@@ -7,25 +7,28 @@
 .include "armips/include/monnums.s"
 .include "armips/include/movenums.s"
 
+// handle sap sipper, based on motor drive
+
 .create "build/move/battle_sub_seq/1_308", 0x0
 
-a001_186:
+a001_308:
+    printattackmessage
+    waitmessage
     wait 0xF
-    changevar VAR_OP_SET, VAR_39, 0x0
-    changevar2 VAR_OP_SET, VAR_ITEM_TEMP, VAR_ATTACKER
-    changevar2 VAR_OP_SET, VAR_ATTACKER, VAR_BATTLER_SOMETHING
-_0038:
-    orderbattlersbyspeed 0x11
-    checkbattlersequal BATTLER_ATTACKER, BATTLER_ADDL_EFFECT, _009C
-    checknostatus BATTLER_ADDL_EFFECT, _009C
-    ifmonstat IF_EQUAL, BATTLER_ADDL_EFFECT, MON_DATA_HP, 0x0, _009C
-    changevar VAR_OP_SET, VAR_34, 0xF
-    changevar VAR_OP_SET, VAR_05, 0x3
-    gotosubscript 12
-_009C:
-    changevar VAR_OP_ADD, VAR_39, 0x1
-    exitloopatvalue 0x27, _0038
-    changevar2 VAR_OP_SET, VAR_ATTACKER, VAR_ITEM_TEMP
+    ifmonstat IF_EQUAL, BATTLER_DEFENDER, MON_DATA_STAT_STAGE_ATTACK, 12, _0084
+    setstatus2effect BATTLER_DEFENDER, 0xC
+    waitmessage
+    changevartomonvalue VAR_OP_ADD, BATTLER_DEFENDER, MON_DATA_STAT_STAGE_ATTACK, 0x1
+    changevar VAR_OP_SET, VAR_22, STAT_ATTACK
+    printmessage 0x26E, 0x27, 0x2, 0x2, 0xFF, "NaN", "NaN", "NaN"
+    waitmessage
+    wait 0x1E
+    endscript
+_0084:
+    printmessage 0x27E, 0x25, 0x2, 0x2, 0x1, "NaN", "NaN", "NaN"
+    waitmessage
+    wait 0x1E
+    endscript
     endscript
 
 .close
