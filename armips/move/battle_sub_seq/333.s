@@ -11,7 +11,7 @@ IceFaceRestoreMsg equ 1357
 
 .create "build/move/battle_sub_seq/1_333", 0
 
-disguiseIceFaceFormChange: // a001_333
+iceFaceRestoreFormChange: // a001_333
     ifmonstat IF_NOTMASK, BATTLER_xFF, MON_DATA_STATUS_2, 0x1000000, _0044
     setstatus2effect BATTLER_xFF, 0xF
     waitmessage
