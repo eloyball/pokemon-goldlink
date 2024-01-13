@@ -9,6 +9,7 @@
 
 .create "build/move/battle_eff_seq/0_297", 0
 
+// Population Bomb
 a030_297:
     // has accuracy check per hit
     setmultihit 0xA, 0xDD
