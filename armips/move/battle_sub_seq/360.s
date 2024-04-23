@@ -22,9 +22,6 @@ a001_360:
     getitempower BATTLER_ATTACKER, 0x9
     changevar2 VAR_OP_ADD, VAR_WEATHER_TURNS, VAR_CALCULATION_WORK
 _0090:
-    printpreparedmessage
-    waitmessage
-    wait 0x1E
     endscript
 _0094:
     changevar VAR_OP_SETMASK, VAR_MOVE_STATUS, 0x40
