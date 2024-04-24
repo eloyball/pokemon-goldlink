@@ -13,7 +13,9 @@
 
 a001_361:
     if IF_MASK, VAR_FIELD_EFFECT, WEATHER_SUNNY_ANY, _0094
-    preparemessage 698, 0x0, "NaN", "NaN", "NaN", "NaN", "NaN", "NaN" // The sunlight turned harsh!
+    printmessage 698, 0x0, "NaN", "NaN", "NaN", "NaN", "NaN", "NaN" // The sunlight turned harsh!
+    waitmessage
+    wait 0x1E
     changevar VAR_OP_CLEARMASK, VAR_FIELD_EFFECT, FIELD_CONDITION_WEATHER
     changevar VAR_OP_SETMASK, VAR_FIELD_EFFECT, WEATHER_SUNNY
     changevar VAR_OP_SET, VAR_WEATHER_TURNS, 0x5
