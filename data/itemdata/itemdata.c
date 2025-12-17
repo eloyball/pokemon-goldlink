@@ -70473,12 +70473,12 @@ const ITEMDATA __data[] =
 
 [ITEM_SAUSAGES] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70538,12 +70538,12 @@ const ITEMDATA __data[] =
 
 [ITEM_BOBS_FOOD_TIN] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 80,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70603,12 +70603,12 @@ const ITEMDATA __data[] =
 
 [ITEM_BACHS_FOOD_TIN] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 80,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70668,12 +70668,12 @@ const ITEMDATA __data[] =
 
 [ITEM_TIN_OF_BEANS] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 80,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70733,12 +70733,12 @@ const ITEMDATA __data[] =
 
 [ITEM_BREAD] =
 {
-    .price = 0,
+    .price = 150,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70798,12 +70798,12 @@ const ITEMDATA __data[] =
 
 [ITEM_PASTA] =
 {
-    .price = 0,
+    .price = 150,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70863,12 +70863,12 @@ const ITEMDATA __data[] =
 
 [ITEM_MIXED_MUSHROOMS] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70928,12 +70928,12 @@ const ITEMDATA __data[] =
 
 [ITEM_SMOKE_POKE_TAIL] =
 {
-    .price = 0,
+    .price = 2,200,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -70993,12 +70993,12 @@ const ITEMDATA __data[] =
 
 [ITEM_LARGE_LEEK] =
 {
-    .price = 0,
+    .price = 2,200,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 20,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71058,12 +71058,12 @@ const ITEMDATA __data[] =
 
 [ITEM_FANCY_APPLE] =
 {
-    .price = 0,
+    .price = 2,200,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 20,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71123,12 +71123,12 @@ const ITEMDATA __data[] =
 
 [ITEM_BRITTLE_BONES] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 30,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71188,12 +71188,12 @@ const ITEMDATA __data[] =
 
 [ITEM_PACK_OF_POTATOES] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71253,12 +71253,12 @@ const ITEMDATA __data[] =
 
 [ITEM_PUNGENT_ROOT] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71318,12 +71318,12 @@ const ITEMDATA __data[] =
 
 [ITEM_SALAD_MIX] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71383,12 +71383,12 @@ const ITEMDATA __data[] =
 
 [ITEM_FRIED_FOOD] =
 {
-    .price = 0,
+    .price = 150,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -71448,12 +71448,12 @@ const ITEMDATA __data[] =
 
 [ITEM_BOILED_EGG] =
 {
-    .price = 0,
+    .price = 2,200,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 20,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -81653,12 +81653,12 @@ const ITEMDATA __data[] =
 
 [ITEM_FRUIT_BUNCH] =
 {
-    .price = 0,
+    .price = 2,200,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -81783,12 +81783,12 @@ const ITEMDATA __data[] =
 
 [ITEM_SPICE_MIX] =
 {
-    .price = 0,
+    .price = 400,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 50,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -81848,12 +81848,12 @@ const ITEMDATA __data[] =
 
 [ITEM_FRESH_CREAM] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -81913,12 +81913,12 @@ const ITEMDATA __data[] =
 
 [ITEM_PACKAGED_CURRY] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -81978,12 +81978,12 @@ const ITEMDATA __data[] =
 
 [ITEM_COCONUT_MILK] =
 {
-    .price = 0,
+    .price = 950,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -82043,12 +82043,12 @@ const ITEMDATA __data[] =
 
 [ITEM_INSTANT_NOODLES] =
 {
-    .price = 0,
+    .price = 150,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -82108,12 +82108,12 @@ const ITEMDATA __data[] =
 
 [ITEM_PRECOOKED_BURGER] =
 {
-    .price = 0,
+    .price = 150,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 10,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
@@ -82173,12 +82173,12 @@ const ITEMDATA __data[] =
 
 [ITEM_GIGANTAMIX] =
 {
-    .price = 0,
+    .price = 15000,
     .holdEffect = 0,
     .holdEffectParam = 0,
     .pluckEffect = 0,
     .flingEffect = 0,
-    .flingPower = 0,
+    .flingPower = 50,
     .naturalGiftPower = 0,
     .naturalGiftType = TYPE_NORMAL,
     .prevent_toss = 0,
