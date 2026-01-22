@@ -1,3 +1,4 @@
+// Test: Zacian - Will enter as Crowned Form and Iron Head changes to Behemoth Blade
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -13,7 +14,6 @@ const struct TestBattleScenario BattleTests[] = {
 
 #endif
 
-    // Test: Zacian - Will enter as Crowned Form and Iron Head changes to Behemoth Blade
     {
         .battleType = BATTLE_TYPE_SINGLE,
         .weather = WEATHER_NONE,
