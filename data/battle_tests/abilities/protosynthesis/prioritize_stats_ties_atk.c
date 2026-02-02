@@ -1,4 +1,5 @@
 // Test: Protosynthesis prioritizes stats in the case of a tie in the following order: Attack, Defense, Sp. Attack, Sp. Defense, Speed - Attack case
+// Mew has 120 stats across the board (except HP)
 {
     .battleType = BATTLE_TYPE_SINGLE,
     .weather = WEATHER_NONE,
