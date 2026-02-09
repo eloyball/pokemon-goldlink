@@ -3342,19 +3342,19 @@ BOOL LONG_CALL ov12_02251A28(struct BattleSystem *bsys, struct BattleStruct *ctx
         && ctx->onceOnlyMoveConditionFlags[SanitizeClientForTeamAccess(bsys, battlerId)][ctx->sel_mons_no[battlerId]].berryEatenAndCanBelch == FALSE) {
         msg->msg_tag = TAG_NICKNAME;
        // { STRVAR_1 1, 0, 0 } hasn’t eaten any held Berries,\nso it can’t possibly belch!
-        msg->msg_id = 1610;
+        msg->msg_id = BATTLE_MSG_CANT_POSSIBLY_USE_BELCN;
         msg->msg_para[0] = CreateNicknameTag(ctx, battlerId);
         ret = FALSE;
     } else if (StruggleCheck(bsys, ctx, battlerId, 0, STRUGGLE_CHECK_STUFF_CHEEKS) & No2Bit(movePos)) { 
         msg->msg_tag = TAG_NICKNAME;
         //It can’t use the move because it doesn’t have a Berry !
-        msg->msg_id = 1611;
+        msg->msg_id = BATTLE_MSG_CANT_USE_MOVE_BECAUSE_NO_BERRY;
         msg->msg_para[0] = CreateNicknameTag(ctx, battlerId);
         ret = FALSE;
     } else if (StruggleCheck(bsys, ctx, battlerId, 0, STRUGGLE_CHECK_THROAT_CHOPPED) & No2Bit(movePos)) {
         msg->msg_tag = TAG_ITEM;
         // The effects of Throat Chop prevent\n{STRVAR_1 1, 0, 0} from using certain moves!
-        msg->msg_id = 1619;
+        msg->msg_id = BATTLE_MSG_THROAT_CHOP_PREVENTS_CERTAIN_MOVES;
         msg->msg_para[0] = CreateNicknameTag(ctx, battlerId);
         ret = FALSE;
     } 
