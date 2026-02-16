@@ -109,13 +109,19 @@
     || (species == SPECIES_NECROZMA) || (species == SPECIES_ZACIAN) || (species == SPECIES_ZAMAZENTA) || (species == SPECIES_ETERNATUS) \
     || (species == SPECIES_CALYREX) || (species == SPECIES_KORAIDON) || (species == SPECIES_MIRAIDON) || (species == SPECIES_TERAPAGOS))
 
+#ifdef VANILLA_MYTHICALS
+#define EXTRA_MYTHICALS(species) 0
+#else
+#define EXTRA_MYTHICALS(species) ( (species == SPECIES_MARSHADOW) /* || (species == OTHER_SPECIES_TO_ADD)*/)
+#endif
+
 #define IS_SPECIES_MYTHICAL(species) ((species == SPECIES_MEW) || (species == SPECIES_CELEBI) || (species == SPECIES_JIRACHI) \
     || (species == SPECIES_DEOXYS) || (species == SPECIES_PHIONE) || (species == SPECIES_MANAPHY) || (species == SPECIES_DARKRAI) \
     || (species == SPECIES_SHAYMIN) || (species == SPECIES_ARCEUS) || (species == SPECIES_VICTINI) || (species == SPECIES_KELDEO) \
     || (species == SPECIES_MELOETTA) || (species == SPECIES_GENESECT) || (species == SPECIES_DIANCIE) || (species == SPECIES_HOOPA) \
-    || (species == SPECIES_VOLCANION) || (species == SPECIES_SHIINOTIC) /* || (species == SPECIES_MARSHADOW) */ || (species == SPECIES_MAGEARNA) \
-    || (species == SPECIES_ZERAORA) || (species == SPECIES_MELTAN) || (species == SPECIES_MELMETAL) || (species == SPECIES_ZARUDE) \
-    || (species == SPECIES_PECHARUNT))
+    || (species == SPECIES_VOLCANION) || (species == SPECIES_SHIINOTIC) || (species == SPECIES_MAGEARNA) || (species == SPECIES_ZERAORA) \
+    || (species == SPECIES_MELTAN) || (species == SPECIES_MELMETAL) || (species == SPECIES_ZARUDE) || (species == SPECIES_PECHARUNT)\
+    || EXTRA_MYTHICALS(species))
 
 #define IS_SPECIES_SUBLEGEND(species) ((species == SPECIES_ARTICUNO) || (species == SPECIES_ZAPDOS) || (species == SPECIES_MOLTRES) \
     || (species == SPECIES_RAIKOU) || (species == SPECIES_ENTEI) || (species == SPECIES_SUICUNE) || (species == SPECIES_REGIROCK) \
