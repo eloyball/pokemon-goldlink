@@ -206,4 +206,10 @@
 // based on the move having FLAG_UNUSABLE_UNIMPLEMENTED
 #define BLOCK_LEARNING_UNIMPLEMENTED_MOVES
 
+// VANILLA_PARADOX_BOOSTER_ENERGY_BEHAVIOUR makes the Paradox Booster item behave as it does in vanilla, where the
+// DLC paradox forms can have Booster Energy tricked onto them.
+// Further info: vxtwitter.com/DaWoblefet/status/1737659599480565762
+// Comment out this define so all Paradox forms behave the same vis a vis Booster Energy
+#define VANILLA_PARADOX_BOOSTER_ENERGY_BEHAVIOUR
+
 #endif
