@@ -119,7 +119,7 @@
     || (species == SPECIES_DEOXYS) || (species == SPECIES_PHIONE) || (species == SPECIES_MANAPHY) || (species == SPECIES_DARKRAI) \
     || (species == SPECIES_SHAYMIN) || (species == SPECIES_ARCEUS) || (species == SPECIES_VICTINI) || (species == SPECIES_KELDEO) \
     || (species == SPECIES_MELOETTA) || (species == SPECIES_GENESECT) || (species == SPECIES_DIANCIE) || (species == SPECIES_HOOPA) \
-    || (species == SPECIES_VOLCANION) || (species == SPECIES_SHIINOTIC) || (species == SPECIES_MAGEARNA) || (species == SPECIES_ZERAORA) \
+    || (species == SPECIES_VOLCANION) || (species == SPECIES_MAGEARNA) || (species == SPECIES_ZERAORA) \
     || (species == SPECIES_MELTAN) || (species == SPECIES_MELMETAL) || (species == SPECIES_ZARUDE) || (species == SPECIES_PECHARUNT)\
     || EXTRA_MYTHICALS(species))
 
