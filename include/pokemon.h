@@ -110,9 +110,9 @@
     || (species == SPECIES_CALYREX) || (species == SPECIES_KORAIDON) || (species == SPECIES_MIRAIDON) || (species == SPECIES_TERAPAGOS))
 
 #ifdef VANILLA_MYTHICALS
-#define EXTRA_MYTHICALS(species) 0
+#define EXTRA_MYTHICALS(species) ( (species == SPECIES_SHIINOTIC) )
 #else
-#define EXTRA_MYTHICALS(species) ( (species == SPECIES_MARSHADOW) /* || (species == OTHER_SPECIES_TO_ADD)*/)
+#define EXTRA_MYTHICALS(species) ( (species == SPECIES_MARSHADOW) )/* || (species == OTHER_SPECIES_TO_ADD)*/)
 #endif
 
 #define IS_SPECIES_MYTHICAL(species) ((species == SPECIES_MEW) || (species == SPECIES_CELEBI) || (species == SPECIES_JIRACHI) \
