@@ -213,7 +213,7 @@
 #define VANILLA_PARADOX_BOOSTER_ENERGY_BEHAVIOUR
 
 // VANILLA_MYTHICALS disallows non vanilla mythical pokemon to be treated as mythical
-// Comment out this define to allow custom define of mythicals, MARSHADOW is added as a mythical by default 
+// Vanilla behaviour adds shiiontic as a mythical more info here: https://xcancel.com/Sibuna_Switch/status/1613414136079323137
 // if VANILLA_MYTHICALS is not defined, but you can change that in the EXTRA_MYTHICALS macro if you want to
 // add or remove mythicals as you see fit
 #define VANILLA_MYTHICALS
