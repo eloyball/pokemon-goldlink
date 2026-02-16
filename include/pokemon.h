@@ -130,11 +130,18 @@
     || (species == SPECIES_CHI_YU) || (species == SPECIES_OGERPON) || (species == SPECIES_OKIDOGI) || (species == SPECIES_MUNKIDORI) \
     || (species == SPECIES_FEZANDIPITI))
 
-#define IS_SPECIES_ULTRA_BEAST(species) ((species >= SPECIES_NIHILEGO && species <= SPECIES_BLACEPHALON))
+#define IS_SPECIES_ULTRA_BEAST(species) ( (species == SPECIES_NIHILEGO) || (species == SPECIES_BUZZWOLE) || (species == SPECIES_PHEROMOSA) || \
+    (species == SPECIES_XURKITREE) || (species == SPECIES_CELESTEELA) || (species == SPECIES_KARTANA) || \
+    (species == SPECIES_GUZZLORD) || (species == SPECIES_POIPOLE) || (species == SPECIES_NAGANADEL) || \
+    (species == SPECIES_STAKATAKA) || (species == SPECIES_BLACEPHALON))
 
-#define IS_SPECIES_PARADOX_FORM(species) ((species >= SPECIES_GREAT_TUSK && species <= SPECIES_IRON_THORNS) || (species == SPECIES_ROARING_MOON) || (species == SPECIES_IRON_VALIANT) || (species == SPECIES_WALKING_WAKE) \
-    || (species == SPECIES_IRON_LEAVES) /*|| (species >= SPECIES_GOUGING_FIRE && species <= SPECIES_IRON_CROWN)*/)
-
+#define IS_SPECIES_PARADOX_FORM(species) ( (species == SPECIES_GREAT_TUSK) || (species == SPECIES_SCREAM_TAIL) || (species == SPECIES_BRUTE_BONNET) || \
+    (species == SPECIES_FLUTTER_MANE) || (species == SPECIES_SLITHER_WING) || (species == SPECIES_SANDY_SHOCKS) || \
+    (species == SPECIES_IRON_TREADS) || (species == SPECIES_IRON_BUNDLE) || (species == SPECIES_IRON_HANDS) || \
+    (species == SPECIES_IRON_JUGULIS) || (species == SPECIES_IRON_MOTH) || (species == SPECIES_IRON_THORNS) || \
+    (species == SPECIES_ROARING_MOON) || (species == SPECIES_IRON_VALIANT) || (species == SPECIES_WALKING_WAKE) || \
+    (species == SPECIES_IRON_LEAVES) || (species == SPECIES_GOUGING_FIRE) || (species == SPECIES_RAGING_BOLT) || \
+    (species == SPECIES_IRON_BOULDER) || (species == SPECIES_IRON_CROWN))
 
 // personal narc fields
 enum
