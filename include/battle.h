@@ -955,6 +955,15 @@ typedef struct
     int msg_client;
 } __attribute__((packed)) MESSAGE_PARAM;
 
+typedef struct BattleMessage {
+    u8 unk0;
+    u8 tag;
+    u16 id;
+    int param[6];
+    int numDigits;
+    int battlerId;
+} BattleMessage;
+
 typedef struct
 {
     u8 unk0;
@@ -1533,7 +1542,7 @@ struct BattleSystem {
     /* 0x0C */ u32 *unkC;
     /* 0x10 */ u32 *unk10;
     /* 0x14 */ MessageFormat *msgFormat;
-    /* 0x18 */ void * /*String **/ msgBuffer;
+    /* 0x18 */ String * msgBuffer;
     /* 0x1C */ u32 unk1C;
     /* 0x20 */ u32 unk20;
     /* 0x24 */ u32 unk24;
@@ -4103,6 +4112,7 @@ void LONG_CALL BattleMon_AddVar(struct BattlePokemon *mon, u32 varId, int data);
 
 #ifdef DEBUG_BATTLE_SCENARIOS
 BOOL LONG_CALL CheckTrainerMessage(struct BattleSystem *bw, struct BattleStruct *sp);
+void LONG_CALL StringExpandPlaceholders(MessageFormat *messageFormat, String *dest, String *src);
 #endif
 
 #endif // BATTLE_H
