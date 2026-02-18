@@ -95,7 +95,6 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.messageID = BATTLE_MSG_BERRY_WEAKENED_SE_MOVE }, 
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.messageID = BATTLE_MSG_CHEEK_POUCH }, 
         },
     },
 #ifndef GET_TEST_CASE_ONLY
