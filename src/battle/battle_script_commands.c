@@ -4568,7 +4568,7 @@ BOOL LONG_CALL BtlCmd_PrintMessage(struct BattleSystem *bsys, struct BattleStruc
     if (scenario != NULL && TestBattle_HasMoreExpectations()) {
         // debug_printf("Has more expectations\n")
         if (scenario->expectations[scenario->expectationPassCount].expectationType == EXPECTATION_TYPE_MESSAGE) {
-            if (scenario->expectations[scenario->expectationPassCount].expectationValue.messageID == msg.msg_id) {
+            if (TestBattle_ExpectedMessageMatches(bsys, &msg, scenario->expectations[scenario->expectationPassCount].expectationValue.message)) {
                 scenario->expectationPassCount++;
             }
             // debug_printf("\n");
@@ -4632,7 +4632,7 @@ BOOL LONG_CALL BtlCmd_PrintGlobalMessage(struct BattleSystem *bsys, struct Battl
     if (scenario != NULL && TestBattle_HasMoreExpectations()) {
         // debug_printf("Has more expectations\n")
         if (scenario->expectations[scenario->expectationPassCount].expectationType == EXPECTATION_TYPE_MESSAGE) {
-            if (scenario->expectations[scenario->expectationPassCount].expectationValue.messageID == msg.msg_id) {
+            if (TestBattle_ExpectedMessageMatches(bsys, &msg, scenario->expectations[scenario->expectationPassCount].expectationValue.message)) {
                 scenario->expectationPassCount++;
             }
             // debug_printf("\n");
@@ -4656,7 +4656,7 @@ BOOL LONG_CALL BtlCmd_PrintBufferedMessage(struct BattleSystem *bsys, struct Bat
     if (scenario != NULL && TestBattle_HasMoreExpectations()) {
         // debug_printf("Has more expectations\n")
         if (scenario->expectations[scenario->expectationPassCount].expectationType == EXPECTATION_TYPE_MESSAGE) {
-            if (scenario->expectations[scenario->expectationPassCount].expectationValue.messageID == ctx->mp.msg_id) {
+            if (TestBattle_ExpectedMessageMatches(bsys, &ctx->mp, scenario->expectations[scenario->expectationPassCount].expectationValue.message)) {
                 scenario->expectationPassCount++;
             }
             // debug_printf("\n");
@@ -4704,7 +4704,7 @@ BOOL LONG_CALL BtlCmd_BufferLocalMessage(struct BattleSystem *bsys, struct Battl
     if (scenario != NULL && TestBattle_HasMoreExpectations()) {
         // debug_printf("Has more expectations\n")
         if (scenario->expectations[scenario->expectationPassCount].expectationType == EXPECTATION_TYPE_MESSAGE) {
-            if (scenario->expectations[scenario->expectationPassCount].expectationValue.messageID == msg.msg_id) {
+            if (TestBattle_ExpectedMessageMatches(bsys, &msg, scenario->expectations[scenario->expectationPassCount].expectationValue.message)) {
                 scenario->expectationPassCount++;
             }
             // debug_printf("\n");

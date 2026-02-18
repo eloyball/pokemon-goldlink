@@ -106,8 +106,8 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.messageID = BATTLE_MSG_STAT_FELL },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.messageID = BATTLE_MSG_STAT_RAISED_SHARPLY },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Primeape's Speed fell!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Primeape's Attack rose sharply!" },
         }
     },
 #ifndef GET_TEST_CASE_ONLY
