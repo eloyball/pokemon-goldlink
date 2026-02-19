@@ -7185,7 +7185,7 @@ movedata MOVE_CHATTER, "Chatter"
     type TYPE_FLYING
     accuracy 100
     pp 20
-    effectchance 0 // always confuse
+    effectchance 100 // always confuse
     target RANGE_SINGLE_TARGET
     priority 0
     flags FLAG_KEEP_HP_BAR | FLAG_PROTECT | FLAG_UNUSABLE_IN_GEN_8 | FLAG_UNUSABLE_IN_GEN_9
