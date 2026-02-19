@@ -1,4 +1,4 @@
-// Test: U-Turn - Iron Barbs, Eject Button, Switch, Life Orb
+// Test: U-Turn - Iron Barbs, Eject Button, Vanish, Life Orb, Switch, Ability
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
