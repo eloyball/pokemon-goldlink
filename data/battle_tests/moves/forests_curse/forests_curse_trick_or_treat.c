@@ -3,7 +3,6 @@
 
 #include "../../../../include/battle.h"
 #include "../../../../include/constants/ability.h"
-#include "../../../../include/constants/battle_message_constants.h"
 #include "../../../../include/constants/item.h"
 #include "../../../../include/constants/moves.h"
 #include "../../../../include/constants/species.h"
@@ -95,7 +94,7 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ghost type was added to Throh!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Throh cut its own HP and put a curse on Smeargle!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Throh cut its own HP and put a curse on the opposing Smeargle!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Grass type was added to Throh!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Throh's Attack rose!" },

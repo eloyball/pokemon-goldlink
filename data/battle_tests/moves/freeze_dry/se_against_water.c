@@ -3,7 +3,6 @@
 
 #include "../../../../include/battle.h"
 #include "../../../../include/constants/ability.h"
-#include "../../../../include/constants/battle_message_constants.h"
 #include "../../../../include/constants/item.h"
 #include "../../../../include/constants/moves.h"
 #include "../../../../include/constants/species.h"

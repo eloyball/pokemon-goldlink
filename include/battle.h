@@ -4114,7 +4114,6 @@ void LONG_CALL BattleMon_AddVar(struct BattlePokemon *mon, u32 varId, int data);
 #ifdef DEBUG_BATTLE_SCENARIOS
 BOOL LONG_CALL CheckTrainerMessage(struct BattleSystem *bw, struct BattleStruct *sp);
 void LONG_CALL StringExpandPlaceholders(MessageFormat *messageFormat, String *dest, String *src);
-void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSystem, MsgData *data, BattleMessage *msg, char *dest, u32 destSize);
 #endif
 
 #endif // BATTLE_H

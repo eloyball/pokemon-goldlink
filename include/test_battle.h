@@ -109,7 +109,6 @@ void LONG_CALL SendValueThroughCommunicationSendHole(int value);
 BOOL LONG_CALL TestBattle_HasMoreExpectations();
 BOOL LONG_CALL TestBattle_HasMoreTests();
 BOOL LONG_CALL TestBattle_IsComplete();
-BOOL LONG_CALL TestBattle_ExpectedMessageMatches(struct BattleSystem *bsys, MESSAGE_PARAM *actualMessage, const char *expectedMessage);
 void LONG_CALL TestBattle_QueueNextTest();
 void LONG_CALL TestBattle_OverrideParties(struct BATTLE_PARAM *bp);
 void LONG_CALL TestBattle_ApplyBattleState(struct BattleStruct *sp);
