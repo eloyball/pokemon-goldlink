@@ -81,6 +81,8 @@ armips/asm/offset.s
 .vscode/
 rom_gen*.ld
 .idea/
+.zed
+compile_commands.json
 
 sdat/*
 *.swav
@@ -98,3 +100,4 @@ changelog
 /data/generated/
 /armips/include/generated/
 /include/constants/generated/
+test_logs.txt
