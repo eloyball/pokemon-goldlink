@@ -2561,56 +2561,56 @@
 #define ITEM_SCARLET_BOOK_SVID            2555
 #define ITEM_VIOLET_BOOK_SVID             2556
 #define ITEM_BRIARS_BOOK                  2557
+#define ITEM_CLEFABLITE                   2558
+#define ITEM_VICTREEBELITE                2559
+#define ITEM_STARMINITE                   2560
+#define ITEM_DRAGONINITE                  2561
+#define ITEM_MEGANIUMITE                  2562
+#define ITEM_FERALIGITE                   2563
+#define ITEM_SKARMORITE                   2564
+#define ITEM_FROSLASSITE                  2565
+#define ITEM_EMBOARITE                    2566
+#define ITEM_EXCADRITE                    2567
+#define ITEM_SCOLIPITE                    2568
+#define ITEM_SCRAFTINITE                  2569
+#define ITEM_EELEKTROSSITE                2570
+#define ITEM_CHANDELURITE                 2571
+#define ITEM_CHESNAUGHTITE                2572
+#define ITEM_DELPHOXITE                   2573
+#define ITEM_GRENINJITE                   2574
+#define ITEM_PYROARITE                    2575
+#define ITEM_FLOETTITE                    2576
+#define ITEM_MALAMARITE                   2577
+#define ITEM_BARBARACITE                  2578
+#define ITEM_DRAGALGITE                   2579
+#define ITEM_HAWLUCHANITE                 2580
+#define ITEM_ZYGARDITE                    2581
+#define ITEM_DRAMPANITE                   2582
+#define ITEM_FALINKSITE                   2583
+#define ITEM_RAICHUNITE_X                 2584
+#define ITEM_RAICHUNITE_Y                 2585
+#define ITEM_CHIMECHITE                   2586
+#define ITEM_ABSOLITE_Z                   2587
+#define ITEM_STARAPTITE                   2588
+#define ITEM_GARCHOMPITE_Z                2589
+#define ITEM_LUCARIONITE_Z                2590
+#define ITEM_HEATRANITE                   2591
+#define ITEM_DARKRANITE                   2592
+#define ITEM_GOLURKITE                    2593
+#define ITEM_MEOWSTICITE                  2594
+#define ITEM_CRABOMINITE                  2595
+#define ITEM_GOLISOPITE                   2596
+#define ITEM_MAGEARNITE                   2597
+#define ITEM_ZERAORITE                    2598
+#define ITEM_SCOVILLAINITE                2599
+#define ITEM_GLIMMORANITE                 2600
+#define ITEM_TATSUGIRINITE                2601
+#define ITEM_BAXCALIBRITE                 2602
 
-#define MAX_BASE_ITEM_NUM ITEM_BRIARS_BOOK
+#define MAX_BASE_ITEM_NUM ITEM_BAXCALIBRITE
 
 // define your custom move effects below like this
 // #define ITEM_CUSTOM_1 (MAX_BASE_ITEM_NUM + 1)
-#define ITEM_CLEFABLITE (MAX_BASE_ITEM_NUM + 1)
-#define ITEM_VICTREEBELITE (MAX_BASE_ITEM_NUM + 2)
-#define ITEM_STARMINITE (MAX_BASE_ITEM_NUM + 3)
-#define ITEM_DRAGONINITE (MAX_BASE_ITEM_NUM + 4)
-#define ITEM_MEGANIUMITE (MAX_BASE_ITEM_NUM + 5)
-#define ITEM_FERALIGITE (MAX_BASE_ITEM_NUM + 6)
-#define ITEM_SKARMORITE (MAX_BASE_ITEM_NUM + 7)
-#define ITEM_FROSLASSITE (MAX_BASE_ITEM_NUM + 8)
-#define ITEM_EMBOARITE (MAX_BASE_ITEM_NUM + 9)
-#define ITEM_EXCADRITE (MAX_BASE_ITEM_NUM + 10)
-#define ITEM_SCOLIPITE (MAX_BASE_ITEM_NUM + 11)
-#define ITEM_SCRAFTINITE (MAX_BASE_ITEM_NUM + 12)
-#define ITEM_EELEKTROSSITE (MAX_BASE_ITEM_NUM + 13)
-#define ITEM_CHANDELURITE (MAX_BASE_ITEM_NUM + 14)
-#define ITEM_CHESNAUGHTITE (MAX_BASE_ITEM_NUM + 15)
-#define ITEM_DELPHOXITE (MAX_BASE_ITEM_NUM + 16)
-#define ITEM_GRENINJITE (MAX_BASE_ITEM_NUM + 17)
-#define ITEM_PYROARITE (MAX_BASE_ITEM_NUM + 18)
-#define ITEM_FLOETTITE (MAX_BASE_ITEM_NUM + 19)
-#define ITEM_MALAMARITE (MAX_BASE_ITEM_NUM + 20)
-#define ITEM_BARBARACITE (MAX_BASE_ITEM_NUM + 21)
-#define ITEM_DRAGALGITE (MAX_BASE_ITEM_NUM + 22)
-#define ITEM_HAWLUCHANITE (MAX_BASE_ITEM_NUM + 23)
-#define ITEM_ZYGARDITE (MAX_BASE_ITEM_NUM + 24)
-#define ITEM_DRAMPANITE (MAX_BASE_ITEM_NUM + 25)
-#define ITEM_FALINKSITE (MAX_BASE_ITEM_NUM + 26)
-#define ITEM_RAICHUNITE_X (MAX_BASE_ITEM_NUM + 27)
-#define ITEM_RAICHUNITE_Y (MAX_BASE_ITEM_NUM + 28)
-#define ITEM_CHIMECHITE (MAX_BASE_ITEM_NUM + 29)
-#define ITEM_ABSOLITE_Z (MAX_BASE_ITEM_NUM + 30)
-#define ITEM_STARAPTITE (MAX_BASE_ITEM_NUM + 31)
-#define ITEM_GARCHOMPITE_Z (MAX_BASE_ITEM_NUM + 32)
-#define ITEM_LUCARIONITE_Z (MAX_BASE_ITEM_NUM + 33)
-#define ITEM_HEATRANITE (MAX_BASE_ITEM_NUM + 34)
-#define ITEM_DARKRANITE (MAX_BASE_ITEM_NUM + 35)
-#define ITEM_GOLURKITE (MAX_BASE_ITEM_NUM + 36)
-#define ITEM_MEOWSTICITE (MAX_BASE_ITEM_NUM + 37)
-#define ITEM_CRABOMINITE (MAX_BASE_ITEM_NUM + 38)
-#define ITEM_GOLISOPITE (MAX_BASE_ITEM_NUM + 39)
-#define ITEM_MAGEARNITE (MAX_BASE_ITEM_NUM + 40)
-#define ITEM_ZERAORITE (MAX_BASE_ITEM_NUM + 41)
-#define ITEM_SCOVILLAINITE (MAX_BASE_ITEM_NUM + 42)
-#define ITEM_GLIMMORANITE (MAX_BASE_ITEM_NUM + 43)
-#define ITEM_TATSUGIRINITE (MAX_BASE_ITEM_NUM + 44)
-#define ITEM_BAXCALIBRITE (MAX_BASE_ITEM_NUM + 45)
 
 #define MAX_TOTAL_ITEM_NUM ITEM_BAXCALIBRITE
 
