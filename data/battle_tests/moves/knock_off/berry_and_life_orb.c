@@ -101,7 +101,7 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 40, 40, 42, 42, 42, 43, 43, 44, 44, 44, 45, 45, 45, 47, 47, 48 } }, // boosted
+            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 40, 40, 42, 42, 42, 43, 43, 44, 44, 44, 45, 45, 45, 47, 47, 48 } }, // boosted
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sneasler's Poison Touch poisoned the opposing Onix!" },        
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Onix's Lum Berry cured its poison!" },        
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Onix's Weak Armor cut its Defense!" },        
