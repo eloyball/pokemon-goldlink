@@ -4126,4 +4126,6 @@ BOOL LONG_CALL CheckTrainerMessage(struct BattleSystem *bw, struct BattleStruct 
 void LONG_CALL StringExpandPlaceholders(MessageFormat *messageFormat, String *dest, String *src);
 #endif
 
+BOOL LONG_CALL IsBattlerSlotValid(struct BattleSystem *battleSystem, int battlerId);
+
 #endif // BATTLE_H
