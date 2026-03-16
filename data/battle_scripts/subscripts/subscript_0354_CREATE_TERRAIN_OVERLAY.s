@@ -3,7 +3,10 @@
 .data
 
 _000:
+    CompareVarToValue OPCODE_NEQ, BSCRIPT_VAR_SIDE_EFFECT_TYPE, SIDE_EFFECT_TYPE_ABILITY, _skipAbilityPopup
+    AbilityPopup BATTLER_CATEGORY_MSG_TEMP
     CheckAbility CHECK_OPCODE_HAVE, BATTLER_CATEGORY_MSG_BATTLER_TEMP, ABILITY_HADRON_ENGINE, _HadronEngineTerrain
+_skipAbilityPopup:
     GotoIfTerrainOverlayIsType GRASSY_TERRAIN, _019
     GotoIfTerrainOverlayIsType MISTY_TERRAIN, _024
     GotoIfTerrainOverlayIsType ELECTRIC_TERRAIN, _029

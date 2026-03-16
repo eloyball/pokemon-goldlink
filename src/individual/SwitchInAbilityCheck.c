@@ -630,18 +630,22 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
                             (sp->battlemon[client_no].hp)) {
                             switch (GetBattlerAbility(sp, client_no)) {
                                 case ABILITY_GRASSY_SURGE:
+                                    sp->addeffect_type = ADD_EFFECT_ABILITY;
                                     UpdateTerrainOverlay(sp, client_no, GRASSY_TERRAIN);
                                     ret = SWITCH_IN_CHECK_MOVE_SCRIPT;
                                     break;
                                 case ABILITY_MISTY_SURGE:
+                                    sp->addeffect_type = ADD_EFFECT_ABILITY;
                                     UpdateTerrainOverlay(sp, client_no, MISTY_TERRAIN);
                                     ret = SWITCH_IN_CHECK_MOVE_SCRIPT;
                                     break;
                                 case ABILITY_ELECTRIC_SURGE:
+                                    sp->addeffect_type = ADD_EFFECT_ABILITY;
                                     UpdateTerrainOverlay(sp, client_no, ELECTRIC_TERRAIN);
                                     ret = SWITCH_IN_CHECK_MOVE_SCRIPT;
                                     break;
                                 case ABILITY_PSYCHIC_SURGE:
+                                    sp->addeffect_type = ADD_EFFECT_ABILITY;
                                     UpdateTerrainOverlay(sp, client_no, PSYCHIC_TERRAIN);
                                     ret = SWITCH_IN_CHECK_MOVE_SCRIPT;
                                     break;
@@ -749,6 +753,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
                         && (GetBattlerAbility(sp, client_no) == ABILITY_HADRON_ENGINE)) {
                             sp->battlemon[client_no].ability_activated_flag = 1;
                             sp->battlerIdTemp = client_no;
+                            sp->addeffect_type = ADD_EFFECT_ABILITY;
                             if (sp->terrainOverlay.type == ELECTRIC_TERRAIN
                             && sp->terrainOverlay.numberOfTurnsLeft > 0) {
                                 scriptnum = SUB_SEQ_HADRON_ENGINE_NO_TERRAIN_SETUP;
@@ -909,7 +914,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
 
                     }
 
-                    // Protosynthesis and Quark Drive 
+                    // Protosynthesis and Quark Drive
                     {
                         scriptnum = ActivateParadoxAbility(bw, sp, client_no);
                         if (scriptnum > 0) {
