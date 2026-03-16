@@ -1,4 +1,4 @@
-// Test: U-Turn - Iron Barbs, Life Orb, Switch, Sitrus
+// Test: U-Turn - Iron Barbs, Life Orb, Sitrus, Switch
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -115,8 +115,8 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 56, 58, 58, 58, 60, 60, 60, 62, 62, 62, 64, 64, 64, 66, 66, 68 } },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ferroseed's Iron Barbs hurt the opposing Beedrill!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Beedrill lost some of its HP!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "The opposing Beedrill went back to" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ferroseed restored its health using its Sitrus Berry!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "The opposing Beedrill went back to" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
