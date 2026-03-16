@@ -2807,7 +2807,7 @@ void LONG_CALL ov12_0224C678(struct BattleSystem *bsys, struct BattleStruct *ctx
 {
     ctx->damageForSpreadMoves[ctx->defence_client] = ctx->damage;
     ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] = ctx->waza_status_flag;
-    if (ctx->critical) {
+    if (ctx->critical > 1) {
         ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] |= WAZA_STATUS_FLAG_CRITICAL;
     }
 
