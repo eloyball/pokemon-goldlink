@@ -1,4 +1,4 @@
-// Test: Flying Press - not SE against Poison
+// Test: Flying Press - neutral damage against Rock-type
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -39,10 +39,10 @@ const struct TestBattleScenario BattleTests[] = {
         },
         .enemyParty = { 
                         {
-                            .species = SPECIES_MUK,
+                            .species = SPECIES_ONIX,
                             .level = 50,
                             .form = 0,
-                            .ability = ABILITY_STICKY_HOLD,
+                            .ability = ABILITY_ROCK_HEAD,
                             .item = ITEM_NONE,
                             .moves = { MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                             .hp = FULL_HP,
@@ -101,7 +101,7 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 33, 33, 34, 34, 35, 35, 36, 36, 36, 36, 37, 37, 38, 38, 39, 39 } },    
+            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 36, 36, 37, 37, 37, 39, 39, 39, 39, 40, 40, 40, 42, 42, 42, 43 } },    
         },
         .knownFailing = TRUE,
     },
