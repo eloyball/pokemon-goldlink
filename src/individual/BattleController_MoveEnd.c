@@ -90,6 +90,8 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
         ctx->store_damage[i] = 0;
     }
     ctx->clientLoopForSpreadMoves = 0;
+    ctx->spreadPostMovePhase = 0;
+    ctx->spreadDefenderAbilityProcessed = 0;
     ctx->clientLoopForAbility = 0;
     ctx->boostedAccuracy = FALSE;
     ctx->gemBoostingMove = FALSE;

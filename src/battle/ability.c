@@ -780,6 +780,26 @@ void ServerWazaOutAfterMessage(void *bsys, struct BattleStruct *ctx)
         ctx->attack_client = ctx->magic_cort_client;
     }
 
+    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+        int ally = BATTLER_ALLY(ctx->attack_client);
+        int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
+        int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
+        ctx->spreadDefenderAbilityProcessed = 0;
+
+        if (IsTargetFoesAndAlly(ctx, ctx->current_move_index) && IS_VALID_MOVE_TARGET(ctx, ally)) {
+            ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ALLY_ITEMS;
+            ctx->defence_client = ally;
+        } else if (IS_VALID_MOVE_TARGET(ctx, oppLeft)) {
+            ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
+            ctx->defence_client = oppLeft;
+        } else if (IS_VALID_MOVE_TARGET(ctx, oppRight)) {
+            ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
+            ctx->defence_client = oppRight;
+        } else {
+            ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ALLY_ITEMS;
+        }
+    }
+
     ctx->server_seq_no = CONTROLLER_COMMAND_31;
     ctx->swoam_seq_no = 0;
     return;

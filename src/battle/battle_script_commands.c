@@ -4625,6 +4625,12 @@ BOOL btl_scr_cmd_11C_BatchFollowupMessage(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     int battlerCategory = read_battle_script_param(ctx);
+
+    if (ctx->server_status_flag & SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE) {
+        ctx->waza_status_flag |= MOVE_STATUS_FLAG_SUPPRESS_FOLLOWUP_MESSAGE;
+        return FALSE;
+    }
+
     int battlerId = GrabClientFromBattleScriptParam(bsys, ctx, battlerCategory);
 
     if (ctx->damageForSpreadMoves[battlerId] != 0) {

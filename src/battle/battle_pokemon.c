@@ -1018,6 +1018,7 @@ while (currentScenario != NULL && TestBattle_HasMoreExpectations()) {
 }
 
 if (TestBattle_HasMoreExpectations()) {
+    debug_printf("expectation[%d] ❌\n", currentScenario->expectationPassCount);
     if (currentScenario->knownFailing) {
         SendValueThroughCommunicationSendHole(TEST_CASE_KNOWN_FAILING);
     } else {

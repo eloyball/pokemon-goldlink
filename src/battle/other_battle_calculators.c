@@ -1580,6 +1580,8 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
         BOOL rangeAllAdjacent = (moveTarget == RANGE_ALL_ADJACENT);
         BOOL rangeAdjacentOpp = (moveTarget == RANGE_ADJACENT_OPPONENTS);
 
+        // hp calc can reduce stored spread damage if sash/sturdy.
+        // persist the resolved value for the later batch update
         int ally = BATTLER_ALLY(ctx->attack_client);
         if ((IS_TARGET_FOES_AND_ALLY_MOVE(ctx) || (IS_TARGET_BOTH_MOVE(ctx) && ally == ctx->defence_client) || rangeAllAdjacent) && IS_VALID_MOVE_TARGET(ctx, ally))
         {
@@ -1587,6 +1589,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
             ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ally];
             ctx->damage = ctx->damageForSpreadMoves[ally];
             internalFunc(bsys, ctx);
+            ctx->damageForSpreadMoves[ally] = ctx->damage;
             ctx->moveStatusFlagForSimultaneousDamage[ally] = ctx->waza_status_flag;
         }
 
@@ -1597,6 +1600,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
                 ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppL];
                 ctx->damage = ctx->damageForSpreadMoves[oppL];
                 internalFunc(bsys, ctx);
+                ctx->damageForSpreadMoves[oppL] = ctx->damage;
                 ctx->moveStatusFlagForSimultaneousDamage[oppL] = ctx->waza_status_flag;
             }
 
@@ -1606,6 +1610,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
                 ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppR];
                 ctx->damage = ctx->damageForSpreadMoves[oppR];
                 internalFunc(bsys, ctx);
+                ctx->damageForSpreadMoves[oppR] = ctx->damage;
                 ctx->moveStatusFlagForSimultaneousDamage[oppR] = ctx->waza_status_flag;
             }
         }

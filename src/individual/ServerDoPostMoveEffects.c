@@ -161,14 +161,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             return;
         }
 
-        if (CanGetNextDefender(bsys, ctx) == TRUE) {
-            ctx->server_seq_no = CONTROLLER_COMMAND_31;
-            return;
-        } else {
-            ctx->clientLoopForSpreadMoves = 0;
-            CanGetNextDefender(bsys, ctx);
-        }
-
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     }
@@ -198,12 +190,16 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         int seq_no = 0;
         //TODO hook and simplify logic for flags
         u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
+        BOOL triggeredIndirectEffect = FALSE;
         ctx->swoam_seq_no++;
         if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
+            triggeredIndirectEffect = TRUE;
+        }
+        ctx->add_status_flag_indirect = indirectStatusEffectFlag;
+        if (triggeredIndirectEffect) {
             LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
             ctx->next_server_seq_no = ctx->server_seq_no;
             ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            ctx->add_status_flag_indirect = indirectStatusEffectFlag;
             return;
         }
     }
@@ -212,15 +208,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_9_2_1_SECONDARY_EFFECTS_SPREAD_MOVES_LOOP_BACK %d\n", ctx->swoam_seq_no);
 #endif
-        if (CanGetNextDefender(bsys, ctx) == TRUE) {
-            ctx->server_seq_no = CONTROLLER_COMMAND_31;
-            ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_9_1_FLINCH_CHECK;
-            return;
-        } else {
-            ctx->clientLoopForSpreadMoves = 0;
-            CanGetNextDefender(bsys, ctx);
-        }
-        ctx->add_status_flag_indirect = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_9_3_FLAME_BURST:
@@ -289,7 +276,21 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
         ctx->swoam_seq_no++;
         int seq_no = 0;
-        if (MoveHitDefenderAbilityCheck(bsys, ctx, &seq_no) == TRUE) {
+        BOOL skipDefenderAbilityCheck = FALSE;
+        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+            // only run defender abilities during the ability phases
+            if (ctx->spreadPostMovePhase == SPREAD_POST_MOVE_PHASE_ALLY_ITEMS || ctx->spreadPostMovePhase == SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS) {
+                skipDefenderAbilityCheck = TRUE;
+            } else {
+                u8 processedBit = No2Bit(ctx->defence_client);
+                if (ctx->spreadDefenderAbilityProcessed & processedBit) {
+                    skipDefenderAbilityCheck = TRUE;
+                } else {
+                    ctx->spreadDefenderAbilityProcessed |= processedBit;
+                }
+            }
+        }
+        if (!skipDefenderAbilityCheck && MoveHitDefenderAbilityCheck(bsys, ctx, &seq_no) == TRUE) {
             LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
             ctx->next_server_seq_no = ctx->server_seq_no;
             ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
@@ -372,11 +373,99 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_10_13_PROTECTION_FROM_Z_MOVE:
         // TODO
-        if (CanGetNextDefender(bsys, ctx) == TRUE) {
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    case MOVE_PERFORMANCE_STEP_10_14_SPREAD_ADVANCE:
+        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+            int ally = BATTLER_ALLY(ctx->attack_client);
+            int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
+            int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
+            BOOL hasAlly = IsTargetFoesAndAlly(ctx, ctx->current_move_index) && IS_VALID_MOVE_TARGET(ctx, ally);
+            BOOL hasOppLeft = IS_VALID_MOVE_TARGET(ctx, oppLeft);
+            BOOL hasOppRight = IS_VALID_MOVE_TARGET(ctx, oppRight);
+
+            switch (ctx->spreadPostMovePhase) {
+            case SPREAD_POST_MOVE_PHASE_ALLY_ITEMS:
+                ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ALLY_ABILITIES;
+                ctx->defence_client = ally;
+                ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ally];
+                ctx->damage = ctx->damageForSpreadMoves[ally];
+                ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
+                return;
+            case SPREAD_POST_MOVE_PHASE_ALLY_ABILITIES:
+                if (hasOppLeft) {
+                    ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
+                    ctx->defence_client = oppLeft;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppLeft];
+                    ctx->damage = ctx->damageForSpreadMoves[oppLeft];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
+                    return;
+                }
+                if (hasOppRight) {
+                    ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
+                    ctx->defence_client = oppRight;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
+                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
+                    return;
+                }
+                break;
+            case SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS:
+                if (ctx->defence_client == oppLeft && hasOppRight) {
+                    ctx->defence_client = oppRight;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
+                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
+                    return;
+                }
+                ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ABILITIES;
+                if (hasOppLeft) {
+                    ctx->defence_client = oppLeft;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppLeft];
+                    ctx->damage = ctx->damageForSpreadMoves[oppLeft];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
+                    return;
+                }
+                if (hasOppRight) {
+                    ctx->defence_client = oppRight;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
+                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
+                    return;
+                }
+                break;
+            case SPREAD_POST_MOVE_PHASE_ENEMY_ABILITIES:
+                if (ctx->defence_client == oppLeft && hasOppRight) {
+                    ctx->defence_client = oppRight;
+                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
+                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
+                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
+                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
+                    return;
+                }
+                break;
+            default:
+                break;
+            }
+
+            ctx->spreadPostMovePhase = hasAlly ? SPREAD_POST_MOVE_PHASE_ALLY_ITEMS : SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
+            ctx->add_status_flag_indirect = 0;
+            ctx->clientLoopForSpreadMoves = 0;
+            CanGetNextDefender(bsys, ctx);
+        } else if (CanGetNextDefender(bsys, ctx) == TRUE) {
             ctx->server_seq_no = CONTROLLER_COMMAND_31;
-            ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER; //loop back
+            ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ctx->defence_client];
+            ctx->damage = ctx->damageForSpreadMoves[ctx->defence_client];
+            ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
             return;
         } else {
+            ctx->add_status_flag_indirect = 0;
             ctx->clientLoopForSpreadMoves = 0;
             CanGetNextDefender(bsys, ctx);
         }
@@ -1824,13 +1913,13 @@ int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct 
                 (ctx->battlemon[ctx->defence_client].hp)
                 && (ctx->battlemon[ctx->defence_client].states[STAT_SPATK] < 12)
                 && ((ctx->oneSelfFlag[ctx->defence_client].physical_damage) || (ctx->oneSelfFlag[ctx->defence_client].special_damage))
-                // berserk doesn't activate if the Pokémon gets attacked by a sheer force boosted move
+                // berserk doesn't activate if the Pokï¿½mon gets attacked by a sheer force boosted move
                 && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
                 // berserk doesn't activate until the last hit of a multi-hit move
                 && (ctx->multiHitCount <= 1)
                 && (ctx->battlemon[ctx->defence_client].hp <= (s32)(ctx->battlemon[ctx->defence_client].maxhp / 2))
                 && (
-                    // checks if the pokémon has gone below half HP from the current damage instance
+                    // checks if the pokï¿½mon has gone below half HP from the current damage instance
                     // physical_damage and special_damage contain the relevant damage value that was just dealt, but the value is negative
                     ((ctx->battlemon[ctx->defence_client].hp - (ctx->oneSelfFlag[ctx->defence_client].physical_damage)) > (s32)ctx->battlemon[ctx->defence_client].maxhp / 2)
                     || ((ctx->battlemon[ctx->defence_client].hp - (ctx->oneSelfFlag[ctx->defence_client].special_damage)) > (s32)ctx->battlemon[ctx->defence_client].maxhp / 2))) {
@@ -1852,13 +1941,13 @@ int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct 
                     || (ctx->battlemon[ctx->defence_client].states[STAT_DEFENSE] > 0)
                     || (ctx->battlemon[ctx->defence_client].states[STAT_SPDEF] > 0))
                 && ((ctx->oneSelfFlag[ctx->defence_client].physical_damage) || (ctx->oneSelfFlag[ctx->defence_client].special_damage))
-                // anger shell doesn't activate if the Pokémon gets attacked by a sheer force boosted move
+                // anger shell doesn't activate if the Pokï¿½mon gets attacked by a sheer force boosted move
                 && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
                 // anger shell doesn't activate until the last hit of a multi-hit move
                 && (ctx->multiHitCount <= 1)
                 && (ctx->battlemon[ctx->defence_client].hp <= (s32)(ctx->battlemon[ctx->defence_client].maxhp / 2))
                 && (
-                    // checks if the pokémon has gone below half HP from the current damage instance
+                    // checks if the pokï¿½mon has gone below half HP from the current damage instance
                     // physical_damage and special_damage contain the relevant damage value that was just dealt, but the value is negative
                     ((ctx->battlemon[ctx->defence_client].hp - (ctx->oneSelfFlag[ctx->defence_client].physical_damage)) > (s32)ctx->battlemon[ctx->defence_client].maxhp / 2)
                     || ((ctx->battlemon[ctx->defence_client].hp - (ctx->oneSelfFlag[ctx->defence_client].special_damage)) > (s32)ctx->battlemon[ctx->defence_client].maxhp / 2))) {

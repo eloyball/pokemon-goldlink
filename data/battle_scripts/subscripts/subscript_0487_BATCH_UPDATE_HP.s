@@ -6,7 +6,7 @@ _Start:
     PlayMoveHitSound BATTLER_CATEGORY_MSG_BATTLER_TEMP
     BatchUpdateHealthBar
     Wait
-    WaitButtonABTime 126
+    WaitButtonABTime 90
     BatchUpdateHealthBarValue
     Wait
     GoTo _SuperEffectiveMessageAttackerSide
