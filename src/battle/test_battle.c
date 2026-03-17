@@ -27,41 +27,65 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
         u32 code = battleSystem->msgBuffer->data[i];
         char character = '\0';
 
-        if (code <= 0x0144) {
-            character = (char)(code - 234);
-        } else {
-            switch (code) {
-            case 0xFFFF:
-                character = '\0';
-                return;
-            case 0x01BE:
-                character = '-';
-                break;
-            case 0x01DE:
-            case 0x0001:
-            case 0xE000:
-            case 0x25BC:
-            case 0x25BD:
-                character = ' ';
-                break;
-            case 0x01AB:
-                character = '!';
-                break;
-            case 0x01AD:
-                character = ',';
-                break;
-            case 0x01AE:
-                character = '.';
-                break;
+        switch (code) {
+        case 0xFFFF:
+            character = '\0';
+            return;
+        case 0x01BE:
+            character = '-';
+            break;
+        case 0x01DE:
+        case 0x0001:
+        case 0xE000:
+        case 0x25BC:
+        case 0x25BD:
+            character = ' ';
+            break;
+        case 0x01AB:
+            character = '!';
+            break;
+        case 0x01AD:
+            character = ',';
+            break;
+        case 0x01AE:
+            character = '.';
+            break;
+        case 0x01B3:
+            character = '\'';
+            break;
+        case 0x0188:
+            character = 'e';
+            break;
+        case 0x01B9:
+            character = '(';
+            break;
+        case 0x01BA:
+            character = ')';
+            break;
+
+        default:
+            if (code <= 0x012A) {
+                character = (char)(code - 0xF1);
+            } else if (code <= 0x0144) {
+                character = (char)(code - 234);
+            } else {
+                character = (char)(code - 228);
+            }
+            break;
+        }
+
+        switch (code) {
             case 0x01B3:
-                character = '\'';
+                debug_printf("’");
+                break;
+            case 0x0188:
+                debug_printf("é");
                 break;
             default:
-                character = (char)(code - 228);
+                debug_printf("%c", character);
                 break;
-            }
         }
-        debug_printf("%c", character);
+
         if (character != scenario->expectations[scenario->expectationPassCount].expectationValue.message[i]) {
             messageMatch = FALSE;
         }
@@ -77,4 +101,3 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
 #endif // DEBUG_BATTLE_SCENARIOS
 
 }
-
