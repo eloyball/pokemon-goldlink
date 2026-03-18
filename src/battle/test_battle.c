@@ -95,14 +95,18 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
             case 0x01AE:
                 character = '.';
                 break;
+
             case 0x01B3:
-                character = '\'';
+                debug_printf("’");
+                break;
+            case 0x0188:
+                debug_printf("é");
                 break;
             default:
-                character = (char)(code - 228);
+                debug_printf("%c", character);
                 break;
-            }
         }
+
         if (character == '\0') {
             character = ' ';
         }
