@@ -105,6 +105,7 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
             default:
                 debug_printf("%c", character);
                 break;
+            }
         }
 
         if (character == '\0') {
