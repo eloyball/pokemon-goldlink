@@ -144,15 +144,18 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE %d\n", ctx->swoam_seq_no);
 #endif
+
         ctx->swoam_seq_no++;
-        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
-        } else {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
+        if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
+            if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
+            } else {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
+            }
+            ctx->next_server_seq_no = ctx->server_seq_no;
+            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+            return;
         }
-        ctx->next_server_seq_no = ctx->server_seq_no;
-        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-        return;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE:
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
@@ -817,8 +820,9 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
     int itemHoldEffect = HeldItemHoldEffectGet(sp, battler);
 
     {
-        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item // already checked by moldbreaker
+        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_ability // already checked by moldbreaker
             && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
+            sp->oneSelfFlag[battler].prevent_one_hit_ko_ability = FALSE;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ABILITY;
             seq_no[0] = SUB_SEQ_STURDY;
             return TRUE;
@@ -829,23 +833,24 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
     case HOLD_EFFECT_MAYBE_ENDURE: // Focus Band
     {
         if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1) {
+            sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
             sp->item_work = sp->battlemon[battler].item;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ITEM;
             seq_no[0] = SUB_SEQ_FOCUS_SASH;
             return TRUE;
         }
-        sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
+        
         break;
     }
     case HOLD_EFFECT_ENDURE: // Focus Sash
     {
         if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
+            sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
             sp->item_work = sp->battlemon[battler].item;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ITEM;
             seq_no[0] = SUB_SEQ_FOCUS_SASH;
             return TRUE;
         }
-        sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
         break;
     }
     default:
