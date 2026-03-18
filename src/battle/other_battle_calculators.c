@@ -1570,7 +1570,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
 
     BOOL didDmg = FALSE;
 
-    if (IS_SPREAD_MOVE(ctx)) {
+    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
         for (int i = 0; i < BattleWorkClientSetMaxGet(bsys); i++) {
             ctx->moveStatusFlagForSimultaneousDamage[i] = 0;
         }
@@ -1633,16 +1633,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
     ctx->server_seq_no = CONTROLLER_COMMAND_29;
     ctx->next_server_seq_no = CONTROLLER_COMMAND_29;
     if (didDmg) {
-        if (IS_SPREAD_MOVE(ctx)) {
-            ctx->server_status_flag |= SERVER_STATUS_FLAG_MOVE_HIT;
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            //ctx->server_status_flag &= ~SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE;
-        } else {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            ctx->server_status_flag |= SERVER_STATUS_FLAG_MOVE_HIT;
-        }
+        ctx->server_status_flag |= SERVER_STATUS_FLAG_MOVE_HIT;
     }
 
     UnloadOverlayByID(ovyId);

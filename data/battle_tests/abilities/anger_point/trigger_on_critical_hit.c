@@ -102,6 +102,7 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "A critical hit!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Tauros's Anger Point raised its Attack drastically!" },
         }
     },

@@ -1673,4 +1673,7 @@ It’s not very effective on the opposing\n{STRVAR_1 1, 0, 0}, {STRVAR_1 1, 1, 0
 (Placeholder)
 (Placeholder)
 (Placeholder)
-(Placeholder)
+(Placeholder) 
+A critical hit on {STRVAR_1 1, 0, 0}!
+A critical hit on the wild\n{STRVAR_1 1, 0, 0}!
+A critical hit on the opposing\n{STRVAR_1 1, 0, 0}!

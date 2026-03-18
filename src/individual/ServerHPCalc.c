@@ -178,7 +178,7 @@ void ServerHPCalc(struct BattleSystem *bw, struct BattleStruct *sp)
             sp->battlerIdTemp = sp->defence_client;
             sp->hp_calc_work = sp->damage;
 
-            if (IS_SPREAD_MOVE(sp) && !(sp->server_status_flag & SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE)) {
+            if (IsMoveSpreadMove(sp, sp->current_move_index) && !(sp->server_status_flag & SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE)) {
                 sp->server_status_flag |= SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE;
             }
 

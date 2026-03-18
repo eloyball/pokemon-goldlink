@@ -141,8 +141,18 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE:
-        // TODO
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE %d\n", ctx->swoam_seq_no);
+#endif
         ctx->swoam_seq_no++;
+        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
+        } else {
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
+        }
+        ctx->next_server_seq_no = ctx->server_seq_no;
+        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+        return;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE:
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
@@ -176,7 +186,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
 
             if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT);
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT_SPREAD);
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
@@ -239,7 +249,12 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             ctx->defence_client = hitFoes[ctx->clientLoopForSpreadMoves];
             ctx->clientLoopForSpreadMoves++;
             if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT);
+                int seq_no = SUB_SEQ_CRITICAL_HIT;
+                if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+                    seq_no = SUB_SEQ_CRITICAL_HIT_SPREAD;
+                }
+     
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
@@ -798,33 +813,37 @@ int LONG_CALL ShowDamageReductionBerryMessage(void *bsys, struct BattleStruct *s
 
 int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct BattleStruct *sp, int *seq_no)
 {
-    int ret = FALSE;
-
     int battler = sp->defence_client;
-    // for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++) {
     int itemHoldEffect = HeldItemHoldEffectGet(sp, battler);
+
+    {
+        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item // already checked by moldbreaker
+            && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
+            sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ABILITY;
+            seq_no[0] = SUB_SEQ_STURDY;
+            return TRUE;
+        }
+    }
 
     switch (itemHoldEffect) {
     case HOLD_EFFECT_MAYBE_ENDURE: // Focus Band
     {
         if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1) {
-            sp->battlerIdTemp = battler;
             sp->item_work = sp->battlemon[battler].item;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ITEM;
             seq_no[0] = SUB_SEQ_FOCUS_SASH;
-            ret = TRUE;
+            return TRUE;
         }
         sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
         break;
     }
-    case HOLD_EFFECT_ENDURE: // Focus Sash //will only be triggered for multi hit moves
+    case HOLD_EFFECT_ENDURE: // Focus Sash
     {
         if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
-            sp->battlerIdTemp = battler;
             sp->item_work = sp->battlemon[battler].item;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ITEM;
             seq_no[0] = SUB_SEQ_FOCUS_SASH;
-            ret = TRUE;
+            return TRUE;
         }
         sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
         break;
@@ -833,26 +852,9 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
         break;
     }
 
-    // TODO Sturdy, False Swipe, Hold Back
-    /*
-    {
-        if (sp->oneTurnFlag[battler].prevent_one_hit_ko_ability == TRUE //already checked by moldbreaker
-            && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->hit_damage) == 1)
-        {
-            sp->battlerIdTemp = battler;
-            sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ABILITY;
-            seq_no[0] = SUB_SEQ_FOCUS_STURDY;
-            ret = TRUE;
-        }
+    // TODO: False Swipe, Hold Back, Friendship
 
-    }
-    */
-    //     if (ret) {
-    //         break;
-    //      }
-    //  }
-
-    return ret;
+    return FALSE;
 }
 
 int LONG_CALL Activate_Clearsmog(void *bsys UNUSED, struct BattleStruct *ctx)
