@@ -1,4 +1,4 @@
-// Test: Anger Point - one hit prevented from crit, one hit crits
+// Test: Anger Point - double critical hits
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
