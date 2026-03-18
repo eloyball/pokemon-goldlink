@@ -16710,71 +16710,24 @@ trainerdata 495, "Boy"
     endparty
 
 trainerdata 496, "Boy"
-     trainermontype TRAINER_DATA_TYPE_MOVES | TRAINER_DATA_TYPE_ITEMS | TRAINER_DATA_TYPE_ABILITY | TRAINER_DATA_TYPE_BALL | TRAINER_DATA_TYPE_IV_EV_SET | TRAINER_DATA_TYPE_NATURE_SET | TRAINER_DATA_TYPE_SHINY_LOCK | TRAINER_DATA_TYPE_ADDITIONAL_FLAGS
-     trainerclass TRAINERCLASS_PASSERBY
-     nummons 3
-     item ITEM_NONE
-     item ITEM_NONE
-     item ITEM_NONE
-     item ITEM_NONE
-     aiflags F_EVALUATE_ATTACKS | 0
-     battletype DOUBLE_BATTLE
-     endentry
+    trainermontype TRAINER_DATA_TYPE_NOTHING
+    trainerclass TRAINERCLASS_PASSERBY
+    nummons 1
+    item ITEM_NONE
+    item ITEM_NONE
+    item ITEM_NONE
+    item ITEM_NONE
+    aiflags F_PRIORITIZE_SUPER_EFFECTIVE | 0
+    battletype SINGLE_BATTLE
+    endentry
 
-     party 496
-         ivs 0
-         abilityslot 0
-         level 5
-         pokemon SPECIES_CHIKORITA
-         item ITEM_FOCUS_SASH
-         move MOVE_SPLASH
-         move MOVE_NONE
-         move MOVE_NONE
-         move MOVE_NONE
-         ability ABILITY_STAMINA
-         ball ITEM_POKE_BALL
-         setivs 31, 0, 31, 31, 31, 31 // hp, atk, def, spd, spatk, spdef
-         setevs 0, 0, 0, 0, 0, 0
-         nature NATURE_HARDY
-         shinylock 0
-         additionalflags 0
-         ballseal 0
-
-         ivs 0
-         abilityslot 0
-         level 5
-         pokemon SPECIES_FRIGIBAX
-         item ITEM_FOCUS_SASH
-         move MOVE_SPLASH
-         move MOVE_NONE
-         move MOVE_NONE
-         move MOVE_NONE
-         ability ABILITY_WEAK_ARMOR
-         ball ITEM_POKE_BALL
-         setivs 31, 31, 31, 31, 31, 31 // hp, atk, def, spd, spatk, spdef
-         setevs 0, 0, 0, 0, 0, 0
-         nature NATURE_HARDY
-         shinylock 0
-         additionalflags 0
-         ballseal 0
-
-         ivs 0
-         abilityslot 0
-         level 10
-         pokemon SPECIES_ONIX
-         item ITEM_EJECT_PACK
-         move MOVE_LEAF_STORM
-         move MOVE_NONE
-         move MOVE_NONE
-         move MOVE_NONE
-         ability ABILITY_INTIMIDATE
-         ball ITEM_POKE_BALL
-         setivs 31, 0, 31, 31, 31, 31 // hp, atk, def, spd, spatk, spdef
-         setevs 0, 0, 0, 0, 0, 0
-         nature NATURE_HARDY
-         shinylock 0
-         additionalflags 0
-         ballseal 0
+    party 496
+        // mon 0
+        ivs 0
+        abilityslot 0
+        level 5
+        pokemon SPECIES_CYNDAQUIL
+        ballseal 0
     endparty
 
 trainerdata 497, "Boy"
