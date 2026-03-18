@@ -48,6 +48,10 @@ int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleSt
 int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleStruct *ctx);
 
 
+
+int LONG_CALL MovePerformance_Step_9(void *bsys, struct BattleStruct *ctx, int *defenders, int defenderCount);
+int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int *defenders, int defenderCount);
+
 /**
  *  @brief do post move effects--synchronize, held item effects, ice thawing from move usage, etc.
  *         no other abilities here though.  primarily here to add scald melting frozen battlers
@@ -62,6 +66,29 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif 
 
     DynamicSortClientExecutionOrder(bsys, ctx, FALSE);
+
+    int hitFoesCount = 0;
+    int hitFoes[2];
+    int isAllyHit = FALSE;
+    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+        if (IS_VALID_MOVE_TARGET(ctx, BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client))) {
+            hitFoes[hitFoesCount] = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
+            hitFoesCount++;
+        }
+
+        if (IS_VALID_MOVE_TARGET(ctx, BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client))) {
+            hitFoes[hitFoesCount] = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
+            hitFoesCount++;
+        }
+        if (IsTargetFoesAndAlly(ctx, ctx->current_move_index)) {
+            isAllyHit = IS_VALID_MOVE_TARGET(ctx, BATTLER_ALLY(ctx->attack_client));
+        }
+    }
+    else
+    {
+        hitFoes[hitFoesCount] = ctx->defence_client;
+        hitFoesCount++;
+    }
 
     switch (ctx->swoam_seq_no) {
     case MOVE_PERFORMANCE_VANISH_ON_OFF: {
@@ -88,7 +115,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STORE_DAMAGE (%d)+(%d)\n", ctx->store_damage[ctx->attack_client], ctx->hit_damage);
 #endif
-        
+
         ctx->store_damage[ctx->attack_client] += ctx->hit_damage;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
@@ -102,7 +129,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
 
         ctx->swoam_seq_no++;
-        
+
         if (ctx->server_status_flag & BATTLE_STATUS_SELFDESTRUCTED) {
             ctx->fainting_client = ctx->attack_client; // No2Bit((ctx->server_status_flag & BATTLE_STATUS_SELFDESTRUCTED) >> BATTLE_STATUS_SELFDESTRUCTED_SHIFT);
             ctx->server_status_flag &= ~BATTLE_STATUS_SELFDESTRUCTED;
@@ -111,7 +138,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
             return;
         }
-        
+
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE:
         // TODO
@@ -121,7 +148,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
-        
+
         // TODO
         ctx->swoam_seq_no++;
         if (ctx->swoam_type == SWOAM_NORMAL) {
@@ -136,342 +163,137 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
         // TODO confirm translation, handled in WazaStatusMessage above?
         ctx->swoam_seq_no++;
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_MESSAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_MESSAGE %d\n", ctx->swoam_seq_no);
-#endif
-
-        ctx->swoam_seq_no++;
-        if (ServerCriticalMessage(bsys, ctx) == TRUE) {
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH %d\n", ctx->swoam_seq_no);
-#endif
-
-        int seq_no = 0;
-        if (Activate_Sturdy_FocusSash_FocusBand_Message(bsys, ctx, &seq_no) == TRUE) {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-
-        ctx->swoam_seq_no++;
         FALLTHROUGH;
     }
-    case MOVE_PERFORMANCE_STEP_8_1_SURVIVE_WITH_FRIENDSHIP:
-        // TODO needed?
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_0_FLING:
-        // TODO needed?
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_1_FLINCH_CHECK:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_9_1_FLINCH_CHECK %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        if (ServerFlinchCheck(bsys, ctx) == TRUE) {
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_2_SECONDARY_EFFECTS: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_9_2_SECONDARY_EFFECTS %d\n", ctx->swoam_seq_no);
-#endif
+    case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY: {
 
-        
-        int seq_no = 0;
-        //TODO hook and simplify logic for flags
-        u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
-        BOOL triggeredIndirectEffect = FALSE;
-        ctx->swoam_seq_no++;
-        if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
-            triggeredIndirectEffect = TRUE;
-        }
-        ctx->add_status_flag_indirect = indirectStatusEffectFlag;
-        if (triggeredIndirectEffect) {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_2_1_SECONDARY_EFFECTS_SPREAD_MOVES_LOOP_BACK:
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_9_2_1_SECONDARY_EFFECTS_SPREAD_MOVES_LOOP_BACK %d\n", ctx->swoam_seq_no);
+        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY %d, isAllyHit %d\n", ctx->swoam_seq_no, isAllyHit);
 #endif
+        ctx->clientLoopForSpreadMoves = 0; //TODO use seprate variable?
         ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_3_FLAME_BURST:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_9_2_FLAME_BURST %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        if (Activate_FlameBurstHit(bsys, ctx) == TRUE)
-        { 
-            return;
-        }    
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_9_4_DYNAMAX_MOVE_EFFECTS:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_1_RAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_1_RAGE %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        // https://github.com/pret/pokeheartgold/blob/f20f85b627d0ba2b208d8e33181cab27d5d1508f/src/battle/battle_controller_player.c#L3802C13-L3802C25
-        if (ServerIkariCheck(bsys, ctx) == TRUE) { // TODO: rename to TryBuildRage, hook, checks only defence_client currently
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_2_CLEAR_SMOG:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_2_CLEAR_SMOG %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        if (Activate_Clearsmog(bsys, ctx) == TRUE) {
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_3_GRUDGE:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_4_BEAK_BLAST_BURN:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_5_POISON_TOUCH: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_5_POISON_TOUCH %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        int seq_no = 0;
-        if (MoveHitAttackerAbilityCheck(bsys, ctx, &seq_no) == TRUE) // TODO: move out Moxie,etc
-        {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_6_DEFENDER_ABILITY: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_6_DEFENDER_ABILITY %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        int seq_no = 0;
-        BOOL skipDefenderAbilityCheck = FALSE;
-        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
-            // only run defender abilities during the ability phases
-            if (ctx->spreadPostMovePhase == SPREAD_POST_MOVE_PHASE_ALLY_ITEMS || ctx->spreadPostMovePhase == SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS) {
-                skipDefenderAbilityCheck = TRUE;
-            } else {
-                u8 processedBit = No2Bit(ctx->defence_client);
-                if (ctx->spreadDefenderAbilityProcessed & processedBit) {
-                    skipDefenderAbilityCheck = TRUE;
-                } else {
-                    ctx->spreadDefenderAbilityProcessed |= processedBit;
-                }
-            }
-        }
-        if (!skipDefenderAbilityCheck && MoveHitDefenderAbilityCheck(bsys, ctx, &seq_no) == TRUE) {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_7_COTTON_DOWN: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_6_DEFENDER_ABILITY: ctx->swoak_work %d, ctx->clientLoopForAbility %d\n", ctx->swoak_work, ctx->clientLoopForAbility);
-#endif
+        if (isAllyHit) {
+            ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
 
-        if (CottonDownCheck(bsys, ctx) == TRUE) {
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BOOST_STATS);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-        ctx->clientLoopForAbility = 0;
-        ctx->swoam_seq_no++;
-        ctx->swoak_work = 0;
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_8_DAMAGE_REDUCTION_BERRY:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_8_DAMAGE_REDUCTION_BERRY %d\n", ctx->swoam_seq_no);
-#endif
-
-        ctx->swoam_seq_no++;
-        if (ShowDamageReductionBerryMessage(bsys, ctx) == TRUE) {
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_9_DEFENDER_ITEMS_1: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_9_DEFENDER_ITEMS_1 %d\n", ctx->swoam_seq_no);
-#endif
-
-        ctx->swoam_seq_no++;
-        int seq_no = 0;
-        // TODO loop through all hit battlers instead of defence_client
-        if (CheckDefenderItemEffectOnHit(bsys, ctx, &seq_no) == TRUE) { //remove items used in here already
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
-        }
-    }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_10_INCINERATE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_10_INCINERATE %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        if (Activate_Incinerate(bsys, ctx) == TRUE) {
-            return;
-        }
-        ctx->swoak_work = 0;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP %d\n", ctx->swoam_seq_no);
-#endif
-        ctx->swoam_seq_no++;
-        if (Activate_Rowap_Jaboca(bsys, ctx) == TRUE) {
-            return;
-        }
-        ctx->swoak_work = 0;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_12_DISGUISE_ICE_FACE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_10_12_DISGUISE_ICE_FACE %d\n", ctx->swoam_seq_no);
-#endif
-
-        if (Activate_Disguise_IceFace(bsys, ctx) == TRUE) {
-            return;
-        }
-
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_13_PROTECTION_FROM_Z_MOVE:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_10_14_SPREAD_ADVANCE:
-        if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
-            int ally = BATTLER_ALLY(ctx->attack_client);
-            int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
-            int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
-            BOOL hasAlly = IsTargetFoesAndAlly(ctx, ctx->current_move_index) && IS_VALID_MOVE_TARGET(ctx, ally);
-            BOOL hasOppLeft = IS_VALID_MOVE_TARGET(ctx, oppLeft);
-            BOOL hasOppRight = IS_VALID_MOVE_TARGET(ctx, oppRight);
-
-            switch (ctx->spreadPostMovePhase) {
-            case SPREAD_POST_MOVE_PHASE_ALLY_ITEMS:
-                ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ALLY_ABILITIES;
-                ctx->defence_client = ally;
-                ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ally];
-                ctx->damage = ctx->damageForSpreadMoves[ally];
-                ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
+            if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
-            case SPREAD_POST_MOVE_PHASE_ALLY_ABILITIES:
-                if (hasOppLeft) {
-                    ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
-                    ctx->defence_client = oppLeft;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppLeft];
-                    ctx->damage = ctx->damageForSpreadMoves[oppLeft];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
-                    return;
-                }
-                if (hasOppRight) {
-                    ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
-                    ctx->defence_client = oppRight;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
-                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
-                    return;
-                }
-                break;
-            case SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS:
-                if (ctx->defence_client == oppLeft && hasOppRight) {
-                    ctx->defence_client = oppRight;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
-                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
-                    return;
-                }
-                ctx->spreadPostMovePhase = SPREAD_POST_MOVE_PHASE_ENEMY_ABILITIES;
-                if (hasOppLeft) {
-                    ctx->defence_client = oppLeft;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppLeft];
-                    ctx->damage = ctx->damageForSpreadMoves[oppLeft];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
-                    return;
-                }
-                if (hasOppRight) {
-                    ctx->defence_client = oppRight;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
-                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
-                    return;
-                }
-                break;
-            case SPREAD_POST_MOVE_PHASE_ENEMY_ABILITIES:
-                if (ctx->defence_client == oppLeft && hasOppRight) {
-                    ctx->defence_client = oppRight;
-                    ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[oppRight];
-                    ctx->damage = ctx->damageForSpreadMoves[oppRight];
-                    ctx->server_seq_no = CONTROLLER_COMMAND_31;
-                    ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_10_0_CORE_ENFORCER;
-                    return;
-                }
-                break;
-            default:
-                break;
             }
-
-            ctx->spreadPostMovePhase = hasAlly ? SPREAD_POST_MOVE_PHASE_ALLY_ITEMS : SPREAD_POST_MOVE_PHASE_ENEMY_ITEMS;
-            ctx->add_status_flag_indirect = 0;
-            ctx->clientLoopForSpreadMoves = 0;
-            CanGetNextDefender(bsys, ctx);
-        } else if (CanGetNextDefender(bsys, ctx) == TRUE) {
-            ctx->server_seq_no = CONTROLLER_COMMAND_31;
-            ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ctx->defence_client];
-            ctx->damage = ctx->damageForSpreadMoves[ctx->defence_client];
-            ctx->swoam_seq_no = MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH;
-            return;
-        } else {
-            ctx->add_status_flag_indirect = 0;
-            ctx->clientLoopForSpreadMoves = 0;
-            CanGetNextDefender(bsys, ctx);
         }
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY %d\n", ctx->swoam_seq_no);
+#endif
+        ctx->swoam_seq_no++;
+        if (isAllyHit) {
+            int seq_no = 0;
 
+            if (Activate_Sturdy_FocusSash_FocusBand_Message(bsys, ctx, &seq_no) == TRUE) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        }
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_ALLY: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_ALLY %d\n", ctx->swoam_seq_no);
+#endif
+
+        if (isAllyHit) {
+            int defender = ctx->defence_client;
+            if (MovePerformance_Step_9(bsys, ctx, &defender, 1) == TRUE) {
+                debug_printf("return ally step9\n");
+                return;
+            }
+        }
         ctx->swoam_seq_no++;
         FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_ALLY: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_ALLY %d\n", ctx->swoam_seq_no);
+#endif
+        if (isAllyHit) {
+            int defender = ctx->defence_client;
+            if (MovePerformance_Step_10(bsys, ctx, &defender, 1) == TRUE) {
+                return;
+            }
+        }
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
+
+    case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d\n", ctx->swoam_seq_no, hitFoesCount);
+#endif
+
+        for ( ; ctx->clientLoopForSpreadMoves < hitFoesCount; ) {
+            ctx->defence_client = hitFoes[ctx->clientLoopForSpreadMoves];
+            ctx->clientLoopForSpreadMoves++;
+            if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        }
+
+        ctx->clientLoopForSpreadMoves = 0;
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_FOES: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_FOES %d\n", ctx->swoam_seq_no);
+#endif
+
+        for (; ctx->clientLoopForSpreadMoves < hitFoesCount;) {
+            ctx->defence_client = hitFoes[ctx->clientLoopForSpreadMoves];
+            ctx->clientLoopForSpreadMoves++;
+            int seq_no = 0;
+
+            if (Activate_Sturdy_FocusSash_FocusBand_Message(bsys, ctx, &seq_no) == TRUE) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        }
+
+        ctx->clientLoopForSpreadMoves = 0;
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_FOES: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_FOES %d\n", ctx->swoam_seq_no);
+#endif
+
+        if (hitFoesCount && MovePerformance_Step_9(bsys, ctx, hitFoes, hitFoesCount) == TRUE) {
+            return;
+        }
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_FOES: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_FOES %d\n", ctx->swoam_seq_no);
+#endif
+
+        if (hitFoesCount && MovePerformance_Step_10(bsys, ctx, hitFoes, hitFoesCount) == TRUE) {
+            return;
+        }
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
     case MOVE_PERFORMANCE_STEP_11_0_FAINTING:
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_11_0_FAINTING %d\n", ctx->swoam_seq_no);
@@ -1047,14 +869,14 @@ int LONG_CALL Activate_Clearsmog(void *bsys UNUSED, struct BattleStruct *ctx)
 int LONG_CALL CottonDownCheck(void *bsys UNUSED, struct BattleStruct *sp)
 {
     sp->swoak_work = sp->defence_client;
-    // TODO for loop is for simultaneous damage
-    // for ( ; sp->swoak_work < BattleWorkClientSetMaxGet(bsys); sp->swoak_work++)
+    if ((GetBattlerAbility(sp, sp->swoak_work) == ABILITY_COTTON_DOWN)
+        && ((sp->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) == 0)
+        && ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) == 0)
+        && ((sp->oneSelfFlag[sp->swoak_work].physical_damage) || (sp->oneSelfFlag[sp->swoak_work].special_damage)))
     {
-        if ((GetBattlerAbility(sp, sp->swoak_work) == ABILITY_COTTON_DOWN)
-            && ((sp->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) == 0)
-            && ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) == 0)
-            && ((sp->server_status_flag2 & SERVER_STATUS_FLAG2_U_TURN) == 0)
-            && ((sp->oneSelfFlag[sp->swoak_work].physical_damage) || (sp->oneSelfFlag[sp->swoak_work].special_damage))) {
+        for (; sp->clientLoopForAbility < SPREAD_ABILITY_LOOP_MAX; )
+        {
+
             switch (sp->clientLoopForAbility) {
             case SPREAD_ABILITY_LOOP_OPPONENT_LEFT:
                 sp->clientLoopForAbility++;
@@ -1090,17 +912,18 @@ int LONG_CALL CottonDownCheck(void *bsys UNUSED, struct BattleStruct *sp)
                 break;
             }
         }
-        sp->clientLoopForAbility = 0;
     }
-
+    sp->clientLoopForAbility = 0;
     return FALSE;
 }
+
 int LONG_CALL Activate_FlameBurstHit(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     if (ctx->current_move_index == MOVE_FLAME_BURST) {
         int ally = BATTLER_ALLY(ctx->defence_client);
         if (ctx->battlemon[ally].hp
-            && (GetBattlerAbility(ctx, ally) != ABILITY_MAGIC_GUARD)) {
+            && (GetBattlerAbility(ctx, ally) != ABILITY_MAGIC_GUARD)
+            && ctx->oneSelfFlag[ctx->defence_client].special_damage) {
             ctx->addeffect_param = ADD_STATUS_EFF_FLAME_BURST_HIT;
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
             ctx->state_client = ally;
@@ -1117,12 +940,8 @@ int LONG_CALL Activate_FlameBurstHit(void *bsys UNUSED, struct BattleStruct *ctx
 
 int LONG_CALL Activate_Rowap_Jaboca(void *bsys, struct BattleStruct *ctx)
 {
-    ctx->swoak_work = ctx->defence_client;
-    // TODO for loop is for simultaneous damage
-    // for ( ; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys); ctx->swoak_work++)
     {
-        // int client_no = ctx->turnOrder[ctx->swoak_work];
-        int client_no = ctx->swoak_work;
+        int client_no = ctx->defence_client;
         if (client_no != ctx->attack_client) {
 
             if (CheckSubstitute(ctx, client_no) == TRUE) {
@@ -2033,8 +1852,7 @@ int LONG_CALL Activate_Disguise_IceFace(void *bw, struct BattleStruct *sp)
     if (sp->defence_client == BATTLER_NONE
         || CheckSubstitute(sp, sp->defence_client) == TRUE
         || ((sp->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) != 0)
-        || ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) != 0)
-        || ((sp->server_status_flag2 & SERVER_STATUS_FLAG2_U_TURN) != 0)) {
+        || ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) != 0)) {
         return FALSE;
     }
     if (MoldBreakerAbilityCheck(sp, sp->attack_client, sp->defence_client, ABILITY_DISGUISE)) {
@@ -2182,4 +2000,234 @@ void LONG_CALL Activate_KO_Count(void *bsys, struct BattleStruct *ctx)
             break;
         }
     }
+}
+
+
+
+int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* defenders, int defenderCount)
+{
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+    debug_printf("in MovePerformance_Step_9: step %d, clientLoopForSpreadMoves %d, defenderCount %d\n", ctx->movePerformanceSubstep, ctx->clientLoopForSpreadMoves, defenderCount);
+#endif
+    for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
+        ctx->defence_client = defenders[ctx->clientLoopForSpreadMoves];
+
+        switch (ctx->movePerformanceSubstep) {
+        case MOVE_PERFORMANCE_SUB_STEP_9_0_FLING:
+            // TODO needed?
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_9_1_FLINCH_CHECK:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_1_FLINCH_CHECK %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (ServerFlinchCheck(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
+#endif
+
+            int seq_no = 0;
+            // TODO hook and simplify logic for flags
+            u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
+            BOOL triggeredIndirectEffect = FALSE;
+            ctx->movePerformanceSubstep++;
+            if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
+                triggeredIndirectEffect = TRUE;
+            }
+            ctx->add_status_flag_indirect = indirectStatusEffectFlag;
+            if (triggeredIndirectEffect) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+        }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_9_3_FLAME_BURST:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_3_FLAME_BURST %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (Activate_FlameBurstHit(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_9_4_DYNAMAX_MOVE_EFFECTS:
+
+            //TODO
+            if (ctx->server_status_flag2 & BATTLE_STATUS2_MAGIC_COAT) {
+                ctx->server_status_flag2 &= ~BATTLE_STATUS2_MAGIC_COAT;
+                ctx->defence_client = ctx->attack_client;
+                ctx->attack_client = ctx->magic_cort_client;
+            }
+
+
+            // TODO
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        default:
+            break;
+        }
+    }
+
+    ctx->clientLoopForSpreadMoves = 0;
+    ctx->movePerformanceSubstep = 0;
+    return FALSE;
+}
+
+int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int *defenders, int defenderCount)
+{
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+    debug_printf("in MovePerformance_Step_10: step %d, clientLoopForSpreadMoves %d, defenderCount %d\n", ctx->movePerformanceSubstep, ctx->clientLoopForSpreadMoves, defenderCount);
+#endif
+    for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
+        ctx->defence_client = defenders[ctx->clientLoopForSpreadMoves];
+
+        switch (ctx->movePerformanceSubstep) {
+        case MOVE_PERFORMANCE_SUB_STEP_10_0_CORE_ENFORCER:
+            // TODO
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_1_RAGE:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+                debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_1_RAGE %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            // https://github.com/pret/pokeheartgold/blob/f20f85b627d0ba2b208d8e33181cab27d5d1508f/src/battle/battle_controller_player.c#L3802C13-L3802C25
+            if (ServerIkariCheck(bsys, ctx) == TRUE) { // TODO: rename to TryBuildRage
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_2_CLEAR_SMOG:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_2_CLEAR_SMOG %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (Activate_Clearsmog(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_3_GRUDGE:
+            // TODO
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_4_BEAK_BLAST_BURN:
+            // TODO
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_5_POISON_TOUCH:{
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_5_POISON_TOUCH %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            int seq_no = 0;
+            if (MoveHitAttackerAbilityCheck(bsys, ctx, &seq_no) == TRUE)
+            {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+            FALLTHROUGH;
+        }
+        case MOVE_PERFORMANCE_SUB_STEP_10_6_DEFENDER_ABILITY: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_6_DEFENDER_ABILITY %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            int seq_no = 0;
+            if (MoveHitDefenderAbilityCheck(bsys, ctx, &seq_no) == TRUE) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+            FALLTHROUGH;
+        }
+        case MOVE_PERFORMANCE_SUB_STEP_10_7_COTTON_DOWN: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_7_COTTON_DOWN: ctx->swoak_work %d, ctx->clientLoopForAbility %d\n", ctx->swoak_work, ctx->clientLoopForAbility);
+#endif
+            if (CottonDownCheck(bsys, ctx) == TRUE) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BOOST_STATS);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+
+            ctx->movePerformanceSubstep++;
+            ctx->clientLoopForAbility = 0;
+            ctx->swoak_work = 0;  
+            FALLTHROUGH;
+        }
+        case MOVE_PERFORMANCE_SUB_STEP_10_8_DAMAGE_REDUCTION_BERRY:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_8_DAMAGE_REDUCTION_BERRY %d\n", ctx->movePerformanceSubstep);
+#endif
+
+            ctx->movePerformanceSubstep++;
+            if (ShowDamageReductionBerryMessage(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_9_DEFENDER_ITEMS_1: {
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_9_DEFENDER_ITEMS_1 %d\n", ctx->movePerformanceSubstep);
+#endif
+
+            ctx->movePerformanceSubstep++;
+            int seq_no = 0;
+            if (CheckDefenderItemEffectOnHit(bsys, ctx, &seq_no) == TRUE) { // remove items used in here already
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+        }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_10_INCINERATE:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_10_INCINERATE %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (Activate_Incinerate(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (Activate_Rowap_Jaboca(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_12_DISGUISE_ICE_FACE:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_12_DISGUISE_ICE_FACE %d\n", ctx->movePerformanceSubstep);
+#endif
+            ctx->movePerformanceSubstep++;
+            if (Activate_Disguise_IceFace(bsys, ctx) == TRUE) {
+                return TRUE;
+            }
+
+            FALLTHROUGH;
+        case MOVE_PERFORMANCE_SUB_STEP_10_13_PROTECTION_FROM_Z_MOVE:
+            // TODO
+            ctx->movePerformanceSubstep++;
+            FALLTHROUGH;
+        default:
+            break;
+        }
+    }
+
+    ctx->clientLoopForSpreadMoves = 0;
+    ctx->movePerformanceSubstep = 0;
+    return FALSE;
 }
