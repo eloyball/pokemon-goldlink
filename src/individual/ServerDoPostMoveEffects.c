@@ -820,9 +820,9 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
     int itemHoldEffect = HeldItemHoldEffectGet(sp, battler);
 
     {
-        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_ability // already checked by moldbreaker
+        if (sp->oneTurnFlag[battler].prevent_one_hit_ko_ability // already checked by moldbreaker
             && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
-            sp->oneSelfFlag[battler].prevent_one_hit_ko_ability = FALSE;
+            sp->oneTurnFlag[battler].prevent_one_hit_ko_ability = FALSE;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ABILITY;
             seq_no[0] = SUB_SEQ_STURDY;
             return TRUE;
