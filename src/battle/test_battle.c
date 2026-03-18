@@ -1,7 +1,8 @@
-#include "../../include/types.h"
+#include "../../include/test_battle.h"
+
 #include "../../include/battle.h"
 #include "../../include/message.h"
-#include "../../include/test_battle.h"
+#include "../../include/types.h"
 
 #ifdef DEBUG_BATTLE_SCENARIOS
 
@@ -61,7 +62,7 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
         return;
     }
 
-    char actualMessage[TEST_BATTLE_MESSAGE_LEN] = {0};
+    char actualMessage[TEST_BATTLE_MESSAGE_LEN] = { 0 };
     int out = 0;
 
     for (int i = 0; i < battleSystem->msgBuffer->size && out < TEST_BATTLE_MESSAGE_LEN - 1; i++) {
@@ -95,19 +96,14 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
             case 0x01AE:
                 character = '.';
                 break;
-
             case 0x01B3:
-                debug_printf("’");
-                break;
-            case 0x0188:
-                debug_printf("é");
+                character = '\'';
                 break;
             default:
-                debug_printf("%c", character);
+                character = (char)(code - 228);
                 break;
             }
         }
-
         if (character == '\0') {
             character = ' ';
         }
@@ -118,14 +114,14 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
     debug_printf("%s", actualMessage);
 
     enum ExpectationType expectationType = scenario->expectations[scenario->expectationPassCount].expectationType;
-    if (expectationType != EXPECTATION_TYPE_MESSAGE &&
-        expectationType != EXPECTATION_TYPE_MESSAGE_CONTAINS &&
-        expectationType != EXPECTATION_TYPE_ATTACK_MESSAGE) {
+    if (expectationType != EXPECTATION_TYPE_MESSAGE 
+        && expectationType != EXPECTATION_TYPE_MESSAGE_CONTAINS
+        && expectationType != EXPECTATION_TYPE_ATTACK_MESSAGE) {
         debug_printf("\n");
         return;
     }
 
-    char expectedMessage[TEST_BATTLE_MESSAGE_LEN] = {0};
+    char expectedMessage[TEST_BATTLE_MESSAGE_LEN] = { 0 };
     for (int i = 0; i < TEST_BATTLE_MESSAGE_LEN - 1; i++) {
         expectedMessage[i] = scenario->expectations[scenario->expectationPassCount].expectationValue.message[i];
         if (expectedMessage[i] == '\0') {
@@ -158,5 +154,4 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
     }
     debug_printf("\n");
 #endif // DEBUG_BATTLE_SCENARIOS
-
 }
