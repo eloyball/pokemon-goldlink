@@ -1522,7 +1522,7 @@ int CalcCritical(void *bw, struct BattleStruct *sp, int attacker, int defender, 
     if
     (
 #ifdef DEBUG_BATTLE_SCENARIOS
-        FALSE
+        sp->moveConditionsFlags[attacker].laserFocusTimer //only allow crits with Laser Focus
 #else
         BattleRand(bw) % CriticalRateTable[temp] == 0
 #endif

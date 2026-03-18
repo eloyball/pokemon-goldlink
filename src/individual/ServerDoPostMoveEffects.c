@@ -245,7 +245,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
     case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES: {
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d\n", ctx->swoam_seq_no, hitFoesCount);
+        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d, clientLoopForSpreadMoves %d\n", ctx->swoam_seq_no, hitFoesCount, ctx->clientLoopForSpreadMoves);
 #endif
 
         for ( ; ctx->clientLoopForSpreadMoves < hitFoesCount; ) {
