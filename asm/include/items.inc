@@ -2584,7 +2584,7 @@
 .equ ITEM_DRAGALGITE,                   2579
 .equ ITEM_HAWLUCHANITE,                 2580
 .equ ITEM_ZYGARDITE,                    2581
-.equ ITEM_DRAMPANITE,                   2582
+.equ ITEM_DRAMPITE,                     2582
 .equ ITEM_FALINKSITE,                   2583
 .equ ITEM_RAICHUNITE_X,                 2584
 .equ ITEM_RAICHUNITE_Y,                 2585

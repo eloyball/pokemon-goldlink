@@ -756,7 +756,7 @@ heightentry SPECIES_SKRELP, 8, 8, 0, 0
 heightentry SPECIES_DRAGALGE, 0, 0, 0, 0
 heightentry SPECIES_CLAUNCHER, 0, 0, 0, 0
 heightentry SPECIES_CLAWITZER, 0, 0, 0, 0
-heightentry SPECIES_HELIOPTILE, 10, 10, 0, 0
+heightentry SPECIES_HELIOPTILE, 0, 0, 0, 0
 heightentry SPECIES_HELIOLISK, 2, 2, 0, 0
 heightentry SPECIES_TYRUNT, 21, 21, 0, 0
 heightentry SPECIES_TYRANTRUM, 0, 0, 0, 0

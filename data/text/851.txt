@@ -727,3 +727,48 @@ a {COLOR 255}Meteorite{COLOR 0}
 a {COLOR 255}Scarlet Book{COLOR 0}
 a {COLOR 255}Violet Book{COLOR 0}
 a {COLOR 255}Briar’s Book{COLOR 0}
+a {COLOR 255}Clefablite{COLOR 0}
+a {COLOR 255}Victreebelite{COLOR 0}
+a {COLOR 255}Starminite{COLOR 0}
+a {COLOR 255}Dragoninite{COLOR 0}
+a {COLOR 255}Meganiumite{COLOR 0}
+a {COLOR 255}Feraligite{COLOR 0}
+a {COLOR 255}Skarmorite{COLOR 0}
+a {COLOR 255}Froslassite{COLOR 0}
+a {COLOR 255}Emboarite{COLOR 0}
+a {COLOR 255}Excadrite{COLOR 0}
+a {COLOR 255}Scolipite{COLOR 0}
+a {COLOR 255}Scraftinite{COLOR 0}
+an {COLOR 255}Eelektrossite{COLOR 0}
+a {COLOR 255}Chandelurite{COLOR 0}
+a {COLOR 255}Chesnaughtite{COLOR 0}
+a {COLOR 255}Delphoxite{COLOR 0}
+a {COLOR 255}Greninjite{COLOR 0}
+a {COLOR 255}Pyroarite{COLOR 0}
+a {COLOR 255}Floettite{COLOR 0}
+a {COLOR 255}Malamarite{COLOR 0}
+a {COLOR 255}Barbaracite{COLOR 0}
+a {COLOR 255}Dragalgite{COLOR 0}
+a {COLOR 255}Hawluchanite{COLOR 0}
+a {COLOR 255}Zygardite{COLOR 0}
+a {COLOR 255}Drampite{COLOR 0}
+a {COLOR 255}Falinksite{COLOR 0}
+a {COLOR 255}Raichunite X{COLOR 0}
+a {COLOR 255}Raichunite Y{COLOR 0}
+a {COLOR 255}Chimechite{COLOR 0}
+an {COLOR 255}Absolite Z{COLOR 0}
+a {COLOR 255}Staraptite{COLOR 0}
+a {COLOR 255}Garchompite Z{COLOR 0}
+a {COLOR 255}Lucarionite Z{COLOR 0}
+a {COLOR 255}Heatranite{COLOR 0}
+a {COLOR 255}Darkranite{COLOR 0}
+a {COLOR 255}Golurkite{COLOR 0}
+a {COLOR 255}Meowsticite{COLOR 0}
+a {COLOR 255}Crabominite{COLOR 0}
+a {COLOR 255}Golisopite{COLOR 0}
+a {COLOR 255}Magearnite{COLOR 0}
+a {COLOR 255}Zeraorite{COLOR 0}
+a {COLOR 255}Scovillainite{COLOR 0}
+a {COLOR 255}Glimmoranite{COLOR 0}
+a {COLOR 255}Tatsugirinite{COLOR 0}
+a {COLOR 255}Baxcalibrite{COLOR 0}

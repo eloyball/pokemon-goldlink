@@ -167841,7 +167841,7 @@ const ITEMDATA __data[] =
     },
 },
 
-[ITEM_DRAMPANITE] =
+[ITEM_DRAMPITE] =
 {
     .price = 0,
     .holdEffect = 0,
