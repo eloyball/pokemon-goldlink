@@ -80,7 +80,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             hitFoes[hitFoesCount] = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
             hitFoesCount++;
         }
-        if (IsTargetFoesAndAlly(ctx, ctx->current_move_index)) {
+        if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)) {
             isAllyHit = IS_VALID_MOVE_TARGET(ctx, BATTLER_ALLY(ctx->attack_client));
         }
     }

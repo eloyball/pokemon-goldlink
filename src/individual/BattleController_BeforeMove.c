@@ -1091,7 +1091,7 @@ void __attribute__((section (".init"))) BattleController_BeforeMove(struct Battl
             if (HeldItemHoldEffectGet(ctx, ctx->attack_client) == HOLD_EFFECT_POWERING_UP_MOVE_ONCE
                 && (BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2) == ctx->move_type)
                 && (ctx->current_move_index < MOVE_WATER_PLEDGE || ctx->current_move_index > MOVE_GRASS_PLEDGE)
-                && IsAnyBattleMonHit(ctx))
+                && IsAnyBattleMonHit(bsys, ctx))
             {
                 ctx->mp.tag = TAG_ITEM_MOVE;
                 //The { STRVAR_1 1, 0, 0 } strengthened\n { STRVAR_1 5, 1, 0 }’s power !

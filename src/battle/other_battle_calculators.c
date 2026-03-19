@@ -1583,7 +1583,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
         // hp calc can reduce stored spread damage if sash/sturdy.
         // persist the resolved value for the later batch update
         int ally = BATTLER_ALLY(ctx->attack_client);
-        if ((IS_TARGET_FOES_AND_ALLY_MOVE(ctx) || (IS_TARGET_BOTH_MOVE(ctx) && ally == ctx->defence_client) || rangeAllAdjacent) && IS_VALID_MOVE_TARGET(ctx, ally))
+        if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || (IsTargetFoes(bsys, ctx, ctx->current_move_index) && ally == ctx->defence_client) || rangeAllAdjacent) && IS_VALID_MOVE_TARGET(ctx, ally))
         {
             ctx->defence_client = ally;
             ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ally];
@@ -2736,10 +2736,21 @@ int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *c
     return FALSE;
 }
 
-int LONG_CALL IsTargetFoesAndAlly(struct BattleStruct *ctx, int move)
+int LONG_CALL IsTargetFoesAndAlly(struct BattleSystem *bsys, struct BattleStruct *ctx, int move)
 {
     if (ctx->moveTbl[move].target == RANGE_ALL_ADJACENT) {
-        return TRUE;
+        return BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI);
+    }
+    return FALSE;
+}
+
+int LONG_CALL IsTargetFoes(struct BattleSystem *bsys, struct BattleStruct *ctx, int move)
+{
+    if ((ctx->moveTbl[move].target == RANGE_ADJACENT_OPPONENTS)
+        || (move == MOVE_EXPANDING_FORCE
+            && ctx->terrainOverlay.numberOfTurnsLeft > 0
+            && ctx->terrainOverlay.type == PSYCHIC_TERRAIN)) {
+        return BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI);
     }
     return FALSE;
 }
@@ -2750,7 +2761,7 @@ int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct 
         switch (ctx->clientLoopForSpreadMoves) {
         case SPREAD_MOVE_LOOP_ALLY:
             ctx->clientLoopForSpreadMoves++;
-            if (IsTargetFoesAndAlly(ctx, ctx->current_move_index) && IS_VALID_MOVE_TARGET(ctx, BATTLER_ALLY(ctx->attack_client))) {
+            if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) && IS_VALID_MOVE_TARGET(ctx, BATTLER_ALLY(ctx->attack_client))) {
                 ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
                 return TRUE;
             }
@@ -3924,10 +3935,10 @@ BOOL LONG_CALL CanKnockOffApply(struct BattleStruct *sp, int attacker, int defen
  * @param sp global battle structure
  * @return TRUE/FALSE
 */
-BOOL LONG_CALL IsAnyBattleMonHit(struct BattleStruct* ctx)
+BOOL LONG_CALL IsAnyBattleMonHit(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
     u8 i = 0;
-    if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx)))
+    if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)))
     {
         while (i <= SPREAD_MOVE_LOOP_MAX)
         {
@@ -3935,7 +3946,7 @@ BOOL LONG_CALL IsAnyBattleMonHit(struct BattleStruct* ctx)
             {
             case SPREAD_MOVE_LOOP_ALLY:
                 i++;
-                if ((IS_TARGET_FOES_AND_ALLY_MOVE(ctx) || BATTLER_ALLY(ctx->attack_client) == ctx->defence_client)
+                if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || BATTLER_ALLY(ctx->attack_client) == ctx->defence_client)
                     && IS_VALID_MOVE_TARGET(ctx, BATTLER_ALLY(ctx->attack_client)))
                 {
                     return TRUE;
@@ -3944,7 +3955,7 @@ BOOL LONG_CALL IsAnyBattleMonHit(struct BattleStruct* ctx)
 
             case SPREAD_MOVE_LOOP_OPPONENT_LEFT:
                 i++;
-                if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))
+                if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index))
                     && IS_VALID_MOVE_TARGET(ctx, BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client)))
                 {
                     return TRUE;
@@ -3952,7 +3963,7 @@ BOOL LONG_CALL IsAnyBattleMonHit(struct BattleStruct* ctx)
                 FALLTHROUGH;
             case SPREAD_MOVE_LOOP_OPPONENT_RIGHT:
                 i++;
-                if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))
+                if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index))
                     && IS_VALID_MOVE_TARGET(ctx, BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client)))
                 {
                     return TRUE;
