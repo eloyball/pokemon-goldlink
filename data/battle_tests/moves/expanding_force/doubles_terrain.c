@@ -134,7 +134,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 33, 33, 33, 33, 34, 34, 35, 35, 36, 36, 36, 36, 37, 37, 38, 39 } }, 
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_SECOND, .expectationValue.hpTaken = { 24, 24, 24, 24, 24, 25, 25, 25, 26, 26, 27, 27, 27, 27, 27, 28 } },
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 33, 33, 33, 33, 34, 34, 35, 35, 36, 36, 36, 36, 37, 37, 38, 39 } }, 
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Krookodile..." },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect the opposing Krookodile..." },
 
         },
         .knownFailing = TRUE,

@@ -235,7 +235,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         if (isAllyHit) {
             int defender = ctx->defence_client;
             if (MovePerformance_Step_9(bsys, ctx, &defender, 1) == TRUE) {
-                debug_printf("return ally step9\n");
                 return;
             }
         }
