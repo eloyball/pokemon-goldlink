@@ -1149,7 +1149,7 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
             && (ctx->oneSelfFlag[ctx->defence_client].physical_damage 
                 || ctx->oneSelfFlag[ctx->defence_client].special_damage)
             //&& ((ctx->battlemon[ctx->defence_client].effect_of_moves & MOVE_EFFECT_FLAG_INGRAIN) == 0)
-            && ((ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE) == 0)) {
+            && CheckSubstitute(ctx, ctx->defence_client) == FALSE) {
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
             LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_FORCE_OUT); // checks suction cup/ingrain
             ctx->next_server_seq_no = ctx->server_seq_no;
@@ -1159,7 +1159,8 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
         break;
     case MOVE_EFFECT_REMOVE_HELD_ITEM:
         if (ctx->attack_client != BATTLER_NONE
-            && ctx->battlemon[ctx->attack_client].hp > 0) {
+            && ctx->battlemon[ctx->attack_client].hp > 0
+            && CheckSubstitute(ctx, ctx->defence_client) == FALSE) {
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
             LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_KNOCK_OFF);
             ctx->next_server_seq_no = ctx->server_seq_no;
@@ -1169,7 +1170,8 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
         break;
     case MOVE_EFFECT_STEAL_HELD_ITEM: // thief, covet
         if (ctx->attack_client != BATTLER_NONE
-            && ctx->battlemon[ctx->attack_client].hp > 0)
+            && ctx->battlemon[ctx->attack_client].hp > 0
+            && CheckSubstitute(ctx, ctx->defence_client) == FALSE)
         // if (ctx->battlemon[ctx->attack_client].item == ITEM_NONE)
         {
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
