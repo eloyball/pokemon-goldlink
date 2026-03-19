@@ -1,0 +1,37 @@
+name: pr-lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**.c'
+      - '**.h'
+  workflow_dispatch: {}
+
+jobs:
+  pr-lint:
+    if: ${{ github.repository == 'BluRosie/hg-engine' }}
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cpp-linter/cpp-linter-action@v2.15.1
+        id: linter
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          style: 'file'
+          tidy-checks: '-*'
+          version: '19'
+          files-changed-only: true
+          ignore: '.github|tools'
+          file-annotations: false
+
+      - name: Fail if formatting checks fail
+        if: steps.linter.outputs.clang-format-checks-failed > 0
+        run: exit 1
