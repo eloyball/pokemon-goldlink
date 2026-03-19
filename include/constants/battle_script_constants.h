@@ -497,8 +497,10 @@
 #define SUB_SEQ_BATCH_UPDATE_HP                       (487)
 #define SUB_SEQ_STURDY                                (488)
 #define SUB_SEQ_CRITICAL_HIT_SPREAD                   (489)
+#define SUB_SEQ_BATCH_EFFECTIVENESS                   (490)
+#define SUB_SEQ_BATCH_FOLLOWUP                        (491)
 
-#define MAX_BASE_SUBSCRIPT_NUM 489
+#define MAX_BASE_SUBSCRIPT_NUM 491
 
 // define your custom subscripts below like this
 // #define MOVE_SUBSCRIPT_CUSTOM_1 (MAX_BASE_SUBSCRIPT_NUM + 1)

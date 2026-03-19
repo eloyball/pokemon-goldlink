@@ -1622,7 +1622,11 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
             }
         }
     } else {
+        u32 cachedMoveStatus = ctx->moveStatusFlagForSpreadMoves[ctx->defence_client];
+
         internalFunc(bsys, ctx);
+        ctx->damageForSpreadMoves[ctx->defence_client] = ctx->damage;
+        ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] = ctx->waza_status_flag | (cachedMoveStatus & WAZA_STATUS_FLAG_CRITICAL);
         if (ctx->damage) {
             didDmg = TRUE;
         }

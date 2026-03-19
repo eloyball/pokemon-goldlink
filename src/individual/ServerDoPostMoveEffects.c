@@ -162,9 +162,15 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         debug_printf("in MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
 
-        // TODO
         ctx->swoam_seq_no++;
-        if (ctx->swoam_type == SWOAM_NORMAL) {
+        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+            if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_EFFECTIVENESS);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        } else if (ctx->swoam_type == SWOAM_NORMAL) {
             if (ServerWazaStatusMessage(bsys, ctx) == TRUE) {
                 return;
             }
@@ -174,8 +180,15 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_6_NOT_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
-        // TODO confirm translation, handled in WazaStatusMessage above?
         ctx->swoam_seq_no++;
+        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+            if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_FOLLOWUP);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        }
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY: {
@@ -818,10 +831,11 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
 {
     int battler = sp->defence_client;
     int itemHoldEffect = HeldItemHoldEffectGet(sp, battler);
+    int incomingDamage = sp->damageForSpreadMoves[battler];
 
     {
         if (sp->oneTurnFlag[battler].prevent_one_hit_ko_ability // already checked by moldbreaker
-            && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
+            && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + incomingDamage /*negative value*/) == 1) {
             sp->oneTurnFlag[battler].prevent_one_hit_ko_ability = FALSE;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ABILITY;
             seq_no[0] = SUB_SEQ_STURDY;
@@ -844,7 +858,7 @@ int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct Bat
     }
     case HOLD_EFFECT_ENDURE: // Focus Sash
     {
-        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + sp->damageForSpreadMoves[battler] /*negative value*/) == 1) {
+        if (sp->oneSelfFlag[battler].prevent_one_hit_ko_item && sp->battlemon[battler].hp == 1 && (sp->battlemon[battler].maxhp + incomingDamage /*negative value*/) == 1) {
             sp->oneSelfFlag[battler].prevent_one_hit_ko_item = FALSE;
             sp->item_work = sp->battlemon[battler].item;
             sp->waza_status_flag |= MOVE_STATUS_FLAG_HELD_ON_ITEM;
@@ -2018,6 +2032,10 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
 #endif
     for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
         ctx->defence_client = defenders[ctx->clientLoopForSpreadMoves];
+        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+            ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ctx->defence_client];
+            ctx->damage = ctx->damageForSpreadMoves[ctx->defence_client];
+        }
 
         switch (ctx->movePerformanceSubstep) {
         case MOVE_PERFORMANCE_SUB_STEP_9_0_FLING:
@@ -2094,6 +2112,10 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
 #endif
     for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
         ctx->defence_client = defenders[ctx->clientLoopForSpreadMoves];
+        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+            ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ctx->defence_client];
+            ctx->damage = ctx->damageForSpreadMoves[ctx->defence_client];
+        }
 
         switch (ctx->movePerformanceSubstep) {
         case MOVE_PERFORMANCE_SUB_STEP_10_0_CORE_ENFORCER:
