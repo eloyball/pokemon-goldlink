@@ -1,4 +1,4 @@
-// Test: Flame Burst - hit ally
+// Test: Flame Burst Effect
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"

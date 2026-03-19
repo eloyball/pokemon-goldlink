@@ -1,4 +1,4 @@
-// Test: Ice Spinner - Seed Sower creates Terrain followed by Terrain removal
+// Test: Ice Spinner - Seed Sower, Terrain up, then removed
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"

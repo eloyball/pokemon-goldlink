@@ -1,4 +1,4 @@
-// Test: Cotton Down
+// Test: Cotton Down - Doubles
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
