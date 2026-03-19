@@ -11,8 +11,8 @@ Checks clang-format on C and header files using the repository's .clang-format.
 Options:
   --fix         Apply formatting in place instead of checking.
   --all         Run on all tracked *.c and *.h files.
-  --staged      Run on staged *.c and *.h files.
-  --base <ref>  Compare changes against the given git ref. Default: origin/main if it exists, otherwise main.
+  --staged      Run on staged *.c and *.h files only.
+  --base <ref>  Compare committed changes against the given git ref. Default: origin/main if it exists, otherwise main.
 EOF
 }
 
@@ -22,7 +22,7 @@ if ! command -v clang-format >/dev/null 2>&1; then
 fi
 
 mode="check"
-scope="diff"
+scope="worktree"
 base_ref=""
 
 while (($#)); do
@@ -65,6 +65,9 @@ if [[ "$scope" == "all" ]]; then
 elif [[ "$scope" == "staged" ]]; then
     mapfile -d '' files < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.c' '*.h')
 else
+    declare -A seen=()
+    files=()
+
     if [[ -z "$base_ref" ]]; then
         if git rev-parse --verify origin/main >/dev/null 2>&1; then
             base_ref="origin/main"
@@ -79,7 +82,27 @@ else
     fi
 
     merge_base="$(git merge-base HEAD "$base_ref")"
-    mapfile -d '' files < <(git diff --name-only --diff-filter=ACMR -z "$merge_base"...HEAD -- '*.c' '*.h')
+
+    while IFS= read -r -d '' file; do
+        if [[ -z "${seen[$file]:-}" ]]; then
+            files+=("$file")
+            seen[$file]=1
+        fi
+    done < <(git diff --name-only --diff-filter=ACMR -z "$merge_base"...HEAD -- '*.c' '*.h')
+
+    while IFS= read -r -d '' file; do
+        if [[ -z "${seen[$file]:-}" ]]; then
+            files+=("$file")
+            seen[$file]=1
+        fi
+    done < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.c' '*.h')
+
+    while IFS= read -r -d '' file; do
+        if [[ -z "${seen[$file]:-}" ]]; then
+            files+=("$file")
+            seen[$file]=1
+        fi
+    done < <(git diff --name-only --diff-filter=ACMR -z -- '*.c' '*.h')
 fi
 
 if ((${#files[@]} == 0)); then
