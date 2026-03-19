@@ -3860,7 +3860,7 @@ void LONG_CALL ov12_02252D14(struct BattleSystem *bsys, struct BattleStruct *ctx
 
 #define LoopCheckFunctionForSpreadMove(bsys, ctx, functionToBeCalled) \
 {\
-    if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))) {\
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {\
         while (ctx->clientLoopForSpreadMoves <= SPREAD_MOVE_LOOP_MAX) {\
             switch (ctx->clientLoopForSpreadMoves) {\
                 case SPREAD_MOVE_LOOP_ALLY:\
@@ -3911,7 +3911,7 @@ void LONG_CALL ov12_02252D14(struct BattleSystem *bsys, struct BattleStruct *ctx
 // if all clients fail, then print fail message, otherwise no message is shown
 #define LoopCheckFunctionForSpreadMove_StatFailureSuccessCheck(bsys, ctx, functionToBeCalled) \
 {\
-    if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))) {\
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {\
         BOOL numClientsChecked = 0;\
         BOOL numClientsFailed = 0;\
         int failureSubscriptToRun = 0;\
@@ -3991,7 +3991,7 @@ void LONG_CALL ov12_02252D14(struct BattleSystem *bsys, struct BattleStruct *ctx
 // if it's a spread move, same as above, otherwise go straight to effect and have statbuffchange do the fail message stuff instead
 #define LoopCheckFunctionForSpreadMove_StatFailureSuccessCheck_StatChanges(bsys, ctx, functionToBeCalled) \
 {\
-    if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))) {\
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {\
         BOOL numClientsChecked = 0;\
         BOOL numClientsFailed = 0;\
         int failureSubscriptToRun = 0;\
@@ -4079,7 +4079,7 @@ void LONG_CALL ov12_02252D14(struct BattleSystem *bsys, struct BattleStruct *ctx
 #define LoopCheckFunctionForSpreadMove_RawSpeedWithNonRNGTie(bsys, ctx, functionToBeCalled) \
 {\
     SortRawSpeedNonRNGArray(bsys, ctx);\
-    if ((IS_TARGET_BOTH_MOVE(ctx) || IS_TARGET_FOES_AND_ALLY_MOVE(ctx))) {\
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {\
         while (ctx->clientLoopForSpreadMoves <= SPREAD_MOVE_LOOP_MAX) {\
             int defender = ctx->rawSpeedNonRNGClientOrder[ctx->clientLoopForSpreadMoves];\
             ctx->clientLoopForSpreadMoves++;\
@@ -4237,8 +4237,7 @@ BOOL LONG_CALL ServerFlinchCheck(void *bw, struct BattleStruct *sp);
 
 int LONG_CALL BattleController_LoopMultiHitInternal(struct BattleSystem *bsys, struct BattleStruct *ctx);
 
-
-int LONG_CALL IsMoveSpreadMove(struct BattleStruct *ctx, int move);
+int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *ctx, int move);
 int LONG_CALL IsTargetFoesAndAlly(struct BattleStruct *ctx, int move);
 int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct *ctx);
 

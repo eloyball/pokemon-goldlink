@@ -70,7 +70,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     int hitFoesCount = 0;
     int hitFoes[2];
     int isAllyHit = FALSE;
-    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
         if (IS_VALID_MOVE_TARGET(ctx, BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client))) {
             hitFoes[hitFoesCount] = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
             hitFoesCount++;
@@ -147,7 +147,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
         ctx->swoam_seq_no++;
         if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
-            if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+            if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
             } else {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
@@ -253,7 +253,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             ctx->clientLoopForSpreadMoves++;
             if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
                 int seq_no = SUB_SEQ_CRITICAL_HIT;
-                if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+                if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
                     seq_no = SUB_SEQ_CRITICAL_HIT_SPREAD;
                 }
      

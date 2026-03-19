@@ -1570,7 +1570,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
 
     BOOL didDmg = FALSE;
 
-    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
         for (int i = 0; i < BattleWorkClientSetMaxGet(bsys); i++) {
             ctx->moveStatusFlagForSimultaneousDamage[i] = 0;
         }
@@ -2720,14 +2720,14 @@ enum {
 };
 
 
-int LONG_CALL IsMoveSpreadMove(struct BattleStruct *ctx, int move)
+int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *ctx, int move)
 {
     if ((ctx->moveTbl[move].target == RANGE_ADJACENT_OPPONENTS)
         || (ctx->moveTbl[move].target == RANGE_ALL_ADJACENT)
         || (move == MOVE_EXPANDING_FORCE
             && ctx->terrainOverlay.numberOfTurnsLeft > 0
             && ctx->terrainOverlay.type == PSYCHIC_TERRAIN)) {
-        return TRUE;
+        return (BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI));
     }
     return FALSE;
 }
@@ -2742,7 +2742,7 @@ int LONG_CALL IsTargetFoesAndAlly(struct BattleStruct *ctx, int move)
 
 int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
-    if (IsMoveSpreadMove(ctx, ctx->current_move_index)) {
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
         switch (ctx->clientLoopForSpreadMoves) {
         case SPREAD_MOVE_LOOP_ALLY:
             ctx->clientLoopForSpreadMoves++;
