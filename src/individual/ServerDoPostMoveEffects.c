@@ -111,14 +111,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoak_work = 0;
         FALLTHROUGH;
     }
-    case MOVE_PERFORMANCE_STORE_DAMAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STORE_DAMAGE (%d)+(%d)\n", ctx->store_damage[ctx->attack_client], ctx->hit_damage);
-#endif
-
-        ctx->store_damage[ctx->attack_client] += ctx->hit_damage;
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_2_HIT_SUBSTITUTE:
         // TODO
         ctx->swoam_seq_no++;
@@ -156,6 +148,14 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
             return;
         }
+        FALLTHROUGH;
+    case MOVE_PERFORMANCE_STEP_4_1_STORE_DAMAGE:
+#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_4_1_STORE_DAMAGE (%d)+(%d)\n", ctx->store_damage[ctx->attack_client], ctx->hit_damage);
+#endif
+
+        ctx->store_damage[ctx->attack_client] += ctx->hit_damage;
+        ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE:
 #ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
