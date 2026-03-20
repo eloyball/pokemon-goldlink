@@ -171,7 +171,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
             }
-        } else if (ctx->swoam_type == SWOAM_NORMAL) {
+        } else if (ctx->multiHitCount <= 1) {
             if (ServerWazaStatusMessage(bsys, ctx) == TRUE) {
                 return;
             }

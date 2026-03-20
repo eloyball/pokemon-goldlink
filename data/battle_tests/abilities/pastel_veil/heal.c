@@ -23,7 +23,7 @@ const struct TestBattleScenario BattleTests[] = {
             {
                 .species = SPECIES_PONYTA,
                 .level = 50,
-                .form = 0,
+                .form = 1,
                 .ability = ABILITY_PASTEL_VEIL,
                 .item = ITEM_NONE,
                 .moves = { MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },

@@ -1,4 +1,4 @@
-// Test: Double Edge - Parental Bond, Iron Barbs, Rocky Helmet, Sitrus
+// Test: Rock Head - no recoil
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
