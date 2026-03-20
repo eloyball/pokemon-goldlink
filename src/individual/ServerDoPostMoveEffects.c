@@ -46,6 +46,7 @@ int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct
 int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleStruct *ctx);
 
 int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleStruct *ctx);
+u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleStruct *ctx, int battlerId, int act_flag);
 
 
 
@@ -584,16 +585,17 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
 
         // TODO remove from switchInAbilityCheck?
-        for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++) {
-            int client_no = ctx->turnOrder[battler];
-            if (AbilityStatusRecoverCheck(bsys, ctx, client_no, 1) == TRUE) { //TODO thermal exchange and newer abilities
-  
+        for (; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys); ) {
+            int client_no = ctx->turnOrder[ctx->swoak_work];
+            ctx->swoak_work++;
+            if (Activate_AbilityHealingStatusCondition(bsys, ctx, client_no, 0) == TRUE) { // TODO check if flag is 1 here
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_ABILITY_RECOVER_CND);
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
             }
         }
+        ctx->swoak_work = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_27_1_OPPORTUNIST_SYBIOSIS:
@@ -2260,4 +2262,37 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
     ctx->clientLoopForSpreadMoves = 0;
     ctx->movePerformanceSubstep = 0;
     return FALSE;
+}
+
+
+u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleStruct *ctx, int battlerId, int act_flag)
+{
+    int ret = FALSE;
+    switch (GetBattlerAbility(ctx, battlerId)) {
+    case ABILITY_WATER_BUBBLE:
+    case ABILITY_THERMAL_EXCHANGE:
+        if (ctx->battlemon[battlerId].condition & STATUS_BURN) {
+            ctx->msg_work = 2;
+            ret = TRUE;
+        }
+        break;
+
+    case ABILITY_PASTEL_VEIL:
+        if (ctx->battlemon[battlerId].condition & STATUS_POISON_ALL) {
+            ctx->msg_work = 1;
+            ret = TRUE;
+        }
+        break;
+    default:
+        break;
+    }
+
+
+    if (ret == TRUE) {
+        ctx->battlerIdTemp = battlerId;
+        ctx->tokusei_work = GetBattlerAbility(ctx, battlerId);
+        return TRUE;
+    }
+
+    return AbilityStatusRecoverCheck(bsys, ctx, battlerId, act_flag);
 }
