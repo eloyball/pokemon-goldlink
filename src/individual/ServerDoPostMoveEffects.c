@@ -585,10 +585,9 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
 
         // TODO remove from switchInAbilityCheck?
-        for (; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys); ) {
-            int client_no = ctx->turnOrder[ctx->swoak_work];
-            ctx->swoak_work++;
-            if (Activate_AbilityHealingStatusCondition(bsys, ctx, client_no, 0) == TRUE) { // TODO check if flag is 1 here
+        for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++) {
+            int client_no = ctx->turnOrder[battler];
+            if (Activate_AbilityHealingStatusCondition(bsys, ctx, client_no, 1) == TRUE) { // TODO check if flag is 0 here
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_ABILITY_RECOVER_CND);
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
