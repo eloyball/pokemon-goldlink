@@ -2,11 +2,9 @@ name: pr-lint
 
 on:
   pull_request:
-    branches: [main]
     paths:
       - '**.c'
       - '**.h'
-  workflow_dispatch: {}
 
 jobs:
   pr-lint:
@@ -22,8 +20,6 @@ jobs:
 
       - uses: cpp-linter/cpp-linter-action@v2.15.1
         id: linter
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           style: 'file'
           tidy-checks: '-*'
