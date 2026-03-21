@@ -1,4 +1,4 @@
-// Test: Subsitute - Don't Block Status Sound Move
+// Test: Substitute - Don't Block Status Sound Move
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"

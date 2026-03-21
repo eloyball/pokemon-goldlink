@@ -1,4 +1,4 @@
-// Test: Subsitute - Apply Attacker's Stat Drop
+// Test: Substitute - Apply Attacker's Stat Drop
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
