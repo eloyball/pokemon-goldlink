@@ -655,6 +655,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
 
                             if (ret == SWITCH_IN_CHECK_MOVE_SCRIPT) {
                                 sp->battlemon[client_no].ability_activated_flag = 1;
+                                sp->battlerIdTemp = client_no; // For ability popup
                                 sp->attack_client = client_no; // this should allow for the seeds to affect the terrain
                                 scriptnum = SUB_SEQ_CREATE_TERRAIN_OVERLAY;
                                 break;
