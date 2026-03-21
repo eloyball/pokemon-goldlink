@@ -96,6 +96,7 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
     ctx->moveContext.hitFoesCount = 0;
     ctx->moveContext.hitSubstituteCount = 0;
     ctx->moveContext.isAllyHit = FALSE;
+    ctx->moveContext.currentMoveCalcDone = FALSE;
 
     ctx->playerActions[ctx->executionOrder[ctx->executionIndex]][0] = CONTROLLER_COMMAND_40;
 

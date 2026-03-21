@@ -1262,7 +1262,8 @@ typedef struct MovePerformanceContext {
     u8 hitFoesCount : 2;
     u8 hitSubstituteCount : 3;
     u8 isAllyHit : 1;
-    u8 padding : 2;
+    u8 currentMoveCalcDone : 1;
+    u8 padding : 1;
     int hitFoes[2];
     int hitSubstitute[3];  
 } MovePerformanceContext;
