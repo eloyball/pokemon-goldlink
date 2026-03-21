@@ -4669,16 +4669,16 @@ BOOL btl_scr_cmd_11D_BatchEffectivenessMessage(void *bsys, struct BattleStruct *
 
     if (attackerSide) {
         int ally = BATTLER_ALLY(attacker);
-        if (ctx->damageForSpreadMoves[ally] != 0 && (ctx->moveStatusFlagForSimultaneousDamage[ally] & flag)) {
+        if (ctx->moveStatusFlagForSimultaneousDamage[ally] & flag) {
             list[count++] = ally;
         }
     } else {
         int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(attacker);
         int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(attacker);
-        if (ctx->damageForSpreadMoves[oppLeft] != 0 && (ctx->moveStatusFlagForSimultaneousDamage[oppLeft] & flag)) {
+        if (ctx->moveStatusFlagForSimultaneousDamage[oppLeft] & flag) {
             list[count++] = oppLeft;
         }
-        if (ctx->damageForSpreadMoves[oppRight] != 0 && (ctx->moveStatusFlagForSimultaneousDamage[oppRight] & flag)) {
+        if (ctx->moveStatusFlagForSimultaneousDamage[oppRight] & flag) {
             list[count++] = oppRight;
         }
     }
