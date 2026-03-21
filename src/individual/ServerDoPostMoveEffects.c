@@ -2056,8 +2056,8 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
-            if (Activate_SecondaryEffects(bsys, ctx) = TRUE) {
-                return TRUE
+            if (Activate_SecondaryEffects(bsys, ctx) == TRUE) {
+                return TRUE;
             }
         }
             FALLTHROUGH;
@@ -2323,8 +2323,8 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
             debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
-            if (Activate_SecondaryEffects(bsys, ctx) = TRUE) {
-                return TRUE
+            if (Activate_SecondaryEffects(bsys, ctx) == TRUE) {
+                return TRUE;
             }
 
             FALLTHROUGH;
