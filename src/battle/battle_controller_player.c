@@ -10,7 +10,7 @@
 #if defined (DISABLE_ITEMS_IN_TRAINER_BATTLE)
 void overrideItemUsage(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
-    MESSAGE_PARAM mp;
+    BattleMessage mp;
     int battlerId;
     u32 fight_type = BattleTypeGet(bsys);
 
