@@ -30,6 +30,7 @@ void ServerHPCalc(struct BattleSystem *bw, struct BattleStruct *sp)
 
     if (sp->damage)
     {
+        debug_printf("dmg %d\n", sp->damage);
         eqp = HeldItemHoldEffectGet(sp, sp->defence_client);
         atk = HeldItemAtkGet(sp, sp->defence_client, ATK_CHECK_NORMAL);
 
@@ -57,12 +58,9 @@ void ServerHPCalc(struct BattleSystem *bw, struct BattleStruct *sp)
                 sp->battlemon[sp->defence_client].moveeffect.substituteHp += sp->damage;
                 sp->hit_damage = sp->damage;
             }
+            debug_printf("hitdmg %d\n", sp->hit_damage);
             sp->oneSelfFlag[sp->defence_client].status_flag |= SELF_STATUS_FLAG_SUBSTITUTE_HIT;
             sp->battlerIdTemp = sp->defence_client;
-            // TODO how to handle this?
-            //LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HIT_SUBSTITUTE);
-            //sp->server_seq_no = 22;
-            //sp->next_server_seq_no = 29;
         }
         else
         {

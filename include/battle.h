@@ -1258,6 +1258,16 @@ typedef struct MoveConditionsFlags {
 } MoveConditionsFlags;
 
 
+typedef struct MovePerformanceContext {
+    u8 hitFoesCount : 2;
+    u8 hitSubstituteCount : 3;
+    u8 isAllyHit : 1;
+    u8 padding : 2;
+    int hitFoes[2];
+    int hitSubstitute[3];  
+} MovePerformanceContext;
+
+
 #define BATTLE_SCRIPT_PUSH_DEPTH 4
 
 /**
@@ -1495,6 +1505,7 @@ struct BattleStruct {
                int currentMoveSwitchStatus;
                
                MoveConditionsFlags moveConditionsFlags[CLIENT_MAX];
+               MovePerformanceContext moveContext;
 };
 
 
@@ -1906,6 +1917,22 @@ enum {
     MOVE_PERFORMANCE_SUB_STEP_10_12_DISGUISE_ICE_FACE,
     MOVE_PERFORMANCE_SUB_STEP_10_13_PROTECTION_FROM_Z_MOVE,
 };
+
+enum {
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_1_HIT = 0,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_2_EFFECTIVENESS_MESSAGE,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_CRITICAL_HIT,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_4_PROTECTION_FROM_Z_MOVE,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_5_SUBSTITUTE_FADES,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLAME_BURST,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_8_CORE_ENFORCER,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_9_FLING,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_10_AIR_BALLOON,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_11_PROTECTION_FROM_Z_MOVE_2,
+    MOVE_PERFORMANCE_SUBSTITUTE_STEP_12_DYNAMAX_MOVE_EFFECTS,
+};
+
 
 enum
 {
@@ -4237,7 +4264,7 @@ int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *c
 int LONG_CALL IsTargetFoesAndAlly(struct BattleSystem *bsys, struct BattleStruct *ctx, int move);
 int LONG_CALL IsTargetFoes(struct BattleSystem *bsys, struct BattleStruct *ctx, int move);
 int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct *ctx);
-
+void LONG_CALL SetupCurrentMoveContext(struct BattleSystem *bsys, struct BattleStruct *ctx);
 
 BOOL LONG_CALL IsBattlerSlotValid(struct BattleSystem *battleSystem, int battlerId);
 

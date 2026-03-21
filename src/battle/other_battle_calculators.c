@@ -2789,6 +2789,52 @@ int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct 
 }
 
 
+void LONG_CALL SetupCurrentMoveContext(struct BattleSystem* bsys, struct BattleStruct* ctx)
+{
+    if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+        int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
+        int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
+        int ally = BATTLER_ALLY(ctx->attack_client);
+
+        if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)
+            && IS_VALID_MOVE_TARGET(ctx, ally)) {
+            if (CheckSubstitute(ctx, ally) == TRUE) {
+                ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = ally;
+                ctx->moveContext.hitSubstituteCount++;
+            } else {
+                ctx->moveContext.isAllyHit = TRUE;
+            }
+        }
+
+        if (IS_VALID_MOVE_TARGET(ctx, oppLeft)) {
+            if (CheckSubstitute(ctx, oppLeft) == TRUE) {
+                ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = oppLeft;
+                ctx->moveContext.hitSubstituteCount++;
+            } else {
+                ctx->moveContext.hitFoes[ctx->moveContext.hitFoesCount] = oppLeft;
+                ctx->moveContext.hitFoesCount++;
+            }
+        }
+
+        if (IS_VALID_MOVE_TARGET(ctx, oppRight)) {
+            if (CheckSubstitute(ctx, oppRight) == TRUE) {
+                ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = oppRight;
+                ctx->moveContext.hitSubstituteCount++;
+            } else {
+                ctx->moveContext.hitFoes[ctx->moveContext.hitFoesCount] = oppRight;
+                ctx->moveContext.hitFoesCount++;
+            }
+        }
+    } else {
+        if (CheckSubstitute(ctx, ctx->defence_client) == TRUE) {
+            ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = ctx->defence_client;
+            ctx->moveContext.hitSubstituteCount++;
+        } else {
+            ctx->moveContext.hitFoes[ctx->moveContext.hitFoesCount] = ctx->defence_client;
+            ctx->moveContext.hitFoesCount++;
+        }
+    }
+}
 
 /**
  * Platinum version as reference

@@ -773,6 +773,7 @@ BOOL LONG_CALL MoveHitDefenderCottonDownCheck(void* bw UNUSED, struct BattleStru
  */
 void ServerWazaOutAfterMessage(void *bsys, struct BattleStruct *ctx)
 {
+    SetupCurrentMoveContext(bsys, ctx);
     ctx->server_seq_no = CONTROLLER_COMMAND_31;
     ctx->swoam_seq_no = 0;
     return;
