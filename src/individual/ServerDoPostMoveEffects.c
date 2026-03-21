@@ -62,7 +62,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
  */
 void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsys, struct BattleStruct *ctx)
 {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
     debug_printf("ServerDoPostMoveEffectsInternal %d: attacker %d, movestatus %d, status %d, ctx->multiHitCount %d\n", ctx->swoam_seq_no, ctx->attack_client, ctx->waza_status_flag, ctx->server_status_flag, ctx->multiHitCount);
 #endif 
 
@@ -93,7 +93,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
     switch (ctx->swoam_seq_no) {
     case MOVE_PERFORMANCE_VANISH_ON_OFF: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_VANISH_ON_OFF %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -117,7 +117,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_3_EXPLOSION_USER_FAINTS:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_3_EXPLOSION_USER_FAINTS %d\n", ctx->server_status_flag & BATTLE_STATUS_SELFDESTRUCTED);
 #endif
 
@@ -134,7 +134,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_4_DEAL_DAMAGE %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -151,7 +151,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_4_1_STORE_DAMAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_4_1_STORE_DAMAGE (%d)+(%d)\n", ctx->store_damage[ctx->attack_client], ctx->hit_damage);
 #endif
 
@@ -159,7 +159,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_5_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -178,7 +178,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_6_NOT_SE_TYPE_EFFECTIVENESS_MESSAGE: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_6_NOT_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -194,7 +194,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     }
     case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY: {
 
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY %d, isAllyHit %d\n", ctx->swoam_seq_no, isAllyHit);
 #endif
         ctx->clientLoopForSpreadMoves = 0; //TODO use seprate variable?
@@ -212,7 +212,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -229,7 +229,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_ALLY: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_ALLY %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -243,7 +243,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_ALLY: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_ALLY %d\n", ctx->swoam_seq_no);
 #endif
         if (isAllyHit) {
@@ -257,7 +257,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     }
 
     case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d, clientLoopForSpreadMoves %d\n", ctx->swoam_seq_no, hitFoesCount, ctx->clientLoopForSpreadMoves);
 #endif
 
@@ -282,7 +282,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_FOES: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_FOES %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -304,7 +304,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_FOES: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_9_SECONDARY_EFFECTS_FOES %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -315,7 +315,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_FOES: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_FOES %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -326,7 +326,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_11_0_FAINTING:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_11_0_FAINTING %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -339,7 +339,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_12_0_RESET_UNNERVE_NEUTRALIZING_GAS_IF_FAINTED: // switch in ability check?
     {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_12_0_RESET_UNNERVE_NEUTRALIZING_GAS_IF_FAINTED %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -356,7 +356,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_13_0_MULTIHIT_MOVE_ATTACKER_ITEMS_4:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_13_0_MULTIHIT_MOVE_ATTACKER_ITEMS_4 %d\n", ctx->swoam_seq_no);
 #endif
         if (TryUseHeldItem(bsys, ctx, ctx->attack_client) == TRUE) { // will eventually need TryUseHeldItem anyway.  generic berry function thing
@@ -366,7 +366,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_13_1_MULTIHIT_MOVE_DEFENDER_ITEMS_4: // Go back to step 1, damage calc consolidate BattleController_LoopMultiHit
     {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_13_1_MULTIHIT_MOVE_DEFENDER_ITEMS_4 %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -383,7 +383,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_13_2_MULTIHIT_STATUS_MESSAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_13_2_MULTIHIT_STATUS_MESSAGE %d\n", ctx->swoam_type);
 #endif
         ctx->swoam_seq_no++;
@@ -398,7 +398,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_15_0_RECOIL_DAMAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_15_0_RECOIL_DAMAGE, storedDamage[%d] %d\n", ctx->attack_client, ctx->store_damage[ctx->attack_client]);
 #endif
 
@@ -408,7 +408,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_15_1_ADDITIONAL_MOVE_EFFECTS:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_15_1_ADDITIONAL_MOVE_EFFECTS %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -418,7 +418,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_15_2_THAW_FROM_FIRE_MOVE: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_15_2_THAW_FROM_FIRE_MOVE %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -438,7 +438,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_16_0_MAGICIAN_MOXIE: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_16_0_MAGICIAN_MOXIE %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -447,7 +447,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_16_1_BERSERK_COLOR_CHANGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_16_1_BERSERK_COLOR_CHANGE %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -459,7 +459,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_17_0_DEFENDER_ITEMS_3: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_17_0_DEFENDER_ITEMS_3 %d\n", ctx->swoam_seq_no);
 #endif
         if (Activate_KeeMarangaBerry_RedCard_EjectButton(bsys, ctx) == TRUE)
@@ -474,7 +474,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_19_0_FORM_CHANGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_19_0_FORM_CHANGE %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -485,7 +485,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_20_0_LIFE_ORB_SHELL_BELL:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_20_0_LIFE_ORB_SHELL_BELL %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -496,7 +496,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_21_0_MOVE_DEFENDER_ITEMS_4: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_21_0_MOVE_DEFENDER_ITEMS_4 %d\n", ctx->swoam_seq_no);
 #endif
         //TODO split tryUseHeldItems?
@@ -510,7 +510,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_23_0_U_TURN_VOLT_SWITCH:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_23_0_U_TURN_VOLT_SWITCH %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -520,7 +520,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_24_0_PICKPOCKET: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_24_0_PICKPOCKET %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -530,7 +530,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_25_0_BURN_UP_DOUBLE_SHOCK_TYPELOSS: //TODO group Skill effect together in one function
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_25_0_BURN_UP_DOUBLE_SHOCK_TYPELOSS %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -543,7 +543,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_25_2_OUTRAGE_CONFUSION:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_25_2_OUTRAGE_CONFUSION %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -553,7 +553,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_25_3_ICE_SPINNER_STEEL_ROLLER:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_25_3_ICE_SPINNER_STEEL_ROLLER %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -568,7 +568,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_26_0_LEPPA_BERRY_THROAT_SPRAY_BLUNDER_POLICY:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_26_0_LEPPA_BERRY_THROAT_SPRAY_BLUNDER_POLICY %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -580,7 +580,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_27_0_ABILITIES_2: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_27_0_ABILITIES_2 %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -597,12 +597,12 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoak_work = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_27_1_OPPORTUNIST_SYBIOSIS:
+    case MOVE_PERFORMANCE_STEP_27_1_OPPORTUNIST_SYMBIOSIS:
         // TODO
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_28_0_WHITE_HERB_MIRROR_HERB_EJECT_PACK: //speed order
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_28_0_WHITE_HERB_MIRROR_HERB_EJECT_PACK %d\n", ctx->swoam_seq_no);
 #endif
 
@@ -612,7 +612,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_29_0_RESOLVE_PENDING_SWITCH:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_29_0_RESOLVE_PENDING_SWITCH %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
@@ -1943,7 +1943,7 @@ int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx)
     }
 
     if (seq_no != 0) {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in ActivateRecoilDamage (%d)\n", ctx->store_damage[ctx->attack_client]);
 #endif
 
@@ -2029,7 +2029,7 @@ void LONG_CALL Activate_KO_Count(void *bsys, struct BattleStruct *ctx)
 
 int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* defenders, int defenderCount)
 {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
     debug_printf("in MovePerformance_Step_9: step %d, clientLoopForSpreadMoves %d, defenderCount %d\n", ctx->movePerformanceSubstep, ctx->clientLoopForSpreadMoves, defenderCount);
 #endif
     for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
@@ -2045,7 +2045,7 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_9_1_FLINCH_CHECK:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_1_FLINCH_CHECK %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2054,7 +2054,7 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
             }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
 
@@ -2076,7 +2076,7 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
         }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_9_3_FLAME_BURST:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_3_FLAME_BURST %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2109,7 +2109,7 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
 
 int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int *defenders, int defenderCount)
 {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
     debug_printf("in MovePerformance_Step_10: step %d, clientLoopForSpreadMoves %d, defenderCount %d\n", ctx->movePerformanceSubstep, ctx->clientLoopForSpreadMoves, defenderCount);
 #endif
     for (; ctx->clientLoopForSpreadMoves < defenderCount; ctx->clientLoopForSpreadMoves++, ctx->movePerformanceSubstep = 0) {
@@ -2125,7 +2125,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_1_RAGE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
                 debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_1_RAGE %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2135,7 +2135,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_2_CLEAR_SMOG:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_2_CLEAR_SMOG %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2152,7 +2152,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_5_POISON_TOUCH:{
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_5_POISON_TOUCH %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2167,7 +2167,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             FALLTHROUGH;
         }
         case MOVE_PERFORMANCE_SUB_STEP_10_6_DEFENDER_ABILITY: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_6_DEFENDER_ABILITY %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2181,7 +2181,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             FALLTHROUGH;
         }
         case MOVE_PERFORMANCE_SUB_STEP_10_7_COTTON_DOWN: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_7_COTTON_DOWN: ctx->swoak_work %d, ctx->clientLoopForAbility %d\n", ctx->swoak_work, ctx->clientLoopForAbility);
 #endif
             if (CottonDownCheck(bsys, ctx) == TRUE) {
@@ -2197,7 +2197,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             FALLTHROUGH;
         }
         case MOVE_PERFORMANCE_SUB_STEP_10_8_DAMAGE_REDUCTION_BERRY:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_8_DAMAGE_REDUCTION_BERRY %d\n", ctx->movePerformanceSubstep);
 #endif
 
@@ -2207,7 +2207,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_9_DEFENDER_ITEMS_1: {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_9_DEFENDER_ITEMS_1 %d\n", ctx->movePerformanceSubstep);
 #endif
 
@@ -2222,7 +2222,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
         }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_10_INCINERATE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_10_INCINERATE %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2231,7 +2231,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_11_DEFENDER_ITEMS_2_JABOCA_ROWAP %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
@@ -2240,7 +2240,7 @@ int LONG_CALL MovePerformance_Step_10(void *bsys, struct BattleStruct *ctx, int 
             }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_10_12_DISGUISE_ICE_FACE:
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_10_12_DISGUISE_ICE_FACE %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;

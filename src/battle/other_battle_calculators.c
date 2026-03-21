@@ -2855,7 +2855,7 @@ void LONG_CALL BattleController_LoopMultiHit(struct BattleSystem *bsys, struct B
 
 int LONG_CALL BattleController_LoopMultiHitInternal(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
-#ifdef DEBUG_MOVE_PERFORMNCE_LOGIC
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
     debug_printf("In BattleController_LoopMultiHitInternal %d\n", ctx->multiHitCountTemp);
 #endif
     
