@@ -26,13 +26,6 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
     u32 battleType = BattleTypeGet(bsys);
 
     if (!(battleType & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_PAL_PARK))) {
-        if (AbilityStatusRecoverCheck(bsys, ctx, ctx->attack_client, 0) == TRUE) {
-            return;
-        }
-        // BATTLER_NONE
-        if (ctx->defence_client != 0xFF && AbilityStatusRecoverCheck(bsys, ctx, ctx->defence_client, 0) == TRUE) {
-            return;
-        }
         if (ov12_0224DD18(ctx, ctx->server_seq_no, ctx->server_seq_no) == TRUE) {
             return;
         }
@@ -42,6 +35,10 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
 
         if (ctx->moveConditionsFlags[ctx->attack_client].glaiveRush && ctx->current_move_index != MOVE_GLAIVE_RUSH) {
             ctx->moveConditionsFlags[ctx->attack_client].glaiveRush = FALSE;
+        }
+
+        if ((ctx->battlemon[ctx->attack_client].condition2 & STATUS2_RAGE) && (ctx->current_move_index != MOVE_RAGE)) {
+            ctx->battlemon[ctx->attack_client].condition2 &= ~(STATUS2_RAGE);
         }
 
         // If the user's next move is not Electric-type, Charge no longer wears off, and instead remains active for the next move that is.

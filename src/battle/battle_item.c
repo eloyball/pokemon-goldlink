@@ -155,9 +155,6 @@ u32 LONG_CALL ServerWazaHitAfterCheckAct(void *bw, struct BattleStruct *sp)
         return TRUE;
     }
 
-    if ((sp->battlemon[sp->attack_client].condition2 & STATUS2_RAGE) && (sp->current_move_index != MOVE_RAGE)) {
-        sp->battlemon[sp->attack_client].condition2 &= ~(STATUS2_RAGE);
-    }
     return FALSE;
  /* do
     {
