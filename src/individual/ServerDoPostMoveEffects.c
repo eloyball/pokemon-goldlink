@@ -935,7 +935,7 @@ int LONG_CALL Activate_FlameBurstHit(void *bsys UNUSED, struct BattleStruct *ctx
         int ally = BATTLER_ALLY(ctx->defence_client);
         if (ctx->battlemon[ally].hp
             && (GetBattlerAbility(ctx, ally) != ABILITY_MAGIC_GUARD)
-            && ctx->oneSelfFlag[ctx->defence_client].special_damage) {
+            && ctx->oneSelfFlag[ctx->defence_client].special_damager == ctx->attack_client) {
             ctx->addeffect_param = ADD_STATUS_EFF_FLAME_BURST_HIT;
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
             ctx->state_client = ally;
@@ -2329,8 +2329,22 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
-            // TODO
+            int seq_no = 0;
+            // TODO hook and simplify logic for flags
+            u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
+            BOOL triggeredIndirectEffect = FALSE;
             ctx->movePerformanceSubstep++;
+            if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
+                triggeredIndirectEffect = TRUE;
+            }
+            ctx->add_status_flag_indirect = indirectStatusEffectFlag;
+            if (triggeredIndirectEffect) {
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLAME_BURST:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
@@ -2354,12 +2368,12 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
             debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_10_AIR_BALLOON %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
-            if ((HeldItemHoldEffectGet(ctx, ctx->defence_client) == HOLD_EFFECT_UNGROUND_DESTROYED_ON_HIT) // Air Balloon
+            if ((HeldItemHoldEffectGet(ctx, ctx->defence_client) == HOLD_EFFECT_UNGROUND_DESTROYED_ON_HIT)) // Air Balloon
                 // Defender is alive after the attack
-                && (ctx->battlemon[ctx->defence_client].hp)
+                //&& (ctx->battlemon[ctx->defence_client].hp)
                 // Damage was dealt
-                && ((ctx->oneSelfFlag[ctx->defence_client].physical_damage)
-                    || (ctx->oneSelfFlag[ctx->defence_client].special_damage)))
+              //  && ((ctx->oneSelfFlag[ctx->defence_client].physical_damage)
+              //      || (ctx->oneSelfFlag[ctx->defence_client].special_damage)))
             {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_AIR_BALLOON_POP);
                 ctx->next_server_seq_no = ctx->server_seq_no;
