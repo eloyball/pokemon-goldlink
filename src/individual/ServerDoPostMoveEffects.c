@@ -37,6 +37,7 @@ int LONG_CALL Activate_KeeMarangaBerry_RedCard_EjectButton(void *bsys, struct Ba
 int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_Pickpocket(void *bsys, struct BattleStruct *sp);
 int LONG_CALL Activate_Disguise_IceFace(void *bsys, struct BattleStruct *sp);
+int LONG_CALL Activate_SecondaryEffects(void *bsys, struct BattleStruct *ctx);
 
 int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx);
 
@@ -1162,6 +1163,7 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
         break;
     case MOVE_EFFECT_STEAL_HELD_ITEM: // thief, covet
         if (ctx->attack_client != BATTLER_NONE
+            && ctx->gemBoostingMove == FALSE // cannot steal item when boosted by gem https://discord.com/channels/419213663107416084/1368163973366681712/1484346665090678854
             && ctx->battlemon[ctx->attack_client].hp > 0
             && CheckSubstitute(ctx, ctx->defence_client) == FALSE)
         // if (ctx->battlemon[ctx->attack_client].item == ITEM_NONE)
@@ -1445,7 +1447,7 @@ int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleS
         return FALSE;
     }
 
-    // TODO Magician in speed order?
+    // TODO Magician in speed order
     switch (GetBattlerAbility(ctx, ctx->attack_client)) {
     case ABILITY_BEAST_BOOST:
         if (ctx->oneTurnFlag[ctx->attack_client].numberOfKOs) {
@@ -1533,6 +1535,9 @@ int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleS
             }
         }
         break;
+        // case ABILITY_MAGICIAN:
+        //https://discord.com/channels/419213663107416084/1368163973366681712/1484346665090678854
+        // ctx->gemBoostingMove == FALSE
     default:
         ctx->oneTurnFlag[ctx->attack_client].numberOfKOs = 0;
         break;
@@ -2050,21 +2055,9 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_2_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
-
-            int seq_no = 0;
-            // TODO hook and simplify logic for flags
-            u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
-            BOOL triggeredIndirectEffect = FALSE;
             ctx->movePerformanceSubstep++;
-            if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
-                triggeredIndirectEffect = TRUE;
-            }
-            ctx->add_status_flag_indirect = indirectStatusEffectFlag;
-            if (triggeredIndirectEffect) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return TRUE;
+            if (Activate_SecondaryEffects(bsys, ctx) = TRUE) {
+                return TRUE
             }
         }
             FALLTHROUGH;
@@ -2329,20 +2322,9 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
-            int seq_no = 0;
-            // TODO hook and simplify logic for flags
-            u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
-            BOOL triggeredIndirectEffect = FALSE;
             ctx->movePerformanceSubstep++;
-            if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
-                triggeredIndirectEffect = TRUE;
-            }
-            ctx->add_status_flag_indirect = indirectStatusEffectFlag;
-            if (triggeredIndirectEffect) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return TRUE;
+            if (Activate_SecondaryEffects(bsys, ctx) = TRUE) {
+                return TRUE
             }
 
             FALLTHROUGH;
@@ -2430,4 +2412,29 @@ u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleSt
     }
 
     return AbilityStatusRecoverCheck(bsys, ctx, battlerId, act_flag);
+}
+
+
+
+int LONG_CALL Activate_SecondaryEffects(void *bsys, struct BattleStruct *ctx)
+{
+    int seq_no = 0;
+    // TODO hook and simplify logic for flags
+    u32 indirectStatusEffectFlag = ctx->add_status_flag_indirect;
+    BOOL triggeredIndirectEffect = FALSE;
+    if ((ST_ServerAddStatusCheck(bsys, ctx, &seq_no) == TRUE) && ((ctx->waza_status_flag & MOVE_STATUS_FLAG_FAILURE_ANY) == 0)) {
+        triggeredIndirectEffect = TRUE;
+    }
+
+    //TODO better logic
+    if (ctx->current_move_index != MOVE_MAKE_IT_RAIN && ctx->current_move_index != MOVE_DIAMOND_STORM) {
+        ctx->add_status_flag_indirect = indirectStatusEffectFlag;
+    }
+    if (triggeredIndirectEffect) {
+        LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+        ctx->next_server_seq_no = ctx->server_seq_no;
+        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+        return TRUE;
+    }
+    return FALSE;
 }
