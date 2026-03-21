@@ -201,15 +201,40 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
     // 6.1 Spread Move Modifier
     // TODO: the vanilla implementation is probably wrong
 
+    int numTargetedFoes = 0;
+    int numTargetedAll = 0;
+
+    if (IsTargetFoes(bw, sp, moveno) || IsTargetFoesAndAlly(bw, sp, moveno)) {
+        int oppLeft = BATTLER_OPPONENT_SIDE_LEFT(attacker);
+        int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(attacker);
+
+        if (sp->battlemon[oppLeft].hp != 0) {
+            numTargetedFoes++;
+            numTargetedAll++;
+        }
+        if (sp->battlemon[oppRight].hp != 0) {
+            numTargetedFoes++;
+            numTargetedAll++;
+        }
+    }
+
+    if (IsTargetFoesAndAlly(bw, sp, moveno)) {
+        int ally = BATTLER_ALLY(attacker);
+
+        if (sp->battlemon[ally].hp != 0) {
+            numTargetedAll++;
+        }
+    }
+
     if ((battle_type & BATTLE_TYPE_DOUBLE) &&
-        (sp->moveTbl[moveno].target == RANGE_ADJACENT_OPPONENTS) &&
-        (CheckNumMonsHit(bw, sp, 1, defender) == 2)) {
+        IsTargetFoes(bw, sp, moveno) &&
+        (numTargetedFoes >= 2)) {
         damage = QMul_RoundDown(damage, UQ412__0_75);
     }
 
     if ((battle_type & BATTLE_TYPE_DOUBLE) &&
-        (sp->moveTbl[moveno].target == RANGE_ALL_ADJACENT) &&
-        (CheckNumMonsHit(bw, sp, 0, defender) >= 2)) {
+        IsTargetFoesAndAlly(bw, sp, moveno) &&
+        (numTargetedAll >= 2)) {
         damage = QMul_RoundDown(damage, UQ412__0_75);
     }
 

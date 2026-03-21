@@ -1576,14 +1576,13 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
         }
 
         // TODO: common function/macro to handle the logic of creating an array with valid clients to loop over?
-        int moveTarget = ctx->moveTbl[ctx->current_move_index].target;
-        BOOL rangeAllAdjacent = (moveTarget == RANGE_ALL_ADJACENT);
-        BOOL rangeAdjacentOpp = (moveTarget == RANGE_ADJACENT_OPPONENTS);
+        BOOL targetFoesAndAlly = IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index);
+        BOOL targetFoes = IsTargetFoes(bsys, ctx, ctx->current_move_index);
 
         // hp calc can reduce stored spread damage if sash/sturdy.
         // persist the resolved value for the later batch update
         int ally = BATTLER_ALLY(ctx->attack_client);
-        if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || (IsTargetFoes(bsys, ctx, ctx->current_move_index) && ally == ctx->defence_client) || rangeAllAdjacent) && IS_VALID_MOVE_TARGET(ctx, ally))
+        if ((targetFoesAndAlly || (targetFoes && ally == ctx->defence_client)) && IS_VALID_MOVE_TARGET(ctx, ally))
         {
             ctx->defence_client = ally;
             ctx->waza_status_flag = ctx->moveStatusFlagForSpreadMoves[ally];
@@ -1593,7 +1592,7 @@ void ServerHPCalc(struct BattleSystem *bsys, struct BattleStruct *ctx)
             ctx->moveStatusFlagForSimultaneousDamage[ally] = ctx->waza_status_flag;
         }
 
-        if (rangeAdjacentOpp || rangeAllAdjacent) {
+        if (targetFoes || targetFoesAndAlly) {
             int oppL = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
             if (IS_VALID_MOVE_TARGET(ctx, oppL)) {
                 ctx->defence_client = oppL;
