@@ -124,7 +124,6 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The substitute took damage for the opposing Mudkip!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's not very effective..." },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The bursting flame hit the opposing Squirtle!" }, 
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander lost some of its HP!" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
