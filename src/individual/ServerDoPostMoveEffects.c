@@ -92,21 +92,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         ctx->swoak_work = 0;
         FALLTHROUGH;
     }
-    case MOVE_PERFORMANCE_STEP_2_HIT_SUBSTITUTE: {
-
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_2_HIT_SUBSTITUTE %d, %d\n", ctx->swoam_seq_no, ctx->moveContext.hitSubstituteCount);
-#endif
-
-        if (ctx->moveContext.hitSubstituteCount && MovePerformance_HitSubstitute(bsys, ctx, ctx->moveContext.hitSubstitute, ctx->moveContext.hitSubstituteCount) == TRUE) {
-            debug_printf("return from substitute function\n");
-            return;
-        }
-
-        ctx->clientLoopForSpreadMoves = 0;
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    }
     case MOVE_PERFORMANCE_STEP_3_EXPLOSION_USER_FAINTS:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_3_EXPLOSION_USER_FAINTS %d\n", ctx->server_status_flag & BATTLE_STATUS_SELFDESTRUCTED);
@@ -133,12 +118,15 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
             if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
-            } else {
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            } else if (CheckSubstitute(ctx, ctx->defence_client) == FALSE){
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
             }
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return;
         }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_4_1_STORE_DAMAGE:
@@ -202,6 +190,46 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         FALLTHROUGH;
     }
+    case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES: {
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d, clientLoopForSpreadMoves %d\n", ctx->swoam_seq_no, ctx->moveContext.hitFoesCount, ctx->clientLoopForSpreadMoves);
+#endif
+
+        for (; ctx->clientLoopForSpreadMoves < ctx->moveContext.hitFoesCount;) {
+            ctx->defence_client = ctx->moveContext.hitFoes[ctx->clientLoopForSpreadMoves];
+            ctx->clientLoopForSpreadMoves++;
+            if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
+                int seq_no = SUB_SEQ_CRITICAL_HIT;
+                if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+                    seq_no = SUB_SEQ_CRITICAL_HIT_SPREAD;
+                }
+
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return;
+            }
+        }
+
+        ctx->clientLoopForSpreadMoves = 0;
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
+    case MOVE_PERFORMANCE_HIT_SUBSTITUTE: {
+
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_HIT_SUBSTITUTE %d, %d\n", ctx->swoam_seq_no, ctx->moveContext.hitSubstituteCount);
+#endif
+
+        if (ctx->moveContext.hitSubstituteCount && MovePerformance_HitSubstitute(bsys, ctx, ctx->moveContext.hitSubstitute, ctx->moveContext.hitSubstituteCount) == TRUE) {
+            debug_printf("return from substitute function\n");
+            return;
+        }
+
+        ctx->clientLoopForSpreadMoves = 0;
+        ctx->swoam_seq_no++;
+        FALLTHROUGH;
+    }
     case MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY: {
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_8_STURDY_FOCUS_SASH_ALLY %d\n", ctx->swoam_seq_no);
@@ -243,32 +271,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
                 return;
             }
         }
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    }
-
-    case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES: {
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_FOES %d, hitFoesCount %d, clientLoopForSpreadMoves %d\n", ctx->swoam_seq_no, ctx->moveContext.hitFoesCount, ctx->clientLoopForSpreadMoves);
-#endif
-
-        for (; ctx->clientLoopForSpreadMoves < ctx->moveContext.hitFoesCount;) {
-            ctx->defence_client = ctx->moveContext.hitFoes[ctx->clientLoopForSpreadMoves];
-            ctx->clientLoopForSpreadMoves++;
-            if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
-                int seq_no = SUB_SEQ_CRITICAL_HIT;
-                if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
-                    seq_no = SUB_SEQ_CRITICAL_HIT_SPREAD;
-                }
-     
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return;
-            }
-        }
-
-        ctx->clientLoopForSpreadMoves = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     }
@@ -2276,38 +2278,13 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
             return TRUE;
         }
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_2_EFFECTIVENESS_MESSAGE:
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_2_EFFECTIVENESS_MESSAGE %d\n", ctx->movePerformanceSubstep);
-#endif
-            ctx->movePerformanceSubstep++;
-            if (ctx->multiHitCount <= 1) {
-                if (ServerWazaStatusMessage(bsys, ctx) == TRUE) {
-                    return TRUE;
-                }
-            }
-            FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_CRITICAL_HIT: {
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_CRITICAL_HIT %d\n", ctx->movePerformanceSubstep);
-#endif
-
-            ctx->movePerformanceSubstep++;
-            if ((ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] & WAZA_STATUS_FLAG_CRITICAL) != 0) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_CRITICAL_HIT);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return TRUE;
-            }
-        }
-            FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_4_PROTECTION_FROM_Z_MOVE:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_2_PROTECTION_FROM_Z_MOVE:
             //TODO
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_5_SUBSTITUTE_FADES:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_SUBSTITUTE_FADES:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_5_SUBSTITUTE_FADES %d\n", ctx->movePerformanceSubstep);
+            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_SUBSTITUTE_FADES %d\n", ctx->movePerformanceSubstep);
 #endif
             // TODO
             ctx->movePerformanceSubstep++;
@@ -2318,9 +2295,9 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
                 return TRUE;
             }
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_4_SECONDARY_EFFECTS:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
+            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_4_SECONDARY_EFFECTS %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
             if (Activate_SecondaryEffects(bsys, ctx) == TRUE) {
@@ -2328,26 +2305,26 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
             }
 
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLAME_BURST:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_5_FLAME_BURST:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLAME_BURST %d\n", ctx->movePerformanceSubstep);
+            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_5_FLAME_BURST %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
             if (Activate_FlameBurstHit(bsys, ctx) == TRUE) {
                 return TRUE;
             }
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_8_CORE_ENFORCER:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_6_CORE_ENFORCER:
             // TODO
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_9_FLING:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLING:
             // TODO
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_10_AIR_BALLOON:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_8_AIR_BALLOON:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_10_AIR_BALLOON %d\n", ctx->movePerformanceSubstep);
+            debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_8_AIR_BALLOON %d\n", ctx->movePerformanceSubstep);
 #endif
             ctx->movePerformanceSubstep++;
             if ((HeldItemHoldEffectGet(ctx, ctx->defence_client) == HOLD_EFFECT_UNGROUND_DESTROYED_ON_HIT)) // Air Balloon
@@ -2363,11 +2340,11 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
                 return TRUE;
             }
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_11_PROTECTION_FROM_Z_MOVE_2:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_9_PROTECTION_FROM_Z_MOVE_2:
             // TODO
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
-        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_12_DYNAMAX_MOVE_EFFECTS:
+        case MOVE_PERFORMANCE_SUBSTITUTE_STEP_10_DYNAMAX_MOVE_EFFECTS:
             // TODO
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;

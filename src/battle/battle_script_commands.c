@@ -4574,7 +4574,9 @@ BOOL btl_scr_cmd_11A_BatchUpdateHealthBar(void *bsys, struct BattleStruct *ctx)
             if (shouldFlicker) {
                 BattleController_EmitMonFlicker(bsys, i, 0);
             }
-            BattleController_EmitHealthbarUpdate(bsys, ctx, i);
+            if (CheckSubstitute(ctx, i) == FALSE) {
+                BattleController_EmitHealthbarUpdate(bsys, ctx, i);
+            }
         }
     }
 
