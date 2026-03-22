@@ -1,4 +1,4 @@
-﻿// Test: Life Orb  - User faints from chip damage
+// Test: Life Orb  - User faints from chip damage
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -115,3 +115,4 @@ const struct TestBattleScenario BattleTests[] = {
 #ifndef GET_TEST_CASE_ONLY
 };
 #endif
+
