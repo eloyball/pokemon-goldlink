@@ -1,4 +1,4 @@
-#include "../../include/battle.h"
+﻿#include "../../include/battle.h"
 #include "../../include/debug.h"
 #include "../../include/overlay.h"
 #include "../../include/pokemon.h"
@@ -416,19 +416,23 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in MOVE_PERFORMANCE_STEP_15_2_THAW_FROM_FIRE_MOVE %d\n", ctx->swoam_seq_no);
 #endif
-
-        if (ThawTarget_FromFireMove_Scald(bsys, ctx) == TRUE) {
-            return;
+        if (ctx->moveContext.isAllyHit) {
+            ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
+            if (ThawTarget_FromFireMove_Scald(bsys, ctx) == TRUE) {
+                return;
+            }
         }
 
-        if (CanGetNextDefender(bsys, ctx) == TRUE) {
-            ctx->server_seq_no = CONTROLLER_COMMAND_31;
-            return;
-        } else {
-            ctx->clientLoopForSpreadMoves = 0;
-            CanGetNextDefender(bsys, ctx);
+        for (; ctx->clientLoopForSpreadMoves < ctx->moveContext.hitFoesCount;) {
+            ctx->defence_client = ctx->moveContext.hitFoes[ctx->clientLoopForSpreadMoves];
+            ctx->clientLoopForSpreadMoves++;
+
+            if (ThawTarget_FromFireMove_Scald(bsys, ctx) == TRUE) {
+                return;
+            }
         }
 
+        ctx->clientLoopForSpreadMoves = 0;
         ctx->swoam_seq_no++;
     }
         FALLTHROUGH;
