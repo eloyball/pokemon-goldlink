@@ -1,4 +1,4 @@
-// Test: Make It Rain - One stat Drop 
+// Test: Make it Rain - Only one Stat Drop
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
