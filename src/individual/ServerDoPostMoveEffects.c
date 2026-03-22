@@ -253,7 +253,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
 
         if (ctx->moveContext.isAllyHit) {
-            int defender = ctx->defence_client;
+            int defender = BATTLER_ALLY(ctx->attack_client);
             if (MovePerformance_Step_9(bsys, ctx, &defender, 1) == TRUE) {
                 return;
             }
@@ -266,7 +266,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         debug_printf("in MOVE_PERFORMANCE_STEP_10_ADDITIONAL_EFFECTS_ALLY %d\n", ctx->swoam_seq_no);
 #endif
         if (ctx->moveContext.isAllyHit) {
-            int defender = ctx->defence_client;
+            int defender = BATTLER_ALLY(ctx->attack_client);
             if (MovePerformance_Step_10(bsys, ctx, &defender, 1) == TRUE) {
                 return;
             }
