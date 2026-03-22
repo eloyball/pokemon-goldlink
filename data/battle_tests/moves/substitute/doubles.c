@@ -1,4 +1,4 @@
-// Test: Subsitute - Ally and one Opponent
+// Test: Substitute - Hit Ally Sub, Hit Foe Sub, Foe Focus Sash
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
