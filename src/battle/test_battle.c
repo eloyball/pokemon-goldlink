@@ -119,13 +119,23 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
             character = ' ';
         }
         actualMessage[out++] = character;
+
+        switch (code) {
+        case 0x01B3:
+            debug_printf("’");
+            break;
+        case 0x0188:
+            debug_printf("é");
+            break;
+        default:
+            debug_printf("%c", character);
+            break;
+        }
     }
     actualMessage[out] = '\0';
 
-    debug_printf("%s", actualMessage);
-
     enum ExpectationType expectationType = scenario->expectations[scenario->expectationPassCount].expectationType;
-    if (expectationType != EXPECTATION_TYPE_MESSAGE 
+    if (expectationType != EXPECTATION_TYPE_MESSAGE
         && expectationType != EXPECTATION_TYPE_MESSAGE_CONTAINS
         && expectationType != EXPECTATION_TYPE_ATTACK_MESSAGE) {
         debug_printf("\n");
@@ -160,7 +170,7 @@ void LONG_CALL BattleMessage_ExpandPlaceholders(struct BattleSystem *battleSyste
     }
 
     if (messageMatch) {
-        debug_printf("✅");
+        debug_printf(" ✅");
         scenario->expectationPassCount++;
     }
     debug_printf("\n");

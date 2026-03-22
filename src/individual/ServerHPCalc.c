@@ -117,11 +117,13 @@ void ServerHPCalc(struct BattleSystem *bw, struct BattleStruct *sp)
             // debug_printf("In ServerHPCalc\n");
             struct TestBattleScenario *scenario = TestBattle_GetCurrentScenario();
             if (scenario != NULL && TestBattle_HasMoreExpectations()) {
+#ifdef DEBUG_DAMAGE_CALC
                 debug_printf("[ServerHPCalc] move=%d target=%d damage=%d status=%08lx\n",
                              sp->current_move_index,
                              sp->defence_client,
                              sp->damage * -1,
                              (unsigned long)sp->waza_status_flag);
+#endif
                 // debug_printf("Has more expectations\n")
                 if (scenario->expectations[scenario->expectationPassCount].expectationType == EXPECTATION_TYPE_HP_BAR
                     && sp->defence_client == scenario->expectations[scenario->expectationPassCount].battlerIDOrPartySlot) {
