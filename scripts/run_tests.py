@@ -57,11 +57,15 @@ def get_test_names() -> list[str]:
                     os.path.join(os.getcwd(), "data", match_group.group(1))
                 )
                 with open(test_file_path, "r") as test_file:
-                    test_case_match_group = re.match(
-                        r"// Test: (.+)", test_file.readline().strip()
-                    )
-                    if test_case_match_group:
-                        test_case_names.append(test_case_match_group.group(1))
+                    try:
+                        test_case_match_group = re.match(
+                            r"// Test: (.+)", test_file.readline().strip()
+                        )
+                        if test_case_match_group:
+                            test_case_names.append(test_case_match_group.group(1))
+                    except:
+                        print(f"Error parsing file {test_file_path}!")
+                        raise
 
     return test_case_names
 
