@@ -236,8 +236,8 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 #endif
         ctx->swoam_seq_no++;
         if (ctx->moveContext.isAllyHit) {
+            ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
             int seq_no = 0;
-
             if (Activate_Sturdy_FocusSash_FocusBand_Message(bsys, ctx, &seq_no) == TRUE) {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
                 ctx->next_server_seq_no = ctx->server_seq_no;

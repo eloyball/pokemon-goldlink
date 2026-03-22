@@ -2742,7 +2742,9 @@ BOOL BattleController_CheckTerrainBlock(struct BattleSystem *bsys UNUSED, struct
 // TODO: Implement new mechanics
 int BattlerController_CheckSubstituteBlockingStatDropsOrDecorate(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int defender) {
     int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
-    if (GetBattlerAbility(ctx, ctx->attack_client) != ABILITY_INFILTRATOR && ctx->battlemon[defender].condition2 & STATUS2_SUBSTITUTE) {
+    if (GetBattlerAbility(ctx, ctx->attack_client) != ABILITY_INFILTRATOR 
+        && ctx->battlemon[defender].condition2 & STATUS2_SUBSTITUTE
+        && !IsMoveSoundBased(ctx->current_move_index)) {
         if (ctx->attack_client != defender) {
             switch (moveEffect) {
                 case MOVE_EFFECT_ATK_DOWN:
@@ -3161,7 +3163,8 @@ BOOL BattleController_CheckMoveAccuracy(struct BattleSystem *bsys, struct Battle
 
 BOOL BattleController_CheckSubstituteBlockingOtherEffects(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx) {
     int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
-    if (ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE) {
+    if (ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE
+        && !IsMoveSoundBased(ctx->current_move_index)) {
         if (ctx->attack_client != ctx->defence_client) {
             switch (moveEffect) {
                 // TODO: Handle Electrify, Flower Shield, Purify, Tar Shot, Topsy-Turvy
