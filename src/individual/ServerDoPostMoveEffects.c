@@ -1,4 +1,4 @@
-﻿#include "../../include/battle.h"
+#include "../../include/battle.h"
 #include "../../include/debug.h"
 #include "../../include/overlay.h"
 #include "../../include/pokemon.h"
@@ -1453,8 +1453,40 @@ int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleS
         return FALSE;
     }
 
-    // TODO Magician in speed order
+   
     switch (GetBattlerAbility(ctx, ctx->attack_client)) {
+    case ABILITY_MAGICIAN:
+        // https://discord.com/channels/419213663107416084/1368163973366681712/1484346665090678854
+        if (ctx->battlemon[ctx->attack_client].hp
+            && ctx->battlemon[ctx->attack_client].item == ITEM_NONE
+            && ctx->moveTbl[ctx->current_move_index].power != 0
+            && ctx->gemBoostingMove == FALSE)
+        {
+            for (; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys); ) {
+                int client_no = ctx->turnOrder[ctx->swoak_work];
+                ctx->swoak_work++;
+
+                if (client_no == ctx->attack_client
+                    || (CheckSubstitute(ctx, client_no) == TRUE)
+                    || (ctx->battlemon[ctx->attack_client].item == ITEM_NONE)
+                    || ((ctx->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) != 0)
+                    || ((ctx->server_status_flag & SERVER_STATUS_FLAG_x20) != 0)) {
+                    continue;
+                }
+
+                if ((ctx->oneSelfFlag[client_no].physical_damage 
+                        || ctx->oneSelfFlag[client_no].special_damage)
+                    && CanTrickHeldItem(ctx, ctx->attack_client, client_no)) {
+                    ctx->addeffect_type = ADD_EFFECT_ABILITY;
+                    ctx->defence_client = client_no;
+                    LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_PICKPOCKET_ATK);
+                    ctx->next_server_seq_no = ctx->server_seq_no;
+                    ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                    return TRUE;
+                }
+            }
+        }
+        break;
     case ABILITY_BEAST_BOOST:
         if (ctx->oneTurnFlag[ctx->attack_client].numberOfKOs) {
             u8 stat = BeastBoostGreatestStatHelper(ctx, ctx->attack_client);
@@ -1541,13 +1573,12 @@ int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleS
             }
         }
         break;
-        // case ABILITY_MAGICIAN:
-        //https://discord.com/channels/419213663107416084/1368163973366681712/1484346665090678854
-        // ctx->gemBoostingMove == FALSE
     default:
         ctx->oneTurnFlag[ctx->attack_client].numberOfKOs = 0;
         break;
     }
+
+    ctx->swoak_work = 0;
     return FALSE;
 }
 
@@ -2290,7 +2321,6 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
             debug_printf("in MOVE_PERFORMANCE_SUBSTITUTE_STEP_3_SUBSTITUTE_FADES %d\n", ctx->movePerformanceSubstep);
 #endif
-            // TODO
             ctx->movePerformanceSubstep++;
             if ((ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE) == 0) {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_SUBSTITUTE_FADES);
