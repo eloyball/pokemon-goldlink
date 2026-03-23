@@ -1,4 +1,4 @@
-// Test: Substitute - Block Status Move
+// Test: Substitute - Substitute takes damage
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
