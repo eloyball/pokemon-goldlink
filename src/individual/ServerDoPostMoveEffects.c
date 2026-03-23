@@ -46,7 +46,7 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
 int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleStruct *ctx);
 
-int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleStruct *ctx);
+int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys, struct BattleStruct *ctx);
 u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleStruct *ctx, int battlerId, int act_flag);
 
 
@@ -1447,7 +1447,7 @@ int LONG_CALL Activate_ShellBell_LifeOrb(void *bw UNUSED, struct BattleStruct *s
     return FALSE;
 }
 
-int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleStruct *ctx)
+int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys, struct BattleStruct *ctx)
 {
     if (ctx->attack_client == BATTLER_NONE) {
         return FALSE;
@@ -1462,15 +1462,17 @@ int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys UNUSED, struct BattleS
             && ctx->moveTbl[ctx->current_move_index].power != 0
             && ctx->gemBoostingMove == FALSE)
         {
-            for (; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys); ) {
-                int client_no = ctx->turnOrder[ctx->swoak_work];
-                ctx->swoak_work++;
+            for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++) {
+                int client_no = ctx->turnOrder[battler];
 
                 if (client_no == ctx->attack_client
+                    || (ctx->battlemon[client_no].ability == ABILITY_STICKY_HOLD
+                        && ctx->battlemon[client_no].hp)
                     || (CheckSubstitute(ctx, client_no) == TRUE)
-                    || (ctx->battlemon[ctx->attack_client].item == ITEM_NONE)
+                    || (ctx->battlemon[client_no].item == ITEM_NONE)
                     || ((ctx->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) != 0)
                     || ((ctx->server_status_flag & SERVER_STATUS_FLAG_x20) != 0)) {
+
                     continue;
                 }
 
