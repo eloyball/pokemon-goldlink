@@ -116,7 +116,9 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
         ctx->swoam_seq_no++;
         if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
-            if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
+            if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)
+                && (ctx->moveContext.isAllyHit
+                || ctx->moveContext.hitFoesCount)) {
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_UPDATE_HP);
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
