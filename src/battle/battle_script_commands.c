@@ -4558,6 +4558,20 @@ BOOL btl_scr_cmd_113_HandleDoubleShock(void* bsys UNUSED, struct BattleStruct* c
     return FALSE;
 }
 
+void EmitHealthBarUpdate(void* bsys, struct BattleStruct* ctx, int client_no, BOOL shouldFlicker)
+{
+    if (ctx->damageForSpreadMoves[client_no])
+    {
+        ctx->battlerIdTemp = client_no;
+        ctx->hp_calc_work = ctx->damageForSpreadMoves[client_no];
+        if (shouldFlicker)
+        {
+            BattleController_EmitMonFlicker(bsys, client_no, 0);
+        }
+        BattleController_EmitHealthbarUpdate(bsys, ctx, client_no);
+    }
+}
+
 /**
  * @brief Triggers HP bar animations for all targets hit by spread move simultaneously
  */
@@ -4567,20 +4581,47 @@ BOOL btl_scr_cmd_11A_BatchUpdateHealthBar(void *bsys, struct BattleStruct *ctx)
 
     BOOL shouldFlicker = !(ctx->server_status_flag & BATTLE_STATUS_NO_BLINK);
 
-    for (int i = 0; i < CLIENT_MAX; i++) {
-        if (ctx->damageForSpreadMoves[i]) {
-            ctx->battlerIdTemp = i;
-            ctx->hp_calc_work = ctx->damageForSpreadMoves[i];
-            if (shouldFlicker) {
-                BattleController_EmitMonFlicker(bsys, i, 0);
-            }
-            if (CheckSubstitute(ctx, i) == FALSE) {
-                BattleController_EmitHealthbarUpdate(bsys, ctx, i);
-            }
-        }
+    if (ctx->moveContext.isAllyHit)
+    {
+        int client_no = BATTLER_ALLY(ctx->attack_client);
+        EmitHealthBarUpdate(bsys, ctx, client_no, shouldFlicker);
+    }
+
+    for (int i = 0; i < ctx->moveContext.hitFoesCount; i++)
+    {
+        int client_no = ctx->moveContext.hitFoes[i];
+        EmitHealthBarUpdate(bsys, ctx, client_no, shouldFlicker);
     }
 
     return FALSE;
+}
+
+void UpdateHealthBarValue(void *bsys, struct BattleStruct *ctx, int client_no)
+{
+    if (ctx->damageForSpreadMoves[client_no]) {
+        ctx->battlerIdTemp = client_no;
+        ctx->hp_calc_work = ctx->damageForSpreadMoves[client_no];
+
+        // this mirrors UpdateHealthbarValue
+        if ((ctx->battlemon[client_no].hp + ctx->hp_calc_work) <= 0) {
+            ctx->damage = ctx->battlemon[client_no].hp * -1;
+        } else {
+            ctx->damage = ctx->hp_calc_work;
+        }
+
+        if (ctx->damage < 0) {
+            ctx->total_damage[client_no] += (-1 * ctx->damage);
+        }
+
+        ctx->battlemon[client_no].hp += ctx->hp_calc_work;
+
+        if (ctx->battlemon[client_no].hp < 0) {
+            ctx->battlemon[client_no].hp = 0;
+        } else if (ctx->battlemon[client_no].hp > ctx->battlemon[client_no].maxhp) {
+            ctx->battlemon[client_no].hp = ctx->battlemon[client_no].maxhp;
+        }
+        CopyBattleMonToPartyMon(bsys, ctx, client_no);
+    }
 }
 
 /**
@@ -4590,31 +4631,15 @@ BOOL btl_scr_cmd_11B_BatchUpdateHealthBarValue(void *bsys, struct BattleStruct *
 {
     IncrementBattleScriptPtr(ctx, 1);
 
-    for (int i = 0; i < CLIENT_MAX; i++) {
-        if (ctx->damageForSpreadMoves[i]) {
-            ctx->battlerIdTemp = i;
-            ctx->hp_calc_work = ctx->damageForSpreadMoves[i];
+    if (ctx->moveContext.isAllyHit) {
+        int client_no = BATTLER_ALLY(ctx->attack_client);
+        UpdateHealthBarValue(bsys, ctx, client_no);
+    }
 
-            // this mirrors UpdateHealthbarValue
-            if ((ctx->battlemon[i].hp + ctx->hp_calc_work) <= 0) {
-                ctx->damage = ctx->battlemon[i].hp * -1;
-            } else {
-                ctx->damage = ctx->hp_calc_work;
-            }
-
-            if (ctx->damage < 0) {
-                ctx->total_damage[i] += (-1 * ctx->damage);
-            }
-
-            ctx->battlemon[i].hp += ctx->hp_calc_work;
-
-            if (ctx->battlemon[i].hp < 0) {
-                ctx->battlemon[i].hp = 0;
-            } else if (ctx->battlemon[i].hp > ctx->battlemon[i].maxhp) {
-                ctx->battlemon[i].hp = ctx->battlemon[i].maxhp;
-            }
-            CopyBattleMonToPartyMon(bsys, ctx, i);
-        }
+    for (int i = 0; i < ctx->moveContext.hitFoesCount; i++)
+    {
+        int client_no = ctx->moveContext.hitFoes[i];
+        UpdateHealthBarValue(bsys, ctx, client_no);
     }
 
     return FALSE;
