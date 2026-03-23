@@ -500,8 +500,9 @@
 #define SUB_SEQ_BATCH_EFFECTIVENESS                   (490)
 #define SUB_SEQ_BATCH_FOLLOWUP                        (491)
 #define SUB_SEQ_SUBSTITUTE_FADES                      (492)
+#define SUB_SEQ_HANDLE_WIMP_OUT                       (493)
 
-#define MAX_BASE_SUBSCRIPT_NUM 492
+#define MAX_BASE_SUBSCRIPT_NUM 493
 
 // define your custom subscripts below like this
 // #define MOVE_SUBSCRIPT_CUSTOM_1 (MAX_BASE_SUBSCRIPT_NUM + 1)

@@ -48,7 +48,7 @@ int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleSt
 
 int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys, struct BattleStruct *ctx);
 u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleStruct *ctx, int battlerId, int act_flag);
-
+int LONG_CALL Activate_WimpOut_EmergencyExit(void *bsys, struct BattleStruct *ctx);
 
 
 int LONG_CALL MovePerformance_Step_9(void *bsys, struct BattleStruct *ctx, int *defenders, int defenderCount);
@@ -507,6 +507,9 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
     case MOVE_PERFORMANCE_STEP_22_0_EMERGENCY_EXIT_WIMP_OUT: //speed order
         // TODO
         ctx->swoam_seq_no++;
+        if (Activate_WimpOut_EmergencyExit(bsys, ctx) == TRUE) {
+            return;
+        }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_23_0_U_TURN_VOLT_SWITCH:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
@@ -2012,11 +2015,11 @@ int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx)
         break;
     case MOVE_EFFECT_SHED_TAIL:
     case MOVE_EFFECT_PARTING_SHOT:
-        debug_printf("PartingShot attacker %d, defender %d\n", ctx->attack_client, ctx->defence_client);
         if (ctx->attack_client != BATTLER_NONE
             && ctx->battlemon[ctx->attack_client].hp > 0
             && (ctx->currentMoveSwitchStatus < CURRENT_MOVE_SWITCH_PENDING)) {
             ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
+            ctx->battlerIdTemp = ctx->attack_client;
             ctx->state_client = ctx->attack_client;
             LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_PARTING_SHOT);
             ctx->next_server_seq_no = ctx->server_seq_no;
@@ -2449,5 +2452,47 @@ int LONG_CALL Activate_SecondaryEffects(void *bsys, struct BattleStruct *ctx)
         ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
         return TRUE;
     }
+    return FALSE;
+}
+
+
+
+int LONG_CALL Activate_WimpOut_EmergencyExit(void *bsys, struct BattleStruct *ctx)
+{
+    for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++)
+    {
+        int client_no = ctx->turnOrder[battler];
+        if ((ctx->battlemon[client_no].hp == 0)
+            || (CheckSubstitute(ctx, client_no) == TRUE)) {
+            continue;
+        }
+
+        if (MoldBreakerAbilityCheck(ctx, ctx->attack_client, client_no, ABILITY_WIMP_OUT)
+            || MoldBreakerAbilityCheck(ctx, ctx->attack_client, client_no, ABILITY_EMERGENCY_EXIT))
+        {
+            if ((ctx->currentMoveSwitchStatus < CURRENT_MOVE_SWITCH_PENDING)
+                && ctx->battlemon[client_no].hp <= (s32)(ctx->battlemon[client_no].maxhp / 2)
+                && ((ctx->oneSelfFlag[client_no].physical_damage) || (ctx->oneSelfFlag[client_no].special_damage))
+                // EE doesn't activate if the Pokémon gets attacked by a sheer force boosted move
+                && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
+                && (ctx->battlemon[client_no].hp <= (s32)(ctx->battlemon[client_no].maxhp / 2))
+                && (
+                    // checks if the pokémon has gone below half HP from the current damage instance
+                    // physical_damage and special_damage contain the relevant damage value that was just dealt, but the value is negative
+                    ((ctx->battlemon[client_no].hp - (ctx->oneSelfFlag[client_no].physical_damage)) > (s32)ctx->battlemon[client_no].maxhp / 2)
+                    || ((ctx->battlemon[client_no].hp - (ctx->oneSelfFlag[client_no].special_damage)) > (s32)ctx->battlemon[client_no].maxhp / 2)))
+            {
+                ctx->addeffect_type = ADD_EFFECT_ABILITY;
+                ctx->state_client = client_no;
+                ctx->battlerIdTemp = client_no;
+
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_WIMP_OUT);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
+        } 
+    }
+
     return FALSE;
 }
