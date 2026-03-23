@@ -1,4 +1,4 @@
-﻿// Test: Rock Head - no recoil
+// Test: Rock Head - no recoil
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
