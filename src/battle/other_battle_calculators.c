@@ -2878,7 +2878,8 @@ int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct 
                     if (ctx->field_condition & WEATHER_SANDSTORM_ANY) {
                         type = TYPE_ROCK;
                     }
-                    if (ctx->field_condition & WEATHER_SUNNY_ANY) {
+                    if ((ctx->field_condition & WEATHER_SUNNY_ANY) 
+                     || (ctx->battlemon[battlerId].ability == ABILITY_MEGA_SOL)) {
                         type = TYPE_FIRE;
                     }
                     if (ctx->field_condition & WEATHER_HAIL_ANY) {

@@ -325,7 +325,8 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
     case MOVE_WEATHER_BALL:
         if (noCloudNineAndAirLock) {
             if ((field_cond & FIELD_CONDITION_WEATHER)
-            && !(field_cond & (WEATHER_STRONG_WINDS | WEATHER_SNOW_ANY))) {
+            && !(field_cond & (WEATHER_STRONG_WINDS | WEATHER_SNOW_ANY))
+            || (AttackingMon.ability == ABILITY_MEGA_SOL)) {
                 movepower *= 2;
             }
         }
@@ -544,7 +545,8 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
     if (noCloudNineAndAirLock) {
         if ((field_cond & (FIELD_STATUS_FOG | WEATHER_HAIL_ANY | WEATHER_SANDSTORM_ANY | WEATHER_RAIN_ANY | WEATHER_SNOW_ANY))
-        && (moveno == MOVE_SOLAR_BEAM || moveno == MOVE_SOLAR_BLADE)) {
+        && (moveno == MOVE_SOLAR_BEAM || moveno == MOVE_SOLAR_BLADE)
+        && (AttackingMon.ability != ABILITY_MEGA_SOL)) {
             basePowerModifier = QMul_RoundUp(basePowerModifier, UQ412__0_5);
         }
     }
@@ -677,6 +679,12 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
                 // handle Refrigerate - 20% boost if a Normal type move was changed to an Ice type move. Does not boost Ice type moves themselves
                 if (AttackingMon.ability == ABILITY_REFRIGERATE && movetype == TYPE_ICE && originalMoveType == TYPE_NORMAL) {
+                    basePowerModifier = QMul_RoundUp(basePowerModifier, UQ412__1_2);
+                    continue;
+                }
+
+                // handle Dragonize - 20% boost if a Normal type move was changed to a Fairy type move. Does not boost Fairy type moves themselves
+                if (AttackingMon.ability == ABILITY_DRAGONIZE && movetype == TYPE_DRAGON && originalMoveType == TYPE_NORMAL) {
                     basePowerModifier = QMul_RoundUp(basePowerModifier, UQ412__1_2);
                     continue;
                 }

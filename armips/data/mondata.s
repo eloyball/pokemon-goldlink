@@ -28334,7 +28334,7 @@ mondata SPECIES_MEGA_MEGANIUM, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_MONSTER, EGG_GROUP_GRASS
-    abilities ABILITY_OVERGROW, ABILITY_OVERGROW
+    abilities ABILITY_MEGA_SOL, ABILITY_MEGA_SOL
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
@@ -28350,7 +28350,7 @@ mondata SPECIES_MEGA_FERALIGATR, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_MONSTER, EGG_GROUP_WATER_1
-    abilities ABILITY_TORRENT, ABILITY_TORRENT
+    abilities ABILITY_DRAGONIZE, ABILITY_DRAGONIZE
     runchance 0
     colorflip BODY_COLOR_BLUE, 0
 
@@ -28510,7 +28510,7 @@ mondata SPECIES_MEGA_EMBOAR, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_BLAZE, ABILITY_BLAZE
+    abilities ABILITY_MOLD_BREAKER, ABILITY_NONE
     runchance 0
     colorflip BODY_COLOR_RED, 0
 
@@ -28622,7 +28622,7 @@ mondata SPECIES_MEGA_CHESNAUGHT, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_OVERGROW, ABILITY_OVERGROW
+    abilities ABILITY_BULLETPROOF, ABILITY_BULLETPROOF
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
@@ -28638,7 +28638,7 @@ mondata SPECIES_MEGA_DELPHOX, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_BLAZE, ABILITY_BLAZE
+    abilities ABILITY_LEVITATE, ABILITY_LEVITATE
     runchance 0
     colorflip BODY_COLOR_RED, 0
 
@@ -28654,7 +28654,7 @@ mondata SPECIES_MEGA_GRENINJA, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_WATER_1, EGG_GROUP_WATER_1
-    abilities ABILITY_TORRENT, ABILITY_TORRENT
+    abilities ABILITY_PROTEAN, ABILITY_PROTEAN
     runchance 0
     colorflip BODY_COLOR_BLUE, 0
 
