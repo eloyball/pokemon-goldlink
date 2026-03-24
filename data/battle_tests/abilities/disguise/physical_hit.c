@@ -99,7 +99,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Mimikyu's disguise was busted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor was damaged by the recoil!" },
         },
-        .knownFailing = TRUE;
+        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };
