@@ -76,7 +76,7 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .enemyScript = { {
                              { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
-                             { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
+                             { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
@@ -97,8 +97,9 @@ const struct TestBattleScenario BattleTests[] = {
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor flew up high!" },
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 102, 103, 105, 106, 108, 108, 109, 111, 112, 114, 114, 115, 117, 118, 120, 121 } },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor restored HP using its Sitrus Berry!" },        
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor restored its health using its Sitrus Berry!" },        
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 126, 128, 128, 132, 132, 134, 134, 138, 138, 140, 140, 144, 144, 146, 146, 150 } },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor is hurt by the opposing Conkeldurr's Rocky Helmet!" },
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 102, 103, 105, 106, 108, 108, 109, 111, 112, 114, 114, 115, 117, 118, 120, 121 } },
         },

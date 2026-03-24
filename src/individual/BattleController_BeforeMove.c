@@ -193,7 +193,7 @@ BOOL LONG_CALL AbilityNoTransform(int ability);
  */
 void __attribute__((section (".init"))) BattleController_BeforeMove(struct BattleSystem *bsys, struct BattleStruct *ctx) {
 #ifdef DEBUG_BEFORE_MOVE_LOGIC
-    debug_printf("In BattleController_BeforeMove\n");
+    debug_printf("In BattleController_BeforeMove %d\n", ctx->current_move_index);
 #endif
 
     CopyBattleMonToPartyMon(bsys, ctx, ctx->attack_client);
@@ -2242,15 +2242,55 @@ BOOL BattleController_CheckStolenBySnatch(struct BattleSystem *bw UNUSED, struct
 }
 
 BOOL BattleController_CheckSemiInvulnerability(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int defender) {
-    if (!(ctx->waza_status_flag & MOVE_STATUS_FLAG_LOCK_ON)
-    && (GetBattlerAbility(ctx, ctx->attack_client) != ABILITY_NO_GUARD)
-    && ctx->moveTbl[ctx->current_move_index].target != RANGE_ADJACENT_OPPONENTS
-    && (
+
+    BOOL isMonInSemiInvulnerability = FALSE;
+    if (
         (!(ctx->server_status_flag & BATTLE_STATUS_HIT_FLY) && ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_FLYING_IN_AIR)
         || (!(ctx->server_status_flag & BATTLE_STATUS_SHADOW_FORCE) && ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_SHADOW_FORCE)
         || (!(ctx->server_status_flag & BATTLE_STATUS_HIT_DIG) && ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_DIGGING)
-        || (!(ctx->server_status_flag & BATTLE_STATUS_HIT_DIVE) && ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_IS_DIVING)
-        )) {
+        || (!(ctx->server_status_flag & BATTLE_STATUS_HIT_DIVE) && ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_IS_DIVING))
+    {
+        isMonInSemiInvulnerability = TRUE;
+    }
+
+    BOOL moveCanHit = FALSE;
+    if (isMonInSemiInvulnerability)
+    {
+        switch (ctx->current_move_index)
+        {
+        case MOVE_SURF:
+        case MOVE_WHIRLPOOL:
+            if (ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_IS_DIVING) {
+                moveCanHit = TRUE;
+            }
+            break;
+        case MOVE_EARTHQUAKE:
+        case MOVE_FISSURE:
+        case MOVE_MAGNITUDE:
+            if (ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_DIGGING) {
+                moveCanHit = TRUE;
+            }
+            break;
+        case MOVE_SKY_UPPERCUT:
+        case MOVE_GUST:
+        case MOVE_TWISTER:
+        case MOVE_HURRICANE:
+        case MOVE_THUNDER:
+        case MOVE_SMACK_DOWN:
+        case MOVE_THOUSAND_ARROWS:
+            if (ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_FLYING_IN_AIR) {
+                moveCanHit = TRUE;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    if (!(ctx->waza_status_flag & MOVE_STATUS_FLAG_LOCK_ON)
+    && (GetBattlerAbility(ctx, ctx->attack_client) != ABILITY_NO_GUARD)
+    && ctx->moveTbl[ctx->current_move_index].target != RANGE_ADJACENT_OPPONENTS
+    && (moveCanHit == FALSE)) {
         BattleController_ResetGeneralMoveFailureFlags(ctx, ctx->attack_client, TRUE);
         ctx->moveStatusFlagForSpreadMoves[defender] = WAZA_STATUS_FLAG_KIE_NOHIT;
         LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_ATTACK_MISSED);
