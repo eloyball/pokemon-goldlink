@@ -98,7 +98,6 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arbok's Toxic Spikes was bounced back by Magic Bounce!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "on the ground all around your team!" },
         },
-        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };

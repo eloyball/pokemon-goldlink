@@ -120,7 +120,6 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Incineroar's Parting Shot was bounced back by Magic Bounce!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "The opposing Espeon went back to" },
         },
-        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };
