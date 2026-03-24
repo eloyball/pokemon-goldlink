@@ -1,4 +1,4 @@
-// Test: Ice Face - block damage, transform
+// Test: Phantom Force - Semi Invun, hit through Protect
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
