@@ -97,8 +97,8 @@ const struct TestBattleScenario BattleTests[] = {
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arbok's Glare was bounced back by Magic Bounce!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arbok is paralyzed, so it may be unable to move!" },
-            .knownFailing = TRUE,
         },
+        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };
