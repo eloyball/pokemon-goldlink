@@ -1974,7 +1974,7 @@ int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx)
         break;
     }
 
-    if (seq_no != 0 || ctx->store_damage[ctx->attack_client] == 0) {
+    if (seq_no != 0 && ctx->store_damage[ctx->attack_client] != 0) {
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in ActivateRecoilDamage (%d)\n", ctx->store_damage[ctx->attack_client]);
 #endif
