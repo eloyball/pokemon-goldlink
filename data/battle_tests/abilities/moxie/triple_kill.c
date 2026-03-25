@@ -82,7 +82,18 @@ const struct TestBattleScenario BattleTests[] = {
                 .condition2 = 0,
                 .moveEffectFlags = 0,
             },
-            { .species = SPECIES_NONE },
+            {
+                .species = SPECIES_TEPIG,
+                .level = 20,
+                .form = 0,
+                .ability = ABILITY_BLAZE,
+                .item = ITEM_NONE,
+                .moves = { MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+                .hp = FULL_HP,
+                .status = 0,
+                .condition2 = 0,
+                .moveEffectFlags = 0,
+            },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE } },
         .playerScript = { {
@@ -126,7 +137,7 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Delphox used Incinerate!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados used Earthquake!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander fainted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cyndaquil fainted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Torchic fainted!" },
