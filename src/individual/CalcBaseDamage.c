@@ -79,29 +79,6 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
     // https://web.archive.org/web/20241226231016/https://www.trainertower.com/dawoblefets-damage-dissertation/
 
-    if ((MoldBreakerAbilityCheckInternal(attacker, defender, AttackingMon.ability, DefendingMon.ability, moveno, movesplit, ABILITY_DISGUISE) == TRUE)
-    && (DefendingMon.species == SPECIES_MIMIKYU)
-    // Mimikyu or Mimikyu-Large
-    && (DefendingMon.form == 0 || DefendingMon.form == 2)
-    // Not transformed
-    && !(DefendingMon.condition2 & STATUS2_TRANSFORMED)) {
-        sp->waza_status_flag &= ~MOVE_STATUS_FLAG_SUPER_EFFECTIVE;
-        sp->waza_status_flag &= ~MOVE_STATUS_FLAG_NOT_VERY_EFFECTIVE;
-        return 0;
-    }
-
-
-    if ((MoldBreakerAbilityCheckInternal(attacker, defender, AttackingMon.ability, DefendingMon.ability, moveno, movesplit, ABILITY_ICE_FACE) == TRUE)
-    && (DefendingMon.species == SPECIES_EISCUE)
-    && (DefendingMon.form == 0)
-    // Not transformed
-    && !(DefendingMon.condition2 & STATUS2_TRANSFORMED)
-    && (movesplit == SPLIT_PHYSICAL)) {
-        sp->waza_status_flag &= ~MOVE_STATUS_FLAG_SUPER_EFFECTIVE;
-        sp->waza_status_flag &= ~MOVE_STATUS_FLAG_NOT_VERY_EFFECTIVE;
-        return 0;
-    }
-
 
     //=====Step 1. Custom BP=====
 

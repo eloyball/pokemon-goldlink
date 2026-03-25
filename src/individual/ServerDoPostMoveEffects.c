@@ -17,15 +17,15 @@
 
 void UNUSED ServerDoPostMoveEffectsInternal(void *bsys, struct BattleStruct *ctx);
 int LONG_CALL ActivateDefenderItems4(void *bsys, struct BattleStruct *sp);
-int LONG_CALL ShowDamageReductionBerryMessage(void *bsys, struct BattleStruct *sp);
+int LONG_CALL ShowDamageReductionBerryMessage(void *bsys UNUSED, struct BattleStruct *sp);
 
-int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct BattleStruct *sp, int *seq_no);
+int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys UNUSED, struct BattleStruct *sp, int *seq_no);
 int LONG_CALL Activate_Clearsmog(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL CottonDownCheck(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_FlameBurstHit(void *bsys UNUSED, struct BattleStruct *ctx);
-int LONG_CALL Activate_Rowap_Jaboca(void *bw, struct BattleStruct *sp);
-int LONG_CALL Activate_Incinerate(void *bw, struct BattleStruct *sp);
-void LONG_CALL Activate_KO_Count(void *bw, struct BattleStruct *sp);
+int LONG_CALL Activate_Rowap_Jaboca(void *bw UNUSED, struct BattleStruct *sp);
+int LONG_CALL Activate_Incinerate(void *bw UNUSED, struct BattleStruct *sp);
+void LONG_CALL Activate_KO_Count(void *bw UNUSED, struct BattleStruct *sp);
 int LONG_CALL ThawTarget_FromFireMove_Scald(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_ThroatSpray_BlunderPolicy(void *bsys, struct BattleStruct *ctx);
 int LONG_CALL Activate_RampageConfusion(void *bsys UNUSED, struct BattleStruct *ctx);
@@ -123,7 +123,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 return;
-            } else if (CheckSubstitute(ctx, ctx->defence_client) == FALSE){
+            } else if (ctx->damage != 0 && CheckSubstitute(ctx, ctx->defence_client) == FALSE){
                 ctx->battlerIdTemp = ctx->defence_client;
                 LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HP_CHANGE);
                 ctx->next_server_seq_no = ctx->server_seq_no;
@@ -379,17 +379,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         }
         return;
     }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_13_2_MULTIHIT_STATUS_MESSAGE:
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_13_2_MULTIHIT_STATUS_MESSAGE %d\n", ctx->swoam_type);
-#endif
-        ctx->swoam_seq_no++;
-        if (ctx->swoam_type != SWOAM_NORMAL) {
-            if (ServerWazaStatusMessage(bsys, ctx) == TRUE) {
-                return;
-            }
-        }
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_14_0_FRIENDSHIP_MESSAGE:
         // TODO
@@ -815,7 +804,7 @@ int LONG_CALL ActivateDefenderItems4(void *bsys, struct BattleStruct *ctx)
     return FALSE;
 }
 
-int LONG_CALL ShowDamageReductionBerryMessage(void *bsys, struct BattleStruct *sp)
+int LONG_CALL ShowDamageReductionBerryMessage(void *bsys UNUSED, struct BattleStruct *sp)
 {
     {
         if ((GetMoveSplit(sp, sp->current_move_index) != SPLIT_STATUS))
@@ -832,7 +821,7 @@ int LONG_CALL ShowDamageReductionBerryMessage(void *bsys, struct BattleStruct *s
 }
 
 
-int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys, struct BattleStruct *sp, int *seq_no)
+int LONG_CALL Activate_Sturdy_FocusSash_FocusBand_Message(void *bsys UNUSED, struct BattleStruct *sp, int *seq_no)
 {
     int battler = sp->defence_client;
     int itemHoldEffect = HeldItemHoldEffectGet(sp, battler);
@@ -963,7 +952,7 @@ int LONG_CALL Activate_FlameBurstHit(void *bsys UNUSED, struct BattleStruct *ctx
     return FALSE;
 }
 
-int LONG_CALL Activate_Rowap_Jaboca(void *bsys, struct BattleStruct *ctx)
+int LONG_CALL Activate_Rowap_Jaboca(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     {
         int client_no = ctx->defence_client;
@@ -1015,7 +1004,7 @@ int LONG_CALL Activate_Rowap_Jaboca(void *bsys, struct BattleStruct *ctx)
     return FALSE;
 }
 
-int LONG_CALL Activate_Incinerate(void *bsys, struct BattleStruct *ctx)
+int LONG_CALL Activate_Incinerate(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     if (ctx->current_move_index != MOVE_INCINERATE
         || (CheckSubstitute(ctx, ctx->defence_client) == TRUE)
@@ -1985,7 +1974,7 @@ int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx)
         break;
     }
 
-    if (seq_no != 0) {
+    if (seq_no != 0 || ctx->store_damage[ctx->attack_client] == 0) {
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
         debug_printf("in ActivateRecoilDamage (%d)\n", ctx->store_damage[ctx->attack_client]);
 #endif
@@ -2056,7 +2045,7 @@ int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx)
     return FALSE;
 }
 
-void LONG_CALL Activate_KO_Count(void *bsys, struct BattleStruct *ctx)
+void LONG_CALL Activate_KO_Count(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     if (ctx->attack_client == BATTLER_NONE || (ctx->battlemon[ctx->attack_client].hp == 0)) {
         return;
