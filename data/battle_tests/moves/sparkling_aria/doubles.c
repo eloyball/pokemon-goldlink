@@ -125,8 +125,8 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_SECOND, .expectationValue.hpTaken = { 43, 44, 45, 45, 45, 46, 46, 47, 48, 48, 48, 49, 49, 50, 51, 51 } },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective on the opposing Donphan!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Donphan endured the hit!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Donphan’s burn was healed!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Blastoise’s burn was healed!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Donphan's burn was healed!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Blastoise's burn was healed!" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY

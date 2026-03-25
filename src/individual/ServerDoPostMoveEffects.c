@@ -42,7 +42,8 @@ int LONG_CALL Activate_SecondaryEffects(void *bsys, struct BattleStruct *ctx);
 int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx);
 
 int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx);
-int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ctx);
+int LONG_CALL Activate_AdditionalMoveEffects(void *bsys UNUSED, struct BattleStruct *ctx);
+int LONG_CALL Activate_SparklingAria(void *bsys, struct BattleStruct *ctx);
 int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleStruct *ctx);
 
@@ -404,9 +405,18 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             return;
         }
         FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_15_2_THAW_FROM_FIRE_MOVE: {
+    case MOVE_PERFORMANCE_STEP_15_2_SPARKLING_ARIA:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_15_2_THAW_FROM_FIRE_MOVE %d\n", ctx->swoam_seq_no);
+        debug_printf("in MOVE_PERFORMANCE_STEP_15_2_SPARKLING_ARIA %d\n", ctx->swoam_seq_no);
+#endif
+        if (Activate_SparklingAria(bsys, ctx) == TRUE) {
+            return;
+        }
+        ctx -> swoam_seq_no++;
+        FALLTHROUGH;
+    case MOVE_PERFORMANCE_STEP_15_3_THAW_FROM_FIRE_MOVE: {
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
+        debug_printf("in MOVE_PERFORMANCE_STEP_15_3_THAW_FROM_FIRE_MOVE %d\n", ctx->swoam_seq_no);
 #endif
         if (ctx->moveContext.isAllyHit) {
             ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
@@ -1018,7 +1028,7 @@ int LONG_CALL Activate_Incinerate(void *bsys UNUSED, struct BattleStruct *ctx)
     return TRUE;
 }
 
-int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ctx)
+int LONG_CALL Activate_AdditionalMoveEffects(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
 
@@ -1204,15 +1214,25 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
             return TRUE;
         }
         break;
+    default:
+        break;
+    }
+
+    return FALSE;
+}
+
+
+int LONG_CALL Activate_SparklingAria(void *bsys, struct BattleStruct *ctx)
+{
+    switch (ctx->current_move_index) {
     case MOVE_SPARKLING_ARIA:
         if (ctx->battlemon[ctx->attack_client].sheer_force_flag == 0) {
-            int i;
             int numberOfClientsHitBySparklingAria = 0;
             int client_no = 0; // initialize
             int client_set_max = BattleWorkClientSetMaxGet(bsys);
 
             // Count how many mons were hit by Sparkling Aria
-            for (i = 0; i < client_set_max; i++) {
+            for (int i = 0; i < client_set_max; i++) {
                 client_no = ctx->turnOrder[i];
                 if (ctx->oneSelfFlag[client_no].special_damager == ctx->attack_client) {
                     numberOfClientsHitBySparklingAria++;
@@ -1220,7 +1240,7 @@ int LONG_CALL Activate_AdditionalMoveEffects(void *bsys, struct BattleStruct *ct
             }
 
             // Heal Burn loop
-            for (i = 0; i < client_set_max; i++) {
+            for (int i = 0; i < client_set_max; i++) {
                 client_no = ctx->turnOrder[i];
                 if ((ctx->oneSelfFlag[client_no].special_damager == ctx->attack_client)
                     && (ctx->battlemon[client_no].condition & STATUS_BURN)
