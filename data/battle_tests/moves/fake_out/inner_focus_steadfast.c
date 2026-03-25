@@ -119,9 +119,10 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Golbat won't flinch because of its Inner Focus!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Lucario flinched and couldn't move!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Golbat used Splash!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Lucario's Steadfast raised its Speed!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Golbat used Splash!" },
         },
         .knownFailing = TRUE,
     },
