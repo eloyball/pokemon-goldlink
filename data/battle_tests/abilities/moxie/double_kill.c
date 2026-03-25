@@ -1,4 +1,4 @@
-// Test: Moxie - Triple Kill
+// Test: Moxie - Double Kill
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -63,7 +63,7 @@ const struct TestBattleScenario BattleTests[] = {
                 .level = 20,
                 .form = 0,
                 .ability = ABILITY_BLAZE,
-                .item = ITEM_NONE,
+                .item = ITEM_FOCUS_SASH,
                 .moves = { MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                 .hp = FULL_HP,
                 .status = 0,
@@ -138,10 +138,9 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados used Earthquake!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander fainted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cyndaquil fainted!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Torchic fainted!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados’s Moxie raised its Attack drastically!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander fainted!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados's Moxie raised its Attack sharply!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados lost some of its HP!" },
         },
     },
