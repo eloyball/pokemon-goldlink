@@ -28318,7 +28318,7 @@ mondata SPECIES_MEGA_DRAGONITE, "-----"
     basefriendship 35
     growthrate GROWTH_SLOW
     egggroups EGG_GROUP_WATER_1, EGG_GROUP_DRAGON
-    abilities ABILITY_INNER_FOCUS, ABILITY_INNER_FOCUS
+    abilities ABILITY_MULTISCALE, ABILITY_MULTISCALE
     runchance 0
     colorflip BODY_COLOR_BROWN, 0
 
@@ -28462,7 +28462,7 @@ mondata SPECIES_MEGA_FROSLASS, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_FAIRY, EGG_GROUP_MINERAL
-    abilities ABILITY_SNOW_CLOAK, ABILITY_SNOW_CLOAK
+    abilities ABILITY_SNOW_WARNING, ABILITY_SNOW_WARNING
     runchance 0
     colorflip BODY_COLOR_WHITE, 0
 
