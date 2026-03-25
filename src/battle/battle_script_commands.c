@@ -118,13 +118,15 @@ BOOL btl_scr_cmd_113_HandleDoubleShock(void* bsys UNUSED, struct BattleStruct* c
 BOOL btl_scr_cmd_114_stuffCheeks(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_115_setMoveConditionFlag(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_116_abilitypopup(void* bsys, struct BattleStruct* sp);
-BOOL btl_scr_cmd_117_SetCurrentMoveDoneSwitchingFlag(void *bsys UNUSED, struct BattleStruct *ctx);
-BOOL btl_scr_cmd_118_TrySynchronizeStatus(void *bsys, struct BattleStruct *ctx);
-BOOL btl_scr_cmd_119_TryCureStatusBerry(void *bsys, struct BattleStruct *ctx);
-BOOL btl_scr_cmd_11A_BatchUpdateHealthBar(void* bsys, struct BattleStruct* ctx);
-BOOL btl_scr_cmd_11B_BatchUpdateHealthBarValue(void* bsys, struct BattleStruct* ctx);
-BOOL btl_scr_cmd_11C_BatchFollowupMessage(void* bsys UNUSED, struct BattleStruct* ctx);
-BOOL btl_scr_cmd_11D_BatchEffectivenessMessage(void* bsys, struct BattleStruct* ctx);
+BOOL btl_scr_cmd_117_activateparadoxability(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_118_resetparadoxability(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_119_SetCurrentMoveDoneSwitchingFlag(void *bsys UNUSED, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_11A_TrySynchronizeStatus(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_11B_TryCureStatusBerry(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_11C_BatchUpdateHealthBar(void* bsys, struct BattleStruct* ctx);
+BOOL btl_scr_cmd_11D_BatchUpdateHealthBarValue(void* bsys, struct BattleStruct* ctx);
+BOOL btl_scr_cmd_11E_BatchFollowupMessage(void* bsys UNUSED, struct BattleStruct* ctx);
+BOOL btl_scr_cmd_11F_BatchEffectivenessMessage(void* bsys, struct BattleStruct* ctx);
 BOOL BtlCmd_GoToMoveScript(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp);
 BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp);
@@ -442,6 +444,8 @@ const u8 *BattleScrCmdNames[] =
     "StuffCheeks",
     "SetMoveConditionFlag",
     "AbilityPopup",
+    "ActivateParadoxAbility",
+    "ResetParadoxAbility",
     "SetCurrentMoveDoneSwitchingFlag",
     "TrySynchronizeStatus",
     "TryCureStatusBerry",
@@ -514,13 +518,15 @@ const btl_scr_cmd_func NewBattleScriptCmdTable[] =
     [0x114 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_114_stuffCheeks,
     [0x115 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_115_setMoveConditionFlag,
     [0x116 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_116_abilitypopup,
-    [0x117 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_117_SetCurrentMoveDoneSwitchingFlag,
-    [0x118 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_118_TrySynchronizeStatus,
-    [0x119 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_119_TryCureStatusBerry,
-    [0x11A - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11A_BatchUpdateHealthBar,
-    [0x11B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11B_BatchUpdateHealthBarValue,
-    [0x11C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11C_BatchFollowupMessage,
-    [0x11D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11D_BatchEffectivenessMessage,
+    [0x117 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_117_activateparadoxability,
+    [0x118 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_118_resetparadoxability,
+    [0x119 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_119_SetCurrentMoveDoneSwitchingFlag,
+    [0x11A - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11A_TrySynchronizeStatus,
+    [0x11B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11B_TryCureStatusBerry,
+    [0x11C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11C_BatchUpdateHealthBar,
+    [0x11D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11D_BatchUpdateHealthBarValue,
+    [0x11E - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11E_BatchFollowupMessage,
+    [0x11F - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11F_BatchEffectivenessMessage,
     // [BASE_ENGINE_BTL_SCR_CMDS_MAX - START_OF_NEW_BTL_SCR_CMDS + 1] = btl_scr_cmd_custom_01_your_custom_command,
 };
 
@@ -2571,47 +2577,39 @@ BOOL btl_scr_cmd_EC_updateterrainoverlay(void *bw UNUSED, struct BattleStruct *s
 
     u8 endTerrainFlag = read_battle_script_param(sp);
     int address = read_battle_script_param(sp);
-    int item, itemPower;
 
     enum TerrainOverlayType oldTerrainOverlay = sp->terrainOverlay.type;
+    enum TerrainOverlayType terrainType;
 
     switch (sp->current_move_index) {
         case MOVE_GRASSY_TERRAIN:
-            sp->terrainOverlay.type = GRASSY_TERRAIN;
+            terrainType = GRASSY_TERRAIN;
             break;
         case MOVE_MISTY_TERRAIN:
-            sp->terrainOverlay.type = MISTY_TERRAIN;
+            terrainType = MISTY_TERRAIN;
             break;
         case MOVE_ELECTRIC_TERRAIN:
-            sp->terrainOverlay.type = ELECTRIC_TERRAIN;
+            terrainType = ELECTRIC_TERRAIN;
             break;
         case MOVE_PSYCHIC_TERRAIN:
-            sp->terrainOverlay.type = PSYCHIC_TERRAIN;
+            terrainType = PSYCHIC_TERRAIN;
             break;
         default:
-            // I think this could work for moves that remove terrain
-            sp->terrainOverlay.type = TERRAIN_NONE;
             break;
     }
 
+    // For Defog, Ice Spinner, regular terrain ending
     if (endTerrainFlag == TRUE) {
-        sp->terrainOverlay.type = TERRAIN_NONE;
+        UpdateTerrainOverlay(sp, sp->attack_client, TERRAIN_NONE);
+        return FALSE;
     }
 
-    // if the new terrain is the same as the old one, the move should fail
-    if (oldTerrainOverlay == sp->terrainOverlay.type) {
-        IncrementBattleScriptPtr(sp, address);
+    debug_printf("endTerrainFlag: %d\noldTerrainOverlay: %d\nterrainType: %d\ncurrent_move_index: %d\n", endTerrainFlag, oldTerrainOverlay, terrainType, sp->current_move_index);
+
+    if (terrainType == oldTerrainOverlay) {
+        IncrementBattleScriptPtr(sp, address); // Unused currently
     } else {
-        if (sp->terrainOverlay.type != TERRAIN_NONE) {
-            item = GetBattleMonItem(sp, sp->attack_client);
-            itemPower = BattleItemDataGet(sp, item, 2);
-            sp->terrainOverlay.numberOfTurnsLeft = 5;
-            if (item == ITEM_TERRAIN_EXTENDER) {
-                sp->terrainOverlay.numberOfTurnsLeft += itemPower;
-            }
-        } else {
-            sp->terrainOverlay.numberOfTurnsLeft = 0;
-        }
+        UpdateTerrainOverlay(sp, sp->attack_client, terrainType);
     }
 
     return FALSE;
@@ -4575,7 +4573,7 @@ void EmitHealthBarUpdate(void* bsys, struct BattleStruct* ctx, int client_no, BO
 /**
  * @brief Triggers HP bar animations for all targets hit by spread move simultaneously
  */
-BOOL btl_scr_cmd_11A_BatchUpdateHealthBar(void *bsys, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11C_BatchUpdateHealthBar(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
 
@@ -4627,7 +4625,7 @@ void UpdateHealthBarValue(void *bsys, struct BattleStruct *ctx, int client_no)
 /**
  * @brief Updates HP values for all targets hit by spread move
  */
-BOOL btl_scr_cmd_11B_BatchUpdateHealthBarValue(void *bsys, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11D_BatchUpdateHealthBarValue(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
 
@@ -4648,7 +4646,7 @@ BOOL btl_scr_cmd_11B_BatchUpdateHealthBarValue(void *bsys, struct BattleStruct *
 /**
  * @brief Display followup messages for all targets hit by spread move in order
  */
-BOOL btl_scr_cmd_11C_BatchFollowupMessage(void *bsys, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11E_BatchFollowupMessage(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     int battlerCategory = read_battle_script_param(ctx);
@@ -4676,13 +4674,97 @@ BOOL btl_scr_cmd_11C_BatchFollowupMessage(void *bsys, struct BattleStruct *ctx)
 }
 
 /**
+ * @brief Activate all clients Paradox Abilities depending on input.
+ *        ActivateParadoxAbility will do the other checks
+ *
+ * Inputs:
+ * 1. ABILITY_PROTOSYNTHESIS or ABILITY_QUARK_DRIVE
+ *
+ * @param bsys BattleSystem
+ * @param ctx BattleContext
+ * @return FALSE
+ */
+BOOL btl_scr_cmd_117_activateparadoxability(void *bsys, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    // ABILITY_PROTOSYNTHESIS or ABILITY_QUARK_DRIVE
+    u32 abilityToCheck = read_battle_script_param(ctx);
+
+    u8 i;
+    u8 maxBattlers = BattleWorkClientSetMaxGet(bsys);
+    u16 seq_no;
+    u8 client;
+
+    SortRawSpeedNonRNGArray(bsys, ctx);
+    for (i = 0; i < maxBattlers; i++) {
+        seq_no = 0;
+        client = ctx->rawSpeedNonRNGClientOrder[i];
+        // debug_printf("[Paradox Abilities] Checking client %d of %d with ability %d\n", client, maxBattlers, GetBattlerAbility(ctx, client));
+        if (GetBattlerAbility(ctx, client) == abilityToCheck) {
+            // this function will do the other checks (Sunny/Elec Terrain or Booster Energy)
+            seq_no = ActivateParadoxAbility(bsys, ctx, client);
+        }
+        if (seq_no == SUB_SEQ_FIELD_CONDITION_PARADOX_ABILITY
+         || seq_no == SUB_SEQ_BOOSTER_ENERGY) {
+            // debug_printf("[Paradox Abilities] Activation via Battle Command\n");
+            // Jump back to instruction to rerun this command on the next client
+            IncrementBattleScriptPtr(ctx, -2);
+            SkillSequenceGosub(ctx, ARC_BATTLE_SUB_SEQ, seq_no);
+            break;
+        }
+    }
+
+    return FALSE;
+}
+
+/**
+ * @brief Reset all clients Paradox Abilities depending input.
+ *
+ * Inputs:
+ * 1. ABILITY_PROTOSYNTHESIS or ABILITY_QUARK_DRIVE
+ *
+ * @param bsys BattleSystem
+ * @param ctx BattleContext
+ * @return FALSE
+ */
+BOOL btl_scr_cmd_118_resetparadoxability(void *bsys, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    // ABILITY_PROTOSYNTHESIS or ABILITY_QUARK_DRIVE
+    u32 abilityToCheck = read_battle_script_param(ctx);
+
+    u8 i;
+    u8 maxBattlers = BattleWorkClientSetMaxGet(bsys);
+    u8 client;
+
+    SortRawSpeedNonRNGArray(bsys, ctx);
+    for (i = 0; i < maxBattlers; i++) {
+        client = ctx->rawSpeedNonRNGClientOrder[i];
+        if (GetBattlerAbility(ctx, client) == abilityToCheck
+        &&  !ctx->boosterEnergyActivated[client]
+        &&  (ctx->paradoxBoostedStat[client] > 0)) {
+            // jump back to instruction to rerun this command on the next client
+            IncrementBattleScriptPtr(ctx, -2);
+            ctx->paradoxBoostedStat[client] = 0;
+            ctx->battlerIdTemp = client;
+            SkillSequenceGosub(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_PARADOX_ABILITY_END);
+            return FALSE;
+        }
+    }
+
+    return FALSE;
+}
+
+/**
  * @brief Display super effective / not very effective messages for all targets hit by spread move in order
  * Uses POV-relative logic:
  *   side=0 = opponent's side (from attacker's POV)
  *   side=1 = attacker's side (ally if hit)
  * Message type stays based on ACTUAL target side (for "opposing"/"wild" prefix)
  */
-BOOL btl_scr_cmd_11D_BatchEffectivenessMessage(void *bsys, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11F_BatchEffectivenessMessage(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
 
@@ -5172,7 +5254,7 @@ BOOL BtlCmd_CopyStatStages(struct BattleSystem *bsys UNUSED, struct BattleStruct
     return FALSE;
 }
 
-BOOL btl_scr_cmd_117_SetCurrentMoveDoneSwitchingFlag(void *bsys UNUSED, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_119_SetCurrentMoveDoneSwitchingFlag(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     u32 status = read_battle_script_param(ctx);
@@ -5180,7 +5262,7 @@ BOOL btl_scr_cmd_117_SetCurrentMoveDoneSwitchingFlag(void *bsys UNUSED, struct B
     return FALSE;
 }
 
-BOOL btl_scr_cmd_118_TrySynchronizeStatus(void *bsys UNUSED, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11A_TrySynchronizeStatus(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     int failAddress = read_battle_script_param(ctx);
@@ -5196,7 +5278,7 @@ BOOL btl_scr_cmd_118_TrySynchronizeStatus(void *bsys UNUSED, struct BattleStruct
     return FALSE;
 }
 
-BOOL btl_scr_cmd_119_TryCureStatusBerry(void *bsys, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_11B_TryCureStatusBerry(void *bsys, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     int side = read_battle_script_param(ctx);
