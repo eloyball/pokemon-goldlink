@@ -48,7 +48,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .species = SPECIES_NONE } },
         .enemyParty = { {
                             .species = SPECIES_CYNDAQUIL,
-                            .level = 20,
+                            .level = 15,
                             .form = 0,
                             .ability = ABILITY_BLAZE,
                             .item = ITEM_NONE,
@@ -60,7 +60,7 @@ const struct TestBattleScenario BattleTests[] = {
                         },
             {
                 .species = SPECIES_TORCHIC,
-                .level = 20,
+                .level = 15,
                 .form = 0,
                 .ability = ABILITY_BLAZE,
                 .item = ITEM_FOCUS_SASH,

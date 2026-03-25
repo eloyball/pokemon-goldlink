@@ -61,7 +61,7 @@ const struct TestBattleScenario BattleTests[] = {
             },
             {
                 .species = SPECIES_GOLBAT,
-                .level = 50,
+                .level = 70,
                 .form = 0,
                 .ability = ABILITY_INNER_FOCUS,
                 .item = ITEM_NONE,
@@ -120,9 +120,9 @@ const struct TestBattleScenario BattleTests[] = {
         },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Golbat won't flinch because of its Inner Focus!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Golbat used Splash!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Lucario flinched and couldn't move!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Lucario's Steadfast raised its Speed!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Golbat used Splash!" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
