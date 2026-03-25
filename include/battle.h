@@ -685,6 +685,40 @@
 #define STRUGGLE_CHECK_BELCH                (1 << 14)
 #define STRUGGLE_CHECK_STUFF_CHEEKS         (1 << 15)
 
+
+// Bug Bite/Pluck/Fling effects:
+#define STEAL_EFFECT_CURE_PARALYSIS     1
+#define STEAL_EFFECT_CURE_SLEEP         2
+#define STEAL_EFFECT_CURE_POISON        3
+#define STEAL_EFFECT_CURE_BURN          4
+#define STEAL_EFFECT_CURE_FREEZE        5
+#define STEAL_EFFECT_RESTORE_PP         6
+#define STEAL_EFFECT_RESTORE_HP         7
+#define STEAL_EFFECT_CURE_CONFUSION     8
+#define STEAL_EFFECT_CURE_ALL           9
+#define STEAL_EFFECT_RESTORE_HP_PERCENT 10
+#define STEAL_EFFECT_RESTORE_SPICY      11
+#define STEAL_EFFECT_RESTORE_DRY        12
+#define STEAL_EFFECT_RESTORE_SWEET      13
+#define STEAL_EFFECT_RESTORE_BITTER     14
+#define STEAL_EFFECT_RESTORE_SOUR       15
+#define STEAL_EFFECT_ATK_UP             16
+#define STEAL_EFFECT_DEF_UP             17
+#define STEAL_EFFECT_SPEED_UP           18
+#define STEAL_EFFECT_SPATK_UP           19
+#define STEAL_EFFECT_SPDEF_UP           20
+#define STEAL_EFFECT_CRITRATE_UP        21
+#define STEAL_EFFECT_RANDOM_UP          22
+#define STEAL_EFFECT_ACC_UP             23
+// Used by Fling only:
+#define STEAL_EFFECT_RESET_STATS            24
+#define STEAL_EFFECT_CURE_MENTAL_CONDITIONS 25
+#define STEAL_EFFECT_FLINCH                 26
+#define STEAL_EFFECT_PARALYZE               27
+#define STEAL_EFFECT_POISON                 28
+#define STEAL_EFFECT_BAD_POISON             29
+#define STEAL_EFFECT_BURN                   30
+
 /**
  *  @brief msg work specifically for statuses
  */
@@ -1431,8 +1465,8 @@ struct BattleStruct {
     /*0x3109*/ u8 level_up_pokemon;
     /*0x310A*/ u16 que_check_wait;
     /*0x310C*/ u16 agi_rand[CLIENT_MAX];
-    /*0x3114*/ int nagetsukeru_work;
-    /*0x3118*/ int nagetsukeru_seq_no;
+    /*0x3114*/ int flingData;
+    /*0x3118*/ int flingScript;
     /*0x311C*/ u8 safari_get_count;
     /*0x311D*/ u8 safari_escape_count;
     /*0x311E*/ u8 escape_count;
@@ -2789,7 +2823,7 @@ BOOL LONG_CALL Battle_IsFishingEncounter(void *bw);
 BOOL LONG_CALL TryUseHeldItem(void *bw, struct BattleStruct *sp, int client_no);
 BOOL LONG_CALL GetHeldItemStatusRecoverySubscript(struct BattleStruct *sp, int client_no, int *seq_no);
 
-/**
+    /**
  *  @brief check if held item effect needs to activate, specifically directly after moves.  for things like status items
  *
  *  @param bw battle work structure; void * because we haven't defined the battle work structure
@@ -3818,7 +3852,13 @@ BOOL LONG_CALL IsMoveWindMove(u16 move);
 
 int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct *ctx, int battlerId, int moveNo);
 
-int LONG_CALL GetNaturalGiftType(struct BattleStruct *ctx, int battlerId);
+
+BOOL LONG_CALL TryFling(struct BattleSystem *bsys, struct BattleStruct *ctx, int battlerId);
+int LONG_CALL GetHeldItemFlingEffect(struct BattleStruct *ctx, int battlerId);
+int LONG_CALL GetHeldItemFlingPower(struct BattleStruct *ctx, int battlerId);
+int LONG_CALL GetHeldItemModifier(struct BattleStruct *ctx, int battlerId, int flag);
+int LONG_CALL GetNaturalGiftPower(struct BattleStruct *ctx, int battlerId);
+int LONG_CALL GetNaturalGiftType(struct BattleStruct *ctx, int battlerId); 
 
 BOOL LONG_CALL BattleContext_CheckMoveImprisoned(struct BattleSystem *bsys, struct BattleStruct *ctx, int battlerId, int moveNo);
 

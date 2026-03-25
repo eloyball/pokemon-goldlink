@@ -116,8 +116,8 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gyarados used Earthquake!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It’s super effective on Charmander!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It’s super effective on the opposing Cyndaquil and Torchic!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective on Charmander!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective on the opposing Cyndaquil and Torchic!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Torchic hung on using its Focus Sash!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander fainted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cyndaquil fainted!" },

@@ -329,10 +329,10 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
     // Item-based
     case MOVE_FLING:
         // TODO: test Parental Bond interaction
-        movepower = damage_power;
+        movepower = GetHeldItemFlingPower(sp, attacker);
         break;
     case MOVE_NATURAL_GIFT:
-        movepower = damage_power;
+        movepower = GetNaturalGiftPower(sp, attacker);
         break;
     // Other
     case MOVE_BEAT_UP:

@@ -205,6 +205,11 @@ HeldItemHealCheck = 0x02254E7C | 1;
 HeldItemHoldEffectGet = 0x02255830 | 1;
 HeldItemAtkGet = 0x02255844 | 1;
 IsMovingAfterClient = 0x0225561C | 1;
+GetHeldItemFlingEffect = 0x022558D0 | 1;
+GetHeldItemFlingPower = 0x022558F8 | 1;
+GetHeldItemModifier = 0x02255844 | 1;
+GetNaturalGiftPower = 0x02255890 | 1;
+GetNaturalGiftType = 0x022558A4 | 1;
 
 GetArceusType = 0x02071C28 | 1;
 BattleWorkBattleStatusFlagGet = 0x0223B514 | 1;
@@ -242,7 +247,6 @@ CreateNicknameTag = 0x022522E0 | 1;
 JumpToMoveEffectScript = 0x02245518 | 1;
 BGCallback_Waza = 0x0226748C | 1;
 TryEatOpponentBerry = 0x02255A2C | 1;
-TryFling = 0x02255F7C | 1;
 
 /* Trainer data expansion */
 gf_get_seed = 0x0201FD2C | 1;
@@ -672,7 +676,6 @@ BattleSystem_CheckMoveHit = 0x0224BCC4 | 1;
 ov12_0224B498 = 0x0224B498 | 1;
 ov12_0224BC2C = 0x0224BC2C | 1;
 
-GetNaturalGiftType = 0x022558A4 | 1;
 
 BattleContext_CheckMoveImprisoned = 0x02252C74 | 1;
 BattleContext_CheckMoveUnuseableInGravity = 0x02252DC4 | 1;

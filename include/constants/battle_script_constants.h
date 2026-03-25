@@ -217,7 +217,7 @@
 #define SUB_SEQ_ITEM_RAISE_CRIT                 (209)
 #define SUB_SEQ_ITEM_STAT_BOOST_2               (210)
 #define SUB_SEQ_ITEM_RECOVER_STAT_DROP          (211)
-#define SUB_SEQ_ITEM_RECOVER_INF                (212)
+#define SUB_SEQ_ITEM_HEAL_MENTAL_CONDITIONS     (212)
 #define SUB_SEQ_ITEM_HP_GRADUAL                 (213) // used for shell bell
 #define SUB_SEQ_ITEM_HP_LOSS                    (214) // used for life orb
 #define SUB_SEQ_ITEM_TAKE_DAMAGE                (215)

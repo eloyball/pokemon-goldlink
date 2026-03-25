@@ -2112,8 +2112,21 @@ int LONG_CALL MovePerformance_Step_9(void* bsys, struct BattleStruct* ctx, int* 
 
         switch (ctx->movePerformanceSubstep) {
         case MOVE_PERFORMANCE_SUB_STEP_9_0_FLING:
-            // TODO needed?
+#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
+            debug_printf("in MOVE_PERFORMANCE_SUB_STEP_9_0_FLING %d, flingScript %d\n", ctx->movePerformanceSubstep, ctx->flingScript);
+#endif
             ctx->movePerformanceSubstep++;
+            if (ctx->current_move_index == MOVE_FLING
+                && ctx->flingScript != 0
+                && CheckSubstitute(ctx, ctx->defence_client) == FALSE)
+            {
+                ctx->state_client = ctx->defence_client;
+                ctx->battlerIdTemp = ctx->defence_client;
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, ctx->flingScript);
+                ctx->next_server_seq_no = ctx->server_seq_no;
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                return TRUE;
+            }
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUB_STEP_9_1_FLINCH_CHECK:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
@@ -2389,7 +2402,7 @@ int LONG_CALL MovePerformance_HitSubstitute(void *bsys, struct BattleStruct *ctx
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUBSTITUTE_STEP_7_FLING:
-            // TODO
+            // TODO confirm
             ctx->movePerformanceSubstep++;
             FALLTHROUGH;
         case MOVE_PERFORMANCE_SUBSTITUTE_STEP_8_AIR_BALLOON:
