@@ -2025,6 +2025,7 @@ int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx)
             return TRUE;
         }
         break;
+    case MOVE_EFFECT_PASS_STATS_AND_STATUS: //baton pass
     case MOVE_EFFECT_SHED_TAIL:
         if (ctx->attack_client != BATTLER_NONE
             && ctx->battlemon[ctx->attack_client].hp > 0
