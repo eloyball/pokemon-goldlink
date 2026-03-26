@@ -1639,8 +1639,7 @@ int LONG_CALL Activate_MirrorHerb_WhiteHerb_EjectPack(void *bsys, struct BattleS
             if ((ctx->battlemon[client_no].hp)
                 && (ctx->currentMoveSwitchStatus < CURRENT_MOVE_SWITCH_PENDING)
                 // Any Sat lowered
-                && ctx->moveConditionsFlags[client_no].anyStatLoweredThisTurn
-                && ctx->multiHitCount <= 1) {
+                && ctx->moveConditionsFlags[client_no].anyStatLoweredThisTurn) {
 
                 ctx->battlerIdTemp = client_no;
                 ctx->state_client = client_no;
@@ -1698,8 +1697,7 @@ int LONG_CALL Activate_KeeMarangaBerry_RedCard_EjectButton(void *bsys, struct Ba
             if ((ctx->currentMoveSwitchStatus < CURRENT_MOVE_SWITCH_PENDING)
                 && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
                 && ((ctx->oneSelfFlag[client_no].physical_damage)
-                    || (ctx->oneSelfFlag[client_no].special_damage))
-                && ctx->multiHitCount <= 1) {
+                    || (ctx->oneSelfFlag[client_no].special_damage))) {
 
                 ctx->battlerIdTemp = client_no;
                 ctx->state_client = client_no;
@@ -1719,8 +1717,7 @@ int LONG_CALL Activate_KeeMarangaBerry_RedCard_EjectButton(void *bsys, struct Ba
                 && (ctx->currentMoveSwitchStatus < CURRENT_MOVE_SWITCH_PENDING)
                 // Damage was dealt
                 && ((ctx->oneSelfFlag[client_no].physical_damage)
-                    || (ctx->oneSelfFlag[client_no].special_damage))
-                && ctx->multiHitCount <= 1) {
+                    || (ctx->oneSelfFlag[client_no].special_damage))) {
                 ctx->state_client = client_no; // store real defender
                 ctx->defence_client = ctx->attack_client;
                 ctx->attack_client = ctx->state_client;
@@ -1799,7 +1796,6 @@ int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct 
                 // berserk doesn't activate if the Pokémon gets attacked by a sheer force boosted move
                 && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
                 // berserk doesn't activate until the last hit of a multi-hit move
-                && (ctx->multiHitCount <= 1)
                 && (ctx->battlemon[ctx->defence_client].hp <= (s32)(ctx->battlemon[ctx->defence_client].maxhp / 2))
                 && (
                     // checks if the pokémon has gone below half HP from the current damage instance
@@ -1827,7 +1823,6 @@ int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct 
                 // anger shell doesn't activate if the Pokémon gets attacked by a sheer force boosted move
                 && !((GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_SHEER_FORCE) && (ctx->battlemon[ctx->attack_client].sheer_force_flag == 1))
                 // anger shell doesn't activate until the last hit of a multi-hit move
-                && (ctx->multiHitCount <= 1)
                 && (ctx->battlemon[ctx->defence_client].hp <= (s32)(ctx->battlemon[ctx->defence_client].maxhp / 2))
                 && (
                     // checks if the pokémon has gone below half HP from the current damage instance
@@ -1857,8 +1852,7 @@ int LONG_CALL Activate_Berserk_AngerShell_ColorChange(void *bsys UNUSED, struct 
                 && ((ctx->oneSelfFlag[ctx->defence_client].physical_damage) || (ctx->oneSelfFlag[ctx->defence_client].special_damage))
                 && (ctx->moveTbl[ctx->current_move_index].power)
                 && (!HasType(ctx, ctx->defence_client, movetype))
-                && (ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE) == 0
-                && (ctx->multiHitCount <= 1)) // don't activate until the last hit of a multi-hit move
+                && (ctx->battlemon[ctx->defence_client].condition2 & STATUS2_SUBSTITUTE) == 0) // don't activate until the last hit of a multi-hit move
             {
                 ChangeToPureType(ctx, ctx->defence_client, movetype);
                 ctx->msg_work = movetype;
