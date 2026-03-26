@@ -110,7 +110,7 @@ arm9 set_starter_hidden_ability_hook 02096158 5
 #02245008
 0012 btl_scr_cmd_d0_checkshouldleavewith1hp 0800D748 3
 #022450B0
-0012 btl_scr_cmd_d1_trynaturalcure 0800D7F0 3
+# 0012 btl_scr_cmd_d1_trynaturalcure 0800D7F0 3
 #0223E004
 0012 btl_scr_cmd_17_playanimation 08006744 3
 #0223E080
@@ -141,6 +141,7 @@ arm9 set_starter_hidden_ability_hook 02096158 5
 0012 BtlCmd_TryFling 0224454C 3
 0012 BtlCmd_CopyStatStages 02242510 3
 0012 BtlCmd_TryFaintMon 0223E22C 3
+0012 BtlCmd_TryRestoreStatusOnSwitch 022450B0 3
 
 #trainer data expansion
 arm9 MakeTrainerPokemonParty 08073604 3
