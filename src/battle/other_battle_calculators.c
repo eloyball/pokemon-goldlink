@@ -2885,6 +2885,9 @@ void LONG_CALL ov12_0224C4D8(struct BattleSystem *bsys, struct BattleStruct *ctx
 
 void LONG_CALL ov12_0224C678(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
+#ifdef DEBUG_BATTLE_SCENARIOS
+    debug_printf("move %d damage roll %d%s\n", ctx->current_move_index, ctx->damage, (ctx->critical > 1) ? " (crit)" : "");
+#endif
     ctx->damageForSpreadMoves[ctx->defence_client] = ctx->damage;
     ctx->moveStatusFlagForSpreadMoves[ctx->defence_client] = ctx->waza_status_flag;
     if (ctx->critical > 1) {
