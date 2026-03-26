@@ -412,7 +412,8 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         if (Activate_SparklingAria(bsys, ctx) == TRUE) {
             return;
         }
-        ctx -> swoam_seq_no++;
+        ctx->swoak_work = 0;
+        ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_15_3_THAW_FROM_FIRE_MOVE: {
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
@@ -434,6 +435,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             }
         }
 
+        ctx->swoak_work = 0;
         ctx->clientLoopForSpreadMoves = 0;
         ctx->swoam_seq_no++;
     }
@@ -472,6 +474,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_18_0_PLEDGE_MOVES_COMBINATION:
         // TODO
+        ctx->swoak_work = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_19_0_FORM_CHANGE:
@@ -584,6 +587,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_27_1_OPPORTUNIST_SYMBIOSIS:
         // TODO
+        ctx->swoak_work = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_28_0_WHITE_HERB_MIRROR_HERB_EJECT_PACK: //speed order
@@ -594,6 +598,7 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         if (Activate_MirrorHerb_WhiteHerb_EjectPack(bsys, ctx) == TRUE) {
             return;
         }
+        ctx->swoak_work = 0;
         ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_29_0_RESOLVE_PENDING_SWITCH:
@@ -1629,9 +1634,10 @@ int LONG_CALL Activate_FormChange(void *bsys, struct BattleStruct *ctx)
 
 int LONG_CALL Activate_MirrorHerb_WhiteHerb_EjectPack(void *bsys, struct BattleStruct *ctx)
 {
-    for (int battler = 0; battler < BattleWorkClientSetMaxGet(bsys); battler++) {
+    for (; ctx->swoak_work < BattleWorkClientSetMaxGet(bsys);) {
         int ret = FALSE;
-        int client_no = ctx->turnOrder[battler];
+        int client_no = ctx->turnOrder[ctx->swoak_work];
+        ctx->swoak_work++;
         int itemHeldEffect = HeldItemHoldEffectGet(ctx, client_no);
         switch (itemHeldEffect) {
         case HOLD_EFFECT_SWITCH_OUT_ON_STAT_DROP: // Eject Pack
