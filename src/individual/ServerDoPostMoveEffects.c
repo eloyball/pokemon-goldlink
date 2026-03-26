@@ -44,8 +44,7 @@ int LONG_CALL Activate_Switch(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_AdditionalMoveEffects(void *bsys UNUSED, struct BattleStruct *ctx);
 int LONG_CALL Activate_SparklingAria(void *bsys, struct BattleStruct *ctx);
-int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct *ctx);
-int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleStruct *ctx);
+int LONG_CALL Activate_SkillEffects(void *bsys UNUSED, struct BattleStruct *ctx);
 
 int LONG_CALL Activate_Moxie_BeastBoost_Others(void *bsys, struct BattleStruct *ctx);
 u32 LONG_CALL Activate_AbilityHealingStatusCondition(void *bsys, struct BattleStruct *ctx, int battlerId, int act_flag);
@@ -533,43 +532,24 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
             return;
         }
         FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_25_0_BURN_UP_DOUBLE_SHOCK_TYPELOSS: //TODO group Skill effect together in one function
+    case MOVE_PERFORMANCE_STEP_25_0_SKILL_EFFECTS:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_25_0_BURN_UP_DOUBLE_SHOCK_TYPELOSS %d\n", ctx->swoam_seq_no);
+        debug_printf("in MOVE_PERFORMANCE_STEP_25_0_SKILL_EFFECTS %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
-        if (Activate_BurnUp_DoubleShock(bsys, ctx) == TRUE) {  //TODO roost?
+        if (Activate_SkillEffects(bsys, ctx) == TRUE) {
             return;
         }
         FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_25_1_NATURAL_GIFT:
-        // TODO
-        ctx->swoam_seq_no++;
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_25_2_OUTRAGE_CONFUSION:
+    case MOVE_PERFORMANCE_STEP_25_1_OUTRAGE_CONFUSION:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_25_2_OUTRAGE_CONFUSION %d\n", ctx->swoam_seq_no);
+        debug_printf("in MOVE_PERFORMANCE_STEP_25_1_OUTRAGE_CONFUSION %d\n", ctx->swoam_seq_no);
 #endif
 
         ctx->swoam_seq_no++;
         if (Activate_RampageConfusion(bsys, ctx) == TRUE) {
             return;
         }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_25_3_ICE_SPINNER_STEEL_ROLLER:
-#ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-        debug_printf("in MOVE_PERFORMANCE_STEP_25_3_ICE_SPINNER_STEEL_ROLLER %d\n", ctx->swoam_seq_no);
-#endif
-
-        ctx->swoam_seq_no++;
-        if (Activate_SteelRoller_IceSpinner(bsys, ctx) == TRUE)
-        {
-            return;
-        }
-        FALLTHROUGH;
-    case MOVE_PERFORMANCE_STEP_25_4_ORDER_UP:
-        // TODO
-        ctx->swoam_seq_no++;
         FALLTHROUGH;
     case MOVE_PERFORMANCE_STEP_26_0_LEPPA_BERRY_THROAT_SPRAY_BLUNDER_POLICY:
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
@@ -1303,9 +1283,19 @@ int LONG_CALL ThawTarget_FromFireMove_Scald(void *bsys UNUSED, struct BattleStru
     return FALSE;
 }
 
-int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct *ctx)
+int LONG_CALL Activate_SkillEffects(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     switch (ctx->current_move_index) {
+    //case MOVE_ORDER_UP: //TODO
+    case MOVE_NATURAL_GIFT:
+        if (ctx->attack_client != BATTLER_NONE
+            && ctx->battlemon[ctx->attack_client].hp
+            && ctx->battlemon[ctx->attack_client].item)
+        {
+            ctx->recycle_item[ctx->attack_client] = ctx->battlemon[ctx->attack_client].item;
+            ctx->battlemon[ctx->attack_client].item = 0;
+        }
+        break;
     case MOVE_BURN_UP:
         if (ctx->attack_client != BATTLER_NONE
             && ctx->battlemon[ctx->attack_client].hp) {
@@ -1324,24 +1314,23 @@ int LONG_CALL Activate_BurnUp_DoubleShock(void *bsys UNUSED, struct BattleStruct
             return TRUE;
         }
         break;
+    case MOVE_ICE_SPINNER:
+        if (ctx->battlemon[ctx->attack_client].hp == 0) {
+            break;
+        }
+        FALLTHROUGH;
+    case MOVE_STEEL_ROLLER:
+        if (ctx->terrainOverlay.type != TERRAIN_NONE)
+        {
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_TERRAIN_END);
+            ctx->next_server_seq_no = ctx->server_seq_no;
+            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+            return TRUE;
+        }
     default:
         break;
     }
 
-    return FALSE;
-}
-
-int LONG_CALL Activate_SteelRoller_IceSpinner(void *bsys UNUSED, struct BattleStruct *ctx)
-{
-    if (ctx->terrainOverlay.type != TERRAIN_NONE
-        && (ctx->current_move_index == MOVE_STEEL_ROLLER
-            || (ctx->current_move_index == MOVE_ICE_SPINNER
-                && ctx->battlemon[ctx->attack_client].hp))) {
-        LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_HANDLE_TERRAIN_END);
-        ctx->next_server_seq_no = ctx->server_seq_no;
-        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-        return TRUE;
-    }
     return FALSE;
 }
 
