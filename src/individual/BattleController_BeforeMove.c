@@ -136,6 +136,13 @@ BOOL BattleController_CheckTeraShell(struct BattleSystem *bsys UNUSED, struct Ba
 BOOL BattleController_TryConsumeDamageReductionBerry(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int defender);
 void BattleController_ResetGeneralMoveFailureFlags(struct BattleStruct *ctx, int attack_client, BOOL setsMoveConditionalFailureFlag);
 
+
+
+BOOL CanHitThroughSemiInvulnerability(struct BattleStruct *ctx, int attacker, int defender);
+BOOL CanHitThroughProtect(struct BattleStruct *ctx, int attacker, int defender);
+BOOL CheckProtectedByAlly(struct BattleStruct *ctx, int ally, u16 *protectedMoveMessage);
+BOOL CheckProtectedBySelf(struct BattleStruct *ctx, int ally, u16 *protectedMoveMessage);
+
 /// @brief Check if ability can be suppressed by Neutralizing Gas if value is not the same as CantSuppress.
 /// @param ability
 /// @ref AbilityCantSupress
@@ -1498,6 +1505,49 @@ void BattleController_CheckStanceChange(struct BattleSystem *bsys, struct Battle
     }
 }
 
+
+void CheckDragonDartsDiverting(struct BattleSystem* bsys, struct BattleStruct* ctx, int defender)
+{
+    u32 flag = 0;
+    u16 protectedMoveMessage = 0;
+    BOOL hitThroughSemi = TRUE;
+    if (ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_SEMI_INVULNERABLE
+        && !CanHitThroughSemiInvulnerability(ctx, ctx->attack_client, ctx->defence_client))
+    {
+        hitThroughSemi = FALSE;
+    }
+    BOOL monProtected = FALSE;
+    if(ctx->oneTurnFlag[defender].protectFlag 
+        && (CheckProtectedByAlly(ctx, BATTLER_ALLY(ctx->defence_client), &protectedMoveMessage) || CheckProtectedBySelf(ctx, ctx->defence_client, &protectedMoveMessage)))
+    {
+        monProtected = TRUE;
+    }
+    BOOL hitThroughAbility = TRUE;//MoveCheckDamageNegatingAbilities(ctx, ctx->attack_client, ctx->defence_client);
+    // check prankster prio when using with copycat
+    int canHitType = GetTypeEffectiveness(bsys, ctx, ctx->attack_client, ctx->defence_client, ctx->move_type, &flag);
+    CalcAccuracy(bsys, ctx, ctx->attack_client, ctx->defence_client, ctx->current_move_index);
+    BOOL hitWithAccuracy = TRUE;
+    if (ctx->waza_status_flag & MOVE_STATUS_FLAG_MISS)
+    {
+        hitWithAccuracy = FALSE;
+        ctx->waza_status_flag &= ~MOVE_STATUS_FLAG_MISS;
+    }
+    
+
+    if (hitThroughSemi == FALSE || monProtected == TRUE || hitThroughAbility == FALSE || canHitType == TYPE_MUL_NO_EFFECT || hitWithAccuracy == FALSE) {
+        if (ctx->battlemon[BATTLER_ALLY(ctx->defence_client)].hp) {
+            ctx->defence_client = BATTLER_ALLY(defender);
+
+            if (ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus < 2) {
+                ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus = DRAGON_DARTS_DIVERTING;
+            }
+            if (hitWithAccuracy == FALSE) {
+                ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus = DRAGON_DARTS_DIVERTING_ACCURACY_MISS;
+            }
+        }
+    }
+}
+
 // TODO: Surely this can be simplified? When Mirror Coat is also modernised?
 BOOL BattlerController_RedirectTarget(struct BattleSystem *bsys, struct BattleStruct *ctx) {
     int side;
@@ -1507,7 +1557,7 @@ BOOL BattlerController_RedirectTarget(struct BattleSystem *bsys, struct BattleSt
     int maxBattlers;
     int battlerIdAttacker = ctx->attack_client;
     int range;
-
+    debug_printf("BattlerController_RedirectTarget: defender %d\n", ctx->defence_client);
     if (ctx->defence_client == BATTLER_NONE) {
         return FALSE;
     }
@@ -1577,6 +1627,24 @@ BOOL BattlerController_RedirectTarget(struct BattleSystem *bsys, struct BattleSt
         ctx->next_server_seq_no = ctx->server_seq_no;
         ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
         ret = TRUE;
+    }
+
+    if (ctx->current_move_index == MOVE_DRAGON_DARTS && (BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI))) {
+        ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus = DRAGON_DARTS_CAN_DIVERT;
+        debug_printf("defender %d, hp %d, hitcount %d, status %d\n", ctx->defence_client, ctx->battlemon[ctx->defence_client].hp, ctx->multiHitCount, ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus);
+        if (ctx->multiHitCount == 0) { //hitcount not yet calced
+            debug_printf("case = 0 \n");
+            CheckDragonDartsDiverting(bsys, ctx, ctx->defence_client);
+        } else if (ctx->multiHitCount == 1 && ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus <= DRAGON_DARTS_CAN_DIVERT) {
+            debug_printf("case = 1, checking ally %d\n", BATTLER_ALLY(ctx->defence_client));
+            ctx->defence_client = BATTLER_ALLY(ctx->defence_client);
+            CheckDragonDartsDiverting(bsys, ctx, ctx->defence_client);
+        }
+
+        else
+        {
+            debug_printf("else \n");
+        }
     }
 
     return ret;
@@ -2243,6 +2311,18 @@ BOOL BattleController_CheckStolenBySnatch(struct BattleSystem *bw UNUSED, struct
     return FALSE;
 }
 
+BOOL CanHitThroughSemiInvulnerability(struct BattleStruct *ctx, int attacker, int defender)
+{
+    if ((ctx->waza_status_flag & MOVE_STATUS_FLAG_LOCK_ON)
+        || (GetBattlerAbility(ctx, attacker) == ABILITY_NO_GUARD)
+        || (GetBattlerAbility(ctx, defender) == ABILITY_NO_GUARD))
+    {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 BOOL BattleController_CheckSemiInvulnerability(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int defender)
 {
     BOOL moveCanHit = FALSE;
@@ -2275,115 +2355,138 @@ BOOL BattleController_CheckSemiInvulnerability(struct BattleSystem *bsys UNUSED,
         default:
             break;
         }
-    }
 
-    if (!(ctx->waza_status_flag & MOVE_STATUS_FLAG_LOCK_ON)
-        && (GetBattlerAbility(ctx, ctx->attack_client) != ABILITY_NO_GUARD)
-        && (ctx->moveTbl[ctx->current_move_index].target != RANGE_ADJACENT_OPPONENTS)
-        && (ctx->battlemon[defender].effect_of_moves & MOVE_EFFECT_FLAG_SEMI_INVULNERABLE)
-        && (moveCanHit == FALSE)) 
-    {
-        BattleController_ResetGeneralMoveFailureFlags(ctx, ctx->attack_client, TRUE);
-        ctx->moveStatusFlagForSpreadMoves[defender] = WAZA_STATUS_FLAG_KIE_NOHIT;
-        LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_ATTACK_MISSED);
-        ctx->next_server_seq_no = ctx->server_seq_no;
-        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+        if (!CanHitThroughSemiInvulnerability(ctx, ctx->attack_client, defender)
+            && (ctx->moveTbl[ctx->current_move_index].target != RANGE_ADJACENT_OPPONENTS)
+            && (moveCanHit == FALSE)) {
+            BattleController_ResetGeneralMoveFailureFlags(ctx, ctx->attack_client, TRUE);
+            ctx->moveStatusFlagForSpreadMoves[defender] = WAZA_STATUS_FLAG_KIE_NOHIT;
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_ATTACK_MISSED);
+            ctx->next_server_seq_no = ctx->server_seq_no;
+            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BOOL CanHitThroughProtect(struct BattleStruct *ctx, int attacker, int defender)
+{
+    if ((ctx->current_move_index == MOVE_CURSE && HasType(ctx, ctx->attack_client, TYPE_GHOST))
+        || (GetBattlerAbility(ctx, attacker) == ABILITY_UNSEEN_FIST
+            && IsContactBeingMade(GetBattlerAbility(ctx, attacker), HeldItemHoldEffectGet(ctx, attacker), HeldItemHoldEffectGet(ctx, defender), ctx->current_move_index, ctx->moveTbl[ctx->current_move_index].flag))) {
         return TRUE;
     }
     return FALSE;
 }
 
+BOOL CheckProtectedByAlly(struct BattleStruct *ctx, int ally, u16 *protectedMoveMessage)
+{
+    BOOL protectedByAlly = FALSE;
+    switch (ctx->moveProtect[ally]) {
+    case MOVE_QUICK_GUARD:
+        if (AdjustedMoveHasPositivePriority(ctx, ctx->attack_client)) {
+            protectedByAlly = TRUE;
+            *protectedMoveMessage = MOVE_QUICK_GUARD;
+        }
+        break;
+    case MOVE_WIDE_GUARD:
+        if (ctx->moveTbl[ctx->current_move_index].target == RANGE_ADJACENT_OPPONENTS
+            || ctx->moveTbl[ctx->current_move_index].target == RANGE_ALL_ADJACENT) {
+            protectedByAlly = TRUE;
+            *protectedMoveMessage = MOVE_WIDE_GUARD;
+        }
+        break;
+    case MOVE_MAT_BLOCK:
+        if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
+            protectedByAlly = TRUE;
+            *protectedMoveMessage = MOVE_MAT_BLOCK;
+        }
+        break;
+    case MOVE_CRAFTY_SHIELD:
+        if (GetMoveSplit(ctx, ctx->current_move_index) == SPLIT_STATUS) {
+            protectedByAlly = TRUE;
+            *protectedMoveMessage = MOVE_CRAFTY_SHIELD;
+        }
+        break;
+    default:
+        break;
+    }
 
-BOOL BattleController_CheckProtect(struct BattleSystem *bsys, struct BattleStruct *ctx, int defender) {
+    return protectedByAlly;
+}
+
+BOOL CheckProtectedBySelf(struct BattleStruct *ctx, int defender, u16 *protectedMoveMessage)
+{
+    BOOL protectedBySelf = FALSE;
+    switch (ctx->moveProtect[defender]) {
+    case MOVE_PROTECT:
+    case MOVE_DETECT:
+    case MOVE_SPIKY_SHIELD:
+    case MOVE_BANEFUL_BUNKER:
+    case MOVE_MAX_GUARD:
+        protectedBySelf = TRUE;
+        *protectedMoveMessage = 0;
+        break;
+    case MOVE_KINGS_SHIELD:
+    case MOVE_OBSTRUCT:
+    case MOVE_SILK_TRAP:
+    case MOVE_BURNING_BULWARK:
+        if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
+            protectedBySelf = TRUE;
+            *protectedMoveMessage = 0;
+        }
+        break;
+    case MOVE_MAT_BLOCK:
+        if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
+            protectedBySelf = TRUE;
+            *protectedMoveMessage = MOVE_MAT_BLOCK;
+        }
+        break;
+    case MOVE_QUICK_GUARD:
+        if (AdjustedMoveHasPositivePriority(ctx, ctx->attack_client)) {
+            protectedBySelf = TRUE;
+            *protectedMoveMessage = MOVE_QUICK_GUARD;
+        }
+        break;
+    case MOVE_WIDE_GUARD:
+        if (ctx->moveTbl[ctx->current_move_index].target == RANGE_ADJACENT_OPPONENTS
+            || ctx->moveTbl[ctx->current_move_index].target == RANGE_ALL_ADJACENT) {
+            protectedBySelf = TRUE;
+            *protectedMoveMessage = MOVE_WIDE_GUARD;
+        }
+        break;
+    case MOVE_CRAFTY_SHIELD:
+        if (GetMoveSplit(ctx, ctx->current_move_index) == SPLIT_STATUS) {
+            protectedBySelf = TRUE;
+            *protectedMoveMessage = MOVE_CRAFTY_SHIELD;
+        }
+        break;
+    default:
+        break;
+    }
+
+
+    return protectedBySelf;
+}
+
+
+BOOL BattleController_CheckProtect(struct BattleSystem *bsys, struct BattleStruct *ctx, int defender)
+{
     if (ctx->oneTurnFlag[defender].protectFlag
-     && ctx->moveTbl[ctx->current_move_index].flag & FLAG_PROTECT
-     && (!(GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_UNSEEN_FIST && IsContactBeingMade(GetBattlerAbility(ctx, ctx->attack_client), HeldItemHoldEffectGet(ctx, ctx->attack_client), HeldItemHoldEffectGet(ctx, ctx->defence_client), ctx->current_move_index, ctx->moveTbl[ctx->current_move_index].flag)))
-     && (ctx->current_move_index != MOVE_CURSE || HasType(ctx, ctx->attack_client, TYPE_GHOST))
-   /*&& (!CheckMoveIsChargeMove(ctx, ctx->current_move_index) || ctx->server_status_flag & BATTLE_STATUS_CHARGE_MOVE_HIT)*/) {
-        BOOL runProtectedSubseq = FALSE;
+        && !CanHitThroughProtect(ctx, ctx->attack_client, defender)) {
+        BOOL protectedByAlly = FALSE;
+        BOOL protectedBySelf = FALSE;
         u16 protectedMoveMessage = 0;
 
-        switch (ctx->moveProtect[BATTLER_ALLY(defender)]) {
-            case MOVE_QUICK_GUARD:
-                if (AdjustedMoveHasPositivePriority(ctx, ctx->attack_client)) {
-                    runProtectedSubseq = TRUE;
-                    protectedMoveMessage = MOVE_QUICK_GUARD;
-                }
-                break;
-            case MOVE_WIDE_GUARD:
-                if (ctx->moveTbl[ctx->current_move_index].target == RANGE_ADJACENT_OPPONENTS
-                 || ctx->moveTbl[ctx->current_move_index].target == RANGE_ALL_ADJACENT) {
-                    runProtectedSubseq = TRUE;
-                    protectedMoveMessage = MOVE_WIDE_GUARD;
-                }
-                break;
-            case MOVE_MAT_BLOCK:
-                if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
-                    runProtectedSubseq = TRUE;
-                    protectedMoveMessage = MOVE_MAT_BLOCK;
-                }
-                break;
-            case MOVE_CRAFTY_SHIELD:
-                if (GetMoveSplit(ctx, ctx->current_move_index) == SPLIT_STATUS) {
-                    runProtectedSubseq = TRUE;
-                    protectedMoveMessage = MOVE_CRAFTY_SHIELD;
-                }
-                break;
-            default:
-                break;
-        }
+        protectedByAlly = CheckProtectedByAlly(ctx, BATTLER_ALLY(defender), &protectedMoveMessage);
 
         // Prevent previous Protect move being read if being attacked before using a different move
         if (ctx->oneTurnFlag[defender].gainedProtectFlagFromAlly == FALSE) {
-            switch (ctx->moveProtect[defender]) {
-                case MOVE_PROTECT:
-                case MOVE_DETECT:
-                case MOVE_SPIKY_SHIELD:
-                case MOVE_BANEFUL_BUNKER:
-                case MOVE_MAX_GUARD:
-                    runProtectedSubseq = TRUE;
-                    protectedMoveMessage = 0;
-                    break;
-                case MOVE_KINGS_SHIELD:
-                case MOVE_OBSTRUCT:
-                case MOVE_SILK_TRAP:
-                case MOVE_BURNING_BULWARK:
-                    if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
-                        runProtectedSubseq = TRUE;
-                        protectedMoveMessage = 0;
-                    }
-                    break;
-                case MOVE_MAT_BLOCK:
-                    if (GetMoveSplit(ctx, ctx->current_move_index) != SPLIT_STATUS) {
-                        runProtectedSubseq = TRUE;
-                        protectedMoveMessage = MOVE_MAT_BLOCK;
-                    }
-                    break;
-                case MOVE_QUICK_GUARD:
-                    if (AdjustedMoveHasPositivePriority(ctx, ctx->attack_client)) {
-                        runProtectedSubseq = TRUE;
-                        protectedMoveMessage = MOVE_QUICK_GUARD;
-                    }
-                    break;
-                case MOVE_WIDE_GUARD:
-                    if (ctx->moveTbl[ctx->current_move_index].target == RANGE_ADJACENT_OPPONENTS
-                     || ctx->moveTbl[ctx->current_move_index].target == RANGE_ALL_ADJACENT) {
-                        runProtectedSubseq = TRUE;
-                        protectedMoveMessage = MOVE_WIDE_GUARD;
-                    }
-                    break;
-                case MOVE_CRAFTY_SHIELD:
-                    if (GetMoveSplit(ctx, ctx->current_move_index) == SPLIT_STATUS) {
-                        runProtectedSubseq = TRUE;
-                        protectedMoveMessage = MOVE_CRAFTY_SHIELD;
-                    }
-                    break;
-                default:
-                    break;
-            }
+            protectedBySelf = CheckProtectedBySelf(ctx, defender, &protectedMoveMessage);
         }
 
-        if (runProtectedSubseq) {
+        if (protectedBySelf || protectedByAlly) {
             ctx->battlerIdTemp = defender;
             UnlockBattlerOutOfCurrentMove(bsys, ctx, ctx->attack_client);
             BattleController_ResetGeneralMoveFailureFlags(ctx, ctx->attack_client, FALSE);

@@ -554,7 +554,7 @@ void LoadNicknameToCharArray(u16 nickname[], char buf[]) {
 #endif
 
 // set sp->waza_status_flag |= MOVE_STATUS_FLAG_MISS if a miss
-BOOL CalcAccuracy(void *bw, struct BattleStruct *sp, int attacker, int defender, int move_no) {
+BOOL LONG_CALL CalcAccuracy(void *bw, struct BattleStruct *sp, int attacker, int defender, int move_no) {
     // https://www.smogon.com/forums/threads/sword-shield-battle-mechanics-research.3655528/page-58#post-8684263
 
     // Apply accuracy / evasion modifiers
@@ -2928,7 +2928,7 @@ void LONG_CALL BattleController_LoopMultiHit(struct BattleSystem *bsys, struct B
 int LONG_CALL BattleController_LoopMultiHitInternal(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
 #ifdef DEBUG_MOVE_PERFORMANCE_LOGIC
-    debug_printf("In BattleController_LoopMultiHitInternal %d\n", ctx->multiHitCountTemp);
+    debug_printf("In BattleController_LoopMultiHitInternal %d/%d, def %d, faint %d\n", ctx->multiHitCount, ctx->multiHitCountTemp, ctx->defence_client, ctx->fainting_client);
 #endif
     
     if (ctx->multiHitCountTemp != 0)
@@ -2936,7 +2936,10 @@ int LONG_CALL BattleController_LoopMultiHitInternal(struct BattleSystem *bsys, s
         if (ctx->fainting_client == BATTLER_NONE && !(ctx->battlemon[ctx->attack_client].condition & STATUS_SLEEP) && !(ctx->waza_status_flag & MOVE_STATUS_FLAG_FURY_CUTTER_MISS))
         {
             SCIO_BlankMessage(bsys);
-            if (--ctx->multiHitCount)
+            if (ctx->multiHitCount) {
+                --ctx->multiHitCount;
+            }
+            if (ctx->multiHitCount)
             {
                 ctx->loop_flag = 1;
                 ov12_02252D14(bsys, ctx);
@@ -2947,13 +2950,35 @@ int LONG_CALL BattleController_LoopMultiHitInternal(struct BattleSystem *bsys, s
                 ctx->next_server_seq_no = CONTROLLER_COMMAND_23; // go back to our custom check
                 return TRUE;
             } else {
-                ctx->msg_work = ctx->multiHitCountTemp;
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_MULTI_HIT);
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                if (ctx->current_move_index != MOVE_DRAGON_DARTS || ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus < DRAGON_DARTS_CAN_DIVERT) {
+                    ctx->msg_work = ctx->multiHitCountTemp;
+                    LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_MULTI_HIT);
+                    ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                }
             }
         }
         else
         {
+
+            if (ctx->current_move_index == MOVE_DRAGON_DARTS && ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus >= DRAGON_DARTS_CAN_DIVERT) {
+                ctx->fainting_client = BATTLER_NONE;
+                if (ctx->multiHitCount) {
+                    --ctx->multiHitCount;
+                }
+                if (ctx->multiHitCount == 0)
+                {
+                    return FALSE;
+                }
+
+                ctx->loop_flag = 1;
+                ov12_02252D14(bsys, ctx);
+                ctx->server_status_flag &= ~BATTLE_STATUS_MOVE_ANIMATIONS_OFF;
+                ctx->waza_out_check_on_off = ctx->loop_hit_check;
+                LoadBattleSubSeqScript(ctx, ARC_BATTLE_MOVE_SEQ, ctx->current_move_index);
+                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+                ctx->next_server_seq_no = CONTROLLER_COMMAND_23; // go back to our custom check
+                return TRUE;
+            }
             if (ctx->fainting_client != BATTLER_NONE || ctx->battlemon[ctx->attack_client].condition & STATUS_SLEEP)
             {
                 ctx->msg_work = ctx->multiHitCountTemp - ctx->multiHitCount + 1;

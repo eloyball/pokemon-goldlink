@@ -1973,6 +1973,7 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                     if (sp->moveConditionsFlags[i].throatChopTimer > 0) {
                         sp->moveConditionsFlags[i].throatChopTimer--;
                     }
+                    sp->moveConditionsFlags[i].dragonDartsStatus = 0;
                 }
 
                 sp->playerSideHasFaintedTeammateLastTurn = sp->playerSideHasFaintedTeammateThisTurn;

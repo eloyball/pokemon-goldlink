@@ -719,6 +719,12 @@
 #define STEAL_EFFECT_BAD_POISON             29
 #define STEAL_EFFECT_BURN                   30
 
+
+#define DRAGON_DARTS_NO_DIVERTING                   0
+#define DRAGON_DARTS_CAN_DIVERT                     1
+#define DRAGON_DARTS_DIVERTING                      2
+#define DRAGON_DARTS_DIVERTING_ACCURACY_MISS        3
+
 /**
  *  @brief msg work specifically for statuses
  */
@@ -1290,6 +1296,9 @@ typedef struct MoveConditionsFlags {
     u8 glaiveRush : 1;
     u8 anyStatLoweredThisTurn : 1;
     u8 throatChopTimer : 2;
+
+    u8 dragonDartsStatus : 3;
+    u8 padding : 5;
 } MoveConditionsFlags;
 
 
@@ -2865,6 +2874,9 @@ BOOL LONG_CALL ShouldDelayTurnEffectivenessChecking(struct BattleStruct *sp, u32
  *  @return TRUE if the normal type effectiveness calculator should be used; FALSE otherwise
  */
 BOOL LONG_CALL ShouldUseNormalTypeEffCalc(struct BattleStruct *sp, int attack_client, int defence_client, int pos);
+
+
+BOOL LONG_CALL CalcAccuracy(void *bw, struct BattleStruct *sp, int attacker, int defender, int move_no);
 
 /**
  *  @brief get party size of certain client
