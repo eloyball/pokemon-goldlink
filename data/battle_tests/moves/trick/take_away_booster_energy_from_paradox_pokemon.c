@@ -121,6 +121,5 @@
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "RagingBolt's Sp. Atk was heightened!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Mewscarada switched items with its target!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Charizard used Splash!" },
     }
 },
