@@ -164,14 +164,6 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
         debug_printf("in MOVE_PERFORMANCE_STEP_6_NOT_SE_TYPE_EFFECTIVENESS_MESSAGE %d\n", ctx->swoam_seq_no);
 #endif
         ctx->swoam_seq_no++;
-        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)) {
-            if ((ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_FOLLOWUP);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return;
-            }
-        }
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_STEP_7_CRITICAL_HIT_ALLY: {
@@ -216,6 +208,13 @@ void __attribute__((section(".init"))) ServerDoPostMoveEffectsInternal(void *bsy
 
         ctx->clientLoopForSpreadMoves = 0;
         ctx->swoam_seq_no++;
+        if (IsMoveSpreadMove(bsys, ctx, ctx->current_move_index)
+         && (ctx->server_status_flag & SERVER_STATUS_FLAG_MOVE_HIT) != 0) {
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_BATCH_FOLLOWUP);
+            ctx->next_server_seq_no = ctx->server_seq_no;
+            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+            return;
+        }
         FALLTHROUGH;
     }
     case MOVE_PERFORMANCE_HIT_SUBSTITUTE: {
