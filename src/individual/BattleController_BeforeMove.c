@@ -1557,7 +1557,9 @@ BOOL BattlerController_RedirectTarget(struct BattleSystem *bsys, struct BattleSt
     int maxBattlers;
     int battlerIdAttacker = ctx->attack_client;
     int range;
+#ifdef DEBUG_BEFORE_MOVE_LOGIC
     debug_printf("BattlerController_RedirectTarget: defender %d\n", ctx->defence_client);
+#endif
     if (ctx->defence_client == BATTLER_NONE) {
         return FALSE;
     }
@@ -1631,19 +1633,27 @@ BOOL BattlerController_RedirectTarget(struct BattleSystem *bsys, struct BattleSt
 
     if (ctx->current_move_index == MOVE_DRAGON_DARTS && (BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI))) {
         ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus = DRAGON_DARTS_CAN_DIVERT;
+#ifdef DEBUG_BEFORE_MOVE_LOGIC
         debug_printf("defender %d, hp %d, hitcount %d, status %d\n", ctx->defence_client, ctx->battlemon[ctx->defence_client].hp, ctx->multiHitCount, ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus);
+#endif
         if (ctx->multiHitCount == 0) { //hitcount not yet calced
+#ifdef DEBUG_BEFORE_MOVE_LOGIC
             debug_printf("case = 0 \n");
+#endif
             CheckDragonDartsDiverting(bsys, ctx, ctx->defence_client);
         } else if (ctx->multiHitCount == 1 && ctx->moveConditionsFlags[ctx->attack_client].dragonDartsStatus <= DRAGON_DARTS_CAN_DIVERT) {
+#ifdef DEBUG_BEFORE_MOVE_LOGIC
             debug_printf("case = 1, checking ally %d\n", BATTLER_ALLY(ctx->defence_client));
+#endif
             ctx->defence_client = BATTLER_ALLY(ctx->defence_client);
             CheckDragonDartsDiverting(bsys, ctx, ctx->defence_client);
         }
 
         else
         {
+#ifdef DEBUG_BEFORE_MOVE_LOGIC
             debug_printf("else \n");
+#endif
         }
     }
 

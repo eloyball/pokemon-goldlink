@@ -7285,7 +7285,7 @@
       },
       {
         "Level": 28,
-        "Move": "MOVE_BULLDOZE"
+        "Move": "MOVE_MOONBLAST"
       },
       {
         "Level": 32,
@@ -7293,11 +7293,11 @@
       },
       {
         "Level": 36,
-        "Move": "MOVE_LASER_FOCUS"
+        "Move": "MOVE_MOONLIGHT"
       },
       {
         "Level": 40,
-        "Move": "MOVE_DOUBLE_EDGE"
+        "Move": "MOVE_PETAL_DANCE"
       }
     ],
     "MachineMoves": [

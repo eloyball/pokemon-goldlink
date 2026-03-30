@@ -227,7 +227,6 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
     //=====Step 6. General Damage Modifiers=====
 
     // 6.1 Spread Move Modifier
-    // TODO: the vanilla implementation is probably wrong
 
     int numTargetedFoes = 0;
     int numTargetedAll = 0;
