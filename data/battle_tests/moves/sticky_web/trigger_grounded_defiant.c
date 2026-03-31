@@ -113,13 +113,12 @@ const struct TestBattleScenario BattleTests[] = {
         },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Primeape's Speed fell!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Primeape's Attack rose sharply!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Primeape's Defiant raised its Attack sharply!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados used Sticky Web!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados used Sticky Web!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
         },
-        .knownFailing = TRUE
     },
 #ifndef GET_TEST_CASE_ONLY
 };
