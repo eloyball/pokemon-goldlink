@@ -2580,7 +2580,7 @@ BOOL btl_scr_cmd_EC_updateterrainoverlay(void *bw UNUSED, struct BattleStruct *s
     int address = read_battle_script_param(sp);
 
     enum TerrainOverlayType oldTerrainOverlay = sp->terrainOverlay.type;
-    enum TerrainOverlayType terrainType;
+    enum TerrainOverlayType terrainType = TERRAIN_NONE;
 
     switch (sp->current_move_index) {
         case MOVE_GRASSY_TERRAIN:
@@ -2605,7 +2605,7 @@ BOOL btl_scr_cmd_EC_updateterrainoverlay(void *bw UNUSED, struct BattleStruct *s
         return FALSE;
     }
 
-    debug_printf("endTerrainFlag: %d\noldTerrainOverlay: %d\nterrainType: %d\ncurrent_move_index: %d\n", endTerrainFlag, oldTerrainOverlay, terrainType, sp->current_move_index);
+    // debug_printf("endTerrainFlag: %d\noldTerrainOverlay: %d\nterrainType: %d\ncurrent_move_index: %d\n", endTerrainFlag, oldTerrainOverlay, terrainType, sp->current_move_index);
 
     if (terrainType == oldTerrainOverlay) {
         IncrementBattleScriptPtr(sp, address); // Unused currently
@@ -4618,7 +4618,7 @@ void UpdateHealthBarValue(void *bsys, struct BattleStruct *ctx, int client_no)
 
         if (ctx->battlemon[client_no].hp < 0) {
             ctx->battlemon[client_no].hp = 0;
-        } else if (ctx->battlemon[client_no].hp > ctx->battlemon[client_no].maxhp) {
+        } else if ((u32)ctx->battlemon[client_no].hp > ctx->battlemon[client_no].maxhp) {
             ctx->battlemon[client_no].hp = ctx->battlemon[client_no].maxhp;
         }
         CopyBattleMonToPartyMon(bsys, ctx, client_no);

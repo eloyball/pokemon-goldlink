@@ -2913,14 +2913,14 @@ void LONG_CALL ov12_0224C678(struct BattleSystem *bsys, struct BattleStruct *ctx
  * BattleController_LoopSpreadMoves
  * https://github.com/pret/pokeplatinum/blob/04d9ea4cfad3963feafecf3eb0f4adcbc7aa5063/src/battle/battle_controller.c#L3832
  */
-void LONG_CALL ov12_0224D03C(struct BattleSystem *bsys, struct BattleStruct *ctx) {
+void LONG_CALL ov12_0224D03C(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx) {
     ctx->server_seq_no = CONTROLLER_COMMAND_36;
 }
 
 /**
  * ov12_0224CF14 in pokeheartgold
  */
-void LONG_CALL BattleController_LoopMultiHit(struct BattleSystem *bsys, struct BattleStruct *ctx) {
+void LONG_CALL BattleController_LoopMultiHit(struct BattleSystem * bsys UNUSED, struct BattleStruct *ctx) {
     // debug_printf("In BattleController_LoopMultiHit\n");
     ctx->server_seq_no = CONTROLLER_COMMAND_34;
 }

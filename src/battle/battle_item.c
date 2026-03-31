@@ -134,7 +134,7 @@ enum
  *  @param sp global battle structure
  *  @return TRUE if a battle subscript has been loaded and should be run; FALSE otherwise
  */
-u32 LONG_CALL ServerWazaHitAfterCheckAct(void *bw, struct BattleStruct *sp)
+u32 LONG_CALL ServerWazaHitAfterCheckAct(void *bw UNUSED, struct BattleStruct *sp)
 {
     /*
     int ret;
