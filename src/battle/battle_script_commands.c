@@ -3135,12 +3135,14 @@ BOOL btl_scr_cmd_FF_checkcanactivatedefiantorcompetitive(void *bsys UNUSED, stru
         switch (GetBattlerAbility(ctx, ctx->state_client)) {
             case ABILITY_DEFIANT:
                 if (ctx->battlemon[ctx->state_client].states[STAT_ATTACK] < 12) {
+                    ctx->addeffect_type = ADD_EFFECT_ABILITY;
                     IncrementBattleScriptPtr(ctx, handleDefiantAddress);
                     return FALSE;
                 }
                 break;
             case ABILITY_COMPETITIVE:
                 if (ctx->battlemon[ctx->state_client].states[STAT_SPATK] < 12) {
+                    ctx->addeffect_type = ADD_EFFECT_ABILITY;
                     IncrementBattleScriptPtr(ctx, handleCompetitiveAddress);
                     return FALSE;
                 }
