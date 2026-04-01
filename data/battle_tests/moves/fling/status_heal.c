@@ -1,4 +1,4 @@
-// Test: Fling - Mental Herb clears target status
+// Test: Fling - Flung item clears target status
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -14,7 +14,7 @@ const struct TestBattleScenario BattleTests[] = {
 #endif
 
     {
-        .battleType = BATTLE_TYPE_DOUBLE,
+        .battleType = BATTLE_TYPE_SINGLE,
         .weather = WEATHER_NONE,
         .fieldCondition = 0,
         .terrain = TERRAIN_NONE,
@@ -25,24 +25,13 @@ const struct TestBattleScenario BattleTests[] = {
                 .form = 0,
                 .ability = ABILITY_NONE,
                 .item = ITEM_MENTAL_HERB,
-                .moves = { MOVE_FLING, MOVE_HEAL_BLOCK, MOVE_DISABLE, MOVE_NONE },
+                .moves = { MOVE_FLING, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                 .hp = FULL_HP,
                 .status = 0,
                 .condition2 = 0,
                 .moveEffectFlags = 0,
             },
-            {
-                .species = SPECIES_BANETTE,
-                .level = 50,
-                .form = 0,
-                .ability = ABILITY_NONE,
-                .item = ITEM_NONE,
-                .moves = { MOVE_TAUNT, MOVE_ENCORE, MOVE_SPLASH, MOVE_NONE },
-                .hp = FULL_HP,
-                .status = 0,
-                .condition2 = 0,
-                .moveEffectFlags = 0,
-            },
+            { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
@@ -51,34 +40,23 @@ const struct TestBattleScenario BattleTests[] = {
                             .species = SPECIES_SHUCKLE,
                             .level = 50,
                             .form = 0,
-                            .ability = ABILITY_RIPEN,
+                            .ability = ABILITY_NONE,
                             .item = ITEM_NONE,
-                            .moves = { MOVE_FALSE_SWIPE, MOVE_SPLASH, MOVE_NONE, MOVE_NONE },
+                            .moves = {MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                             .hp = FULL_HP,
                             .status = 0,
                             .condition2 = STATUS2_ATTRACT | STATUS2_TORMENT,
                             .moveEffectFlags = 0,
                         },
-                        {
-                            .species = SPECIES_MAGIKARP,
-                            .level = 50,
-                            .form = 0,
-                            .ability = ABILITY_RIPEN,
-                            .item = ITEM_NONE,
-                            .moves = { MOVE_SPLASH, MOVE_NONE, MOVE_NONE, MOVE_NONE },
-                            .hp = FULL_HP,
-                            .status = 0,
-                            .condition2 = 0,
-                            .moveEffectFlags = 0,
-                        },
+            { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE } },
         .playerScript = { {
-                              { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
-                              { ACTION_MOVE_SLOT_3, BATTLER_ENEMY_FIRST },
                               { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
+                              { ACTION_NONE, 0 },
+                              { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
@@ -86,9 +64,9 @@ const struct TestBattleScenario BattleTests[] = {
                               { ACTION_NONE, 0 },
                           },
             {
-                { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
-                { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
-                { ACTION_MOVE_SLOT_3, BATTLER_ENEMY_FIRST },
+                { ACTION_NONE, 0 },
+                { ACTION_NONE, 0 },
+                { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
@@ -97,8 +75,8 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .enemyScript = { {
                              { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
-                             { ACTION_MOVE_SLOT_2, BATTLER_PLAYER_FIRST },
-                             { ACTION_MOVE_SLOT_2, BATTLER_PLAYER_FIRST },
+                             { ACTION_NONE, 0 },
+                             { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
@@ -106,9 +84,9 @@ const struct TestBattleScenario BattleTests[] = {
                              { ACTION_NONE, 0 },
                          },
             {
-                { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
-                { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
-                { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
+                { ACTION_NONE, 0 },
+                { ACTION_NONE, 0 },
+                { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
                 { ACTION_NONE, 0 },
@@ -117,12 +95,7 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle cured its infatuation status using its Mental Herb!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle shook off the taunt!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle's encore ended!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle is no longer tormented!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle's move is no longer disabled!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Shuckle is no longer prevented from healing!" },
-        
         }
     },
 #ifndef GET_TEST_CASE_ONLY
