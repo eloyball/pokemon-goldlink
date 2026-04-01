@@ -9228,7 +9228,7 @@ movedata MOVE_PETAL_BLIZZARD, "Petal Blizzard"
     movedescription MOVE_PETAL_BLIZZARD, "The user stirs up a\nviolent petal blizzard\nand attacks everything\naround it."
 
 movedata MOVE_FREEZE_DRY, "Freeze-Dry"
-    battleeffect MOVE_EFFECT_HIT
+    battleeffect MOVE_EFFECT_FREEZE_HIT
     pss SPLIT_SPECIAL
     basepower 70
     type TYPE_ICE // Handled in src/battle/other_battle_calculators.c
