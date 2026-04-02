@@ -475,6 +475,7 @@ BOOL LONG_CALL MoveHitAttackerAbilityCheck(void *bw, struct BattleStruct *sp, in
                 && ((sp->oneSelfFlag[sp->defence_client].physical_damage) ||
                     (sp->oneSelfFlag[sp->defence_client].special_damage))
                 && (IsContactBeingMade(GetBattlerAbility(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->defence_client), sp->current_move_index, sp->moveTbl[sp->current_move_index].flag))
+                && (HeldItemHoldEffectGet(sp, sp->defence_client) != HOLD_EFFECT_PREVENT_SECONDARY_EFFECTS)
                 && (CheckSubstitute(sp, sp->defence_client) == FALSE)
 #ifndef DEBUG_BATTLE_SCENARIOS
                 && (BattleRand(bw) % 10 < 3)
