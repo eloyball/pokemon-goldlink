@@ -276,10 +276,7 @@ $(BASE)/arm9.bin: $(ROMNAME) $(NDSTOOL)
 	$(NDSTOOL) -x $(ROMNAME) -9 $(BASE)/arm9.bin -7 $(BASE)/arm7.bin -y9 $(BASE)/overarm9.bin -y7 $(BASE)/overarm7.bin -d $(FILESYS) -y $(BASE)/overlay -t $(BASE)/banner.bin -h $(BASE)/header.bin
 	$(NARCHIVE) extract $(FILESYS)/a/0/2/8 -o $(BUILD)/a028/ -nf
 
-# rom needs to be extracted for various narc buildings to function
-$(NARC_FILES): | $(BASE)/arm9.bin
-
-all: $(OUTPUT) $(OVERLAY_OUTPUTS) $(TOOLS) $(NARC_FILES)
+all: $(OUTPUT) $(OVERLAY_OUTPUTS) $(TOOLS) $(BASE)/arm9.bin
 	@# find and delete macOS and windows files
 	find . \( -name "*.DS_Store" -o -name "*:Zone.Identifier" \) -delete
 	$(PYTHON) scripts/make.py $(CFLAGS)
@@ -322,7 +319,7 @@ clean_code:
 CODE_ADDON_ARTIFACTS := $(wildcard $(BUILD)/a028/9_*) $(wildcard $(BUILD)/a028/8_1*) $(wildcard build/$(BUILD)/8_2*) $(BUILD)/a028/8_07 $(BUILD)/a028/8_08 $(BUILD)/a028/8_09
 CODE_ADDON_ARTIFACTS := $(filter-out $(BUILD)/a028/8_1 $(BUILD)/a028/8_2 $(BUILD)/a028/8_3 $(BUILD)/a028/8_4 $(BUILD)/a028/8_5 $(BUILD)/a028/8_6, $(CODE_ADDON_ARTIFACTS))
 
-move_narc:
+move_narc: $(NARC_FILES)
 	@echo "battle hud layout:"
 	cp $(BATTLEHUD_NARC) $(BATTLEHUD_TARGET)
 
