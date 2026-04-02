@@ -1331,6 +1331,7 @@ BOOL btl_scr_cmd_24_jumptocurmoveeffectscript(void *bw UNUSED, struct BattleStru
                 break;
 
             default:
+                sp->battlemon[sp->attack_client].sheer_force_flag = 0;
                 break;
         }
 
