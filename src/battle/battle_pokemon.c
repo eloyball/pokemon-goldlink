@@ -1080,6 +1080,7 @@ void LONG_CALL ClearBattleMonFlags(struct BattleStruct *sp, int client)
     sp->protectSuccessTurns[client] = 0;
     sp->paradoxBoostedStat[client] = 0;
     sp->boosterEnergyActivated[client] = FALSE;
+    sp->lastClientMoveType[client] = TYPE_TYPELESS;
 
     if (gBattleSystem != NULL)
     {
