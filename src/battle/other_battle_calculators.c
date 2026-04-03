@@ -4148,3 +4148,11 @@ u32 LONG_CALL CheckSubstitute(struct BattleStruct* ctx, int client_no)
 
     return ret;
 }
+
+u8 BattleSystem_GetCriticalHpMusicFlag(struct BattleStruct *battleSystem UNUSED) {
+	return 2;
+}
+
+u8 BattleSystem_SetCriticalHpMusicFlag(struct BattleStruct *battleSystem, u8 flag UNUSED) {
+	//battleSystem->criticalHpMusic = 2;
+}
