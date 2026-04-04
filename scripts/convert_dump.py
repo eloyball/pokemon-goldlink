@@ -134,6 +134,7 @@ def convert_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "SPECIES_TATSUGIRI_3": "SPECIES_MEGA_TATSUGIRI",
         "SPECIES_TATSUGIRI_4": "SPECIES_MEGA_TATSUGIRI_DROOPY",
         "SPECIES_TATSUGIRI_5": "SPECIES_MEGA_TATSUGIRI_STRETCHY",
+        "SPECIES_PYROAR_FEMALE": "SPECIES_MEGA_PYROAR",  # Pyroar female is only a form in hg-engine
     }
 
     if key in hardcoded_mappings:
