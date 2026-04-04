@@ -126,9 +126,9 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Chikorita's Sp. Atk fell!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Chikorita’s Sp. Atk harshly fell!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "Chikorita is switched out" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Treecko used Sleep Talk!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Treecko used Sleep Talk!" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
