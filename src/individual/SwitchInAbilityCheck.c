@@ -942,6 +942,8 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
             }
                 break;
             case SWITCH_IN_CHECK_ENTRY_EFFECT_EJECT_PACK: {
+                // only one eject pack can activate
+                sp->switch_in_check_seq_no++;
                 for (i = 0; i < client_set_max; i++) {
                     client_no = sp->turnOrder[i];
 
@@ -956,9 +958,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
                         }
                     }
                 }
-                //only one eject pack can activate
-                sp->switch_in_check_seq_no++;
-
+               
                 if (ret == SWITCH_IN_CHECK_MOVE_SCRIPT) {
                     sp->switch_in_check_seq_no = 0;
                     break;
