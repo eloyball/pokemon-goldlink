@@ -1646,7 +1646,7 @@ int LONG_CALL Activate_MirrorHerb_WhiteHerb_EjectPack(void *bsys, struct BattleS
                 // Any Sat lowered
                 && ctx->moveConditionsFlags[client_no].anyStatLoweredThisTurn) {
 
-                sp->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
+                ctx->addeffect_type = ADD_EFFECT_MOVE_EFFECT;
                 ctx->battlerIdTemp = client_no;
                 ctx->state_client = client_no;
 
