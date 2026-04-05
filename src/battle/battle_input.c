@@ -277,13 +277,7 @@ void Sub_PokeIconResourceFree(struct BI_PARAM *bip)
             newBS.playerWantMega = No2Bit(bip->client_no_fight_screen); // determine which party pos queued up the mega for cases where the player is in control of 2 clients
         }
         else
-        {
-#ifdef DEBUG_BATTLE_SCENARIOS
-            newBS.playerWantMega = TRUE;
-#else
             newBS.playerWantMega = FALSE;
-#endif // DEBUG_BATTLE_SCENARIOS
-        }
         newBS.MegaIconLight = 0;
     }
 

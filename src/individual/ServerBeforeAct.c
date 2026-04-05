@@ -105,6 +105,9 @@ void __attribute__((section (".init"))) ServerBeforeActInternal(struct BattleSys
                 // debug_printf("In SBA_SET_GIMMICK_REQUEST_STATUS\n");
 
                 for (client_no = 0; client_no < client_set_max; client_no++) {
+#ifdef DEBUG_BATTLE_SCENARIOS
+                    newBS.playerWantMega = No2Bit(client_no);
+#endif
                     flag = FALSE;
                     if (sp->playerActions[0][3] != SELECT_ESCAPE_COMMAND &&
                         sp->playerActions[2][3] != SELECT_ESCAPE_COMMAND) {
