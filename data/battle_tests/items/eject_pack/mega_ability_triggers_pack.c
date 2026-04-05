@@ -1,4 +1,4 @@
-// Test: Eject Pack - Mega Ability triggers pack
+// Test: Eject Pack - Mega Ability triggers pack during move
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -19,7 +19,7 @@ const struct TestBattleScenario BattleTests[] = {
         .terrain = TERRAIN_NONE,
         .playerParty = {
             {
-                .species = SPECIES_MARSHTOMP,
+                .species = SPECIES_MANECTRIC,
                 .level = 50,
                 .form = 0,
                 .ability = ABILITY_STATIC,
