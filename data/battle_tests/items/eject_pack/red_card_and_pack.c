@@ -144,7 +144,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Litten's Intimidate cuts Marshtomb's Attack!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Chikorita used Sleep Talk!" },
         },
-        .knownFailing = TRUE;
+        .knownFailing = TRUE,
 }
 ,
 #ifndef GET_TEST_CASE_ONLY
