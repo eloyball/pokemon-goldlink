@@ -944,7 +944,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
             case SWITCH_IN_CHECK_ENTRY_EFFECT_EJECT_PACK: {
                 // only one eject pack can activate
                 sp->switch_in_check_seq_no++;
-                for (i = 0; i < client_set_max; i++) {
+                /* for (i = 0; i < client_set_max; i++) {
                     client_no = sp->turnOrder[i];
 
                     if (HeldItemHoldEffectGet(sp, client_no) == HOLD_EFFECT_SWITCH_OUT_ON_STAT_DROP 
@@ -964,7 +964,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
                     sp->switch_in_check_seq_no = 0;
                     break;
                 }
-                FALLTHROUGH;
+               */ FALLTHROUGH;
             }
             case SWITCH_IN_CHECK_ENTRY_EFFECT_OPPORTUNIST: {
                 for (i = 0; i < client_set_max; i++) {
