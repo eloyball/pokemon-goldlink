@@ -942,6 +942,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
             }
                 break;
             case SWITCH_IN_CHECK_ENTRY_EFFECT_EJECT_PACK: {
+                debug_printf("SWITCH_IN_CHECK_ENTRY_EFFECT_EJECT_PACK: cmd %d, faint %d, switch %d, switchtmp %d\n", ctx->server_seq_no, sp->fainting_client, sp->reshuffle_client, sp->reshuffle_client_temp);
                 // only one eject pack can activate
                 sp->switch_in_check_seq_no++;
                 /* for (i = 0; i < client_set_max; i++) {
