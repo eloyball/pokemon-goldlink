@@ -30,6 +30,7 @@ extern struct ILLUSION_STRUCT gIllusionStruct;
  */
 int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
 {
+    debug_printf("in SwitchInAbilityCheck\n");
     // Sort clients because abilities may affect speed
     DynamicSortClientExecutionOrder(bw, sp, FALSE);
     int i;
@@ -290,6 +291,7 @@ int UNUSED SwitchInAbilityCheck(void *bw, struct BattleStruct *sp)
                     // Intimidate
                     {
                         if ((sp->battlemon[client_no].ability_activated_flag == 0) && (sp->battlemon[client_no].hp) && (GetBattlerAbility(sp, client_no) == ABILITY_INTIMIDATE)) {
+                            debug_printf("in Intimidate\n");
                             // mark intimidate as having activated if it can regardless of if it does so that abilities that suppress it don't suddenly let it activate once they disappear
                             sp->battlemon[client_no].ability_activated_flag = 1;
                             if (IntimidateCheckHelper(sp, client_no)) {
