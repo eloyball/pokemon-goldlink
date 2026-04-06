@@ -440,13 +440,11 @@ static BOOL MegaEvolutionOrUltraBurst(struct BattleSystem *bsys, struct BattleSt
         }
         if (newBS.needMega[client_no] == MEGA_CHECK_APPER && ctx->battlemon[client_no].hp) {
             newBS.needMega[client_no] = MEGA_NO_NEED;
-            seq = ST_ServerPokeAppearCheck(bsys, ctx);
-            if (seq) {
-                LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, seq);
-                ctx->next_server_seq_no = ctx->server_seq_no;
-                ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                return TRUE;
-            }
+
+            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_SWITCH_IN_ABILITY_CHECK);
+            ctx->next_server_seq_no = ctx->server_seq_no;
+            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+            return TRUE;
         }
         newBS.needMega[client_no] = MEGA_NO_NEED;
     }
