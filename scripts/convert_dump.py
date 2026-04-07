@@ -158,11 +158,24 @@ def convert_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     if key.endswith("_1") or key.endswith("_2") or key.endswith("_3"):
         key = key[:-1] + "MEGA"
 
-    # Level‑up moves
+    # -3: evo, -2: reminder
+
+    # Reminder moves
     lvl_moves = []
+    for rm in entry.get("ReminderMoves", []):
+        lvl_moves.append({"Level": 1, "Move": resolve_move_name(rm)})
     for lm in entry.get("Learnset", []):
+        if lm["Level"] == -2:
+            lvl_moves.append({"Level": 1, "Move": resolve_move_name(lm["Move"])})
+
+    # Level‑up moves
+    for lm in entry.get("Learnset", []):
+        if lm["Level"] == -2:
+            continue
         lvl = 0 if lm["Level"] == -3 else lm["Level"]
         lvl_moves.append({"Level": lvl, "Move": resolve_move_name(lm["Move"])})
+
+    lvl_moves.sort(key=lambda d: d["Level"])
 
     # TM moves
     tm_moves = [resolve_move_name(m) for m in entry.get("TechnicalMachine", [])]
