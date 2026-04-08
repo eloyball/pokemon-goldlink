@@ -28270,7 +28270,7 @@ mondata SPECIES_MEGA_CLEFABLE, "-----"
     basefriendship 140
     growthrate GROWTH_FAST
     egggroups EGG_GROUP_FAIRY, EGG_GROUP_FAIRY
-    abilities ABILITY_CUTE_CHARM, ABILITY_CUTE_CHARM
+    abilities ABILITY_MAGIC_BOUNCE, ABILITY_MAGIC_BOUNCE
     runchance 0
     colorflip BODY_COLOR_PINK, 0
 
@@ -28286,12 +28286,12 @@ mondata SPECIES_MEGA_VICTREEBEL, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_GRASS, EGG_GROUP_GRASS
-    abilities ABILITY_CHLOROPHYLL, ABILITY_CHLOROPHYLL
+    abilities ABILITY_INNARDS_OUT, ABILITY_INNARDS_OUT
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
 mondata SPECIES_MEGA_STARMIE, "-----"
-    basestats 60, 140, 105, 120, 130, 105
+    basestats 60, 100, 105, 120, 130, 105
     types TYPE_WATER, TYPE_PSYCHIC
     catchrate 60
     baseexp 0 // defined in baseexp.s
@@ -28302,7 +28302,7 @@ mondata SPECIES_MEGA_STARMIE, "-----"
     basefriendship 50
     growthrate GROWTH_SLOW
     egggroups EGG_GROUP_WATER_3, EGG_GROUP_WATER_3
-    abilities ABILITY_ILLUMINATE, ABILITY_ILLUMINATE
+    abilities ABILITY_HUGE_POWER, ABILITY_HUGE_POWER
     runchance 0
     colorflip BODY_COLOR_PURPLE, 0
 
@@ -28366,7 +28366,7 @@ mondata SPECIES_MEGA_SKARMORY, "-----"
     basefriendship 50
     growthrate GROWTH_SLOW
     egggroups EGG_GROUP_FLYING, EGG_GROUP_FLYING
-    abilities ABILITY_KEEN_EYE, ABILITY_KEEN_EYE
+    abilities ABILITY_STALWART, ABILITY_STALWART
     runchance 0
     colorflip BODY_COLOR_GRAY, 0
 
@@ -28526,7 +28526,7 @@ mondata SPECIES_MEGA_EXCADRILL, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_SAND_RUSH, ABILITY_SAND_RUSH
+    abilities ABILITY_PIERCING_DRILL, ABILITY_PIERCING_DRILL
     runchance 0
     colorflip BODY_COLOR_GRAY, 0
 
@@ -28590,7 +28590,7 @@ mondata SPECIES_MEGA_CHANDELURE, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_SLOW
     egggroups EGG_GROUP_AMORPHOUS, EGG_GROUP_AMORPHOUS
-    abilities ABILITY_FLASH_FIRE, ABILITY_FLASH_FIRE
+    abilities ABILITY_INFILTRATOR, ABILITY_INFILTRATOR
     runchance 0
     colorflip BODY_COLOR_BLACK, 0
 
@@ -28606,7 +28606,7 @@ mondata SPECIES_MEGA_GOLURK, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_MINERAL, EGG_GROUP_MINERAL
-    abilities ABILITY_IRON_FIST, ABILITY_IRON_FIST
+    abilities ABILITY_UNSEEN_FIST, ABILITY_UNSEEN_FIST
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
@@ -28686,7 +28686,7 @@ mondata SPECIES_MEGA_FLOETTE, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_UNDISCOVERED, EGG_GROUP_UNDISCOVERED
-    abilities ABILITY_FLOWER_VEIL, ABILITY_FLOWER_VEIL
+    abilities ABILITY_FAIRY_AURA, ABILITY_FAIRY_AURA
     runchance 0
     colorflip BODY_COLOR_WHITE, 0
 
@@ -28702,7 +28702,7 @@ mondata SPECIES_MEGA_MEOWSTIC, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_KEEN_EYE, ABILITY_KEEN_EYE
+    abilities ABILITY_TRACE, ABILITY_TRACE
     runchance 0
     colorflip BODY_COLOR_BLUE, 0
 
@@ -28718,7 +28718,7 @@ mondata SPECIES_MEGA_MEOWSTIC_FEMALE, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_FIELD, EGG_GROUP_FIELD
-    abilities ABILITY_KEEN_EYE, ABILITY_KEEN_EYE
+    abilities ABILITY_TRACE, ABILITY_TRACE
     runchance 0
     colorflip BODY_COLOR_BLUE, 0
 
@@ -28782,7 +28782,7 @@ mondata SPECIES_MEGA_HAWLUCHA, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_FLYING, EGG_GROUP_HUMAN_LIKE
-    abilities ABILITY_LIMBER, ABILITY_LIMBER
+    abilities ABILITY_NO_GUARD, ABILITY_NO_GUARD
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
@@ -28814,7 +28814,7 @@ mondata SPECIES_MEGA_CRABOMINABLE, "-----"
     basefriendship 70
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_WATER_3, EGG_GROUP_WATER_3
-    abilities ABILITY_HYPER_CUTTER, ABILITY_HYPER_CUTTER
+    abilities ABILITY_IRON_FIST, ABILITY_IRON_FIST
     runchance 0
     colorflip BODY_COLOR_WHITE, 0
 
@@ -28926,7 +28926,7 @@ mondata SPECIES_MEGA_SCOVILLAIN, "-----"
     basefriendship 50
     growthrate GROWTH_MEDIUM_FAST
     egggroups EGG_GROUP_GRASS, EGG_GROUP_GRASS
-    abilities ABILITY_CHLOROPHYLL, ABILITY_CHLOROPHYLL
+    abilities ABILITY_SPICY_SPRAY, ABILITY_SPICY_SPRAY
     runchance 0
     colorflip BODY_COLOR_GREEN, 0
 
