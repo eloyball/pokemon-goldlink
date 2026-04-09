@@ -443,7 +443,7 @@ const struct MegaStruct sMegaTable[] =
     },
     {
         .monindex = SPECIES_DRAMPA,
-        .itemindex = ITEM_DRAMPITE,
+        .itemindex = ITEM_DRAMPANITE,
         .form = 1,
     },
     {
