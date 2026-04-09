@@ -495,6 +495,9 @@ u16 SharpnessMovesTable[24] = {
     MOVE_SOLAR_BLADE,
     MOVE_STONE_AXE,
     MOVE_X_SCISSOR,
+    MOVE_SHADOW_CLAW,
+    MOVE_DRAGON_CLAW,
+    MOVE_DIRE_CLAW,
 };
 
 u16 sLowKickWeightToPower[6][2] = {

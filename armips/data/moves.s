@@ -1198,7 +1198,7 @@ movedata MOVE_GROWTH, "Growth"
     battleeffect MOVE_EFFECT_SP_ATK_UP
     pss SPLIT_STATUS
     basepower 0
-    type TYPE_NORMAL
+    type TYPE_GRASS
     accuracy 0
     pp 20
     effectchance 0
@@ -2447,7 +2447,7 @@ movedata MOVE_CRABHAMMER, "Crabhammer"
     pss SPLIT_PHYSICAL
     basepower 100
     type TYPE_WATER
-    accuracy 90
+    accuracy 95
     pp 10
     effectchance 0
     target RANGE_SINGLE_TARGET
@@ -2928,7 +2928,7 @@ movedata MOVE_PROTECT, "Protect"
     basepower 0
     type TYPE_NORMAL
     accuracy 0
-    pp 10
+    pp 5
     effectchance 0
     target RANGE_USER
     priority 4
@@ -3181,7 +3181,7 @@ movedata MOVE_DETECT, "Detect"
 movedata MOVE_BONE_RUSH, "Bone Rush"
     battleeffect MOVE_EFFECT_MULTI_HIT
     pss SPLIT_PHYSICAL
-    basepower 25
+    basepower 30
     type TYPE_GROUND
     accuracy 90
     pp 10
@@ -7089,7 +7089,7 @@ movedata MOVE_IRON_HEAD, "Iron Head"
     type TYPE_STEEL
     accuracy 100
     pp 15
-    effectchance 30
+    effectchance 20
     target RANGE_SINGLE_TARGET
     priority 0
     flags FLAG_MIRROR_MOVE | FLAG_PROTECT | FLAG_CONTACT
@@ -8686,7 +8686,7 @@ movedata MOVE_COTTON_GUARD, "Cotton Guard"
 movedata MOVE_NIGHT_DAZE, "Night Daze"
     battleeffect MOVE_EFFECT_LOWER_ACCURACY_HIT
     pss SPLIT_SPECIAL
-    basepower 85
+    basepower 90
     type TYPE_DARK
     accuracy 95
     pp 10
@@ -9426,7 +9426,7 @@ movedata MOVE_MOONBLAST, "Moonblast"
     type (FAIRY_TYPE_IMPLEMENTED) ? TYPE_FAIRY : TYPE_NORMAL
     accuracy 100
     pp 15
-    effectchance 30
+    effectchance 10
     target RANGE_SINGLE_TARGET
     priority 0
     flags FLAG_KEEP_HP_BAR | FLAG_PROTECT | FLAG_MIRROR_MOVE
@@ -10624,7 +10624,7 @@ movedata MOVE_SHORE_UP, "Shore Up"
 movedatalongname MOVE_FIRST_IMPRESSION, "FirstImpression", "First Impression"
     battleeffect MOVE_EFFECT_FIRST_TURN_ONLY
     pss SPLIT_PHYSICAL
-    basepower 90
+    basepower 100
     type TYPE_BUG
     accuracy 100
     pp 10
@@ -10656,7 +10656,7 @@ movedata MOVE_BANEFUL_BUNKER, "Baneful Bunker"
 movedata MOVE_SPIRIT_SHACKLE, "Spirit Shackle"
     battleeffect MOVE_EFFECT_PREVENT_ESCAPE_HIT
     pss SPLIT_PHYSICAL
-    basepower 80
+    basepower 90
     type TYPE_GHOST
     accuracy 100
     pp 10
@@ -10944,7 +10944,7 @@ movedata MOVE_LUNGE, "Lunge"
 movedata MOVE_FIRE_LASH, "Fire Lash"
     battleeffect MOVE_EFFECT_LOWER_DEFENSE_HIT
     pss SPLIT_PHYSICAL
-    basepower 80
+    basepower 90
     type TYPE_FIRE
     accuracy 100
     pp 15
@@ -11072,7 +11072,7 @@ movedata MOVE_CORE_ENFORCER, "Core Enforcer"
 movedata MOVE_TROP_KICK, "Trop Kick"
     battleeffect MOVE_EFFECT_LOWER_ATTACK_HIT
     pss SPLIT_PHYSICAL
-    basepower 70
+    basepower 85
     type TYPE_GRASS
     accuracy 100
     pp 15
@@ -11104,10 +11104,10 @@ movedata MOVE_INSTRUCT, "Instruct"
 movedata MOVE_BEAK_BLAST, "Beak Blast"
     battleeffect MOVE_EFFECT_HIT
     pss SPLIT_PHYSICAL
-    basepower 100
+    basepower 120
     type TYPE_FLYING
     accuracy 100
-    pp 15
+    pp 5
     effectchance 0
     target RANGE_SINGLE_TARGET
     priority -3
@@ -12535,7 +12535,7 @@ movedata MOVE_SNAP_TRAP, "Snap Trap"
     battleeffect MOVE_EFFECT_HIT
     pss SPLIT_PHYSICAL
     basepower 35
-    type TYPE_GRASS
+    type TYPE_STEEL
     accuracy 100
     pp 15
     effectchance 100
@@ -12662,7 +12662,7 @@ movedata MOVE_OVERDRIVE, "Overdrive"
 movedata MOVE_APPLE_ACID, "Apple Acid"
     battleeffect MOVE_EFFECT_LOWER_SP_DEF_HIT
     pss SPLIT_SPECIAL
-    basepower 80
+    basepower 90
     type TYPE_GRASS
     accuracy 100
     pp 10
@@ -12678,7 +12678,7 @@ movedata MOVE_APPLE_ACID, "Apple Acid"
 movedata MOVE_GRAV_APPLE, "Grav Apple"
     battleeffect MOVE_EFFECT_LOWER_DEFENSE_HIT // Damage portion handled in CalcBaseDamage.c.
     pss SPLIT_PHYSICAL
-    basepower 80
+    basepower 90
     type TYPE_GRASS
     accuracy 100
     pp 10
@@ -13307,7 +13307,7 @@ movedata MOVE_DIRE_CLAW, "Dire Claw"
     type TYPE_POISON
     accuracy 100
     pp 15
-    effectchance 50
+    effectchance 30
     target RANGE_SINGLE_TARGET
     priority 0
     flags FLAG_PROTECT | FLAG_MIRROR_MOVE | FLAG_CONTACT
@@ -13319,7 +13319,7 @@ movedata MOVE_DIRE_CLAW, "Dire Claw"
 movedata MOVE_PSYSHIELD_BASH, "Psyshield Bash"
     battleeffect MOVE_EFFECT_RAISE_DEF_HIT
     pss SPLIT_PHYSICAL
-    basepower 70
+    basepower 90
     type TYPE_PSYCHIC
     accuracy 90
     pp 10
@@ -13447,7 +13447,7 @@ movedata MOVE_CHLOROBLAST, "Chloroblast"
 movedata MOVE_MOUNTAIN_GALE, "Mountain Gale"
     battleeffect MOVE_EFFECT_FLINCH_HIT
     pss SPLIT_PHYSICAL
-    basepower 100
+    basepower 120
     type TYPE_ICE
     accuracy 85
     pp 10
@@ -13575,7 +13575,7 @@ movedata MOVE_TRIPLE_ARROWS, "Triple Arrows"
 movedata MOVE_INFERNAL_PARADE, "Infernal Parade"
     battleeffect MOVE_EFFECT_BURN_HIT_DOUBLE_POWER_ON_STATUS
     pss SPLIT_SPECIAL
-    basepower 60
+    basepower 65
     type TYPE_GHOST
     accuracy 100
     pp 15
@@ -14524,7 +14524,7 @@ movedata MOVE_SYRUP_BOMB, "Syrup Bomb"
     pss SPLIT_SPECIAL
     basepower 60
     type TYPE_GRASS
-    accuracy 85
+    accuracy 90
     pp 10
     effectchance 100
     target RANGE_SINGLE_TARGET
