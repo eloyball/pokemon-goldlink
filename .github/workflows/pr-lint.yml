@@ -3,8 +3,8 @@ name: pr-lint
 on:
   pull_request:
     paths:
-      - '**.c'
-      - '**.h'
+      - 'src/**/*.c'
+      - 'include/**/*.h'
 
 jobs:
   pr-lint:
@@ -26,8 +26,13 @@ jobs:
           version: '19'
           files-changed-only: true
           ignore: '.github|tools'
-          file-annotations: false
+          file-annotations: true
+          format-review: true
+
+      - name: Print lint results
+        run: |
+          echo "Format failures: ${{ steps.linter.outputs.clang-format-checks-failed }}"
 
       - name: Fail if formatting checks fail
-        if: steps.linter.outputs.clang-format-checks-failed > 0
+        if: ${{ steps.linter.outputs.clang-format-checks-failed != '0' }}
         run: exit 1
