@@ -1,0 +1,1 @@
+Local scratch dir for temp files. Not tracked by git.
