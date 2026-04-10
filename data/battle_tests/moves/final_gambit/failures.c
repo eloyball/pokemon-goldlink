@@ -122,7 +122,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Mankey used Final Gambit!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gible protected itself!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Starly used Final Gambit!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect the opposing Gastly..." },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect the opposing Gastly..." },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
