@@ -1996,6 +1996,9 @@ int LONG_CALL Activate_RecoilDamage(void *bsys UNUSED, struct BattleStruct *ctx)
     case MOVE_EFFECT_RECOIL_HALF: // head smash, light of ruin
         seq_no = SUB_SEQ_RECOIL_1_2;
         break;
+    case MOVE_EFFECT_RECOIL_HALF_MAX_HP: //chloroplast
+        seq_no = SUB_SEQ_RECOIL_HALF_MAX_HP;
+        break;
     default:
         break;
     }
