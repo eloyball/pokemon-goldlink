@@ -127,6 +127,7 @@ BOOL btl_scr_cmd_11C_BatchUpdateHealthBar(void* bsys, struct BattleStruct* ctx);
 BOOL btl_scr_cmd_11D_BatchUpdateHealthBarValue(void* bsys, struct BattleStruct* ctx);
 BOOL btl_scr_cmd_11E_BatchFollowupMessage(void* bsys UNUSED, struct BattleStruct* ctx);
 BOOL btl_scr_cmd_11F_BatchEffectivenessMessage(void* bsys, struct BattleStruct* ctx);
+BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_GoToMoveScript(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp);
 BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp);
@@ -454,6 +455,7 @@ const u8 *BattleScrCmdNames[] =
     "BatchUpdateHealthBarValue",
     "BatchFollowupMessage",
     "BatchEffectivenessMessage",
+    "DivideVarByValueRoundUp",
     // "YourCustomCommand",
 };
 
@@ -528,6 +530,7 @@ const btl_scr_cmd_func NewBattleScriptCmdTable[] =
     [0x11D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11D_BatchUpdateHealthBarValue,
     [0x11E - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11E_BatchFollowupMessage,
     [0x11F - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11F_BatchEffectivenessMessage,
+    [0x120 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_120_DivideVarByValueRoundUp,
     // [BASE_ENGINE_BTL_SCR_CMDS_MAX - START_OF_NEW_BTL_SCR_CMDS + 1] = btl_scr_cmd_custom_01_your_custom_command,
 };
 
@@ -5337,6 +5340,50 @@ BOOL BtlCmd_TryFaintMon(struct BattleSystem *bsys, struct BattleStruct *ctx)
         ctx->total_hinshi[battlerId]++;
         UpdateFriendshipFainted(bsys, ctx, battlerId);
     }
+
+    return FALSE;
+}
+
+int DivideRoundUp(int num, int denom)
+{
+    int sign;
+
+    if (num == 0) {
+        return num;
+    }
+
+    if (num < 0) {
+        sign = -1;
+    } else {
+        sign = 1;
+    }
+
+    int remainder = num % denom;
+    num /= denom;
+
+    if (remainder)
+    {
+        num += sign;
+    }
+
+    if (num == 0) {
+        num = sign;
+    }
+
+    return num;
+}
+
+BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    int varNo = read_battle_script_param(ctx);
+    int denom = read_battle_script_param(ctx);
+
+    
+    int *data = BattleScriptGetVarPointer(bsys, ctx, varNo);
+
+    *data = DivideRoundUp(*data, denom);
 
     return FALSE;
 }
