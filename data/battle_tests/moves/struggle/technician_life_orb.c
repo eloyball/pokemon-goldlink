@@ -1,4 +1,4 @@
-// Test: Struggle - taunted, Life Orb chip
+// Test: Struggle - Technician, Life Orb chip
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -26,7 +26,7 @@ const struct TestBattleScenario BattleTests[] = {
                 .form = 0,
                 .ability = ABILITY_TECHNICIAN,
                 .item = ITEM_LIFE_ORB,
-                .moves = { MOVE_LEER, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+                .moves = { MOVE_STRUGGLE, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                 .hp = FULL_HP,
                 .status = 0,
                 .condition2 = 0,
@@ -43,7 +43,7 @@ const struct TestBattleScenario BattleTests[] = {
                             .form = 0,
                             .ability = ABILITY_ROUGH_SKIN,
                             .item = ITEM_NONE,
-                            .moves = { MOVE_TAUNT, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+                            .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                             .hp = FULL_HP,
                             .status = 0,
                             .condition2 = 0,
@@ -95,7 +95,6 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Scizor can't use Leer after the taunt!" },
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 49, 49, 51, 51, 52, 52, 52, 53, 53, 55, 55, 56, 56, 57, 57, 58 } },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Garchomp's Rough Skin hurt Scizor!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Scizor lost some of its HP!" },
