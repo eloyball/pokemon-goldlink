@@ -722,7 +722,7 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
             // handle Technician
             if ((AttackingMon.ability == ABILITY_TECHNICIAN)
-            && (moveno != MOVE_STRUGGLE)
+            /* && (moveno != MOVE_STRUGGLE) as of Gen5 */
             && (movepower <= 60)) {
                 basePowerModifier = QMul_RoundUp(basePowerModifier, UQ412__1_5);
                 continue;
