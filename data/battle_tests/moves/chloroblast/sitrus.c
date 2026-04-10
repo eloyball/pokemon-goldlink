@@ -1,4 +1,4 @@
-// Test: Chloroplast - Recoil half max HP, Sitrus triggers
+// Test: Chloroblast - Recoil half max HP, Sitrus triggers
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
