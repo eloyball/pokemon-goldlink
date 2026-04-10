@@ -21,7 +21,7 @@ const struct TestBattleScenario BattleTests[] = {
         .playerParty = {
             {
                 .species = SPECIES_SIRFETCHD,
-                .level = 50,
+                .level = 100,
                 .form = 0,
                 .ability = ABILITY_STEADFAST,
                 .item = ITEM_NONE,
@@ -38,7 +38,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .species = SPECIES_NONE } },
         .enemyParty = { {
                             .species = SPECIES_CRYOGONAL,
-                            .level = 50,
+                            .level = 100,
                             .form = 0,
                             .ability = ABILITY_LEVITATE,
                             .item = ITEM_FOCUS_SASH,
@@ -50,7 +50,7 @@ const struct TestBattleScenario BattleTests[] = {
                         },
             {
                 .species = SPECIES_CRYOGONAL,
-                .level = 50,
+                .level = 100,
                 .form = 0,
                 .ability = ABILITY_LEVITATE,
                 .item = ITEM_FOCUS_SASH,
