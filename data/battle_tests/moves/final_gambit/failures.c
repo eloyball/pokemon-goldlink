@@ -119,13 +119,11 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander used Flame Wheel!" },
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 25, 25, 25, 26, 26, 26, 27, 27, 27, 27, 27, 27, 29, 29, 29, 30 } },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's not very effective..." },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gible thawed out!" }, 
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander lost some of its HP!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Mankey used Final Gambit!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gible protected itself!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Starly used Final Gambit!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect the opposing Gastly..." },
         },
-        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };

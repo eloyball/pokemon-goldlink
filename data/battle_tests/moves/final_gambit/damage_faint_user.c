@@ -47,7 +47,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .species = SPECIES_NONE },
             { .species = SPECIES_NONE } },
         .enemyParty = { {
-                            .species = SPECIES_GIBLE,
+                            .species = SPECIES_DRAMPA,
                             .level = 50,
                             .form = 0,
                             .ability = ABILITY_ROUGH_SKIN,
@@ -115,13 +115,11 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander used Flame Wheel!" },
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 25, 25, 25, 26, 26, 26, 27, 27, 27, 27, 27, 27, 29, 29, 29, 30 } },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's not very effective..." },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gible thawed out!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander lost some of its HP!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Mankey used Final Gambit!" },
+            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115, 115 } },
+            //{ .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective on the opposing Drampa" }, //TODO exclude
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Mankey fainted!" },
         },
-        .knownFailing = TRUE,
     },
 #ifndef GET_TEST_CASE_ONLY
 };
