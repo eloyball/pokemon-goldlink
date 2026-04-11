@@ -301,10 +301,12 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
         }
         break;
     case MOVE_WEATHER_BALL:
-        if (noCloudNineAndAirLock) {
+        if (AttackingMon.ability == ABILITY_MEGA_SOL) {
+            movepower *= 2;
+            break;
+        } else if (noCloudNineAndAirLock) {
             if ((field_cond & FIELD_CONDITION_WEATHER)
-            && !(field_cond & (WEATHER_STRONG_WINDS | WEATHER_SNOW_ANY))
-            || (AttackingMon.ability == ABILITY_MEGA_SOL)) {
+            && !(field_cond & (WEATHER_STRONG_WINDS | WEATHER_SNOW_ANY))) {
                 movepower *= 2;
             }
         }
@@ -520,10 +522,9 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
     // Field effects (weather conditions, Terrains, Imprison, Ion Deluge, Magic Room, Gravity, etc.):
 
-    if (noCloudNineAndAirLock) {
+    if ((noCloudNineAndAirLock) && (AttackingMon.ability != ABILITY_MEGA_SOL)) {
         if ((field_cond & (FIELD_STATUS_FOG | WEATHER_HAIL_ANY | WEATHER_SANDSTORM_ANY | WEATHER_RAIN_ANY | WEATHER_SNOW_ANY))
-        && (moveno == MOVE_SOLAR_BEAM || moveno == MOVE_SOLAR_BLADE)
-        && (AttackingMon.ability != ABILITY_MEGA_SOL)) {
+        && (moveno == MOVE_SOLAR_BEAM || moveno == MOVE_SOLAR_BLADE)) {
             basePowerModifier = QMul_RoundUp(basePowerModifier, UQ412__0_5);
         }
     }
@@ -1389,7 +1390,7 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 #endif
 
     // Step 4.7. Sandstorm + Rock-type
-    if (noCloudNineAndAirLock) {
+    if ((noCloudNineAndAirLock) && (AttackingMon.ability != ABILITY_MEGA_SOL)) {
         if ((field_cond & WEATHER_SANDSTORM_ANY)
         && HasType(sp, defender, TYPE_ROCK)) {
             sp_defense = QMul_RoundDown(sp_defense, UQ412__1_5);

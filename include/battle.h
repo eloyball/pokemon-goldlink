@@ -2306,7 +2306,7 @@ extern u16 StrongJawMovesTable[10];
 
 extern u16 MegaLauncherMovesTable[7];
 
-extern u16 SharpnessMovesTable[24];
+extern u16 SharpnessMovesTable[27];
 
 extern u16 sLowKickWeightToPower[6][2];
 

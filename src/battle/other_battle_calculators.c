@@ -470,7 +470,7 @@ u16 MegaLauncherMovesTable[7] = {
     MOVE_WATER_PULSE,
 };
 
-u16 SharpnessMovesTable[24] = {
+u16 SharpnessMovesTable[27] = {
     MOVE_AERIAL_ACE,
     MOVE_AIR_CUTTER,
     MOVE_AIR_SLASH,
@@ -3089,7 +3089,9 @@ int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct 
             }
             break;
         case MOVE_WEATHER_BALL:
-            if (!CheckSideAbility(bsys, ctx, CHECK_ABILITY_ALL_HP, 0, ABILITY_CLOUD_NINE) && !CheckSideAbility(bsys, ctx, CHECK_ABILITY_ALL_HP, 0, ABILITY_AIR_LOCK)) {
+            if (GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_MEGA_SOL) {   
+                type = TYPE_FIRE;
+            } else if (!CheckSideAbility(bsys, ctx, CHECK_ABILITY_ALL_HP, 0, ABILITY_CLOUD_NINE) && !CheckSideAbility(bsys, ctx, CHECK_ABILITY_ALL_HP, 0, ABILITY_AIR_LOCK)) {
                 if (ctx->field_condition & FIELD_CONDITION_WEATHER) {
                     if (ctx->field_condition & WEATHER_RAIN_ANY) {
                         type = TYPE_WATER;
@@ -3097,8 +3099,7 @@ int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct 
                     if (ctx->field_condition & WEATHER_SANDSTORM_ANY) {
                         type = TYPE_ROCK;
                     }
-                    if ((ctx->field_condition & WEATHER_SUNNY_ANY) 
-                     || (ctx->battlemon[battlerId].ability == ABILITY_MEGA_SOL)) {
+                    if (ctx->field_condition & WEATHER_SUNNY_ANY) {
                         type = TYPE_FIRE;
                     }
                     if (ctx->field_condition & WEATHER_HAIL_ANY) {

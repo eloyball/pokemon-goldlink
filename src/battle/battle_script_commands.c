@@ -3441,8 +3441,12 @@ BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp) {
     // sprintf(buf, "In BtlCmd_WeatherHPRecovery\n");
     // debugsyscall(buf);
 
+    // mega sol always treats as if harsh sun is up so it needs to go before cloud nine / strong winds
+    if ((sp->current_move_index != MOVE_SHORE_UP) &&
+        (GetBattlerAbility(sp, sp->attack_client) == ABILITY_MEGA_SOL)) { 
+        sp->hp_calc_work = BattleDamageDivide(sp->battlemon[sp->attack_client].maxhp * 20, 30);
     // For Strong Winds, the moves Moonlight, Morning Sun, and Synthesis continue to recover ½ of max HP, as they do in clear weather.
-    if (!(sp->field_condition & FIELD_CONDITION_WEATHER)
+    } else if (!(sp->field_condition & FIELD_CONDITION_WEATHER)
     || (sp->field_condition & WEATHER_STRONG_WINDS)
     || CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_CLOUD_NINE)
     || CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_AIR_LOCK)) {
@@ -3450,7 +3454,6 @@ BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp) {
         // debugsyscall(buf);
         sp->hp_calc_work = sp->battlemon[sp->attack_client].maxhp / 2;
     } else if ((sp->current_move_index != MOVE_SHORE_UP && sp->field_condition & WEATHER_SUNNY_ANY)
-               ||((sp->current_move_index != MOVE_SHORE_UP) && (GetBattlerAbility(sp, sp->attack_client) == ABILITY_MEGA_SOL))
                ||(sp->current_move_index == MOVE_SHORE_UP && sp->field_condition & WEATHER_SANDSTORM_ANY)) {
         // sprintf(buf, "Recover 2/3\n");
         // debugsyscall(buf);
@@ -3471,7 +3474,10 @@ BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp) {
     // sprintf(buf, "In BtlCmd_CalcWeatherBallParams\n");
     // debugsyscall(buf);
 
-    if (!CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_CLOUD_NINE) && !CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_AIR_LOCK)) {
+    if (GetBattlerAbility(sp, sp->attack_client) == ABILITY_MEGA_SOL) {
+        sp->damage_power = sp->moveTbl[sp->current_move_index].power * 2;
+        sp->move_type = TYPE_FIRE;
+    } else if (!CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_CLOUD_NINE) && !CheckSideAbility(bw, sp, CHECK_ABILITY_ALL_HP, 0, ABILITY_AIR_LOCK)) {
         if ((sp->field_condition & FIELD_CONDITION_WEATHER) && !(sp->field_condition & WEATHER_STRONG_WINDS)) {
             sp->damage_power = sp->moveTbl[sp->current_move_index].power * 2;
             if (sp->field_condition & WEATHER_RAIN_ANY) {
