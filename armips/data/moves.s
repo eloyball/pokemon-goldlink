@@ -6416,7 +6416,7 @@ movedata MOVE_NIGHT_SLASH, "Night Slash"
     basepower 70
     type TYPE_DARK
     accuracy 100
-    pp 15
+    pp 20
     effectchance 0
     target RANGE_SINGLE_TARGET
     priority 0
@@ -10643,7 +10643,7 @@ movedata MOVE_BANEFUL_BUNKER, "Baneful Bunker"
     basepower 0
     type TYPE_POISON
     accuracy 0
-    pp 10
+    pp 5
     effectchance 0
     target RANGE_USER
     priority 4
