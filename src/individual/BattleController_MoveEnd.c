@@ -91,6 +91,8 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
     ctx->clientLoopForAbility = 0;
     ctx->boostedAccuracy = FALSE;
     ctx->gemBoostingMove = FALSE;
+    ctx->futureSightHitTurn = FALSE;
+    ctx->futureSightDifferentAttacker = FALSE;
     ctx->currentMoveSwitchStatus = CURRENT_MOVE_NO_SWITCH;
 
     ctx->moveContext.hitFoesCount = 0;

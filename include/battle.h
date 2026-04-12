@@ -1265,7 +1265,7 @@ typedef union ConditionType
 
 typedef struct FutureCondition {
     ConditionType conditionType;
-    u8 affectedClient;
+    u8 defenderSlot;
 } FutureCondition;
 
 typedef struct OnceOnlyAbilityFlags {
@@ -1545,7 +1545,9 @@ struct BattleStruct {
                u8 enemySideHasFaintedTeammateLastTurn : 2;
 
                u8 gemBoostingMove: 1;
-               u8 gemBoostingMovePadding : 7;
+               u8 futureSightHitTurn: 1;
+               u8 futureSightDifferentAttacker : 1;
+               u8 gemBoostingMovePadding : 5;
 
                int currentMoveSwitchStatus;
                

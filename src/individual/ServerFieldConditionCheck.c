@@ -118,9 +118,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
     FutureCondition futureCondition;
 
 #ifdef DEBUG_ENDTURN_LOGIC
-    u8 buf[64];
-    sprintf(buf, "In ServerFieldConditionCheck\n");
-    debug_printf(buf);
+    debug_printf("In ServerFieldConditionCheck\n");
+    
 #endif
 
     do {
@@ -139,8 +138,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
         switch (sp->fcc_seq_no) {
             case ENDTURN_WEATHER_SUBSIDING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_WEATHER_SUBSIDING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_WEATHER_SUBSIDING\n");
+                
                 #endif
 
                 if (sp->field_condition & WEATHER_RAIN) {
@@ -199,8 +198,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_WEATHER_ANIMATION_AND_DAMAGE_AND_HEAL: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_WEATHER_ANIMATION_AND_DAMAGE_AND_HEAL\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_WEATHER_ANIMATION_AND_DAMAGE_AND_HEAL\n");
+                
                 #endif
 
                 if (sp->field_condition & WEATHER_RAIN_ANY) {
@@ -278,8 +277,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_RESOLVE_SWITCHES_1: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_RESOLVE_SWITCHES_1\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_RESOLVE_SWITCHES_1\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -288,8 +287,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_AFFECTION_SELF_CURE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_AFFECTION_SELF_CURE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_AFFECTION_SELF_CURE\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -297,67 +296,89 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_FUTURE_EFFECT: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_FUTURE_EFFECT\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_FUTURE_EFFECT\n");
+                
 #endif
 
                 while (sp->scc_work < CLIENT_MAX * FUTURE_CONDITION_MAX) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                    sprintf(buf, "scc_work: %d\n", sp->scc_work);
-                    debug_printf(buf);
+                    debug_printf("scc_work: %d\n", sp->scc_work);
+                    
 #endif
                     futureCondition = sp->futureConditionQueue[sp->scc_work];
 #ifdef DEBUG_ENDTURN_LOGIC
-                    sprintf(buf, "Client: %d, Condition: %d\n", futureCondition.affectedClient, futureCondition.conditionType.futureConditionType);
-                    debug_printf(buf);
+                    debug_printf("Client: %d, Condition: %d\n", futureCondition.defenderSlot, futureCondition.conditionType.futureConditionType);
+                    
 #endif
                     switch (futureCondition.conditionType.futureConditionType) {
                         case FUTURE_CONDITION_FUTURE_SIGHT_OR_DOOM_DESIRE: {
-                            if (sp->fcc.future_prediction_count[futureCondition.affectedClient]) {
+                            if (sp->fcc.future_prediction_count[futureCondition.defenderSlot]) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "In Future Sight\n");
-                                debug_printf(buf);
+                                debug_printf("In Future Sight\n");
+                                
 #endif
-                                if (!(--sp->fcc.future_prediction_count[futureCondition.affectedClient]) && sp->battlemon[futureCondition.affectedClient].hp != 0) {
+                                if (!(--sp->fcc.future_prediction_count[futureCondition.defenderSlot]) && sp->battlemon[futureCondition.defenderSlot].hp != 0) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "Future Sight Pass\n");
-                                    debug_printf(buf);
+                                    debug_printf("Future Sight Pass\n");
+                                    
 #endif
-                                    sp->side_condition[IsClientEnemy(bw, futureCondition.affectedClient)] &= ~SIDE_STATUS_FUTURE_SIGHT;
+                                    sp->side_condition[IsClientEnemy(bw, futureCondition.defenderSlot)] &= ~SIDE_STATUS_FUTURE_SIGHT;
                                     sp->mp.id = BATTLE_MSG_TOOK_DOOM_DESIRE;  // Seadra took the Doom Desire attack!
                                     sp->mp.tag = TAG_NICKNAME_MOVE;
-                                    sp->mp.param[0] = CreateNicknameTag(sp, futureCondition.affectedClient);
-                                    sp->mp.param[1] = sp->fcc.future_prediction_wazano[futureCondition.affectedClient];
-                                    sp->battlerIdTemp = futureCondition.affectedClient;
-                                    sp->attack_client_work = sp->fcc.future_prediction_client_no[futureCondition.affectedClient];
-                                    sp->waza_work = sp->fcc.future_prediction_wazano[futureCondition.affectedClient];
-                                    sp->hp_calc_work = sp->fcc.future_prediction_damage[futureCondition.affectedClient];
-                                    LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, 121);
-                                    sp->next_server_seq_no = sp->server_seq_no;
+                                    sp->mp.param[0] = CreateNicknameTag(sp, futureCondition.defenderSlot);
+                                    sp->mp.param[1] = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
+
+                                    ov12_02252D14(bw, sp); //reset damage, status
+                                    sp->futureSightHitTurn = TRUE;
+                                    sp->defence_client = futureCondition.defenderSlot;
+                                    sp->attack_client = sp->fcc.future_prediction_client_no[futureCondition.defenderSlot];
+                                    debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", sp->attack_client, sp->fcc.wish_sel_mons[sp->attack_client], sp->sel_mons_no[sp->attack_client]);
+                                    for (int i = 0; i< 4; ++i) {
+
+                                        debug_printf("execution index %d: command %d\n", sp->executionOrder[i], sp->playerActions[sp->executionOrder[i]][0]);
+                                    }
+                                    
+                                    if (sp->fcc.wish_sel_mons[sp->attack_client] != sp->sel_mons_no[sp->attack_client])
+                                    {
+                                        debug_printf("Different attacker\n");
+                                        //sp->attack_client = BATTLER_NONE;
+                                        sp->futureSightDifferentAttacker = TRUE;
+                                    }
+
+                                    sp->current_move_index = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
+                                    int side = IsClientEnemy(bw, sp->defence_client);
+                                    sp->side_condition[side] |= SIDE_STATUS_FUTURE_SIGHT;
+
+                                     debug_printf("laod script\n");
+                                    LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, SUB_SEQ_FUTURE_SIGHT_HIT);
+                                    sp->next_server_seq_no = CONTROLLER_COMMAND_23;
+                                    sp->wb_seq_no = BEFORE_MOVE_STATE_TYPE_CHART_IMMUNITY;
                                     sp->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                                     ret = 1;
                                     sp->futureConditionQueue[sp->scc_work].conditionType.futureConditionType = FUTURE_CONDITION_NONE;
+                                    sp->futureConditionQueue[sp->scc_work].defenderSlot =0;
+                                    debug_printf("end block\n");
                                 }
                             }
                             break;
                         }
                         case FUTURE_CONDITION_WISH: {
-                            if (sp->fcc.wish_count[futureCondition.affectedClient]) {
+                            if (sp->fcc.wish_count[futureCondition.defenderSlot]) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "In Wish\n");
-                                debug_printf(buf);
+                                debug_printf("In Wish\n");
+                                
 #endif
-                                if (--sp->fcc.wish_count[futureCondition.affectedClient] == 0) {
-                                    if (sp->battlemon[futureCondition.affectedClient].hp) {
+                                if (--sp->fcc.wish_count[futureCondition.defenderSlot] == 0) {
+                                    if (sp->battlemon[futureCondition.defenderSlot].hp) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                        sprintf(buf, "Wish Pass\n");
-                                        debug_printf(buf);
+                                        debug_printf("Wish Pass\n");
+                                        
 #endif
-                                        sp->battlerIdTemp = futureCondition.affectedClient;
+                                        sp->battlerIdTemp = futureCondition.defenderSlot;
                                         sp->mp.tag = TAG_NICKNAME;
                                         sp->mp.id = BATTLE_MSG_WISH_CAME_TRUE;  // "{STRVAR_1 1, 0, 0}’s wish\ncame true!"
-                                        sp->mp.param[0] = futureCondition.affectedClient | (sp->fcc.wish_sel_mons[futureCondition.affectedClient] << 8);
-                                        sp->hp_calc_work = BattleDamageDivide(sp->battlemon[futureCondition.affectedClient].maxhp, 2);
+                                        sp->mp.param[0] = futureCondition.defenderSlot | (sp->fcc.wish_sel_mons[futureCondition.defenderSlot] << 8);
+                                        sp->hp_calc_work = BattleDamageDivide(sp->battlemon[futureCondition.defenderSlot].maxhp, 2);
                                         LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, SUB_SEQ_WISH_HEAL);
                                         sp->next_server_seq_no = sp->server_seq_no;
                                         sp->server_seq_no = 22;
@@ -370,95 +391,20 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         default:
                             break;
-                    }
 
+                             debug_printf("loop end\n");
+                    }
+                        debug_printf("loop increase\n");
                     sp->scc_work++;
                     break;
                 }
-/*
-                while (sp->scc_work < client_set_max) {
-                    battlerId = sp->turnOrder[sp->scc_work];
-                    // TODO: keep this "skip" logic?
-                    // if (sp->no_reshuffle_client & No2Bit(battlerId)) {
-                    //     sp->scc_work++;
-                    //     continue;
-                    // }
 
-                    debug_printf("\n\nClient %d future count: %d, wish count: %d\n", battlerId, sp->fcc.future_prediction_count[battlerId], sp->fcc.wish_count[battlerId]);
-                    debug_printf("Client %d future order: %d, wish order: %d\n\n", battlerId, sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder, sp->futureConditionQueueWrong[battlerId].wishExecutionOrder);
-
-                    // Process the first in queue first
-                    if (sp->fcc.future_prediction_count[battlerId] == 1 &&
-                        (sp->fcc.wish_count[battlerId] != 1 ||
-                         sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder == 1)) {
-                        debug_printf("\n\nIn Doom Desire\n\n", NULL);
-                        sp->fcc.future_prediction_count[battlerId]--;
-                        if (sp->battlemon[battlerId].hp != 0) {
-                            sp->side_condition[IsClientEnemy(bw, battlerId)] &= ~SIDE_STATUS_FUTURE_SIGHT;
-                            sp->mp.id = 475;  // Seadra took the Doom Desire attack!
-                            sp->mp.tag = TAG_NICKNAME_MOVE;
-                            sp->mp.param[0] = CreateNicknameTag(sp, battlerId);
-                            sp->mp.param[1] = sp->fcc.future_prediction_wazano[battlerId];
-                            sp->client_work = battlerId;
-                            sp->attack_client_work = sp->fcc.future_prediction_client_no[battlerId];
-                            sp->waza_work = sp->fcc.future_prediction_wazano[battlerId];
-                            sp->hp_calc_work = sp->fcc.future_prediction_damage[battlerId];
-                            LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, 121);
-                            sp->next_server_seq_no = sp->server_seq_no;
-                            sp->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-                            ret = 1;
-                        }
-                        // "Move" everyone forward in line
-                        if (sp->futureConditionQueueWrong[battlerId].wishExecutionOrder) {
-                            sp->futureConditionQueueWrong[battlerId].wishExecutionOrder--;
-                        }
-                        if (sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder) {
-                            sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder--;
-                        }
-                    } else {
-                        if (sp->fcc.wish_count[battlerId] == 1 &&
-                            (sp->fcc.future_prediction_count[battlerId] != 1 ||
-                             sp->futureConditionQueueWrong[battlerId].wishExecutionOrder == 1)) {
-                            debug_printf("\n\nIn Wish\n\n", NULL);
-                            sp->fcc.wish_count[battlerId]--;
-                            if (sp->battlemon[battlerId].hp) {
-                                sp->client_work = battlerId;
-                                sp->mp.tag = TAG_NICKNAME;
-                                sp->mp.id = BATTLE_MSG_WISH_CAME_TRUE;  // "{STRVAR_1 1, 0, 0}’s wish\ncame true!"
-                                sp->mp.param[0] = battlerId | (sp->fcc.wish_sel_mons[battlerId] << 8);
-                                sp->hp_calc_work = BattleDamageDivide(sp->battlemon[battlerId].maxhp, 2);
-                                LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, SUB_SEQ_WISH_HEAL);
-                                sp->next_server_seq_no = sp->server_seq_no;
-                                sp->server_seq_no = 22;
-                                ret = 1;
-                            }
-                            // "Move" everyone forward in line
-                            if (sp->futureConditionQueueWrong[battlerId].wishExecutionOrder) {
-                                sp->futureConditionQueueWrong[battlerId].wishExecutionOrder--;
-                            }
-                            if (sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder) {
-                                sp->futureConditionQueueWrong[battlerId].futureSightOrDoomDesireExecutionOrder--;
-                            }
-                        }
-                    }
-
-                    if (ret == 0) {
-                        // Decrement the counts first
-                        if (sp->fcc.future_prediction_count[battlerId]) {
-                            sp->fcc.future_prediction_count[battlerId]--;
-                        }
-                        if (sp->fcc.wish_count[battlerId]) {
-                            sp->fcc.wish_count[battlerId]--;
-                        }
-                        sp->scc_work++;
-                    }
-                    break;
-                }
-*/
+                debug_printf("loop done\n");
+               
                 if (sp->scc_work >= CLIENT_MAX * FUTURE_CONDITION_MAX) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                    sprintf(buf, "Start cleaning\n");
-                    debug_printf(buf);
+                    debug_printf("Start cleaning\n");
+                    
 #endif
                     // remove effects that happened already
                     // deleteProcessedElements(sp->futureConditionQueue, CLIENT_MAX * FUTURE_CONDITION_MAX);
@@ -468,7 +414,7 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                     while (flag) {
                         // Find position of element to be deleted
                         for (i = 0; i < CLIENT_MAX * FUTURE_CONDITION_MAX; i++) {
-                            if (sp->futureConditionQueue[i].conditionType.futureConditionType == FUTURE_CONDITION_NONE && sp->futureConditionQueue[i].affectedClient != 0) {
+                            if (sp->futureConditionQueue[i].conditionType.futureConditionType == FUTURE_CONDITION_NONE && sp->futureConditionQueue[i].defenderSlot != 0) {
                                 break;
                             }
                         }
@@ -476,8 +422,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         int position = i == CLIENT_MAX * FUTURE_CONDITION_MAX ? -1 : i;
 
 #ifdef DEBUG_ENDTURN_LOGIC
-                    sprintf(buf, "Position: %d\n", position);
-                    debug_printf(buf);
+                    debug_printf("Position: %d\n", position);
+                    
 #endif
 
                         if (position == -1) {
@@ -485,14 +431,14 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                             break;
                         }
 
-                        sp->futureConditionQueue[position].affectedClient = 0;
+                        sp->futureConditionQueue[position].defenderSlot = 0;
 
                         // Shifting elements
                         for (i = position; i < CLIENT_MAX * FUTURE_CONDITION_MAX - 1; i++) {
-                            sp->futureConditionQueue[i].affectedClient = sp->futureConditionQueue[i + 1].affectedClient;
+                            sp->futureConditionQueue[i].defenderSlot = sp->futureConditionQueue[i + 1].defenderSlot;
                             sp->futureConditionQueue[i].conditionType = sp->futureConditionQueue[i + 1].conditionType;
                         }
-                        sp->futureConditionQueue[i].affectedClient = 0;
+                        sp->futureConditionQueue[i].defenderSlot = 0;
                         sp->futureConditionQueue[i].conditionType.futureConditionType = FUTURE_CONDITION_NONE;
                     }
 
@@ -503,8 +449,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_FIRST_EVENT_BLOCK: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_FIRST_EVENT_BLOCK\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_FIRST_EVENT_BLOCK\n");
+                
 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -518,8 +464,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         // TODO
                         case FIRST_EVENT_BLOCK_SIDE_CONDITION_RESIDUAL_DAMAGE: {
                             #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In FIRST_EVENT_BLOCK_SIDE_CONDITION_RESIDUAL_DAMAGE\n");
-                            debug_printf(buf);
+                            debug_printf("In FIRST_EVENT_BLOCK_SIDE_CONDITION_RESIDUAL_DAMAGE\n");
+                            
                             #endif
 
                             sp->endTurnEventBlockSequenceNumber++;
@@ -527,8 +473,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case FIRST_EVENT_BLOCK_GRASSY_TERRAIN: {
                             #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In FIRST_EVENT_BLOCK_GRASSY_TERRAIN\n");
-                            debug_printf(buf);
+                            debug_printf("In FIRST_EVENT_BLOCK_GRASSY_TERRAIN\n");
+                            
                             #endif
 
                             if (sp->terrainOverlay.type == GRASSY_TERRAIN
@@ -547,8 +493,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case FIRST_EVENT_BLOCK_ABILITY_HEAL_STATUS: {
                             #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In FIRST_EVENT_BLOCK_ABILITY_HEAL_STATUS\n");
-                            debug_printf(buf);
+                            debug_printf("In FIRST_EVENT_BLOCK_ABILITY_HEAL_STATUS\n");
+                            
                             #endif
 
                             switch (GetBattlerAbility(sp, battlerId)) {
@@ -583,43 +529,43 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
 
                             if (ret) {
                                 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "condition: %d\n", sp->battlemon[battlerId].condition);
-                                debug_printf(buf);
+                                debug_printf("condition: %d\n", sp->battlemon[battlerId].condition);
+                                
                                 #endif
 
                                 // TODO: why is condition weird here?
                                 if (sp->battlemon[battlerId].condition & STATUS_SLEEP) {
                                     #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "In STATUS_FLAG_ASLEEP\n");
-                                    debug_printf(buf);
+                                    debug_printf("In STATUS_FLAG_ASLEEP\n");
+                                    
                                     #endif
 
                                     sp->msg_work = MSG_HEAL_SLEEP;
                                 } else if (sp->battlemon[battlerId].condition & STATUS_POISON_ALL) {
                                     #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "In STATUS_POISON_ANY\n");
-                                    debug_printf(buf);
+                                    debug_printf("In STATUS_POISON_ANY\n");
+                                    
                                     #endif
 
                                     sp->msg_work = MSG_HEAL_POISON;
                                 } else if (sp->battlemon[battlerId].condition & STATUS_BURN) {
                                     #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "In STATUS_FLAG_BURNED\n");
-                                    debug_printf(buf);
+                                    debug_printf("In STATUS_FLAG_BURNED\n");
+                                    
                                     #endif
 
                                     sp->msg_work = MSG_HEAL_BURN;
                                 } else if (sp->battlemon[battlerId].condition & STATUS_PARALYSIS) {
                                     #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "In STATUS_FLAG_PARALYZED\n");
-                                    debug_printf(buf);
+                                    debug_printf("In STATUS_FLAG_PARALYZED\n");
+                                    
                                     #endif
 
                                     sp->msg_work = MSG_HEAL_PARALYSIS;
                                 } else {
                                     #ifdef DEBUG_ENDTURN_LOGIC
-                                    sprintf(buf, "In MSG_HEAL_FROZEN\n");
-                                    debug_printf(buf);
+                                    debug_printf("In MSG_HEAL_FROZEN\n");
+                                    
                                     #endif
 
                                     sp->msg_work = MSG_HEAL_FROZEN;
@@ -636,8 +582,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case FIRST_EVENT_BLOCK_ITEM: {
                             #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In FIRST_EVENT_BLOCK_ITEM\n");
-                            debug_printf(buf);
+                            debug_printf("In FIRST_EVENT_BLOCK_ITEM\n");
+                            
                             #endif
 
                             if (CheckItemGradualHPRestore(bw, sp, battlerId) == TRUE) {  // come back for this one
@@ -648,8 +594,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case FIRST_EVENT_BLOCK_END: {
                             #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In FIRST_EVENT_BLOCK_END\n");
-                            debug_printf(buf);
+                            debug_printf("In FIRST_EVENT_BLOCK_END\n");
+                            
                             #endif
 
                             sp->endTurnEventBlockSequenceNumber = 0;
@@ -670,8 +616,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_RESOLVE_SWITCHES_2: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_RESOLVE_SWITCHES_2\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_RESOLVE_SWITCHES_2\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -679,8 +625,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_AQUA_RING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_AQUA_RING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_AQUA_RING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -712,8 +658,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_INGRAIN: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_INGRAIN\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_INGRAIN\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -746,8 +692,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_LEECH_SEED: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_LEECH_SEED\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_LEECH_SEED\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -775,8 +721,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_POISON: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_POISON\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_POISON\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -815,8 +761,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_BURN: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_BURN\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_BURN\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -842,8 +788,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_NIGHTMARE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_NIGHTMARE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_NIGHTMARE\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -873,8 +819,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_CURSE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_CURSE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_CURSE\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -900,8 +846,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_TRAPPING_DAMAGE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TRAPPING_DAMAGE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TRAPPING_DAMAGE\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -936,8 +882,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_OCTOLOCK: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_OCTOLOCK\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_OCTOLOCK\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -945,8 +891,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_TAUNT_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TAUNT_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TAUNT_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -976,8 +922,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_TORMENT_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TORMENT_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TORMENT_FADING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -985,8 +931,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_ENCORE_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_ENCORE_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_ENCORE_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1025,8 +971,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_DISABLE_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_DISABLE_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_DISABLE_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1065,8 +1011,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_MAGNET_RISE_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_MAGNET_RISE_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_MAGNET_RISE_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1095,8 +1041,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_TELEKINESIS_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TELEKINESIS_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TELEKINESIS_FADING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1104,8 +1050,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_HEAL_BLOCK_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_HEAL_BLOCK_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_HEAL_BLOCK_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1133,8 +1079,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_EMBARGO_FADING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_EMBARGO_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_EMBARGO_FADING\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1162,8 +1108,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_YAWN: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_YAWN\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_YAWN\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1194,8 +1140,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO: check correctness
             case ENDTURN_PERISH_COUNT: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_PERISH_COUNT\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_PERISH_COUNT\n");
+                
                 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1228,8 +1174,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_ROOST_USERS_REGAINING_FLYING_TYPE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_ROOST_USERS_REGAINING_FLYING_TYPE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_ROOST_USERS_REGAINING_FLYING_TYPE\n");
+                
                 #endif
 
                 for (int i = 0; i < client_set_max; i++) {
@@ -1270,8 +1216,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_RESOLVE_SWITCHES_3: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_RESOLVE_SWITCHES_3\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_RESOLVE_SWITCHES_3\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1279,8 +1225,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_SECOND_EVENT_BLOCK: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_SECOND_EVENT_BLOCK\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_SECOND_EVENT_BLOCK\n");
+                
 #endif
 
                 // Host-based.
@@ -1297,14 +1243,14 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
 
                         case SECOND_EVENT_BLOCK_REFLECT_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_REFLECT_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_REFLECT_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_REFLECT) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "\n\nReflect side %d, turns left %d\n\n", side, sp->scw[side].reflectCount);
-                                debug_printf(buf);
+                                debug_printf("\n\nReflect side %d, turns left %d\n\n", side, sp->scw[side].reflectCount);
+                                
 #endif
                                 if (--sp->scw[side].reflectCount == 0) {
                                     sp->side_condition[side] &= ~(SIDE_STATUS_REFLECT);
@@ -1322,14 +1268,14 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_LIGHT_SCREEN_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_LIGHT_SCREEN_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_LIGHT_SCREEN_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_LIGHT_SCREEN) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "\n\nLight Screen side %d, turns left %d\n\n", side, sp->scw[side].lightScreenCount);
-                                debug_printf(buf);
+                                debug_printf("\n\nLight Screen side %d, turns left %d\n\n", side, sp->scw[side].lightScreenCount);
+                                
 #endif
                                 if (--sp->scw[side].lightScreenCount == 0) {
                                     sp->side_condition[side] &= ~(SIDE_STATUS_LIGHT_SCREEN);
@@ -1347,8 +1293,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_SAFEGUARD_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_SAFEGUARD_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_SAFEGUARD_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_SAFEGUARD) {
@@ -1367,8 +1313,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_MIST_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_MIST_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_MIST_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_MIST) {
@@ -1388,8 +1334,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_TAILWIND_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_TAILWIND_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_TAILWIND_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->tailwindCount[side])  // update tailwind to use a separate counter so it can be larger
@@ -1417,8 +1363,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_LUCKY_CHANT_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_LUCKY_CHANT_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_LUCKY_CHANT_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_LUCKY_CHANT) {
@@ -1437,8 +1383,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         // TODO
                         case SECOND_EVENT_BLOCK_RAINBOW_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_RAINBOW_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_RAINBOW_DISSIPATING\n");
+                            
 #endif
 
                             if (FALSE) {
@@ -1449,8 +1395,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         // TODO
                         case SECOND_EVENT_BLOCK_SEA_OF_FIRE_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_SEA_OF_FIRE_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_SEA_OF_FIRE_DISSIPATING\n");
+                            
 #endif
                             if (FALSE) {
                             }
@@ -1460,8 +1406,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         // TODO
                         case SECOND_EVENT_BLOCK_SWAMP_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_SWAMP_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_SWAMP_DISSIPATING\n");
+                            
 #endif
                             if (FALSE) {
                             }
@@ -1471,14 +1417,14 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         // TODO
                         case SECOND_EVENT_BLOCK_AURORA_VEIL_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_AURORA_VEIL_DISSIPATING\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_AURORA_VEIL_DISSIPATING\n");
+                            
 #endif
 
                             if (sp->side_condition[side] & SIDE_STATUS_AURORA_VEIL) {
 #ifdef DEBUG_ENDTURN_LOGIC
-                                sprintf(buf, "\n\nAurora Veil side %d, turns left %d\n\n", side, sp->scw[side].auroraVeilCount);
-                                debug_printf(buf);
+                                debug_printf("\n\nAurora Veil side %d, turns left %d\n\n", side, sp->scw[side].auroraVeilCount);
+                                
 #endif
                                 if (--sp->scw[side].auroraVeilCount == 0) {
                                     sp->side_condition[side] &= ~(SIDE_STATUS_AURORA_VEIL);
@@ -1496,8 +1442,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                         }
                         case SECOND_EVENT_BLOCK_END: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                            sprintf(buf, "In SECOND_EVENT_BLOCK_END\n");
-                            debug_printf(buf);
+                            debug_printf("In SECOND_EVENT_BLOCK_END\n");
+                            
 #endif
 
                             sp->endTurnEventBlockSequenceNumber = 0;
@@ -1517,8 +1463,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_TRICK_ROOM_DISSIPATING: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TRICK_ROOM_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TRICK_ROOM_DISSIPATING\n");
+                
 #endif
 
                 if (sp->field_condition & FIELD_STATUS_TRICK_ROOM) {
@@ -1536,8 +1482,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_GRAVITY_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_GRAVITY_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_GRAVITY_DISSIPATING\n");
+                
                 #endif
 
                 if (sp->field_condition & FIELD_STATUS_GRAVITY) {
@@ -1555,8 +1501,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_WATER_SPORT_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_WATER_SPORT_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_WATER_SPORT_DISSIPATING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1565,8 +1511,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_MUD_SPORT_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_MUD_SPORT_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_MUD_SPORT_DISSIPATING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1575,8 +1521,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_WONDER_ROOM_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_WONDER_ROOM_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_WONDER_ROOM_DISSIPATING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1585,8 +1531,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_MAGIC_ROOM_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_MAGIC_ROOM_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_MAGIC_ROOM_DISSIPATING\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1594,8 +1540,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_TERRAIN_DISSIPATING: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_TERRAIN_DISSIPATING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_TERRAIN_DISSIPATING\n");
+                
                 #endif
 
                 if (sp->terrainOverlay.type != TERRAIN_NONE) {
@@ -1615,8 +1561,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_THIRD_EVENT_BLOCK: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_THIRD_EVENT_BLOCK\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_THIRD_EVENT_BLOCK\n");
+                
 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1855,8 +1801,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_RESOLVE_SWITCHES_4: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_RESOLVE_SWITCHES_4\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_RESOLVE_SWITCHES_4\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1865,8 +1811,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             // TODO
             case ENDTURN_FORM_CHANGE: {
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_FORM_CHANGE\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_FORM_CHANGE\n");
+                
                 #endif
 
                 sp->fcc_seq_no++;
@@ -1874,8 +1820,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_FOURTH_EVENT_BLOCK: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_FOURTH_EVENT_BLOCK\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_FOURTH_EVENT_BLOCK\n");
+                
 #endif
 
                 while (sp->scc_work < client_set_max) {
@@ -1943,8 +1889,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_ION_DELUGE_FADING: { // Ion Deluge has no actual requirement for synchronicity as it lacks a message and all moves have been executed by this point. It's just here because it needs to be reset somewhere.
                 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_ION_DELUGE_FADING\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_ION_DELUGE_FADING\n");
+                
                 #endif
 
                 sp->field_condition &= ~FIELD_STATUS_ION_DELUGE;
@@ -1954,8 +1900,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
             }
             case ENDTURN_END: {
 #ifdef DEBUG_ENDTURN_LOGIC
-                sprintf(buf, "In ENDTURN_END\n");
-                debug_printf(buf);
+                debug_printf("In ENDTURN_END\n");
+                
 #endif
 
                 for (int i = 0; i < client_set_max; i++) {
@@ -1986,6 +1932,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
         }
     } while (ret == 0);
 
+
+    debug_printf("FieldCondition end %d\n", ret);
     if (ret == 1) {
         SCIO_BlankMessage(bw);
     }
