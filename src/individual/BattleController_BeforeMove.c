@@ -1115,6 +1115,7 @@ void __attribute__((section (".init"))) BattleController_BeforeMove(struct Battl
                 ctx->next_server_seq_no = ctx->server_seq_no;
                 ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
                 ctx->gemBoostingMove = TRUE;
+                debug_printf("activate gem, seqno %d, next seqno %d\n", ctx->server_seq_no, ctx->next_server_seq_no);
                 return;
             }
             FALLTHROUGH;
