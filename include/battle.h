@@ -1266,6 +1266,8 @@ typedef union ConditionType
 typedef struct FutureCondition {
     ConditionType conditionType;
     u8 defenderSlot;
+    u8 futureSightSTAB : 1;
+    u8 padding : 7;
 } FutureCondition;
 
 typedef struct OnceOnlyAbilityFlags {
@@ -1547,7 +1549,8 @@ struct BattleStruct {
                u8 gemBoostingMove: 1;
                u8 futureSightHitTurn: 1;
                u8 futureSightDifferentAttacker : 1;
-               u8 gemBoostingMovePadding : 5;
+               u8 futureSightSTAB : 1;
+               u8 gemBoostingMovePadding : 4;
 
                int currentMoveSwitchStatus;
                
@@ -2222,6 +2225,10 @@ struct PACKED sDamageCalc
     u16 item;
     u16 item_held_effect;
     u8  item_power;
+
+    u8 type1;
+    u8 type2;
+    u8 type3;
 
     u32 condition;
     u32 condition2;

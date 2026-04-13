@@ -787,11 +787,12 @@ BOOL BattleScriptCommandHandler(void *bw, struct BattleStruct *sp)
         else
         {
             ret = NewBattleScriptCmdTable[command - START_OF_NEW_BTL_SCR_CMDS](bw, sp);
+            debug_printf("end BattleScriptCommandHandler progress %d seq %d, next seq %d\n", sp->battle_progress_flag, sp->server_seq_no, sp->next_server_seq_no);
         }
     } while ((sp->battle_progress_flag == 0) && ((BattleTypeGet(bw) & BATTLE_TYPE_WIRELESS) == 0));
 
     sp->battle_progress_flag = 0;
-    debug_printf("end BattleScriptCommandHandler ret %d seq %d, next seq %d\n", ret, sp->server_seq_no, sp->next_server_seq_no);
+
     return ret;
 }
 
@@ -3624,6 +3625,7 @@ BOOL BtlCmd_TryFutureSight(struct BattleSystem *bsys, struct BattleStruct *ctx) 
             if (ctx->futureConditionQueue[i].conditionType.futureConditionType == FUTURE_CONDITION_NONE) {
                 ctx->futureConditionQueue[i].conditionType.futureConditionType = FUTURE_CONDITION_FUTURE_SIGHT_OR_DOOM_DESIRE;
                 ctx->futureConditionQueue[i].defenderSlot = ctx->defence_client;
+                ctx->futureConditionQueue[i].futureSightSTAB = HasType(ctx, ctx->attack_client, ctx->move_type) ? 1 : 0;
                 break;
             }
         }

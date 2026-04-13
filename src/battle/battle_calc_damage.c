@@ -466,9 +466,15 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
 
     // 6.6 Same-Type Attack Bonus (STAB) Modifier
     int moveEffect = sp->moveTbl[moveno].effect;
-    if (moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS && sp->futureSightDifferentAttacker)
-    {
-        //TODO
+    if (moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS && sp->futureSightDifferentAttacker) {
+        if (ctx->futureSightSTAB) {
+#ifdef DEBUG_DAMAGE_ROLLS
+            for (int u = 0; u < 16; u++) {
+                predamage[u] = QMul_RoundDown(predamage[u], UQ412__1_5);
+            }
+#endif // DEBUG_DAMAGE_ROLLS
+            damage = QMul_RoundDown(damage, UQ412__1_5);
+        }
     }
     else if (((sp->server_status_flag & SERVER_STATUS_FLAG_TYPE_FLAT) == 0) && HasType(sp, attacker, type)) {
         if (attackerAbility == ABILITY_ADAPTABILITY) {
