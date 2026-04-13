@@ -1512,28 +1512,32 @@ int CalcCritical(void *bw, struct BattleStruct *sp, int attacker, int defender, 
     u16 temp;
     u16 item;
     int hold_effect;
-    u16 species;
+    u16 species = SPECIES_NONE;
     u32 defender_condition;
-    u32 condition2;
+    u32 condition2 = 0;
     u32 move_effect;
     int multiplier = 1;
-    int ability;
+    int ability = ABILITY_NONE;
+    int attackerHasLaserFocus = 0;
 
-    item = GetBattleMonItem(sp, attacker);
+    if (attacker != BATTLER_NONE) {
+        item = GetBattleMonItem(sp, attacker);
+        species = sp->battlemon[attacker].species;
+        condition2 = sp->battlemon[attacker].condition2;
+        ability = sp->battlemon[attacker].ability;
+        attackerHasLaserFocus = sp->moveConditionsFlags[attacker].laserFocusTimer;
+    }
     hold_effect = BattleItemDataGet(sp, item, 1);
-
-    species = sp->battlemon[attacker].species;
     defender_condition = sp->battlemon[defender].condition;
-    condition2 = sp->battlemon[attacker].condition2;
     move_effect = sp->battlemon[defender].effect_of_moves;
-    ability = sp->battlemon[attacker].ability;
+
 
     temp = (((condition2 & STATUS2_FOCUS_ENERGY) != 0) * 2) + (hold_effect == HOLD_EFFECT_CRITRATE_UP) + critical_count + (ability == ABILITY_SUPER_LUCK)
          + (2 * ((hold_effect == HOLD_EFFECT_CHANSEY_CRITRATE_UP) && (species == SPECIES_CHANSEY)))
          + (2 * ((hold_effect == HOLD_EFFECT_FARFETCHD_CRITRATE_UP) && (species == SPECIES_FARFETCHD)));
 
 
-    if (temp > 4 || sp->moveConditionsFlags[attacker].laserFocusTimer)
+    if (temp > 4 || attackerHasLaserFocus)
     {
         temp = 4;
     }
@@ -1541,7 +1545,7 @@ int CalcCritical(void *bw, struct BattleStruct *sp, int attacker, int defender, 
     if
     (
 #ifdef DEBUG_BATTLE_SCENARIOS
-        sp->moveConditionsFlags[attacker].laserFocusTimer //only allow crits with Laser Focus
+        attackerHasLaserFocus // only allow crits with Laser Focus
 #else
         BattleRand(bw) % CriticalRateTable[temp] == 0
 #endif
@@ -1564,7 +1568,7 @@ int CalcCritical(void *bw, struct BattleStruct *sp, int attacker, int defender, 
         multiplier = 3;
     }
 
-    if (multiplier > 1) // log critical hits for current pokemon
+    if (multiplier > 1 && attacker != BATTLER_NONE) // log critical hits for current pokemon
     {
         sp->battlemon[attacker].critical_hits++;
         if (sp->battlemon[attacker].critical_hits == 3)
@@ -3039,10 +3043,11 @@ int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct 
 
     // BUGFIX
     type = ctx->move_type;
-
-    mon = Battle_GetClientPartyMon(bsys, battlerId, ctx->sel_mons_no[battlerId]);
-    species = GetMonData(mon, MON_DATA_SPECIES, 0);
-    form = GetMonData(mon, MON_DATA_FORM, 0);
+    if (battlerId != BATTLER_NONE) {
+        mon = Battle_GetClientPartyMon(bsys, battlerId, ctx->sel_mons_no[battlerId]);
+        species = GetMonData(mon, MON_DATA_SPECIES, 0);
+        form = GetMonData(mon, MON_DATA_FORM, 0);
+    }
 
     switch (moveNo) {
         case MOVE_NATURAL_GIFT:
@@ -3673,6 +3678,9 @@ int LONG_CALL GetClientActionPriority(struct BattleSystem *bsys UNUSED, struct B
 /// @return whether the client has the type
 BOOL LONG_CALL HasType(struct BattleStruct *ctx, int battlerId, int type) {
     GF_ASSERT(TYPE_NORMAL <= type && type <= TYPE_STELLAR);
+    if (battlerId == BATTLER_NONE) {
+        return FALSE;
+    }
     struct BattlePokemon *client = &ctx->battlemon[battlerId];
     if (client->is_currently_terastallized) {
         return client->tera_type == type;
@@ -3897,6 +3905,10 @@ BOOL LONG_CALL AbilityNoTransform(int ability) {
 
 // TODO: Just use this instead of the Mold Breaker one
 u32 LONG_CALL GetBattlerAbility(struct BattleStruct *ctx, int battlerId) {
+    if  (battlerId == BATTLER_NONE) {
+        return ABILITY_NONE;
+    }
+
     u32 ability = ctx->battlemon[battlerId].ability;
     if ((ctx->battlemon[battlerId].effect_of_moves & MOVE_EFFECT_GASTRO_ACID) && ctx->battlemon[battlerId].ability != ABILITY_MULTITYPE) {
         return ABILITY_NONE;
