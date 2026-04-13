@@ -40,13 +40,11 @@ jobs:
             ${{ github.event.pull_request.base.sha }} \
             ${{ github.event.pull_request.head.sha }} |
           while IFS= read -r f; do
-            case "$f" in
-              src/*.c|include/*.h)
-                if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
-                  echo "$f"
-                fi
-              ;;
-            esac
+            if [ -f "$f" ] && [[ "$f" =~ ^(src/.+\.c|include/.+\.h)$ ]]; then
+              if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
+                echo "$f"
+              fi
+            fi
           done
         
           echo "Format failures: ${{ steps.linter.outputs.clang-format-checks-failed }}"
