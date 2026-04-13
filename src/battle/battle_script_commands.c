@@ -791,7 +791,7 @@ BOOL BattleScriptCommandHandler(void *bw, struct BattleStruct *sp)
     } while ((sp->battle_progress_flag == 0) && ((BattleTypeGet(bw) & BATTLE_TYPE_WIRELESS) == 0));
 
     sp->battle_progress_flag = 0;
-    debug_printf("end BattleScriptCommandHandler seq %d, next seq %d\n", sp->server_seq_no, sp->next_server_seq_no);
+    debug_printf("end BattleScriptCommandHandler ret %d seq %d, next seq %d\n", ret, sp->server_seq_no, sp->next_server_seq_no);
     return ret;
 }
 
