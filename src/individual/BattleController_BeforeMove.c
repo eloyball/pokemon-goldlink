@@ -1096,12 +1096,15 @@ void __attribute__((section (".init"))) BattleController_BeforeMove(struct Battl
         case BEFORE_MOVE_STATE_GEM_ACTIVATION:
         {
 #ifdef DEBUG_BEFORE_MOVE_LOGIC
-            debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2));
+            if (ctx->attack_client != BATTLER_NONE)
+                debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2));
 #endif
-            debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d, hit %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2), IsAnyBattleMonHit(bsys, ctx));
+            if (ctx->attack_client != BATTLER_NONE)
+                debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d, hit %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2), IsAnyBattleMonHit(bsys, ctx));
             ctx->wb_seq_no++;
 
-            if (HeldItemHoldEffectGet(ctx, ctx->attack_client) == HOLD_EFFECT_POWERING_UP_MOVE_ONCE
+            if (ctx->attack_client != BATTLER_NONE
+                && HeldItemHoldEffectGet(ctx, ctx->attack_client) == HOLD_EFFECT_POWERING_UP_MOVE_ONCE
                 && (BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2) == ctx->move_type)
                 && (ctx->current_move_index < MOVE_WATER_PLEDGE || ctx->current_move_index > MOVE_GRASS_PLEDGE)
                 && IsAnyBattleMonHit(bsys, ctx))
@@ -2691,7 +2694,9 @@ BOOL BattleController_CheckAbilityFailures3(struct BattleSystem *bsys UNUSED, st
 
 BOOL BattleController_CheckTypeBasedMoveConditionImmunities1(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int defender) {
     int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
-    int priority = ctx->clientPriority[ctx->attack_client];
+    int priority = 0;
+    if (ctx->attack_client != BATTLER_NONE)
+        priority = ctx->clientPriority[ctx->attack_client];
 
     // Dark-type Prankster immunity
     if ((priority > 0 && GetMoveSplit(ctx, ctx->current_move_index) == SPLIT_STATUS && GetBattlerAbility(ctx, ctx->attack_client) == ABILITY_PRANKSTER && HasType(ctx, defender, TYPE_DARK) && (ctx->attack_client & 1) != (defender & 1)) // used on an enemy)
@@ -3286,7 +3291,10 @@ BOOL BattleController_CheckMoveAccuracy(struct BattleSystem *bsys, struct Battle
     }
 
     // Apply accuracy / evasion modifiers
-    if (!(ctx->waza_out_check_on_off & 0x20) && defender != BATTLER_NONE && BattleSystem_CheckMoveHit(bsys, ctx, ctx->attack_client, defender, ctx->current_move_index) == TRUE) {
+    if (!(ctx->waza_out_check_on_off & 0x20) 
+        && defender != BATTLER_NONE 
+        && ctx->attack_client != BATTLER_NONE
+        && BattleSystem_CheckMoveHit(bsys, ctx, ctx->attack_client, defender, ctx->current_move_index) == TRUE) {
         return FALSE;
     }
 
@@ -3378,7 +3386,10 @@ BOOL BattleController_CheckMoveFailures4_SingleTarget(struct BattleSystem *bsys 
     BOOL jungleHealingAllySuccess = FALSE;
     u32 clientPosition = 0;
     u32 maxBattlers = BattleWorkClientSetMaxGet(bsys);
-    u32 attackerSpecies = ctx->battlemon[ctx->attack_client].species;
+    u32 attackerSpecies = SPECIES_NONE;
+    if (ctx->attack_client != BATTLER_NONE) {
+        attackerSpecies = ctx->battlemon[ctx->attack_client].species;
+    }
     u32 defenderSpecies = ctx->battlemon[ctx->defence_client].species;
     u32 attackerItem = ctx->battlemon[ctx->attack_client].item;
     u32 defenderItem = ctx->battlemon[ctx->defence_client].item;
@@ -4079,7 +4090,10 @@ BOOL BattleController_CheckMoveFailures5(struct BattleSystem *bsys UNUSED, struc
 
     int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
 
-    int attackerCondition = ctx->battlemon[ctx->attack_client].condition;
+    int attackerCondition = 0;
+    if (ctx->attack_client != BATTLER_NONE) {
+        attackerCondition = ctx->battlemon[ctx->attack_client].condition;
+    }
 
     switch (moveEffect) {
         // Psycho Shift
@@ -4793,17 +4807,19 @@ BOOL LONG_CALL AbilityCantSupress(int ability) {
 }
 
 void BattleController_ResetGeneralMoveFailureFlags(struct BattleStruct *ctx, int attack_client, BOOL setsMoveConditionalFailureFlag) {
-    ctx->oneTurnFlag[attack_client].parental_bond_flag = 0;
-    ctx->oneTurnFlag[attack_client].parental_bond_is_active = FALSE;
+    if (attack_client != BATTLER_NONE) {
+        ctx->oneTurnFlag[attack_client].parental_bond_flag = 0;
+        ctx->oneTurnFlag[attack_client].parental_bond_is_active = FALSE;
 
-    ctx->battlemon[attack_client].condition2 &= ~STATUS2_LOCKED_INTO_MOVE;
-    ctx->battlemon[attack_client].condition2 &= ~STATUS2_BIDE;
-    ctx->battlemon[attack_client].effect_of_moves &= ~(MOVE_EFFECT_FLAG_SEMI_INVULNERABLE);
-    ctx->battlemon[attack_client].moveeffect.rolloutCount = 0;
-    ctx->battlemon[attack_client].moveeffect.furyCutterCount = 0;
+        ctx->battlemon[attack_client].condition2 &= ~STATUS2_LOCKED_INTO_MOVE;
+        ctx->battlemon[attack_client].condition2 &= ~STATUS2_BIDE;
+        ctx->battlemon[attack_client].effect_of_moves &= ~(MOVE_EFFECT_FLAG_SEMI_INVULNERABLE);
+        ctx->battlemon[attack_client].moveeffect.rolloutCount = 0;
+        ctx->battlemon[attack_client].moveeffect.furyCutterCount = 0;
 
-    if (setsMoveConditionalFailureFlag) {
-        ctx->moveConditionsFlags[attack_client].moveFailureThisTurn = TRUE;
+        if (setsMoveConditionalFailureFlag) {
+            ctx->moveConditionsFlags[attack_client].moveFailureThisTurn = TRUE;
+        }
     }
     //TODO: end bide, bide no target, Telekinesis
 }
