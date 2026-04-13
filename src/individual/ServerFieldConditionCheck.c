@@ -1933,7 +1933,7 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
     } while (ret == 0);
 
 
-    debug_printf("FieldCondition end %d\n", ret);
+    debug_printf("FieldCondition end %d, progress %d, waitingBattlers %d\n", ret, sp->battle_progress_flag, sp->waitingBattlers);
     if (ret == 1) {
         SCIO_BlankMessage(bw);
     }

@@ -1096,8 +1096,9 @@ void __attribute__((section (".init"))) BattleController_BeforeMove(struct Battl
         case BEFORE_MOVE_STATE_GEM_ACTIVATION:
         {
 #ifdef DEBUG_BEFORE_MOVE_LOGIC
-            debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION\n");
+            debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2));
 #endif
+            debug_printf("In BEFORE_MOVE_STATE_GEM_ACTIVATION effect %d, type %d, hit %d\n", HeldItemHoldEffectGet(ctx, ctx->attack_client), BattleItemDataGet(ctx, ctx->battlemon[ctx->attack_client].item, 2), IsAnyBattleMonHit(bsys, ctx));
             ctx->wb_seq_no++;
 
             if (HeldItemHoldEffectGet(ctx, ctx->attack_client) == HOLD_EFFECT_POWERING_UP_MOVE_ONCE
