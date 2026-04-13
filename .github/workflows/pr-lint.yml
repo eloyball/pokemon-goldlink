@@ -35,6 +35,8 @@ jobs:
         if: ${{ steps.linter.outputs.clang-format-checks-failed != '0' }}
         run: |
           echo "Files needing formatting:"
+          echo "clang-format version:"
+          clang-format --version
         
           git diff --name-only \
             ${{ github.event.pull_request.base.sha }} \
@@ -43,6 +45,12 @@ jobs:
             if [ -f "$f" ] && [[ "$f" =~ ^(src/.+\.c|include/.+\.h)$ ]]; then
               if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
                 echo "$f"
+                echo "--- file info: $f ---"
+                file "$f" || true
+                echo "--- git diff: $f ---"
+                git diff -- "$f" || true
+                echo "--- clang-format diff: $f ---"
+                clang-format "$f" | diff -u "$f" - || true
               fi
             fi
           done
