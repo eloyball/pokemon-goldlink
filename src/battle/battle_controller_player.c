@@ -35,7 +35,7 @@ void overrideItemUsage(struct BattleSystem *bsys, struct BattleStruct *ctx)
 
 BOOL LONG_CALL BattleContext_Main(struct BattleSystem *bsys, struct BattleStruct *ctx)
 {
-    debug_printf("BattleContext_Main: server_seq_no=%d, next %d\n", ctx->server_seq_no, ctx->next_server_seq_no);
+
 #ifdef DEBUG_BATTLE_SCENARIOS
     if (!ctx->hasLoadedTerrainOver && ctx->terrainOverlay.type != TERRAIN_NONE && ctx->server_seq_no >= CONTROLLER_COMMAND_SELECTION_SCREEN_INIT &&
         bsys != NULL && bsys->bgConfig != NULL && bsys->bg_area != NULL && bsys->pal_area != NULL) {
@@ -91,7 +91,7 @@ BOOL LONG_CALL BattleContext_Main(struct BattleSystem *bsys, struct BattleStruct
 #if defined (DISABLE_ITEMS_IN_TRAINER_BATTLE)
     overrideItemUsage(bsys, ctx);
 #endif
-    debug_printf("BattleContext_Main: server_seq_no=%d, next %d\n", ctx->server_seq_no, ctx->next_server_seq_no);
+
     if (ctx->server_seq_no == CONTROLLER_COMMAND_45)
     {
         return TRUE;
