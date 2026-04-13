@@ -26,8 +26,15 @@ int AdjustDamageForRoll(void *bw, struct BattleStruct *sp, int damage);
 int CalcBaseDamage(void *bw, struct BattleStruct *sp, int moveno, u32 side_cond UNUSED,
                    u32 field_cond, u16 pow UNUSED, u8 type UNUSED, u8 attacker, u8 defender, u8 critical)
 {
-
+    debug_printf("CalcBaseDamage attacker %d\n", attacker);
     struct DamageCalcStruct damageCalc = {0};
+
+    BOOL isFutureSightWithoutAttacker = FALSE;
+    int moveEffect = sp->moveTbl[moveno].effect;
+    if (attacker == BATTLER_NONE && moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS) { // we set attacker to valid and overwrite stats afterwards
+        attacker = sp->fcc.future_prediction_client_no[defender];
+        isFutureSightWithoutAttacker = TRUE;
+    }
 
     damageCalc.maxBattlers = BattleWorkClientSetMaxGet(bw);
     damageCalc.attackerPartySize = Battle_GetClientPartySize(bw, attacker);
@@ -39,7 +46,7 @@ int CalcBaseDamage(void *bw, struct BattleStruct *sp, int moveno, u32 side_cond 
     damageCalc.defender = defender;
     damageCalc.critical = critical;
     damageCalc.moveno = moveno;
-    damageCalc.movetype = GetAdjustedMoveType(sp, attacker, moveno);
+    damageCalc.movetype = GetAdjustedMoveType(sp, (isFutureSightWithoutAttacker ? BATTLER_NONE : attacker), moveno);
     damageCalc.movesplit = GetMoveSplit(sp, moveno);
     damageCalc.movepower = sp->moveTbl[moveno].power;
     damageCalc.damage_power = sp->damage_power;
@@ -118,6 +125,67 @@ int CalcBaseDamage(void *bw, struct BattleStruct *sp, int moveno, u32 side_cond 
         damageCalc.clients[i] = client;
     }
 
+    if (isFutureSightWithoutAttacker)
+    {
+        debug_printf("future sight attacker %d, selMon %d", attacker, sp->fcc.wish_sel_mons[attacker]);
+        struct PartyPokemon *pp = Battle_GetClientPartyMon(bw, attacker, sp->fcc.wish_sel_mons[attacker]);
+        damageCalc.clients[attacker].attack = GetMonData(pp, MON_DATA_ATTACK, 0);
+        damageCalc.clients[attacker].defense = GetMonData(pp, MON_DATA_DEFENSE, 0);
+        damageCalc.clients[attacker].sp_attack = GetMonData(pp, MON_DATA_SPECIAL_ATTACK, 0);
+        damageCalc.clients[attacker].sp_defense = GetMonData(pp, MON_DATA_SPECIAL_DEFENSE, 0);
+        damageCalc.clients[attacker].atkstate = 0;
+        damageCalc.clients[attacker].defstate = 0;
+        damageCalc.clients[attacker].spatkstate = 0;
+        damageCalc.clients[attacker].spdefstate = 0;
+        debug_printf("damageCalc.clients[attacker].attack %d\n", damageCalc.clients[attacker].attack);
+        debug_printf("damageCalc.clients[attacker].defense %d\n", damageCalc.clients[attacker].defense);
+        debug_printf("damageCalc.clients[attacker].sp_attack %d\n", damageCalc.clients[attacker].sp_attack);
+        debug_printf("damageCalc.clients[attacker].sp_defense %d\n", damageCalc.clients[attacker].sp_defense);
+
+        damageCalc.clients[attacker].positiveStatBoosts = 0;
+
+        damageCalc.clients[attacker].level = GetMonData(pp, MON_DATA_LEVEL, 0);
+        damageCalc.clients[attacker].species = GetMonData(pp, MON_DATA_SPECIES, 0);
+        damageCalc.clients[attacker].hp = GetMonData(pp, MON_DATA_HP, 0);
+        damageCalc.clients[attacker].maxhp = GetMonData(pp, MON_DATA_MAXHP, 0);
+
+        debug_printf("damageCalc.clients[attacker].level %d\n", damageCalc.clients[attacker].level);
+        debug_printf("damageCalc.clients[attacker].species %d\n", damageCalc.clients[attacker].species);
+        debug_printf("damageCalc.clients[attacker].hp %d\n", damageCalc.clients[attacker].hp);
+        debug_printf("damageCalc.clients[attacker].maxhp %d\n", damageCalc.clients[attacker].maxhp);
+
+        damageCalc.clients[attacker].condition = 0;
+        damageCalc.clients[attacker].condition2 = 0;
+        damageCalc.clients[attacker].ability = 0;
+        damageCalc.clients[attacker].sex = GetMonData(pp, MON_DATA_GENDER, 0);
+        damageCalc.clients[attacker].speed = GetMonData(pp, MON_DATA_SPEED, 0);
+        damageCalc.clients[attacker].weight = 1; // we dont really care for weight in this case
+        damageCalc.clients[attacker].happiness = GetMonData(pp, MON_DATA_FRIENDSHIP, 0);
+        damageCalc.clients[attacker].form = GetMonData(pp, MON_DATA_FORM, 0);
+        damageCalc.clients[attacker].furyCutterCount = 0;
+        damageCalc.clients[attacker].rolloutCount = 0;
+        damageCalc.clients[attacker].stockpileCount = 0;
+        damageCalc.clients[attacker].parentalBondFlag = 0;
+        damageCalc.clients[attacker].helpingHandFlag = 0;
+        damageCalc.clients[attacker].sheerForceFlag = 0;
+        damageCalc.clients[attacker].effectOfMoves = 0;
+        damageCalc.clients[attacker].type1 = GetMonData(pp, MON_DATA_TYPE_1, 0);
+        damageCalc.clients[attacker].type2 = GetMonData(pp, MON_DATA_TYPE_2, 0);
+        damageCalc.clients[attacker].type3 = TYPE_TYPELESS;
+        damageCalc.clients[attacker].isGrounded = TRUE;
+        if ((damageCalc.clients[attacker].type1 == TYPE_FLYING || damageCalc.clients[attacker].type2 == TYPE_FLYING) && !(sp->field_condition & FIELD_STATUS_GRAVITY))
+        {
+            damageCalc.clients[attacker].isGrounded = FALSE;
+        }
+        damageCalc.clients[attacker].item = 0;
+        damageCalc.clients[attacker].item_held_effect = 0;
+        damageCalc.clients[attacker].item_power = 0;
+        damageCalc.clients[attacker].hasMoveFailureLastTurn = 0;
+        damageCalc.clients[attacker].paradoxBoostedStat = 0;
+        damageCalc.clients[attacker].boosterEnergyActivated = 0;
+    }
+
+    debug_printf("CalcBaseDamage filled structs\n");
     u32 ovyId, offset;
     int ret;
     int (*internalFunc)(struct BattleSystem *bw, struct BattleStruct *sp, struct DamageCalcStruct *damageCalc);
@@ -129,6 +197,7 @@ int CalcBaseDamage(void *bw, struct BattleStruct *sp, int moveno, u32 side_cond 
     ret = internalFunc(bw, sp, &damageCalc);
     UnloadOverlayByID(ovyId);
 
+    debug_printf("end CalcBaseDamage\n");
     return ret;
 }
 
@@ -141,6 +210,9 @@ int CalcBaseDamage(void *bw, struct BattleStruct *sp, int moveno, u32 side_cond 
  */
 u16 LONG_CALL GetBattleMonItem(struct BattleStruct *sp, int client_no)
 {
+    if (client_no == BATTLER_NONE) {
+        return 0;
+    }
     if ((GetBattlerAbility(sp, client_no) == ABILITY_KLUTZ))
     {
         return 0;
@@ -169,6 +241,7 @@ u16 LONG_CALL GetBattleMonItem(struct BattleStruct *sp, int client_no)
  */
 // This is DamageCalcDefault
 void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
+    debug_printf("CalcDamageOverall\n");
     int type;
 
     type = GetAdjustedMoveType(sp, sp->attack_client, sp->current_move_index);
@@ -279,7 +352,7 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
 #endif
 
     // this is beacuse of weirdness, just make sure the value is correct at all times
-    if (sp->oneTurnFlag[attacker].parental_bond_flag) {
+    if (attacker != BATTLER_NONE && sp->oneTurnFlag[attacker].parental_bond_flag) {
 #ifdef DEBUG_DAMAGE_CALC
         debug_printf("[CalcBaseDamage] parental_bond_flag: %d\n", sp->oneTurnFlag[attacker].parental_bond_flag);
 #endif
@@ -392,8 +465,12 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
 
 
     // 6.6 Same-Type Attack Bonus (STAB) Modifier
-
-    if (((sp->server_status_flag & SERVER_STATUS_FLAG_TYPE_FLAT) == 0) && HasType(sp, attacker, type)) {
+    int moveEffect = sp->moveTbl[moveno].effect;
+    if (moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS && sp->futureSightDifferentAttacker)
+    {
+        //TODO
+    }
+    else if (((sp->server_status_flag & SERVER_STATUS_FLAG_TYPE_FLAT) == 0) && HasType(sp, attacker, type)) {
         if (attackerAbility == ABILITY_ADAPTABILITY) {
 #ifdef DEBUG_DAMAGE_ROLLS
         for (int u = 0; u < 16; u++)
