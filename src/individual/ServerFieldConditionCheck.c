@@ -335,8 +335,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                                     sp->current_move_index = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
                                     sp->move_type = GetAdjustedMoveType(sp, sp->attack_client, sp->current_move_index);
 
-                                    sp->playerActions[sp->attack_client][0] = CONTROLLER_COMMAND_FIGHT_INPUT;
-                                    sp->playerActions[sp->attack_client][3] = SELECT_FIGHT_COMMAND;
+                                    //sp->playerActions[sp->attack_client][0] = CONTROLLER_COMMAND_FIGHT_INPUT;
+                                    //sp->playerActions[sp->attack_client][3] = SELECT_FIGHT_COMMAND;
                                     debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", sp->attack_client, sp->fcc.wish_sel_mons[sp->attack_client], sp->sel_mons_no[sp->attack_client]);
                                     for (int i = 0; i< 4; ++i) {
 
