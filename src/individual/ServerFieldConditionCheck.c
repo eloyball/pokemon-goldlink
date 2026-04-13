@@ -332,6 +332,9 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                                     sp->futureSightHitTurn = TRUE;
                                     sp->defence_client = futureCondition.defenderSlot;
                                     sp->attack_client = sp->fcc.future_prediction_client_no[futureCondition.defenderSlot];
+                                    sp->current_move_index = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
+                                    ctx->move_type = GetAdjustedMoveType(ctx, ctx->attack_client, ctx->current_move_index);
+
                                     sp->playerActions[sp->attack_client][0] = CONTROLLER_COMMAND_FIGHT_INPUT;
                                     sp->playerActions[sp->attack_client][3] = SELECT_FIGHT_COMMAND;
                                     debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", sp->attack_client, sp->fcc.wish_sel_mons[sp->attack_client], sp->sel_mons_no[sp->attack_client]);
@@ -347,7 +350,7 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                                         sp->futureSightDifferentAttacker = TRUE;
                                     }
 
-                                    sp->current_move_index = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
+                                    
                                     int side = IsClientEnemy(bw, sp->defence_client);
                                     sp->side_condition[side] |= SIDE_STATUS_FUTURE_SIGHT;
 
