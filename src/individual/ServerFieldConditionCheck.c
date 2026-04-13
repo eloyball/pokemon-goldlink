@@ -332,6 +332,8 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                                     sp->futureSightHitTurn = TRUE;
                                     sp->defence_client = futureCondition.defenderSlot;
                                     sp->attack_client = sp->fcc.future_prediction_client_no[futureCondition.defenderSlot];
+                                    ctx->playerActions[sp->attack_client][0] = CONTROLLER_COMMAND_FIGHT_INPUT;
+                                    ctx->playerActions[sp->attack_client][3] = SELECT_FIGHT_COMMAND;
                                     debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", sp->attack_client, sp->fcc.wish_sel_mons[sp->attack_client], sp->sel_mons_no[sp->attack_client]);
                                     for (int i = 0; i< 4; ++i) {
 
