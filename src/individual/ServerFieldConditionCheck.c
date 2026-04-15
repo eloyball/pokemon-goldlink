@@ -331,26 +331,35 @@ void ServerFieldConditionCheck(void *bw, struct BattleStruct *sp) {
                                     ov12_02252D14(bw, sp); //reset damage, status
                                     sp->futureSightHitTurn = TRUE;
                                     sp->defence_client = futureCondition.defenderSlot;
+                                    int attackerSlot = sp->fcc.future_prediction_client_no[futureCondition.defenderSlot];
+                                    int attackerAlly = BATTLER_ALLY(attackerSlot);
                                     sp->attack_client = sp->fcc.future_prediction_client_no[futureCondition.defenderSlot];
                                     sp->current_move_index = sp->fcc.future_prediction_wazano[futureCondition.defenderSlot];
-                                    sp->move_type = GetAdjustedMoveType(sp, sp->attack_client, sp->current_move_index);
                                     sp->futureSightSTAB = sp->futureConditionQueue[sp->scc_work].futureSightSTAB;
 
                                     //sp->playerActions[sp->attack_client][0] = CONTROLLER_COMMAND_FIGHT_INPUT;
                                     //sp->playerActions[sp->attack_client][3] = SELECT_FIGHT_COMMAND;
-                                    debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", sp->attack_client, sp->fcc.wish_sel_mons[sp->attack_client], sp->sel_mons_no[sp->attack_client]);
+                                    debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", attackerSlot, sp->fcc.wish_sel_mons[attackerSlot], sp->sel_mons_no[attackerSlot]);
+                                    debug_printf("attacker %d, sp->wish_sel_mons %d, sel_mons_no %d\n", attackerAlly, sp->fcc.wish_sel_mons[attackerSlot], sp->sel_mons_no[attackerAlly]);
                                     for (int i = 0; i< 4; ++i) {
 
                                         debug_printf("execution index %d: command %d\n", sp->executionOrder[i], sp->playerActions[sp->executionOrder[i]][0]);
                                     }
-                                    
-                                    if (sp->fcc.wish_sel_mons[sp->attack_client] != sp->sel_mons_no[sp->attack_client])
+                                    if (sp->fcc.wish_sel_mons[attackerSlot] == sp->sel_mons_no[attackerSlot])
                                     {
-                                        debug_printf("Different attacker\n");
+                                        sp->attack_client = attackerSlot;
+                                    }
+                                    else if (sp->fcc.wish_sel_mons[attackerSlot] == sp->sel_mons_no[attackerAlly])
+                                    {
+                                        sp->attack_client = attackerAlly;
+                                    } else
+                                    {
+                                        debug_printf("No original attacker\n");
                                         sp->attack_client = BATTLER_NONE;
-                                        sp->futureSightDifferentAttacker = TRUE;
+                                        sp->futureSightNoAttacker = TRUE;
                                     }
 
+                                    sp->move_type = GetAdjustedMoveType(sp, sp->attack_client, sp->current_move_index);
                                     
                                     int side = IsClientEnemy(bw, sp->defence_client);
                                     sp->side_condition[side] |= SIDE_STATUS_FUTURE_SIGHT;

@@ -466,7 +466,7 @@ void CalcDamageOverall(void *bw, struct BattleStruct *sp) {
 
     // 6.6 Same-Type Attack Bonus (STAB) Modifier
     int moveEffect = sp->moveTbl[moveno].effect;
-    if (moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS && sp->futureSightDifferentAttacker) {
+    if (moveEffect == MOVE_EFFECT_HIT_IN_3_TURNS && sp->futureSightNoAttacker) {
         if (sp->futureSightSTAB) {
 #ifdef DEBUG_DAMAGE_ROLLS
             for (int u = 0; u < 16; u++) {

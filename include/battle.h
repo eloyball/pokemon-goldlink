@@ -1548,7 +1548,7 @@ struct BattleStruct {
 
                u8 gemBoostingMove: 1;
                u8 futureSightHitTurn: 1;
-               u8 futureSightDifferentAttacker : 1;
+               u8 futureSightNoAttacker : 1;
                u8 futureSightSTAB : 1;
                u8 gemBoostingMovePadding : 4;
 

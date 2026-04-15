@@ -205,10 +205,6 @@ void __attribute__((section (".init"))) BattleController_BeforeMove(struct Battl
 
     CopyBattleMonToPartyMon(bsys, ctx, ctx->attack_client);
 
-    if (ctx->futureSightDifferentAttacker)
-    {
-        ctx->attack_client = BATTLER_NONE;
-    }
 
     if (ctx->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) {
 #ifdef DEBUG_BEFORE_MOVE_LOGIC

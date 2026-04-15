@@ -92,7 +92,7 @@ void LONG_CALL BattleController_MoveEndInternal(struct BattleSystem *bsys, struc
     ctx->boostedAccuracy = FALSE;
     ctx->gemBoostingMove = FALSE;
     ctx->futureSightHitTurn = FALSE;
-    ctx->futureSightDifferentAttacker = FALSE;
+    ctx->futureSightNoAttacker = FALSE;
     ctx->futureSightSTAB = 0;
     ctx->currentMoveSwitchStatus = CURRENT_MOVE_NO_SWITCH;
 
