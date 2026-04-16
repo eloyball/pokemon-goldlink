@@ -808,6 +808,8 @@ InitBattleMsg = 0x022479C0 | 1;
 BattleController_EmitPrintMessage = 0x022633F0 | 1;
 BattleController_EmitPrintAttackMessage = 0x022633B8 | 1;
 
+BattleScriptGetVarPointer = 0x02245528 | 1;
+
 Mon_UpdateRotomForm	= 0x02071EC0 | 1;
 
 LoadItemDataOrGfx = 0x02077CE8 | 1;

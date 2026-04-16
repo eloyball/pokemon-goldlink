@@ -126,6 +126,7 @@ BOOL btl_scr_cmd_11C_BatchUpdateHealthBar(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_11D_BatchUpdateHealthBarValue(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_11E_BatchFollowupMessage(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_11F_BatchEffectivenessMessage(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_GoToMoveScript(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp);
 BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp);
@@ -452,6 +453,7 @@ const u8 *BattleScrCmdNames[] = {
     "BatchUpdateHealthBarValue",
     "BatchFollowupMessage",
     "BatchEffectivenessMessage",
+    "DivideVarByValueRoundUp",
     // "YourCustomCommand",
 };
 
@@ -461,196 +463,76 @@ u32 cmdAddress = 0;
 
 #define BASE_ENGINE_BTL_SCR_CMDS_MAX 0x11D
 
+// clang-format off
 const btl_scr_cmd_func NewBattleScriptCmdTable[] = {
     [0xE1 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E1_reduceweight,
-    [0xE2 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E2_heavyslamdamagecalc,
-    [0xE3 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E3_isuserlowerlevel,
-    [0xE4 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E4_settailwind,
-    [0xE5 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E5_iftailwindactive,
-    [0xE6 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E6_ifcurrentfieldistype,
-    [0xE7 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E7_ifmovepowergreaterthanzero,
-    [0xE8 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E8_ifgrounded,
-    [0xE9 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_E9_checkifcurrentadjustedmoveistype,
-    [0xEA -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_EA_ifcontactmove,
-    [0xEB -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_EB_ifsoundmove,
-    [0xEC -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_EC_updateterrainoverlay,
-    [0xED -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_ED_ifterrainoverlayistype,
-    [0xEE -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_EE_setpsychicterrainmoveusedflag,
-    [0xEF -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_EF_iffirsthitofparentalbond,
-    [0xF0 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F0_ifsecondhitofparentalbond,
-    [0xF1 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F1_setparentalbondflag,
-    [0xF2 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F2_ifcurrentmoveisvalidparentalbondmove,
-    [0xF3 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F3_canapplyknockoffdamageboost,
-    [0xF4 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F4_isparentalbondactive,
-    [0xF5 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F5_changepermanentbg,
-    [0xF6 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F6_changeexecutionorderpriority,
-    [0xF7 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F7_setbindingcounter,
-    [0xF8 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F8_clearbindcounter,
-    [0xF9 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_F9_canclearprimalweather,
-    [0xFA -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FA_setabilityactivatedflag,
-    [0xFB -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FB_switchinabilitycheck,
-    [0xFC -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FC_trystickyweb,
-    [0xFD -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FD_trymegaorultraburstduringpursuit,
-    [0xFE -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FE_calcconfusiondamage,
-    [0xFF -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_FF_checkcanactivatedefiantorcompetitive,
-    [0x100 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_100_jumptocurrententryhazard,
-    [0x101 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_101_addentryhazardtoqueue,
-    [0x102 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_102_removeentryhazardfromqueue,
-    [0x103 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_103_checkprotectcontactmoves,
-    [0x104 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_104_tryincinerate,
-    [0x105 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_105_addtype,
-    [0x106 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_106_tryauroraveil,
-    [0x107 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_107_clearauroraveil,
-    [0x108 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_108_strengthsapcalc,
-    [0x109 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_109_checktargetispartner,
-    [0x10A -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10A_clearsmog,
-    [0x10B -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10B_gotoifthirdtype,
-    [0x10C -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10C_gotoifterastallized,
-    [0x10D -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10D_HandleRoost,
-    [0x10E -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10E_HandleSoak,
-    [0x10F -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_10F_HandleMagicPowder,
-    [0x110 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_110_HandleForestsCurse,
-    [0x111 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_111_HandleTrickOrTreat,
-    [0x112 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_112_HandleBurnUp,
-    [0x113 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_113_HandleDoubleShock,
-    [0x114 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_114_stuffCheeks,
-    [0x115 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_115_setMoveConditionFlag,
-    [0x116 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_116_abilitypopup,
-    [0x117 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_117_activateparadoxability,
-    [0x118 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_118_resetparadoxability,
-    [0x119 -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_119_SetCurrentMoveDoneSwitchingFlag,
-    [0x11A -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11A_TrySynchronizeStatus,
-    [0x11B -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11B_TryCureStatusBerry,
-    [0x11C -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11C_BatchUpdateHealthBar,
-    [0x11D -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11D_BatchUpdateHealthBarValue,
-    [0x11E -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11E_BatchFollowupMessage,
-    [0x11F -
-        START_OF_NEW_BTL_SCR_CMDS]
-    = btl_scr_cmd_11F_BatchEffectivenessMessage,
+    [0xE2 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E2_heavyslamdamagecalc,
+    [0xE3 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E3_isuserlowerlevel,
+    [0xE4 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E4_settailwind,
+    [0xE5 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E5_iftailwindactive,
+    [0xE6 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E6_ifcurrentfieldistype,
+    [0xE7 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E7_ifmovepowergreaterthanzero,
+    [0xE8 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E8_ifgrounded,
+    [0xE9 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_E9_checkifcurrentadjustedmoveistype,
+    [0xEA - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_EA_ifcontactmove,
+    [0xEB - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_EB_ifsoundmove,
+    [0xEC - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_EC_updateterrainoverlay,
+    [0xED - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_ED_ifterrainoverlayistype,
+    [0xEE - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_EE_setpsychicterrainmoveusedflag,
+    [0xEF - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_EF_iffirsthitofparentalbond,
+    [0xF0 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F0_ifsecondhitofparentalbond,
+    [0xF1 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F1_setparentalbondflag,
+    [0xF2 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F2_ifcurrentmoveisvalidparentalbondmove,
+    [0xF3 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F3_canapplyknockoffdamageboost,
+    [0xF4 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F4_isparentalbondactive,
+    [0xF5 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F5_changepermanentbg,
+    [0xF6 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F6_changeexecutionorderpriority,
+    [0xF7 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F7_setbindingcounter,
+    [0xF8 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F8_clearbindcounter,
+    [0xF9 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_F9_canclearprimalweather,
+    [0xFA - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FA_setabilityactivatedflag,
+    [0xFB - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FB_switchinabilitycheck,
+    [0xFC - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FC_trystickyweb,
+    [0xFD - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FD_trymegaorultraburstduringpursuit,
+    [0xFE - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FE_calcconfusiondamage,
+    [0xFF - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_FF_checkcanactivatedefiantorcompetitive,
+    [0x100 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_100_jumptocurrententryhazard,
+    [0x101 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_101_addentryhazardtoqueue,
+    [0x102 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_102_removeentryhazardfromqueue,
+    [0x103 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_103_checkprotectcontactmoves,
+    [0x104 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_104_tryincinerate,
+    [0x105 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_105_addtype,
+    [0x106 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_106_tryauroraveil,
+    [0x107 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_107_clearauroraveil,
+    [0x108 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_108_strengthsapcalc,
+    [0x109 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_109_checktargetispartner,
+    [0x10A - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10A_clearsmog,
+    [0x10B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10B_gotoifthirdtype,
+    [0x10C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10C_gotoifterastallized,
+    [0x10D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10D_HandleRoost,
+    [0x10E - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10E_HandleSoak,
+    [0x10F - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10F_HandleMagicPowder,
+    [0x110 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_110_HandleForestsCurse,
+    [0x111 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_111_HandleTrickOrTreat,
+    [0x112 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_112_HandleBurnUp,
+    [0x113 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_113_HandleDoubleShock,
+    [0x114 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_114_stuffCheeks,
+    [0x115 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_115_setMoveConditionFlag,
+    [0x116 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_116_abilitypopup,
+    [0x117 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_117_activateparadoxability,
+    [0x118 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_118_resetparadoxability,
+    [0x119 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_119_SetCurrentMoveDoneSwitchingFlag,
+    [0x11A - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11A_TrySynchronizeStatus,
+    [0x11B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11B_TryCureStatusBerry,
+    [0x11C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11C_BatchUpdateHealthBar,
+    [0x11D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11D_BatchUpdateHealthBarValue,
+    [0x11E - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11E_BatchFollowupMessage,
+    [0x11F - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_11F_BatchEffectivenessMessage,
+    [0x120 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_120_DivideVarByValueRoundUp,
     // [BASE_ENGINE_BTL_SCR_CMDS_MAX - START_OF_NEW_BTL_SCR_CMDS + 1] = btl_scr_cmd_custom_01_your_custom_command,
 };
+
+// clang-format on
 
 // entries before 0xFFFE are banned for mimic and metronome--after is just banned for metronome.  table ends with 0xFFFF
 u16 sMetronomeMimicMoveBanList[] = {
@@ -1831,8 +1713,7 @@ BOOL Task_DistributeExp_capture_experience(void *arg0, void *work, u32 get_clien
 BOOL btl_scr_cmd_33_statbuffchange(void *bw, struct BattleStruct *sp)
 {
     u32 ovyId, offset;
-    BOOL(*internalFunc)
-    (void *bw, struct BattleStruct *sp);
+    BOOL (*internalFunc)(void *bw, struct BattleStruct *sp);
 
     ovyId = OVERLAY_BTL_SCR_CMD_33_STATBUFFCHANGE;
     offset = 0x023C0400 | 1;
@@ -3894,8 +3775,7 @@ BOOL BtlCmd_CheckSubstitute(void *bsys, struct BattleStruct *ctx)
 u32 CalculateBallShakes(void *bw, struct BattleStruct *sp)
 {
     u32 ovyId, offset, ret;
-    BOOL(*internalFunc)
-    (void *bw, struct BattleStruct *sp);
+    BOOL (*internalFunc)(void *bw, struct BattleStruct *sp);
 
     ovyId = OVERLAY_CALCULATEBALLSHAKES;
     offset = 0x023C0400 | 1;
@@ -5292,6 +5172,48 @@ BOOL BtlCmd_TryFaintMon(struct BattleSystem *bsys, struct BattleStruct *ctx)
         ctx->total_hinshi[battlerId]++;
         UpdateFriendshipFainted(bsys, ctx, battlerId);
     }
+
+    return FALSE;
+}
+
+int DivideRoundUp(int num, int denom)
+{
+    int sign;
+
+    if (num == 0) {
+        return num;
+    }
+
+    if (num < 0) {
+        sign = -1;
+    } else {
+        sign = 1;
+    }
+
+    int remainder = num % denom;
+    num /= denom;
+
+    if (remainder) {
+        num += sign;
+    }
+
+    if (num == 0) {
+        num = sign;
+    }
+
+    return num;
+}
+
+BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    int varNo = read_battle_script_param(ctx);
+    int denom = read_battle_script_param(ctx);
+
+    int *data = BattleScriptGetVarPointer(bsys, ctx, varNo);
+
+    *data = DivideRoundUp(*data, denom);
 
     return FALSE;
 }

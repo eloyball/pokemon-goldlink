@@ -2014,7 +2014,7 @@ enum
     MOVE_PERFORMANCE_STEP_18_0_PLEDGE_MOVES_COMBINATION,
     MOVE_PERFORMANCE_STEP_19_0_FORM_CHANGE,
     MOVE_PERFORMANCE_STEP_20_0_LIFE_ORB_SHELL_BELL,
-    MOVE_PERFORMANCE_STEP_21_0_MOVE_DEFENDER_ITEMS_4,
+    MOVE_PERFORMANCE_STEP_21_0_ALL_ITEMS,
     MOVE_PERFORMANCE_STEP_22_0_EMERGENCY_EXIT_WIMP_OUT,
     MOVE_PERFORMANCE_STEP_23_0_U_TURN_VOLT_SWITCH,
     MOVE_PERFORMANCE_STEP_24_0_PICKPOCKET,
@@ -4310,6 +4310,8 @@ void LONG_CALL InitBattleMsgData(struct BattleStruct *sp, BattleMessageData *msg
 void LONG_CALL InitBattleMsg(struct BattleSystem *bw, struct BattleStruct *sp, BattleMessageData *msgdata, BattleMessage *msg);
 void LONG_CALL BattleController_EmitPrintMessage(struct BattleSystem *bw, struct BattleStruct *sp, BattleMessage *msg);
 void LONG_CALL BattleController_EmitPrintAttackMessage(struct BattleSystem *bw, struct BattleStruct *sp);
+
+void *LONG_CALL BattleScriptGetVarPointer(struct BattleSystem *bw, struct BattleStruct *sp, int var);
 
 void LONG_CALL BattleMon_AddVar(struct BattlePokemon *mon, u32 varId, int data);
 
