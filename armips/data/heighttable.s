@@ -780,7 +780,7 @@ heightentry SPECIES_NOIBAT, 2, 2, 0, 0
 heightentry SPECIES_NOIVERN, 0, 0, 0, 0
 heightentry SPECIES_XERNEAS, "null", 0, "null", 0
 heightentry SPECIES_YVELTAL, "null", 12, "null", 0
-heightentry SPECIES_ZYGARDE, "null", 5, "null", 0
+heightentry SPECIES_ZYGARDE, "null", 0, "null", 0
 heightentry SPECIES_DIANCIE, "null", 7, "null", 0
 heightentry SPECIES_HOOPA, "null", 1, "null", 0
 heightentry SPECIES_VOLCANION, "null", 2, "null", 0
@@ -1289,7 +1289,7 @@ heightentry SPECIES_GOURGEIST_SUPER, 0, 0, 0, 0
 heightentry SPECIES_XERNEAS_ACTIVE, 0, 0, 0, 0
 heightentry SPECIES_ZYGARDE_10, 9, 9, 0, 0
 heightentry SPECIES_ZYGARDE_10_POWER_CONSTRUCT, 9, 9, 0, 0
-heightentry SPECIES_ZYGARDE_50_POWER_CONSTRUCT, 8, 8, 0, 0
+heightentry SPECIES_ZYGARDE_50_POWER_CONSTRUCT, 0, 0, 0, 0
 heightentry SPECIES_ZYGARDE_10_COMPLETE, 1, 1, 0, 0
 heightentry SPECIES_ZYGARDE_50_COMPLETE, 1, 1, 0, 0
 heightentry SPECIES_HOOPA_UNBOUND, 0, 0, 0, 0
