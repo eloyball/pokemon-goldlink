@@ -588,3 +588,9 @@ arm9 PartyMenu_StartContextMenuButtonPressAnim_FromCursorObj 0207CB9C 3
 
 # determine rock smash table to use for items
 0001 DetermineRockSmashItem_hook 02204E28 1
+
+
+# roamers
+arm9 Save_CreateRoamerByID 020676EC 3
+arm9 RoamerLocationSetRandom 02067830 4
+arm9 SpeciesToRoamerIdx 020677F4 2
