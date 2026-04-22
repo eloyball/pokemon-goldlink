@@ -65,7 +65,7 @@ u8 LONG_CALL EncounterSlot_WildMonSlotRoll_Surfing(void)
     }
 }
 
-u8 LONG_CALL EncounterSlot_WildMonSlotRoll_Fishing(int rodType)
+u8 LONG_CALL EncounterSlot_WildMonSlotRoll_Fishing(int rodType UNUSED)
 {
     u8 rnd = LCRandRange(100);
 
