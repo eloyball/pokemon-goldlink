@@ -1,6 +1,7 @@
 #include "../include/types.h"
 #include "../include/script.h"
 #include "../include/repel.h"
+#include "../include/roamer.h"
 #include "../include/constants/file.h"
 
 #define SCRIPT_NEW_CMD_REPEL_USE    0

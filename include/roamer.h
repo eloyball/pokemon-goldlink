@@ -53,4 +53,7 @@ void LONG_CALL ApplyRoamerLocation(void *roamerSave, u8 roamer_idx, u8 new_loc, 
 u32 LONG_CALL PlayerLocationHistoryGetBack(void *roamerSave);
 u8 LONG_CALL Roamer_GetLocation(void *roamerSave, u8 roamerId);
 
+
+void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx);
+
 #endif // POKEHEARTGOLD_ROAMER_H

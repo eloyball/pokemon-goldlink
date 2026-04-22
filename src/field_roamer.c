@@ -11,6 +11,10 @@
 #include "../include/script.h"
 #include "../include/types.h"
 
+/* In order to change the adjacent routes we would need to hook
+* https://github.com/pret/pokeheartgold/blob/d72700a52ad27ddf47847009a85b4bc9c85fa283/src/field_roamer.c#L256
+*/
+
 static const u32 sRoamerLocations[ROAMER_LOC_COUNT] = {
     // Johto
     MAP_R29,
@@ -84,7 +88,6 @@ void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx)
 {
     void *profile;
     void *roamerSave = EncDataSave_GetSaveDataPtr(saveData);
-    //RoamerSaveData *roamerSave = Save_Roamers_Get(saveData);
     Roamer *roamerStats = Roamers_GetRoamMonStats(roamerSave, idx);
     struct PartyPokemon *mon;
     u16 species;
