@@ -1,14 +1,14 @@
 #ifndef POKEHEARTGOLD_ROAMER_H
 #define POKEHEARTGOLD_ROAMER_H
 
-#include "types.h"
-#include "item.h"
-#include "sprite.h"
-#include "pokemon.h"
-#include "task.h"
-#include "save.h"
 #include "constants/roamer.h"
 
+#include "item.h"
+#include "pokemon.h"
+#include "save.h"
+#include "sprite.h"
+#include "task.h"
+#include "types.h"
 
 enum RoamerDataParam {
     ROAMER_DATA_MET_LOCATION = 1,
@@ -46,13 +46,11 @@ typedef struct RoamerSaveData { // todo: this appears to be used for swarms as w
 } RoamerSaveData;
 */
 
-
-Roamer* LONG_CALL Roamers_GetRoamMonStats(void *roamerSave, u8 roamerId);
+Roamer *LONG_CALL Roamers_GetRoamMonStats(void *roamerSave, u8 roamerId);
 void LONG_CALL SetRoamerData(struct Roamer *roamer, int a1, int val);
 void LONG_CALL ApplyRoamerLocation(void *roamerSave, u8 roamer_idx, u8 new_loc, u32 new_mapno);
 u32 LONG_CALL PlayerLocationHistoryGetBack(void *roamerSave);
 u8 LONG_CALL Roamer_GetLocation(void *roamerSave, u8 roamerId);
-
 
 void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx);
 

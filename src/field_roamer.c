@@ -1,19 +1,19 @@
 #include "../include/config.h"
-#include "../include/roamer.h"
-#include "../include/constants/roamer.h"
 #include "../include/constants/file.h"
 #include "../include/constants/maps.h"
+#include "../include/constants/roamer.h"
 #include "../include/constants/species.h"
 #include "../include/debug.h"
 #include "../include/map_events_internal.h"
 #include "../include/message.h"
+#include "../include/roamer.h"
 #include "../include/save.h"
 #include "../include/script.h"
 #include "../include/types.h"
 
 /* In order to change the adjacent routes we would need to hook
-* https://github.com/pret/pokeheartgold/blob/d72700a52ad27ddf47847009a85b4bc9c85fa283/src/field_roamer.c#L256
-*/
+ * https://github.com/pret/pokeheartgold/blob/d72700a52ad27ddf47847009a85b4bc9c85fa283/src/field_roamer.c#L256
+ */
 
 static const u32 sRoamerLocations[ROAMER_LOC_COUNT] = {
     // Johto
@@ -61,7 +61,6 @@ static const u32 sRoamerLocations[ROAMER_LOC_COUNT] = {
     MAP_R26,
     MAP_R28,
 };
-
 
 void LONG_CALL RoamerLocationSetRandom(void *roamerSave, u8 roamer_idx, u32 last_loc)
 {
