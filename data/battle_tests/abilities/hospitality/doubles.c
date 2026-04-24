@@ -126,12 +126,13 @@ const struct TestBattleScenario BattleTests[] = {
                 { ACTION_NONE, 0 },
             } },
         .expectations = {
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Delphox used Incinerate!" },
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 15, 15, 15, 16, 16, 16, 16, 17, 17, 17, 17, 18, 18, 18, 18, 18 } }, // unboosted
-            { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_SECOND, .expectationValue.hpTaken = { 13, 13, 14, 14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15, 15, 16 } }, 
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Swampert's Sitrus Berry was burned up!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Delphox stole the opposing Blastoise's Life Orb!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Delphox lost some of its HP!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sinistcha's Hospitality" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Delphox drank down all the matcha that Sinistcha made!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Sinistcha fainted!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Snorlax cut its own HP and maximized its Attack!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "sent out Sinistcha!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sinistcha’s Hospitality" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Snorlax drank down all the matcha that the opposing Sinistcha made!" },
         },
     },
 #ifndef GET_TEST_CASE_ONLY
