@@ -1726,4 +1726,5 @@ The opposing {STRVAR_1 1, 0, 0}\nheld up its Red Card against\fthe opposing {STR
 {STRVAR_1 1, 0, 0} drank down all\nthe matcha that the opposing\f{STRVAR_1 1, 1, 0} made!
 {STRVAR_1 1, 0, 0} drank down all\nthe matcha that {STRVAR_1 1, 1, 0}\fmade!
 {STRVAR_1 1, 0, 0} drank down all\nthe matcha that the wild\f{STRVAR_1 1, 1, 0} made!
+{STRVAR_1 1, 0, 0} drank down all\nthe matcha that {STRVAR_1 1, 1, 0}\fmade!
 {STRVAR_1 1, 0, 0} drank down all\nthe matcha that the opposing\f{STRVAR_1 1, 1, 0} made!
