@@ -25,7 +25,7 @@ const struct TestBattleScenario BattleTests[] = {
                 .form = 0,
                 .ability = ABILITY_STALL,
                 .item = ITEM_NONE,
-                .moves = { MOVE_CONVERSION_2, MOVE_DISABLE, MOVE_NONE, MOVE_NONE },
+                .moves = { MOVE_CONVERSION_2, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                 .hp = FULL_HP,
                 .status = 0,
                 .condition2 = 0,
@@ -44,7 +44,7 @@ const struct TestBattleScenario BattleTests[] = {
                             .form = 0,
                             .ability = ABILITY_STURDY,
                             .item = ITEM_NONE,
-                            .moves = { MOVE_GROWL, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+                            .moves = { MOVE_STRUGGLE, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                             .hp = FULL_HP,
                             .status = 0,
                             .condition2 = 0,
@@ -58,8 +58,8 @@ const struct TestBattleScenario BattleTests[] = {
         },
         .playerScript = {
             {
-                              { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
                               { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
+                              { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
                               { ACTION_NONE, 0 },
@@ -81,7 +81,7 @@ const struct TestBattleScenario BattleTests[] = {
         .enemyScript = {
             {
                              { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
-                             { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
+                             { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },
                              { ACTION_NONE, 0 },

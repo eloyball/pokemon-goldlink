@@ -5364,7 +5364,8 @@ BOOL BtlCmd_TryConversion2(struct BattleSystem *bsys, struct BattleStruct *ctx)
     // Failure conditions other than type chart interactions are handled in BeforeMove.c.
 
     // If the target has used a move...
-    if (ctx->lastClientMoveType[ctx->defence_client] != TYPE_TYPELESS)
+    if (ctx->lastClientMoveType[ctx->defence_client] != TYPE_TYPELESS
+    && ctx->waza_no_old[ctx->defence_client] != MOVE_STRUGGLE) // Struggle is actually a Normal-type move, despite not at all functioning like one.
     {
         u8 attackingTypeToCheck, typeToChangeTo, effectiveness;
         int moveType = ctx->lastClientMoveType[ctx->defence_client];
