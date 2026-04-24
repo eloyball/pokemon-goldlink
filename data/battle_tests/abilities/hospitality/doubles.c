@@ -131,7 +131,7 @@ const struct TestBattleScenario BattleTests[] = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Sinistcha fainted!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Snorlax cut its own HP and maximized its Attack!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "sent out Sinistcha!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sinistcha’s Hospitality" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sinistcha's Hospitality" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Snorlax drank down all the matcha that the opposing Sinistcha made!" },
         },
     },
