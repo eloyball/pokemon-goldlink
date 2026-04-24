@@ -731,7 +731,6 @@ CanSwitchMon = 0x02252890 | 1;
 BattleMon_AddVar = 0x0224F7AC | 1;
 GetFlavorPreferenceFromPID = 0x020718E8 | 1;
 
-ov12_0224DD74 = 0x0224DD74 | 1;
 ov12_02261258 = 0x02261258 | 1;
 //ov12_02252D14 = 0x02252D14 | 1;
 
@@ -843,3 +842,5 @@ sBattleBgProfileTable = 0x0226E70C;
 UpdateFriendshipFainted = 0x02248558 | 1;
 
 StringExpandPlaceholders = 0x0200CBBC | 1;
+
+ov12_02256694 = 0x02256694 | 1;

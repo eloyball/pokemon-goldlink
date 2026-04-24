@@ -101,7 +101,7 @@ endif
 ADPCMXQ := tools/adpcm-xq
 ARMIPS := tools/armips
 BLZ := tools/blz
-BTX := $(PYTHON) tools/overworld-btx.py
+BTX := tools/btx
 ENCODEPWIMG := tools/ENCODE_IMG
 GFX := tools/nitrogfx
 MSGENC := tools/msgenc
@@ -232,8 +232,14 @@ $(ENCODEPWIMG):
 
 TOOLS += $(ENCODEPWIMG)
 
+$(BTX):
+	cd tools/source/btx ; $(MAKE)
+	mv tools/source/btx/btx $(BTX)
+
+TOOLS += $(BTX)
+
 ####################### Build #######################
-$(BUILD)/rom_gen.ld:$(LINK) $(OUTPUT) rom.ld $(VENV_ACTIVATE)
+$(BUILD)/rom_gen.ld:$(LINK) $(OUTPUT) rom.ld
 	cp rom.ld $(BUILD)/rom_gen.ld
 	$(PYTHON) scripts/generate_ld.py $(BUILD)/rom_gen.ld $(LINK)
 
@@ -269,19 +275,21 @@ $(LINK):$(OBJS)
 $(OUTPUT):$(LINK)
 	$(OBJCOPY) -O binary $< $@
 
-all: $(OUTPUT) $(OVERLAY_OUTPUTS) $(TOOLS)
+# only reextract from the rom if the romname is newer than the extracted arm9.bin
+$(BASE)/arm9.bin: $(ROMNAME) $(NDSTOOL) $(VENV_ACTIVATE)
 	rm -rf $(BASE)
 	@mkdir -p $(REQUIRED_DIRECTORIES)
-	@# find and delete macOS and windows files
-	find . \( -name "*.DS_Store" -o -name "*:Zone.Identifier" \) -delete
 	$(NDSTOOL) -x $(ROMNAME) -9 $(BASE)/arm9.bin -7 $(BASE)/arm7.bin -y9 $(BASE)/overarm9.bin -y7 $(BASE)/overarm7.bin -d $(FILESYS) -y $(BASE)/overlay -t $(BASE)/banner.bin -h $(BASE)/header.bin
 	$(NARCHIVE) extract $(FILESYS)/a/0/2/8 -o $(BUILD)/a028/ -nf
+
+all: $(OUTPUT) $(OVERLAY_OUTPUTS) $(TOOLS) $(BASE)/arm9.bin
+	@# find and delete macOS and windows files
+	find . \( -name "*.DS_Store" -o -name "*:Zone.Identifier" \) -delete
 	$(PYTHON) scripts/make.py $(CFLAGS)
+# TODO: find a convenient way to not have this be a separate $(MAKE)
 	$(MAKE) move_narc
 	$(ARMIPS) armips/global.s $(ARMIPS_FLAGS)
 	$(NARCHIVE) create $(FILESYS)/a/0/2/8 $(BUILD)/a028/ -nf
-# make sure that this doesn't have any old files in it
-	@rm -rf $(BUILD)/a028/
 	@echo "Making ROM..."
 	$(NDSTOOL) -c $(BUILDROM) -9 $(BASE)/arm9.bin -7 $(BASE)/arm7.bin -y9 $(BASE)/overarm9.bin -y7 $(BASE)/overarm7.bin -d $(FILESYS) -y $(BASE)/overlay -t $(BASE)/banner.bin -h $(BASE)/header.bin
 	@echo "Done.  See output $(BUILDROM)."
