@@ -4315,3 +4315,18 @@ u8 BattleSystem_SetCriticalHpMusicFlag(struct BattleSystem *battleSystem, u8 fla
 	battleSystem->criticalHpMusic = flag;
 	#endif
 }
+
+BOOL LONG_CALL GetTypeEffectivenessData(struct BattleSystem *bsys, int index, u8 *typeMove, u8 *typeMon, u8 *eff) {
+    BOOL ret = TRUE;
+
+    if (index >= TYPE_EFFECTIVENESS_ENTRIES) {
+        index = BattleRand(bsys) % TYPE_EFFECTIVENESS_ENTRIES;
+        ret = FALSE;
+    }
+
+    *typeMove = TypeEffectivenessTable[index][0];
+    *typeMon = TypeEffectivenessTable[index][1];
+    *eff = TypeEffectivenessTable[index][2];
+
+    return ret;
+}
