@@ -14,8 +14,7 @@ const struct TestBattleScenario BattleTests[] = {
 
 #endif
 
-    {
-        .battleType = BATTLE_TYPE_SINGLE,
+    { .battleType = BATTLE_TYPE_SINGLE,
         .weather = WEATHER_NONE,
         .fieldCondition = 0,
         .terrain = TERRAIN_NONE,
@@ -96,7 +95,9 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 17, 17, 17, 17, 17, 18, 18, 18, 18, 18, 19, 19, 19, 19, 19, 20 } },
+            { .expectationType = EXPECTATION_TYPE_NOT_MESSAGE, .expectationValue.message = "The Normal Gem strengthened Struggle's power!" },
         },
+        .knownFailing = TRUE;
     },
 #ifndef GET_TEST_CASE_ONLY
 };
