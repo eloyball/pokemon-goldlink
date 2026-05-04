@@ -3,7 +3,7 @@ CFLAGS := -std=c11 -O2 -Wall -Wextra -I../../..
 TARGET := ../../../tools/speciesdatagen
 
 SRCS := species_data_gen.c
-DATA_SRC := ../../../data/SpeciesData.c
+DATA_SRC := ../../../data/Species.c
 DATA_OBJ := SpeciesDataData.o
 OBJS := $(SRCS:%.c=%.o) $(DATA_OBJ)
 
