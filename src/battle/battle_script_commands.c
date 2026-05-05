@@ -5215,6 +5215,14 @@ BOOL BtlCmd_TryFaintMon(struct BattleSystem *bsys, struct BattleStruct *ctx)
 
     int battlerId = GrabClientFromBattleScriptParam(bsys, ctx, read_battle_script_param(ctx));
 
+	// fix for bad egg fainting from spread moves issue 770
+
+    if (ctx->skill_arc_kind == ARC_BATTLE_SUB_SEQ && ctx->skill_arc_index == SUB_SEQ_BATCH_FOLLOWUP) {
+        if (!IsBattlerSlotValid(bsys, battlerId) || ctx->damageForSpreadMoves[battlerId] == 0) {
+            return FALSE;
+        }
+    }
+
     // skip processing fainted battlers if simultaneous damage active and they didn't take damage from the move
 
     if ((ctx->server_status_flag & SERVER_STATUS_FLAG_SIMULTANEOUS_DAMAGE) && ctx->damageForSpreadMoves[battlerId] == 0) {
