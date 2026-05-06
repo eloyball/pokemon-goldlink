@@ -1910,7 +1910,7 @@ BOOL BattleController_CheckMoveFailures1(struct BattleSystem *bsys, struct Battl
         // Fling / Natural Gift: Embargo or Magic Room are in effect, or ineligible held item, or no item
         || ((moveEffect == MOVE_EFFECT_FLING || moveEffect == MOVE_EFFECT_NATURAL_GIFT) && (attackClient.moveeffect.embargoFlag || attackClient.item == 0))
         || (moveEffect == MOVE_EFFECT_NATURAL_GIFT && GetNaturalGiftPower(ctx, ctx->attack_client) == 0)
-        || (moveEffect == MOVE_EFFECT_FLING && (IS_ITEM_GEM(attackClient.item) || !CanItemBeRemovedFromClient(attackClient.species, attackClient.item, attackClient.form_no)))
+        || (moveEffect == MOVE_EFFECT_FLING && (IS_ITEM_GEM(attackClient.item) || !CanItemBeRemovedFromClient(attackClient.species, attackClient.item, attackClient.form_no) || attackerAbility == ABILITY_KLUTZ))
     ) {
         BattleController_ResetGeneralMoveFailureFlags(ctx, ctx->attack_client, TRUE);
         ctx->server_seq_no = CONTROLLER_COMMAND_25;
