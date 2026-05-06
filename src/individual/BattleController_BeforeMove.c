@@ -2383,7 +2383,10 @@ BOOL BattleController_CheckSemiInvulnerability(struct BattleSystem *bsys UNUSED,
 
 BOOL CanHitThroughProtect(struct BattleStruct *ctx, int attacker, int defender)
 {
-    if ((ctx->current_move_index == MOVE_CURSE && HasType(ctx, ctx->attack_client, TYPE_GHOST))
+    int moveEffect = ctx->moveTbl[ctx->current_move_index].effect;
+    if (moveEffect == MOVE_EFFECT_REMOVE_PROTECT
+        || moveEffect == MOVE_EFFECT_SHADOW_FORCE
+        || (ctx->current_move_index == MOVE_CURSE && HasType(ctx, ctx->attack_client, TYPE_GHOST))
         || (GetBattlerAbility(ctx, attacker) == ABILITY_UNSEEN_FIST
             && IsContactBeingMade(GetBattlerAbility(ctx, attacker), HeldItemHoldEffectGet(ctx, attacker), HeldItemHoldEffectGet(ctx, defender), ctx->current_move_index, ctx->moveTbl[ctx->current_move_index].flag))) {
         return TRUE;
