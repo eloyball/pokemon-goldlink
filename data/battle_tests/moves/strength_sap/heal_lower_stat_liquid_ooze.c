@@ -121,11 +121,11 @@ const struct TestBattleScenario BattleTests[] = {
         },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Bellsprout used Strength Sap!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Mew’s Attack fell!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Mew's Attack fell!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish used Strength Sap!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish's HP is full!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish used Strength Sap!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gulpin’s Attack fell!" },
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gulpin's Attack fell!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It sucked up the liquid ooze!" },
         },
     },
