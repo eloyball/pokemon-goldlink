@@ -1,4 +1,4 @@
-// Test: Mega Sol - Growth work when Sun is up
+// Test: Mega Sol - Growth works when Sun is up
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
