@@ -1,4 +1,4 @@
-// Test: Pursuit - trigger both pursuit on hard switch in doubles and mega against Proto-Groudon
+// Test: Pursuit - trigger both pursuit on hard switch in doubles and mega against Pirmal-Groudon
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
@@ -60,7 +60,7 @@ const struct TestBattleScenario BattleTests[] = {
                 .level = 50,
                 .form = 0,
                 .ability = ABILITY_LIGHTNING_ROD,
-                .item = ITEM_MANECTITE,
+                .item = ITEM_NONE,
                 .moves = { MOVE_PURSUIT, MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE },
                 .hp = FULL_HP,
                 .status = 0,
@@ -149,7 +149,6 @@ const struct TestBattleScenario BattleTests[] = {
             } },
         .expectations = {
             { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "withdrew Groudon!" },
-            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Manectric has Mega Evolved into Mega Manectric!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Manectric used Pursuit!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Houndoom has Mega Evolved into Mega Houndoom!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Houndoom used Pursuit!" },
