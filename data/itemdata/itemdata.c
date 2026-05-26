@@ -169269,7 +169269,7 @@ const ITEMDATA __data[] =
         .friendship_mod_med_param = 0,
         .friendship_mod_hi_param = 0,
     },
-}
+},
 
 [ITEM_AMAZING_BUTTER] =
 {
