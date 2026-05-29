@@ -1,4 +1,4 @@
-// Test: Innards Out - return entire damage received
+// Test: Innards Out - return entire damage received by multihit move
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
@@ -10,7 +10,7 @@ BEGIN_TEST
         {
             .species = SPECIES_STARAPTOR,
             .level = 50,
-            .form = 1,
+            .form = 0,
             .ability = ABILITY_NO_GUARD,
             .item = ITEM_NONE,
             .moves = { MOVE_WING_ATTACK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
