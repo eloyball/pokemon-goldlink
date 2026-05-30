@@ -1,4 +1,4 @@
-// Test: Innards Out - return entire damage received
+// Test: Innards Out - return entire damage received, recoil afterwards
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
