@@ -1,4 +1,4 @@
-// Test: Innards Out - return entire damage received
+// Test: Innards Out - return entire damage received, faint from recoil afterwards
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
@@ -99,9 +99,8 @@ BEGIN_TEST
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It's super effective!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Victreebel's Innards Out" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor was hurt!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Victreebel fainted!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor was damaged by the recoil!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Staraptor fainted!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Victreebel fainted!" },
     }
 }
 END_TEST
