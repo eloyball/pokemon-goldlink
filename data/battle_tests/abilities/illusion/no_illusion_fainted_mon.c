@@ -75,7 +75,6 @@ BEGIN_TEST
             .moveEffectFlags = 0,
         },
         { .species = SPECIES_NONE },
-        { .species = SPECIES_NONE },
         { .species = SPECIES_NONE } },
     .playerScript = {
         {
