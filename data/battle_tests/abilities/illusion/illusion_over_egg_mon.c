@@ -1,4 +1,4 @@
-// Test: Illusion - imitage an alive mon over an egg mon
+// Test: Illusion - imitate an alive mon over an egg mon
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
