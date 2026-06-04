@@ -1,4 +1,4 @@
-// Test: Bestow - Invalid item
+// Test: Bestow - Regular invalid item
 #ifndef GET_TEST_CASE_ONLY
 
 #include "../../../../include/battle.h"
