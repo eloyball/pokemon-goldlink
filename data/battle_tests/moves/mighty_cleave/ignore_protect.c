@@ -20,7 +20,7 @@ BEGIN_TEST
             .moveEffectFlags = 0,
         },
         {
-            .species = SPECIES_UMBREON
+            .species = SPECIES_UMBREON,
             .level = 50,
             .form = 0,
             .ability = ABILITY_NO_GUARD,
