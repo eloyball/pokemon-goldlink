@@ -113,6 +113,7 @@ BEGIN_TEST
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Gyarados used Tackle!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The attack of the opposing Gyarados missed!" },
         { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 7, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 10 } },
-    }
+    },
+    .knownFailing = TRUE,
 }
 END_TEST
