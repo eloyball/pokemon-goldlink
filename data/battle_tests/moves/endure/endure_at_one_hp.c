@@ -105,7 +105,14 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Gastly..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Dwebble braced itself!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Crustle braced itself!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Dwebble endured the hit!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Dwebble’s Weak Armor" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Dwebble’s Kee Berry raised its Defense!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Crustle endured the hit!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Air Balloon" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Crustle’s Weak Armor" },
     }
 }
 END_TEST
