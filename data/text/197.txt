@@ -1763,3 +1763,6 @@ The opposing {STRVAR_1 1, 0, 0}’s aura flared\nto life!\fIts {STRVAR_1 13, 1, 
 The wild {STRVAR_1 1, 0, 0}’s aura flared to life!\nIts stats rose!
 The opposing {STRVAR_1 1, 0, 0}’s aura flared\nto life!\fIts stats rose!
 Can’t flee this fight!
+{STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
+The wild {STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
+The opposing {STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
