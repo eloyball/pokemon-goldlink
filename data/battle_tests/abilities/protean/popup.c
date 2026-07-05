@@ -83,9 +83,14 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja used Sleep Talk!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Go! Greninja!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "Protean" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja used Surf!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja transformed into Water type!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean made it the Poison type!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja used Toxic!" },
     }
 }
 END_TEST

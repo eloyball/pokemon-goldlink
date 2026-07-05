@@ -4,6 +4,7 @@
 
 _000:
     CompareVarToValue OPCODE_FLAG_SET, BSCRIPT_VAR_FIELD_CONDITION, FIELD_CONDITION_OVERWORLD_WEATHER_ANY, _OverworldWeather
+    AbilityPopup BATTLER_CATEGORY_MSG_BATTLER_TEMP
     PlayBattleAnimation BATTLER_CATEGORY_PLAYER, BATTLE_ANIMATION_WEATHER_SUN
     Wait
     // The sunlight turned extremely harsh!
