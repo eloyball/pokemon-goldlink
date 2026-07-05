@@ -1119,13 +1119,13 @@ The opposing {STRVAR_1 1, 0, 0} finally got\nits act together!
 {STRVAR_1 1, 0, 0} frisked its\nfoe and found one {STRVAR_1 8, 1, 0}!
 The wild {STRVAR_1 1, 0, 0} frisked its\nfoe and found one {STRVAR_1 8, 1, 0}!
 The opposing {STRVAR_1 1, 0, 0} frisked its\nfoe and found one {STRVAR_1 8, 1, 0}!
-{STRVAR_1 1, 2, 0} is tormented\nby {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
-The wild {STRVAR_1 1, 2, 0} is tormented\nby {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
-The opposing {STRVAR_1 1, 2, 0} is tormented\nby {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
-{STRVAR_1 1, 2, 0} is tormented\nby the wild {STRVAR_1 1, 0, 0}’s\f{STRVAR_1 5, 1, 0}!
-The wild {STRVAR_1 1, 2, 0} is tormented\nby the wild {STRVAR_1 1, 0, 0}’s\f{STRVAR_1 5, 1, 0}!
-{STRVAR_1 1, 2, 0} is tormented\nby the opposing {STRVAR_1 1, 0, 0}’s\f{STRVAR_1 5, 1, 0}!
-The opposing {STRVAR_1 1, 2, 0} is tormented\nby the opposing {STRVAR_1 1, 0, 0}’s\f{STRVAR_1 5, 1, 0}!
+{STRVAR_1 1, 0, 0} is tormented!
+The wild {STRVAR_1 1, 0, 0} is tormented!
+The opposing {STRVAR_1 1, 0, 0} is tormented!
+(unused)
+(unused)
+(unused)
+(unused)
 {STRVAR_1 1, 0, 0} maxed its\n{STRVAR_1 13, 2, 0} with its {STRVAR_1 8, 1, 0}!
 The wild {STRVAR_1 1, 0, 0} maxed its\n{STRVAR_1 13, 2, 0} with its {STRVAR_1 8, 1, 0}!
 The opposing {STRVAR_1 1, 0, 0} maxed its\n{STRVAR_1 13, 2, 0} with its {STRVAR_1 8, 1, 0}!
