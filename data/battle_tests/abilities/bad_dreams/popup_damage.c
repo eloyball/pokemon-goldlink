@@ -25,7 +25,7 @@ BEGIN_TEST
             .form = 0,
             .ability = ABILITY_ICE_SCALES,
             .item = ITEM_NONE,
-            .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+            .moves = { MOVE_LEER, MOVE_NONE, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = STATUS_SLEEP,
             .condition2 = 0,
@@ -42,7 +42,7 @@ BEGIN_TEST
                         .form = 0,
                         .ability = ABILITY_NO_GUARD,
                         .item = ITEM_NONE,
-                        .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+                        .moves = { MOVE_LEER, MOVE_NONE, MOVE_NONE, MOVE_NONE },
                         .hp = FULL_HP,
                         .status = 0,
                         .condition2 = 0,
@@ -54,7 +54,7 @@ BEGIN_TEST
             .form = 0,
             .ability = ABILITY_NO_GUARD,
             .item = ITEM_NONE,
-            .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+            .moves = { MOVE_LEER, MOVE_NONE, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = 0,
             .condition2 = 0,
@@ -105,7 +105,12 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Machamp fell asleep!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Machop fell asleep!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Darkrai's Bad Dreams" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Machamp is tormented!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Darkrai's Bad Dreams" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Machop is tormented!" },
     }
 }
 END_TEST
