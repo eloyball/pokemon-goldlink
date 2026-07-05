@@ -102,6 +102,7 @@ const struct TestBattleScenario BattleTests[] = {
             }
         },
         .expectations = {
+            { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Parasect's Mold Breaker" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Hypno fell asleep!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Hypno's Chesto Berry woke it up!" },
             { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Hypno fell asleep!" },
