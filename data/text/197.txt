@@ -677,9 +677,9 @@ The wild {STRVAR_1 1, 0, 0}’s\n{STRVAR_1 5, 1, 0} hurt {STRVAR_1 1, 2, 0}!
 The wild {STRVAR_1 1, 0, 0}’s\n{STRVAR_1 5, 1, 0} hurt the wild\f{STRVAR_1 1, 2, 0}!
 The opposing {STRVAR_1 1, 0, 0}’s\n{STRVAR_1 5, 1, 0} hurt {STRVAR_1 1, 2, 0}!
 The opposing {STRVAR_1 1, 0, 0}’s\n{STRVAR_1 5, 1, 0} hurt the opposing\f{STRVAR_1 1, 2, 0}!
-It traced {STRVAR_1 1, 1, 0}’s {STRVAR_1 5, 2, 0}!
-It traced the wild\n{STRVAR_1 1, 1, 0}’s {STRVAR_1 5, 2, 0}!
-It traced the opposing\n{STRVAR_1 1, 1, 0}’s {STRVAR_1 5, 2, 0}!
+It traced {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
+It traced the wild\n{STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
+It traced the opposing\n{STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}!
 (unused)
 (unused)
 (unused)

@@ -105,12 +105,13 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Beldum had its energy drained!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish used Absorb!" },
         { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 16 } },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Tentacool's Liquid Ooze" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Squirtle's Speed fell!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander's Speed fell!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Beldum's Speed fell!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It sucked up the liquid ooze!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Tentacool’s Air Balloon popped!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish lost some of its HP!" },
     }
 }
 END_TEST
