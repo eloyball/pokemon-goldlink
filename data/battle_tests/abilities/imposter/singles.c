@@ -83,7 +83,9 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ditto's Attack fell!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ditto's Imposter" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ditto transformed into Staraptor!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ditto's Intimidate" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Staraptor's Attack fell!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ditto used Wing Attack!" },
         { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 54, 54, 55, 55, 57, 57, 58, 58, 58, 60, 60, 61, 61, 63, 63, 64 } },
