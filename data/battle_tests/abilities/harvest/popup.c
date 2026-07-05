@@ -83,11 +83,12 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ninetales's Drought" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor’s Harvest" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor's Harvest" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested a Oran Berry!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor’s Harvest" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor's Harvest" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested a Oran Berry!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
     }

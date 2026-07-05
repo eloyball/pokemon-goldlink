@@ -84,7 +84,7 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking used Sleep Talk!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking’s Truant" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking's Truant" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking is loafing around!" },
     }
 }
