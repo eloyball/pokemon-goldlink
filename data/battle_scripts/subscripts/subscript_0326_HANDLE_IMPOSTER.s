@@ -3,7 +3,6 @@
 .data
 
 _000:
-    AbilityPopup BATTLER_CATEGORY_ATTACKER
     PlayMoveAnimation BATTLER_CATEGORY_ATTACKER
     Wait 
     // {0} transformed into {1}!
