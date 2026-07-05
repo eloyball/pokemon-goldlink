@@ -1,4 +1,4 @@
-// Test: Harvest - Popup
+// Test: Harvest - Popup, 100% in Sun
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
@@ -44,7 +44,7 @@ BEGIN_TEST
         { .species = SPECIES_NONE } },
     .playerScript = { {
                           { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
-                          { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
+                          { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
                           { ACTION_NONE, 0 },
                           { ACTION_NONE, 0 },
                           { ACTION_NONE, 0 },
@@ -64,7 +64,7 @@ BEGIN_TEST
         } },
     .enemyScript = { {
                          { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
-                         { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
+                         { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
                          { ACTION_NONE, 0 },
                          { ACTION_NONE, 0 },
                          { ACTION_NONE, 0 },
@@ -84,9 +84,12 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor’s Harvest restored its Oran Berry!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor’s Harvest" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested a Oran Berry!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor’s Harvest restored its Oran Berry!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor’s Harvest" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested a Oran Berry!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
     }
 }
 END_TEST

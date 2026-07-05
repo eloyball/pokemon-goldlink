@@ -2,7 +2,7 @@
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
-    .battleType = BATTLE_TYPE_DOUBLE,
+    .battleType = BATTLE_TYPE_SINGLE,
     .weather = WEATHER_NONE,
     .fieldCondition = 0,
     .terrain = TERRAIN_NONE,
@@ -84,7 +84,7 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking used Sleep Talk!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking's Truant" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking’s Truant" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Slaking is loafing around!" },
     }
 }
