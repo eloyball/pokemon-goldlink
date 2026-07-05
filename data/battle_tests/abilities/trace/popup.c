@@ -84,7 +84,7 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Kirlia's Trace" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It traced the opposing Haxorus’s Mold Breaker!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It traced the opposing Haxorus's Mold Breaker!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Kirlia's Mold Breaker" },
     }
 }

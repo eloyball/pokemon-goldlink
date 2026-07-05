@@ -110,7 +110,7 @@ BEGIN_TEST
         { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 12, 12, 12, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 13, 16 } },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Tentacool's Liquid Ooze" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It sucked up the liquid ooze!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Tentacool’s Air Balloon popped!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Tentacool's Air Balloon popped!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oddish lost some of its HP!" },
     }
 }
