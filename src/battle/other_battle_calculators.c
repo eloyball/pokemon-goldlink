@@ -3452,6 +3452,9 @@ BOOL LONG_CALL BattleContext_CheckMoveHealBlocked(struct BattleSystem *bsys UNUS
                 ret = TRUE;
                 break;
             }
+        }
+
+        for (i = 0; i < NELEMS(HealBlockUnusableMoveEffects); i++) {
             if (HealBlockUnusableMoveEffects[i] == effect) {
                 ret = TRUE;
                 break;
