@@ -3417,35 +3417,42 @@ int LONG_CALL GetDynamicMoveType(struct BattleSystem *bsys, struct BattleStruct 
 }
 
 const u16 HealBlockUnusableMoves[] = {
-    MOVE_RECOVER,
-    MOVE_SOFT_BOILED,
-    MOVE_REST,
-    MOVE_MILK_DRINK,
-    MOVE_MORNING_SUN,
-    MOVE_SYNTHESIS,
-    MOVE_MOONLIGHT,
-    MOVE_SWALLOW,
-    MOVE_HEAL_ORDER,
-    MOVE_SLACK_OFF,
-    MOVE_ROOST,
-    MOVE_LUNAR_DANCE,
-    MOVE_HEALING_WISH,
-    MOVE_WISH,
-    MOVE_HEAL_PULSE,
     MOVE_FLORAL_HEALING,
-    MOVE_LIFE_DEW,
     MOVE_LUNAR_BLESSING,
-    //  MOVE_POLLEN_PUFF, should be here but can also target enemies when heal blocked so
+};
+
+const u16 HealBlockUnusableMoveEffects[] = {
+    MOVE_EFFECT_RECOVER_HALF_DAMAGE_DEALT, //Absorb, etc
+    MOVE_EFFECT_RECOVER_THREE_QUARTERS_DAMAGE_DEALT, //draining kiss, Oblivion Wing
+    MOVE_EFFECT_RECOVER_FULL_DAMAGE_DEALT, //bouncy bubble
+    MOVE_EFFECT_RECOVER_DAMAGE_SLEEP, //dream eater
+    MOVE_EFFECT_RECOVER_HALF_DAMAGE_DEALT_BURN_HIT, //matcha gotcha
+    MOVE_EFFECT_RESTORE_HALF_HP, //recover, etc
+    MOVE_EFFECT_HEAL_HALF_REMOVE_FLYING_TYPE, //roost
+    MOVE_EFFECT_HEAL_HALF_DIFFERENT_IN_WEATHER, //synthesis, etc
+    MOVE_EFFECT_RECOVER_HEALTH_AND_SLEEP, //rest
+    MOVE_EFFECT_SWALLOW,
+    MOVE_EFFECT_FAINT_FULL_RESTORE_NEXT_MON, //Luna Dance
+    MOVE_EFFECT_FAINT_AND_FULL_HEAL_NEXT_MON, //healing wish
+    MOVE_EFFECT_HEAL_IN_3_TURNS, //wish
+    MOVE_EFFECT_HEAL_TARGET, //heal pulse
+    MOVE_EFFECT_LIFE_DEW,
+    // TODO Lunar Blessing, Floral Healing
 };
 
 BOOL LONG_CALL BattleContext_CheckMoveHealBlocked(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx, int battlerId, int moveNo)
 {
     u32 i;
     BOOL ret = FALSE;
+    int effect = ctx->moveTbl[moveNo].effect;
 
     if (ctx->battlemon[battlerId].moveeffect.healBlockTurns) {
         for (i = 0; i < NELEMS(HealBlockUnusableMoves); i++) {
-            if (HealBlockUnusableMoves[i] == moveNo) {
+            if (HealBlockUnusableMoves[i] == moveNo) { //TODO: remove once moves are implemented
+                ret = TRUE;
+                break;
+            }
+            if (HealBlockUnusableMoveEffects[i] == effect) {
                 ret = TRUE;
                 break;
             }

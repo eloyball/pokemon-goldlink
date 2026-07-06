@@ -1372,6 +1372,22 @@ void BattleController_CheckHealBlock(struct BattleSystem *bsys, struct BattleStr
         ctx->server_status_flag |= BATTLE_STATUS_CHECK_LOOP_ONLY_ONCE;
         ctx->waza_status_flag |= MOVE_STATUS_NO_MORE_WORK;
     }
+
+    if ((ctx->current_move_index == MOVE_HEAL_PULSE && ctx->battlemon[ctx->defence_client].moveeffect.healBlockTurns)
+        || (ctx->current_move_index == MOVE_POLLEN_PUFF
+            && ctx->battlemon[ctx->defence_client].moveeffect.healBlockTurns
+            && ctx->defence_client == BATTLER_ALLY(ctx->attack_client)))
+    {
+        ctx->moveOutCheck[ctx->attack_client].stoppedFromHealBlock = TRUE;
+        LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_MOVE_FAILED_HEAL_BLOCK);
+        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+        ctx->next_server_seq_no = CONTROLLER_COMMAND_39;
+        ctx->wb_seq_no = BEFORE_MOVE_START;
+        CopyBattleMonToPartyMon(bsys, ctx, ctx->attack_client);
+        ctx->server_status_flag |= BATTLE_STATUS_CHECK_LOOP_ONLY_ONCE;
+        ctx->waza_status_flag |= MOVE_STATUS_NO_MORE_WORK;
+    }
+
 }
 
 // TODO: Gravity ban list and Throat Chop
