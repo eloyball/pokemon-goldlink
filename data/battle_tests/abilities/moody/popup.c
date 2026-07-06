@@ -27,7 +27,7 @@ BEGIN_TEST
     },
     .enemyParty = { {
                         .species = SPECIES_BIBAREL,
-                        .level = 50,
+                        .level = 15,
                         .form = 0,
                         .ability = ABILITY_MOODY,
                         .item = ITEM_NONE,
