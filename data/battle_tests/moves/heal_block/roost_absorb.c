@@ -13,7 +13,7 @@ BEGIN_TEST
             .form = 0,
             .ability = ABILITY_SYNCHRONIZE,
             .item = ITEM_NONE,
-            .moves = { MOVE_HEAL_BLOCK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+            .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = 0,
             .condition2 = 0,
@@ -105,7 +105,11 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "heal block" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Alakazam used Heal Block!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Pidgey was prevented from healing!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Oddish was prevented from healing!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Pidgey can't use Roost because of Heal Block!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Oddish can't use Absorb because of Heal Block!" },
     }
 }
 END_TEST
