@@ -3,6 +3,7 @@
 .data
 
 _000:
+    AbilityPopup BATTLER_CATEGORY_DEFENDER
     CompareMonDataToValue OPCODE_EQU, BATTLER_CATEGORY_MSG_TEMP, BMON_DATA_ABILITY, ABILITY_MUMMY, _handleMummy
 // else assume lingering aroma
     // A lingering aroma clings to {0}!
