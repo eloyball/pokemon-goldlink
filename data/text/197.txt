@@ -1331,7 +1331,7 @@ The opposing {STRVAR_1 1, 0, 0} shared its\npower with the target!
 {STRVAR_1 1, 0, 0} transformed\ninto the Water type!
 The wild {STRVAR_1 1, 0, 0} transformed\ninto the Water type!
 The opposing {STRVAR_1 1, 0, 0} transformed\ninto the Water type!
-{STRVAR_1 1, 0, 0} harvested {STRVAR_1 8, 1, 0}!
+{STRVAR_1 1, 0, 0} harvested\n{STRVAR_1 8, 1, 0}!
 The wild {STRVAR_1 1, 0, 0} harvested\n{STRVAR_1 8, 1, 0}!
 The opposing {STRVAR_1 1, 0, 0} harvested\n{STRVAR_1 8, 1, 0}!
 (Unused)
