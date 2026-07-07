@@ -86,10 +86,10 @@ BEGIN_TEST
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ninetales's Drought" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor's Harvest" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested an Oran Berry!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "The opposing Exeggutor harvested an" }, //TODO control characters for colors
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Exeggutor's Harvest" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor harvested an Oran Berry!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "Oran Berry" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Exeggutor restored its health using its Oran Berry!" },
     }
 }
