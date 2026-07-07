@@ -154,6 +154,7 @@ arm9 CreateStarterMon_hook 020960E6 1
 0012 BtlCmd_Transform 02241708 3
 0012 BtlCmd_TryPursuit 0224336C 3
 0012 BtlCmd_MagicCoat 02242CDC 3
+0012 BtlCmd_TryFeint 02243D20 3
 
 #trainer data expansion
 arm9 MakeTrainerPokemonParty 08073604 3
