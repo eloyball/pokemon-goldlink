@@ -106,7 +106,7 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Noivern's Telepathy" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Noivern can’t be hit by attacks from its ally Pokémon!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Noivern can't be hit by attacks from its ally Pokemon!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Bulbasaur protected itself!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Chikorita protected itself!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Noivern's Telepathy" },

@@ -33,7 +33,8 @@ BEGIN_TEST {
         { .species = SPECIES_NONE },
         { .species = SPECIES_NONE },
         { .species = SPECIES_NONE },
-        { .species = SPECIES_NONE } },
+        { .species = SPECIES_NONE }
+    },
     .enemyParty = { {
                         .species = SPECIES_ESPEON,
                         .level = 50,
@@ -110,4 +111,5 @@ BEGIN_TEST {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arbok's Attack fell!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Snom's Attack fell!" },
     },
-} END_TEST
+}
+END_TEST

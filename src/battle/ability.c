@@ -28,8 +28,7 @@ BOOL SynchroniseAbilityCheck(void *bw, struct BattleStruct *sp, int server_seq_n
 void ServerWazaOutAfterMessage(void *bw, struct BattleStruct *sp);
 //u32 ServerWazaKoyuuCheck(void *bw, struct BattleStruct *sp);
 void ServerDoPostMoveEffects(struct BattleSystem *bsys, struct BattleStruct *ctx);
-//BOOL LONG_CALL MoveHitDefenderCottonDownCheck(void* bw UNUSED, struct BattleStruct* sp, int* seq_no);
-//BOOL LONG_CALL MoveHitDefenderCottonDownCheckHelper(struct BattleStruct* sp, int battler, int* seq_no);
+
 
 
 /**
@@ -474,7 +473,6 @@ BOOL LONG_CALL MoveHitAttackerAbilityCheck(void *bw UNUSED, struct BattleStruct 
                 && (sp->battlemon[sp->defence_client].condition == 0)
                 && ((sp->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) == 0)
                 && ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) == 0)
-                && ((sp->server_status_flag2 & SERVER_STATUS_FLAG2_U_TURN) == 0)
                 && ((sp->oneSelfFlag[sp->defence_client].physical_damage) ||
                     (sp->oneSelfFlag[sp->defence_client].special_damage))
                 && (IsContactBeingMade(GetBattlerAbility(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->defence_client), sp->current_move_index, sp->moveTbl[sp->current_move_index].flag))
@@ -489,6 +487,16 @@ BOOL LONG_CALL MoveHitAttackerAbilityCheck(void *bw UNUSED, struct BattleStruct 
                 sp->state_client = sp->defence_client;
                 sp->battlerIdTemp = sp->attack_client;
                 seq_no[0] = SUB_SEQ_APPLY_POISON;
+                ret = TRUE;
+            }
+            break;
+        case ABILITY_UNSEEN_FIST:
+            if (sp->oneTurnFlag[sp->defence_client].protectFlag
+                && (sp->oneSelfFlag[sp->defence_client].physical_damage || sp->oneSelfFlag[sp->defence_client].special_damage)
+                && (IsContactBeingMade(GetBattlerAbility(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->defence_client), sp->current_move_index, sp->moveTbl[sp->current_move_index].flag))
+            ) {
+                sp->addeffect_type = ADD_STATUS_ABILITY;
+                seq_no[0] = SUB_SEQ_UNSEEN_FIST;
                 ret = TRUE;
             }
             break;
@@ -615,6 +623,7 @@ BOOL AbilityIsIgnoredByMoldBreaker (int ability) {
         case ABILITY_EARTH_EATER:
         case ABILITY_MINDS_EYE:
         case ABILITY_TERA_SHELL:
+        case ABILITY_EELEVATE:
             return TRUE;
             break;
 
@@ -866,7 +875,6 @@ enum
     SEQ_NORMAL_IKARI_CHECK,
     SEQ_NORMAL_ATTACKER_ABILITY_CHECK,
     SEQ_NORMAL_DEFENDER_ABILITY_CHECK,
-    SEQ_NORMAL_DEFENDER_ABILITY_COTTON_DOWN,
     SEQ_NORMAL_FLINCH_CHECK,
 
     SEQ_LOOP_CRITICAL_MSG = 0,
@@ -876,58 +884,10 @@ enum
     SEQ_LOOP_IKARI_CHECK,
     SEQ_LOOP_ATTACKER_ABILITY_CHECK,
     SEQ_LOOP_DEFENDER_ABILITY_CHECK,
-    SEQ_LOOP_DEFENDER_ABILITY_COTTON_DOWN,
     SEQ_LOOP_MOVE_STATUS_MSG,
     SEQ_LOOP_FLINCH_CHECK,
 };
-/*
-BOOL LONG_CALL MoveHitDefenderCottonDownCheckHelper(struct BattleStruct* sp, int battler, int* seq_no)
-{
-    BOOL ret = FALSE;
-    if (sp->battlemon[battler].species
-        && ((sp->waza_status_flag & WAZA_STATUS_FLAG_NO_OUT) == 0)
-        && ((sp->server_status_flag & SERVER_STATUS_FLAG_x20) == 0)
-        && ((sp->server_status_flag2 & SERVER_STATUS_FLAG2_U_TURN) == 0)
-        && ((sp->oneSelfFlag[sp->defence_client].physical_damage) ||
-            (sp->oneSelfFlag[sp->defence_client].special_damage)))
-    {
-        sp->addeffect_param = ADD_STATUS_EFF_BOOST_STATS_SPEED_DOWN;
-        sp->addeffect_type = ADD_EFFECT_PRINT_WORK_ABILITY;
-        sp->state_client = battler;
-        sp->battlerIdTemp = sp->defence_client;
-        seq_no[0] = SUB_SEQ_BOOST_STATS;
-        ret = TRUE;
-    }
-    return ret;
-}
 
-BOOL LONG_CALL MoveHitDefenderCottonDownCheck(void* bw UNUSED, struct BattleStruct* sp, int* seq_no)
-{
-    BOOL ret = FALSE;
-    switch (sp->clientLoopForAbility)
-    {
-    case SPREAD_ABILITY_LOOP_OPPONENT_LEFT:
-        sp->clientLoopForAbility++;
-        ret = MoveHitDefenderCottonDownCheckHelper(sp, BATTLER_OPPONENT_SIDE_LEFT(sp->defence_client), seq_no);
-        if (ret)
-            break;
-        FALLTHROUGH;
-    case SPREAD_ABILITY_LOOP_OPPONENT_RIGHT:
-        sp->clientLoopForAbility++;
-        ret = MoveHitDefenderCottonDownCheckHelper(sp, BATTLER_OPPONENT_SIDE_RIGHT(sp->defence_client), seq_no);
-        if (ret)
-            break;
-        FALLTHROUGH;
-    case SPREAD_ABILITY_LOOP_ALLY:
-        sp->clientLoopForAbility++;
-        ret = MoveHitDefenderCottonDownCheckHelper(sp, BATTLER_ALLY(sp->defence_client), seq_no);
-        break;
-    default:
-        break;
-    }
-    return ret;
-}
-*/
 // TODO: Come back here for move performance modernisation
 /**
  *  @brief run the end-of-turn checks for everything.  critical hit message, move effectiveness message, call MoveHitAttackerAbilityCheck and MoveHitDefenderAbilityCheck as well
@@ -1031,20 +991,6 @@ void ServerWazaOutAfterMessage(void *bsys, struct BattleStruct *ctx)
                 }
             }
             FALLTHROUGH;
-        case SEQ_NORMAL_DEFENDER_ABILITY_COTTON_DOWN:
-        {
-            int seq_no;
-            if (GetBattlerAbility(sp, sp->defence_client) == ABILITY_COTTON_DOWN && MoveHitDefenderCottonDownCheck(bw, sp, &seq_no) == TRUE)
-            {
-                LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, seq_no);
-                sp->next_server_seq_no = sp->server_seq_no;
-                sp->server_seq_no = 22;
-                return;
-            }
-            sp->clientLoopForAbility = 0;
-            sp->swoam_seq_no++;
-        }
-        FALLTHROUGH;
         case SEQ_NORMAL_FLINCH_CHECK:
             sp->swoam_seq_no++;
             if (ServerFlinchCheck(bw, sp) == TRUE)
@@ -1135,20 +1081,6 @@ void ServerWazaOutAfterMessage(void *bsys, struct BattleStruct *ctx)
                 }
             }
             FALLTHROUGH;
-        case SEQ_LOOP_DEFENDER_ABILITY_COTTON_DOWN:
-        {
-            int seq_no;
-            if (GetBattlerAbility(sp, sp->defence_client) == ABILITY_COTTON_DOWN && MoveHitDefenderCottonDownCheck(bw, sp, &seq_no) == TRUE)
-            {
-                LoadBattleSubSeqScript(sp, ARC_BATTLE_SUB_SEQ, seq_no);
-                sp->next_server_seq_no = sp->server_seq_no;
-                sp->server_seq_no = 22;
-                return;
-            }
-            sp->clientLoopForAbility = 0;
-            sp->swoam_seq_no++;
-        }
-        FALLTHROUGH;
         case SEQ_LOOP_MOVE_STATUS_MSG:
             sp->swoam_seq_no++;
             if (ServerWazaStatusMessage(bw, sp) == TRUE)
