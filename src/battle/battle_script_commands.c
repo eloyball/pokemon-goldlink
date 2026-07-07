@@ -10,6 +10,7 @@
 #include "../../include/constants/moves.h"
 #include "../../include/constants/species.h"
 #include "../../include/constants/weather_numbers.h"
+#include "../../include/constants/system_control.h"
 #include "../../include/debug.h"
 #include "../../include/mega.h"
 #include "../../include/message.h"
@@ -152,6 +153,7 @@ BOOL BtlCmd_CheckToxicSpikes(struct BattleSystem *bsys, struct BattleStruct *ctx
 BOOL BtlCmd_TryConversion2(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_TryPursuit(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_Transform(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx);
+BOOL BtlCmd_MagicCoat(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintAttackMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintGlobalMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
@@ -5673,5 +5675,27 @@ BOOL btl_scr_cmd_124_GetMonByCottonDownOrder(void *bsys UNUSED, struct BattleStr
     }
 
     ctx->clientLoopForAbility = 0;
+    return FALSE;
+}
+
+BOOL BtlCmd_MagicCoat(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    ctx->magicBounceContext.isActive = TRUE;
+    ctx->attack_client = ctx->magicBounceContext.bounceClients[ctx->magicBounceContext.bounceCounter];
+    ctx->magicBounceContext.bounceCounter++;
+    ctx->defence_client = ctx->magicBounceContext.originalAttacker;
+
+    ov12_02252D14(bsys, ctx);
+    for (int i = 0; i < BattleWorkClientSetMaxGet(bsys); i++) {
+        ctx->moveStatusFlagForSpreadMoves[i] = 0;
+        ctx->moveStatusFlagForSpreadMoves2[i] = 0;
+    }
+    ctx->clientLoopForSpreadMoves = 0;
+    ctx->movePerformanceSubstep = 0;
+
+    ctx->waza_out_check_on_off |= (SYSCTL_SKIP_STATUS_CHECK | SYSCTL_SKIP_OBEDIENCE_CHECK | SYSCTL_SKIP_PP_DECREMENT);
+
     return FALSE;
 }
