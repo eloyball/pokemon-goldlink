@@ -275,6 +275,7 @@ def dump_trainerdata_c(rom, msgdata_narc, expanded):
     trainer_text, text_order, _text_offset_count = parse_text_archives(rom, decode_trainer_text(msgdata_narc))
 
     lines = [
+        '#include "../include/constants/pokemon_nickname.h"',
         '#include "../include/trainer_data.h"',
         "",
         "const TrainerData sTrainerData[] = {",
