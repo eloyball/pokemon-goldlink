@@ -1,5 +1,5 @@
-#ifndef CHARMAP_H
-#define CHARMAP_H
+#ifndef POKEMON_NICKNAME_H
+#define POKEMON_NICKNAME_H
 
 #define CHAR_SPACE 478
 #define _endstr    0xFFFF
@@ -72,4 +72,4 @@
         c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10           \
     }
 
-#endif // CHARMAP_H
+#endif // POKEMON_NICKNAME_H
