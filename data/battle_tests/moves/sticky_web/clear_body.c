@@ -94,9 +94,9 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados’s Attack fell!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados’s Defiant" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados’s Attack rose sharply!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados's Attack fell!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados's Defiant" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados's Attack rose sharply!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ariados used Sticky Web!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "sent out Beldum!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "Speed" },

@@ -107,8 +107,8 @@ BEGIN_TEST
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Beldum used Bullet Punch!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sliggoo's Gooey" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Beldum’s Clear Body" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Beldum’s stats were not lowered!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Beldum's Clear Body" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Beldum's stats were not lowered!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander used Flame Wheel!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Sliggoo's Gooey" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Charmander's Speed fell!" },
