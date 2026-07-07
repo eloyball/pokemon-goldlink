@@ -130,6 +130,7 @@ BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ct
 BOOL btl_scr_cmd_121_IsPursuitActive(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_122_GoBackToBeforeMove(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_123_MakeTotem(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_124_GetMonByCottonDownOrder(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL BtlCmd_GoToMoveScript(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp);
 BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp);
@@ -463,6 +464,7 @@ const u8 *BattleScrCmdNames[] = {
     "IsPursuitActive",
     "GoBackToBeforeMove",
     "MakeTotem",
+    "GetMonByCottonDownOrder",
     // "YourCustomCommand",
 };
 
@@ -541,6 +543,7 @@ const btl_scr_cmd_func NewBattleScriptCmdTable[] = {
     [0x121 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_121_IsPursuitActive,
     [0x122 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_122_GoBackToBeforeMove,
     [0x123 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_123_MakeTotem,
+    [0x124 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_124_GetMonByCottonDownOrder,
     // [BASE_ENGINE_BTL_SCR_CMDS_MAX - START_OF_NEW_BTL_SCR_CMDS + 1] = btl_scr_cmd_custom_01_your_custom_command,
 };
 
@@ -5619,5 +5622,56 @@ BOOL btl_scr_cmd_123_MakeTotem(void *bsys UNUSED, struct BattleStruct *ctx)
         ctx->mp.param[0] = CreateNicknameTag(ctx, battlerID);
     }
 
+    return FALSE;
+}
+
+BOOL btl_scr_cmd_124_GetMonByCottonDownOrder(void *bsys UNUSED, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+    int endloop = read_battle_script_param(ctx);
+
+    if (ctx->clientLoopForAbility == SPREAD_ABILITY_LOOP_MAX) {
+        IncrementBattleScriptPtr(ctx, endloop);
+        ctx->clientLoopForAbility = 0;
+        return FALSE;
+    }
+
+    switch (ctx->clientLoopForAbility) {
+    case SPREAD_ABILITY_LOOP_OPPONENT_LEFT:
+        ctx->clientLoopForAbility++;
+        int leftSide = BATTLER_OPPONENT_SIDE_LEFT(ctx->defence_client);
+        if (ctx->battlemon[leftSide].species
+            && (ctx->battlemon[leftSide].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = leftSide;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    case SPREAD_ABILITY_LOOP_OPPONENT_RIGHT:
+        ctx->clientLoopForAbility++;
+        int rightSide = BATTLER_OPPONENT_SIDE_RIGHT(ctx->defence_client);
+        if (ctx->battlemon[rightSide].species
+            && (ctx->battlemon[rightSide].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = rightSide;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    case SPREAD_ABILITY_LOOP_ALLY:
+        ctx->clientLoopForAbility++;
+        int ally = BATTLER_ALLY(ctx->defence_client);
+        if (ctx->battlemon[ally].species
+            && (ctx->battlemon[ally].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = ally;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    default:
+        IncrementBattleScriptPtr(ctx, endloop);
+        break;
+    }
+
+    ctx->clientLoopForAbility = 0;
     return FALSE;
 }

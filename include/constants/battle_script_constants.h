@@ -518,8 +518,9 @@
 #define SUB_SEQ_CLEAR_AFTER_PURSUIT                    (509)
 #define SUB_SEQ_SOUL_HEART                             (510)
 #define SUB_SEQ_UNSEEN_FIST                            (511)
+#define SUB_SEQ_COTTON_DOWN                            (512)
 
-#define MAX_BASE_SUBSCRIPT_NUM 511
+#define MAX_BASE_SUBSCRIPT_NUM 512
 
 // define your custom subscripts below like this
 // #define MOVE_SUBSCRIPT_CUSTOM_1 (MAX_BASE_SUBSCRIPT_NUM + 1)
