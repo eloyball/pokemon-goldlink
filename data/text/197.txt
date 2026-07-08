@@ -1766,3 +1766,15 @@ Can’t flee this fight!
 {STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
 The wild {STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
 The opposing {STRVAR_1 1, 0, 0} couldn’t\nfully protect itself and got hurt!
+{STRVAR_1 1, 0, 0} was cured of its\npoisoning!
+The wild {STRVAR_1 1, 0, 0} was cured\nof its poisoning!
+The opposing {STRVAR_1 1, 0, 0} was cured\nof its poisoning!
+{STRVAR_1 1, 0, 0}’s burn was cured!
+The wild {STRVAR_1 1, 0, 0}’s burn was\ncured!
+The opposing {STRVAR_1 1, 0, 0}’s burn\nwas cured!
+{STRVAR_1 1, 0, 0} was cured of paralysis!
+The wild {STRVAR_1 1, 0, 0} was cured of\nparalysis!
+The opposing {STRVAR_1 1, 0, 0} was cured\nof paralysis!
+{STRVAR_1 1, 0, 0} got over its\ninfatuation.
+The wild {STRVAR_1 1, 0, 0} got over its\ninfatuation.
+The opposing {STRVAR_1 1, 0, 0} got over\nits infatuation.
