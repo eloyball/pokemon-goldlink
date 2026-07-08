@@ -22,17 +22,17 @@ _sleep:
 
 _poison:
     // {0} was cured of its poisoning!
-    PrintMessage 1757, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
+    PrintMessage 1768, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
     GoTo _updateHealthbar
 
 _burn:
-    // {0}'s burn was cured!'
-    PrintMessage 1760, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
+    // {0}’s burn was cured!
+    PrintMessage 1771, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
     GoTo _updateHealthbar
 
 _paralysis:
     // {0} was cured of paralysis!
-    PrintMessage 1763, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
+    PrintMessage 1774, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
     GoTo _updateHealthbar
 
 _freeze:
@@ -47,9 +47,9 @@ _confusion:
     GoTo _end
 
 _attract:
-    // { 0} got over its infatuation.
+    // {0} got over its infatuation.
     UpdateMonData OPCODE_FLAG_OFF, BATTLER_CATEGORY_MSG_TEMP, BMON_DATA_STATUS2, STATUS2_ATTRACT
-    PrintMessage 1766, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
+    PrintMessage 1777, TAG_NICKNAME, BATTLER_CATEGORY_MSG_TEMP
     GoTo _end
 
 _taunt:

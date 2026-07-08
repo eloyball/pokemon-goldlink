@@ -10,6 +10,7 @@
 #include "../../include/constants/moves.h"
 #include "../../include/constants/species.h"
 #include "../../include/constants/weather_numbers.h"
+#include "../../include/constants/system_control.h"
 #include "../../include/debug.h"
 #include "../../include/mega.h"
 #include "../../include/message.h"
@@ -105,8 +106,8 @@ BOOL btl_scr_cmd_107_clearauroraveil(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_108_strengthsapcalc(void *bw, struct BattleStruct *sp);
 BOOL btl_scr_cmd_109_checktargetispartner(void *bw, struct BattleStruct *sp);
 BOOL btl_scr_cmd_10A_clearsmog(void *bsys UNUSED, struct BattleStruct *ctx);
-BOOL btl_scr_cmd_10B_gotoifthirdtype(void *bsys UNUSED, struct BattleStruct *ctx);
-BOOL btl_scr_cmd_10C_gotoifterastallized(void *bsys UNUSED, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_10B_ifthirdtype(void* bw, struct BattleStruct* sp);
+BOOL btl_scr_cmd_10C_ifterastallized(void* bw, struct BattleStruct* sp);
 BOOL btl_scr_cmd_10D_HandleRoost(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_10E_HandleSoak(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_10F_HandleMagicPowder(void *bsys UNUSED, struct BattleStruct *ctx);
@@ -129,6 +130,8 @@ BOOL btl_scr_cmd_11F_BatchEffectivenessMessage(void *bsys, struct BattleStruct *
 BOOL btl_scr_cmd_120_DivideVarByValueRoundUp(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_121_IsPursuitActive(void *bsys, struct BattleStruct *ctx);
 BOOL btl_scr_cmd_122_GoBackToBeforeMove(void *bsys UNUSED, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_123_MakeTotem(void *bsys, struct BattleStruct *ctx);
+BOOL btl_scr_cmd_124_GetMonByCottonDownOrder(void *bsys UNUSED, struct BattleStruct *ctx);
 BOOL BtlCmd_GoToMoveScript(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_WeatherHPRecovery(void *bw, struct BattleStruct *sp);
 BOOL BtlCmd_CalcWeatherBallParams(void *bw, struct BattleStruct *sp);
@@ -150,6 +153,8 @@ BOOL BtlCmd_CheckToxicSpikes(struct BattleSystem *bsys, struct BattleStruct *ctx
 BOOL BtlCmd_TryConversion2(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_TryPursuit(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL BtlCmd_Transform(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx);
+BOOL BtlCmd_MagicCoat(struct BattleSystem *bsys, struct BattleStruct *ctx);
+BOOL BtlCmd_TryFeint(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintAttackMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
 BOOL LONG_CALL BtlCmd_PrintGlobalMessage(struct BattleSystem *bsys, struct BattleStruct *ctx);
@@ -461,6 +466,8 @@ const u8 *BattleScrCmdNames[] = {
     "DivideVarByValueRoundUp",
     "IsPursuitActive",
     "GoBackToBeforeMove",
+    "MakeTotem",
+    "GetMonByCottonDownOrder",
     // "YourCustomCommand",
 };
 
@@ -514,8 +521,8 @@ const btl_scr_cmd_func NewBattleScriptCmdTable[] = {
     [0x108 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_108_strengthsapcalc,
     [0x109 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_109_checktargetispartner,
     [0x10A - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10A_clearsmog,
-    [0x10B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10B_gotoifthirdtype,
-    [0x10C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10C_gotoifterastallized,
+    [0x10B - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10B_ifthirdtype,
+    [0x10C - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10C_ifterastallized,
     [0x10D - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10D_HandleRoost,
     [0x10E - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10E_HandleSoak,
     [0x10F - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_10F_HandleMagicPowder,
@@ -538,6 +545,8 @@ const btl_scr_cmd_func NewBattleScriptCmdTable[] = {
     [0x120 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_120_DivideVarByValueRoundUp,
     [0x121 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_121_IsPursuitActive,
     [0x122 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_122_GoBackToBeforeMove,
+    [0x123 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_123_MakeTotem,
+    [0x124 - START_OF_NEW_BTL_SCR_CMDS] = btl_scr_cmd_124_GetMonByCottonDownOrder,
     // [BASE_ENGINE_BTL_SCR_CMDS_MAX - START_OF_NEW_BTL_SCR_CMDS + 1] = btl_scr_cmd_custom_01_your_custom_command,
 };
 
@@ -3757,7 +3766,7 @@ BOOL BtlCmd_TryProtection(void *bsys UNUSED, struct BattleStruct *ctx)
     }
 
     if (ctx->moveTbl[ctx->current_move_index].effect == MOVE_EFFECT_SURVIVE_WITH_1_HP) {
-        ctx->oneTurnFlag[ctx->attack_client].prevent_one_hit_ko_ability = TRUE;
+        ctx->moveConditionsFlags[ctx->attack_client].endure = TRUE;
         ctx->mp.id = BATTLE_MSG_BRACED_ITSELF; // "{0} braced itself!"
         ctx->mp.tag = TAG_NICKNAME;
         ctx->mp.param[0] = CreateNicknameTag(ctx, ctx->attack_client);
@@ -4447,7 +4456,7 @@ BOOL btl_scr_cmd_10A_clearsmog(void *bsys UNUSED, struct BattleStruct *ctx)
     return FALSE;
 }
 
-BOOL btl_scr_cmd_10B_gotoifthirdtype(void *bsys UNUSED, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_10B_ifthirdtype(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     s32 side = read_battle_script_param(ctx);
@@ -4464,7 +4473,7 @@ BOOL btl_scr_cmd_10B_gotoifthirdtype(void *bsys UNUSED, struct BattleStruct *ctx
     return FALSE;
 }
 
-BOOL btl_scr_cmd_10C_gotoifterastallized(void *bsys UNUSED, struct BattleStruct *ctx)
+BOOL btl_scr_cmd_10C_ifterastallized(void *bsys UNUSED, struct BattleStruct *ctx)
 {
     IncrementBattleScriptPtr(ctx, 1);
     s32 battlerID = read_battle_script_param(ctx);
@@ -4871,7 +4880,8 @@ enum {
     ABILITY_POPUP_SLIDE_IN,
     ABILITY_POPUP_WAIT,
     ABILITY_POPUP_SLIDE_OUT,
-    ABILITY_POPUP_DESTROY
+    ABILITY_POPUP_DESTROY,
+    ABILITY_POPUP_FINISH,
 };
 
 // originally wrote this to be like some kind of task but it was best done through the script command itself
@@ -4964,6 +4974,10 @@ void AbilityPopup_SlideIn(void *data)
         G2_SetBG0Priority(1);
         SetBgPriority(1, 0);
         SetBgPriority(2, 1);
+        work->step++;
+        break;
+    case ABILITY_POPUP_FINISH:
+        work->step = ABILITY_POPUP_INIT_PALETTE;
         break;
     }
 }
@@ -4997,7 +5011,7 @@ BOOL btl_scr_cmd_116_abilitypopup(void *bw, struct BattleStruct *sp)
             work->step = ABILITY_POPUP_INIT_PALETTE;
             sp->battle_progress_flag = 1;
         }
-    } else if (sp->abilityPopupWork != NULL && sp->abilityPopupWork->step >= ABILITY_POPUP_DESTROY) {
+    } else if (sp->abilityPopupWork != NULL && sp->abilityPopupWork->step >= ABILITY_POPUP_FINISH) {
         sys_FreeMemoryEz(sp->abilityPopupWork);
         sp->abilityPopupWork = NULL;
         IncrementBattleScriptPtr(sp, 3);
@@ -5474,12 +5488,12 @@ BOOL btl_scr_cmd_122_GoBackToBeforeMove(void *bsys UNUSED, struct BattleStruct *
     // BSCRIPT_VAR_SIDE_EFFECT_FLAGS_DIRECT
     ctx->add_status_flag_indirect = 0;
     // BSCRIPT_VAR_SIDE_EFFECT_FLAGS_INDIRECT
-    ctx->add_status_flag_direct = 0;
+ctx->add_status_flag_direct = 0;
 
-    ctx->next_server_seq_no = CONTROLLER_COMMAND_23;
-    ctx->server_seq_no = CONTROLLER_COMMAND_23;
+ctx->next_server_seq_no = CONTROLLER_COMMAND_23;
+ctx->server_seq_no = CONTROLLER_COMMAND_23;
 
-    return FALSE;
+return FALSE;
 }
 
 BOOL BtlCmd_TryPursuit(struct BattleSystem *bsys, struct BattleStruct *ctx)
@@ -5557,5 +5571,198 @@ BOOL BtlCmd_TryPursuit(struct BattleSystem *bsys, struct BattleStruct *ctx)
         */
     }
 
+    return FALSE;
+}
+
+u16 TotemSpecies[][STAT_MAX] = // Species, stat stage increases
+{
+    { SPECIES_RATICATE_ALOLAN_LARGE, 0, 1, 0, 0, 0, 0, 0 },  // +1 Defense
+    { SPECIES_MAROWAK_ALOLAN_LARGE,  0, 0, 2, 0, 0, 0, 0 },  // +2 Speed
+    { SPECIES_GUMSHOOS_LARGE,        0, 1, 0, 0, 0, 0, 0 },  // +1 Defense
+    { SPECIES_VIKAVOLT_LARGE,        1, 1, 1, 1, 1, 0, 0 },  // +1 Omni-boost
+    { SPECIES_RIBOMBEE_LARGE,        2, 2, 2, 2, 2, 0, 0 },  // +2 Omni-boost
+    { SPECIES_ARAQUANID_LARGE,       0, 0, 1, 0, 0, 0, 0 },  // +1 Speed
+    { SPECIES_LURANTIS_LARGE,        0, 0, 2, 0, 0, 0, 0 },  // +2 Speed
+    { SPECIES_SALAZZLE_LARGE,        0, 0, 0, 0, 1, 0, 0 },  // +1 Special Defense
+    { SPECIES_TOGEDEMARU_LARGE,      0, 2, 0, 0, 0, 0, 0 },  // +2 Defense
+    { SPECIES_MIMIKYU_LARGE,         1, 1, 1, 1, 1, 0, 0 },  // +1 Omni-boost
+    { SPECIES_MIMIKYU_BUSTED_LARGE,  0, 0, 0, 0, 0, 0, 0 },
+    { SPECIES_KOMMO_O_LARGE,         1, 1, 1, 1, 1, 0, 0 }, // +1 Omni-boost
+    // Add your Totem species here.
+    // Don't bother making a custom form unless you plan for it to be caught.
+};
+
+BOOL btl_scr_cmd_123_MakeTotem(void *bsys UNUSED, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+    s32 battlerID = read_battle_script_param(ctx);
+    s32 failAddr = read_battle_script_param(ctx);
+
+    // Grab totem ID.
+    u32 totemID;
+    u32 adjustedSpecies = PokeOtherFormMonsNoGet(ctx->battlemon[battlerID].species, ctx->battlemon[battlerID].form_no);
+    for (totemID = 0; totemID < NELEMS(TotemSpecies); totemID++)
+    {
+        if (adjustedSpecies == TotemSpecies[totemID][0])
+        {
+            break;
+        }
+    }
+    // no weight increase because each form has its own weight + wishiwashi doesn't gain weight anyway
+    // ctx->battlemon[battlerID].weight *= 2;
+
+    // if not defined in above table, should skip playing stat animation because it can not be found  
+    if (totemID == NELEMS(TotemSpecies))
+    {
+        IncrementBattleScriptPtr(ctx, failAddr);
+        return FALSE;
+    }
+
+    // Handle stat boosts.
+    u8 totalStatBoosts = 0;
+    u8 raisedStat = 0;
+    u8 stat;
+    for (stat = STAT_ATTACK; stat < STAT_MAX; stat++)
+    {
+        if (TotemSpecies[totemID][stat] > 0)
+        {
+            ctx->battlemon[battlerID].states[stat] += TotemSpecies[totemID][stat];
+            raisedStat = stat;
+            totalStatBoosts++;
+        }
+    }
+
+    if (totalStatBoosts == 1)
+    {
+        ctx->mp.id = BATTLE_MSG_TOTEM_AURA_SINGLE_STAT; // {0}’s aura flared to life! Its {1} rose!
+        ctx->mp.tag = TAG_NICKNAME_STAT;
+        ctx->mp.param[0] = CreateNicknameTag(ctx, battlerID);
+        ctx->mp.param[1] = raisedStat;
+    }
+    else if (totalStatBoosts > 1)
+    {
+        ctx->mp.id = BATTLE_MSG_TOTEM_AURA_MULTI_STAT; // {0}’s aura flared to life! Its stats rose!
+        ctx->mp.tag = TAG_NICKNAME;
+        ctx->mp.param[0] = CreateNicknameTag(ctx, battlerID);
+    }
+
+    return FALSE;
+}
+
+BOOL btl_scr_cmd_124_GetMonByCottonDownOrder(void *bsys UNUSED, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+    int endloop = read_battle_script_param(ctx);
+
+    if (ctx->clientLoopForAbility == SPREAD_ABILITY_LOOP_MAX) {
+        IncrementBattleScriptPtr(ctx, endloop);
+        ctx->clientLoopForAbility = 0;
+        return FALSE;
+    }
+
+    switch (ctx->clientLoopForAbility) {
+    case SPREAD_ABILITY_LOOP_OPPONENT_LEFT:
+        ctx->clientLoopForAbility++;
+        int leftSide = BATTLER_OPPONENT_SIDE_LEFT(ctx->defence_client);
+        if (ctx->battlemon[leftSide].species
+            && (ctx->battlemon[leftSide].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = leftSide;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    case SPREAD_ABILITY_LOOP_OPPONENT_RIGHT:
+        ctx->clientLoopForAbility++;
+        int rightSide = BATTLER_OPPONENT_SIDE_RIGHT(ctx->defence_client);
+        if (ctx->battlemon[rightSide].species
+            && (ctx->battlemon[rightSide].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = rightSide;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    case SPREAD_ABILITY_LOOP_ALLY:
+        ctx->clientLoopForAbility++;
+        int ally = BATTLER_ALLY(ctx->defence_client);
+        if (ctx->battlemon[ally].species
+            && (ctx->battlemon[ally].condition2 & STATUS2_SUBSTITUTE) == 0) {
+            ctx->state_client = ally;
+            ctx->battlerIdTemp = ctx->defence_client;
+            return FALSE;
+        }
+        FALLTHROUGH;
+    default:
+        IncrementBattleScriptPtr(ctx, endloop);
+        break;
+    }
+
+    ctx->clientLoopForAbility = 0;
+    return FALSE;
+}
+
+BOOL BtlCmd_MagicCoat(struct BattleSystem *bsys UNUSED, struct BattleStruct *ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    ctx->magicBounceContext.isActive = TRUE;
+    ctx->attack_client = ctx->magicBounceContext.bounceClients[ctx->magicBounceContext.bounceCounter];
+    ctx->magicBounceContext.bounceCounter++;
+    ctx->defence_client = ctx->magicBounceContext.originalAttacker;
+
+    ov12_02252D14(bsys, ctx);
+    for (int i = 0; i < BattleWorkClientSetMaxGet(bsys); i++) {
+        ctx->moveStatusFlagForSpreadMoves[i] = 0;
+        ctx->moveStatusFlagForSpreadMoves2[i] = 0;
+    }
+    ctx->clientLoopForSpreadMoves = 0;
+    ctx->movePerformanceSubstep = 0;
+
+    ctx->waza_out_check_on_off |= (SYSCTL_SKIP_STATUS_CHECK | SYSCTL_SKIP_OBEDIENCE_CHECK | SYSCTL_SKIP_PP_DECREMENT);
+
+    return FALSE;
+}
+
+BOOL BtlCmd_TryFeint(struct BattleSystem* bsys UNUSED, struct BattleStruct* ctx)
+{
+    IncrementBattleScriptPtr(ctx, 1);
+
+    int adrs = read_battle_script_param(ctx);
+    int ally = BATTLER_ALLY(ctx->defence_client);
+
+    if (ctx->oneTurnFlag[ctx->defence_client].protectFlag)
+    {
+        ctx->oneTurnFlag[ctx->defence_client].protectFlag = FALSE;
+
+        if (ctx->oneTurnFlag[ctx->defence_client].gainedProtectFlagFromAlly) {
+            ctx->oneTurnFlag[ctx->defence_client].gainedProtectFlagFromAlly = FALSE;
+            switch (ctx->moveProtect[ally]) {
+            case MOVE_QUICK_GUARD:
+            case MOVE_WIDE_GUARD:
+            case MOVE_MAT_BLOCK:
+            case MOVE_CRAFTY_SHIELD:
+                ctx->oneTurnFlag[BATTLER_ALLY(ctx->defence_client)].protectFlag = FALSE;
+                break;
+            default:
+                break;
+            }
+        }
+
+        switch (ctx->moveProtect[ctx->defence_client]) {
+        case MOVE_QUICK_GUARD:
+        case MOVE_WIDE_GUARD:
+        case MOVE_MAT_BLOCK:
+        case MOVE_CRAFTY_SHIELD:
+            if (ctx->oneTurnFlag[BATTLER_ALLY(ctx->defence_client)].gainedProtectFlagFromAlly)
+            {
+                ctx->oneTurnFlag[BATTLER_ALLY(ctx->defence_client)].gainedProtectFlagFromAlly = FALSE;
+                ctx->oneTurnFlag[BATTLER_ALLY(ctx->defence_client)].protectFlag = FALSE;
+            }
+            break;
+        default:
+            break;
+        }
+    } else {
+        IncrementBattleScriptPtr(ctx, adrs);
+    }
     return FALSE;
 }
