@@ -39,14 +39,11 @@ enum {
 
 #define MAX_ROCK_SMASH_ITEMS_PER_TABLE 8
 
-// TODO: Move this somewhere better (filesystem.h does not exist).
-void LONG_CALL ReadWholeNarcMemberByIdPair(void *dest, u32 narc_id, s32 file_id);
-
-// TODO: Move this somewhere better (overlay_01_022001E4.h does not exist).
+// overlay_01_022001E4.h in pokeheartgold
 int LONG_CALL ov01_02200540(LocalMapObject *obj, int a0, int a1);
 BOOL LONG_CALL ov01_022003F4(int a0);
 
-// TODO: Move this somewhere better (unk_020689C8.h does not exist).
+// unk_020689C8.h in pokeheartgold
 void LONG_CALL sub_02068B48(int a0);
 
 #endif // ROCK_SMASH_ITEM_H

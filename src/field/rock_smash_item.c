@@ -121,7 +121,7 @@ BOOL LONG_CALL CheckRockSmashItemDrop(FieldSystem *fieldSystem, RockSmashItemChe
     }
 #endif
 
-    if (env->followMonKnowsHM) { // TODO: Check interactability with free field moves.
+    if (env->followMonKnowsHM) {
         odds += 5;
     }
 

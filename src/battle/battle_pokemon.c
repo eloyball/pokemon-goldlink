@@ -885,7 +885,7 @@ void LONG_CALL BattleFormChange(int client, int form_no, void* bw, struct Battle
 
     // need to update weight as well
     // read s32's from a214 file 1, resets autotomize lightening
-    ArchiveDataLoadOfs(&sp->battlemon[client].weight, ARC_DEX_LISTS, 1, PokeOtherFormMonsNoGet(sp->battlemon[client].species, form_no) * sizeof(s32), sizeof(s32));
+    ReadFromNarcMemberByIdPair(&sp->battlemon[client].weight, ARC_DEX_LISTS, 1, PokeOtherFormMonsNoGet(sp->battlemon[client].species, form_no) * sizeof(s32), sizeof(s32));
 }
 
 /**

@@ -1465,7 +1465,7 @@ int UNUSED CalcBaseDamageInternal(struct BattleSystem *bw, struct BattleStruct *
 
                 struct Evolution *evoTable;
                 evoTable = sys_AllocMemory(0, MAX_EVOS_PER_POKE * sizeof(struct Evolution));
-                ArchiveDataLoad(evoTable, ARC_EVOLUTIONS, speciesWithForm);
+                ReadWholeNarcMemberByIdPair(evoTable, ARC_EVOLUTIONS, speciesWithForm);
 
                 // If a Pokémon has any evolutions, there should be an entry at the top that isn't EVO_NONE.
                 // In that case, the Pokémon is capable of evolving, and so the effect of Eviolite should apply.
