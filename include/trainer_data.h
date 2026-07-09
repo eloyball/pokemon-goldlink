@@ -139,6 +139,7 @@ typedef struct TrainerPokemonData {
     u16 spDefense;
     u8 ppCounts[4];
     u16 nickname[11];
+    const char *nicknameStr;
     u16 ballSeal;
 } TrainerPokemonData;
 
