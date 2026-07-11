@@ -1,6 +1,7 @@
 #include "../../include/debug.h"
 #include "../../include/map_events_internal.h"
 #include "../../include/rock_smash_item.h"
+#include "../../include/script.h"
 #include "../../include/types.h"
 
 #include "../../include/constants/maps.h"
@@ -59,13 +60,42 @@ const RockSmashAbilityQuality RockSmashAbilityQualityTable[] = {
     { ABILITY_SUPER_LUCK,   1 },
 };
 
-u32 DetermineRockSmashItem(u32 tableIndex, u32 index)
+u32 DetermineRockSmashItem(u32 tableIndex, u32 quality)
 {
-    if (tableIndex >= NELEMS(RockSmashItemTable) || index >= MAX_ROCK_SMASH_ITEMS_PER_TABLE)
+    if (tableIndex >= NELEMS(RockSmashItemTable))
     {
         return ITEM_NONE;
     }
-    return RockSmashItemTable[tableIndex][index];
+
+    int partySlot = 0;
+    struct Party *party = SaveData_GetPlayerPartyPtr(gFieldSysPtr->savedata);
+#ifdef ENTIRE_PARTY_AFFECTS_ROCK_SMASH
+    for (; partySlot < party->count; partySlot++) {
+#endif
+        int ability;
+        struct PartyPokemon *mon = Party_GetMonByIndex(party, partySlot);
+        if (GetMonData(mon, MON_DATA_IS_EGG, NULL) == FALSE) {
+            ability = GetMonData(mon, MON_DATA_ABILITY, NULL);
+        } else {
+            ability = NUM_ABILITIES;
+        }
+
+        for (u32 i = 0; i < NELEMS(RockSmashAbilityOddsTable); i++) {
+            if (ability == RockSmashAbilityQualityTable[i].ability) {
+                quality += RockSmashAbilityQualityTable[i].quality;
+                break;
+            }
+        }
+#ifdef ENTIRE_PARTY_AFFECTS_ROCK_SMASH
+    }
+#endif
+    
+    if (quality >= MAX_ROCK_SMASH_ITEMS_PER_TABLE)
+    {
+        quality = MAX_ROCK_SMASH_ITEMS_PER_TABLE - 1;
+    }
+
+    return RockSmashItemTable[tableIndex][quality];
 }
 
 BOOL LONG_CALL CheckRockSmashItemDrop(FieldSystem *fieldSystem, RockSmashItemCheckWork *env);
