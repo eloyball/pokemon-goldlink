@@ -47,7 +47,7 @@ BOOL LONG_CALL GetOtherFormPic(MON_PIC *picdata, u16 mons_no, u8 dir, u8 col, u8
 
     if (form_no != 0) {
         u16 newSpecies;
-        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*mons_no + form_no-1), sizeof(u16));
+        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * mons_no + form_no - 1), sizeof(u16));
         newSpecies &= ~(NEEDS_REVERSION);
         if (newSpecies != 0) {
             picdata->arc_no = ARC_MON_PIC;
@@ -116,7 +116,7 @@ int LONG_CALL PokeOtherFormMonsNoGet(int mons_no, int form_no)
     default:;
         if (form_no != 0) {
             u16 newSpecies;
-            ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*mons_no + form_no-1), sizeof(u16));
+            ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * mons_no + form_no - 1), sizeof(u16));
             newSpecies &= ~(NEEDS_REVERSION);
             if (newSpecies != 0) {
                 mons_no = newSpecies;
@@ -139,7 +139,7 @@ u16 LONG_CALL GetSpeciesBasedOnForm(int mons_no, int form_no)
 {
     if (form_no != 0) {
         u16 newSpecies;
-        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*mons_no + form_no-1), sizeof(u16));
+        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * mons_no + form_no - 1), sizeof(u16));
         newSpecies &= ~(NEEDS_REVERSION);
         if (newSpecies != 0) {
             mons_no = newSpecies;
@@ -175,7 +175,7 @@ u16 LONG_CALL GetFormFromAdjustedForm(u32 mons_no)
     if (mons_no > MAX_MON_NUM) {
         u16 oldSpecies = GetBaseSpeciesFromAdjustedForm(mons_no);
         u16 formTable[32]; // right on stack so do not have to free this
-        ReadFromNarcMemberByIdPair(formTable, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (oldSpecies*32), sizeof(u16)*32);
+        ReadFromNarcMemberByIdPair(formTable, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (oldSpecies * 32), sizeof(u16) * 32);
         for (ret = 0; ret < 32; ret++)
         {
             if ((formTable[ret] & ~NEEDS_REVERSION) == mons_no || !formTable[ret]) {
@@ -247,7 +247,7 @@ u32 LONG_CALL PokeIconIndexGetByMonsNumber(u32 mons, u32 egg, u32 form_no)
         // pat is now treated as the return value.  is initially set as the mons+7, but is adjusted as necessary below
         if (form_no != 0) {
             u16 newSpecies;
-            ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*mons + form_no-1), sizeof(u16));
+            ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * mons + form_no - 1), sizeof(u16));
             newSpecies &= ~(NEEDS_REVERSION);
             if (newSpecies != 0) {
                 mons = newSpecies;
@@ -286,7 +286,7 @@ u16 LONG_CALL PokeIconCgxPatternGet(struct BoxPokemon *ppp)
     default:;
         // here we check if the mon at all has any forms--if so we assume its form id is valid and return it
         u16 newSpecies;
-        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*monsno + 1-1), sizeof(u16));
+        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * monsno + 1 - 1), sizeof(u16));
         newSpecies &= ~(NEEDS_REVERSION);
         if (newSpecies != 0) {
             ret = GetBoxMonData(ppp, MON_DATA_FORM, NULL);
@@ -340,7 +340,7 @@ u32 LONG_CALL PokeIconPalNumGet(u32 mons, u32 form, u32 isegg)
         } else {
             if (form != 0) {
                 u16 newSpecies;
-                ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*mons + form-1), sizeof(u16));
+                ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * mons + form - 1), sizeof(u16));
                 newSpecies &= ~(NEEDS_REVERSION);
                 if (newSpecies != 0) {
                     mons = newSpecies;
@@ -390,7 +390,7 @@ u16 GetMonHiddenAbilityAlreadySanitized(u16 species)
 {
 #ifdef HIDDEN_ABILITIES
     u16 ability = 0;
-    ReadFromNarcMemberByIdPair(&ability, ARC_CODE_ADDONS, CODE_ADDON_HIDDEN_ABILITY_LIST, sizeof(u16)*species, sizeof(u16));
+    ReadFromNarcMemberByIdPair(&ability, ARC_CODE_ADDONS, CODE_ADDON_HIDDEN_ABILITY_LIST, sizeof(u16) * species, sizeof(u16));
     return ability;
 #else
     return 0;
@@ -649,7 +649,7 @@ u32 LONG_CALL GetSpeciesBaseExp(u32 species, u32 form)
 {
     u16 baseExp;
     species = PokeOtherFormMonsNoGet(species, form); // for whatever reason alternate formes can have different base experiences
-    ReadFromNarcMemberByIdPair(&baseExp, ARC_CODE_ADDONS, CODE_ADDON_BASE_EXPERIENCE_LIST, sizeof(u16)*species, sizeof(u16));
+    ReadFromNarcMemberByIdPair(&baseExp, ARC_CODE_ADDONS, CODE_ADDON_BASE_EXPERIENCE_LIST, sizeof(u16) * species, sizeof(u16));
     return baseExp;
 }
 
@@ -1338,7 +1338,7 @@ u16 LONG_CALL get_mon_ow_tag(u16 species, u32 form, u32 isFemale)
 u32 LONG_CALL OverworldModelLookupHasFemaleForm(u32 species)
 {
     u32 ret = 0;
-    ReadFromNarcMemberByIdPair(&ret, ARC_CODE_ADDONS, CODE_ADDON_OVERWORLD_FORM_FEMALE, sizeof(u16)*(species), sizeof(u16));
+    ReadFromNarcMemberByIdPair(&ret, ARC_CODE_ADDONS, CODE_ADDON_OVERWORLD_FORM_FEMALE, sizeof(u16) * (species), sizeof(u16));
     return ret;
 }
 
@@ -1532,7 +1532,7 @@ bool8 LONG_CALL RevertFormChange(struct PartyPokemon *pp, u16 species, u8 form_n
 
     if (form_no != 0) {
         u16 newSpecies;
-        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16)*(32*species + form_no-1), sizeof(u16));
+        ReadFromNarcMemberByIdPair(&newSpecies, ARC_CODE_ADDONS, CODE_ADDON_FORM_DATA, sizeof(u16) * (32 * species + form_no - 1), sizeof(u16));
         ret = ((newSpecies & NEEDS_REVERSION) != 0); // initial return
         newSpecies &= ~(NEEDS_REVERSION);
         // invalid form entry specified or form does not require reversion--return
