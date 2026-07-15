@@ -836,7 +836,7 @@ void LONG_CALL LoadBattleSubSeqScript(struct BattleStruct *sp, int kind, int ind
     sp->skill_arc_kind = kind;
     sp->skill_arc_index = index;
     sp->skill_seq_no = 0;
-    ArchiveDataLoad(&sp->SkillSeqWork, kind, index);
+    ReadWholeNarcMemberByIdPair(&sp->SkillSeqWork, kind, index);
 #ifdef DEBUG_BATTLE_SCRIPT_COMMANDS
     debug_printf("\n=================\nLoading %sscript index %d...\n\n", kind == ARC_BATTLE_SUB_SEQ ? "sub" : kind == ARC_BATTLE_MOVE_SEQ ? "move "
                                                                                                                                            : "effect ",
@@ -860,7 +860,7 @@ void LONG_CALL PushAndLoadBattleScript(struct BattleStruct *sp, int kind, int in
     sp->skill_arc_kind = kind;
     sp->skill_arc_index = index;
     sp->skill_seq_no = 0;
-    ArchiveDataLoad(&sp->SkillSeqWork, kind, index);
+    ReadWholeNarcMemberByIdPair(&sp->SkillSeqWork, kind, index);
 #ifdef DEBUG_BATTLE_SCRIPT_COMMANDS
     debug_printf("\n=================\nLoading %sscript index %d...\n\n", kind == ARC_BATTLE_SUB_SEQ ? "sub" : kind == ARC_BATTLE_MOVE_SEQ ? "move "
                                                                                                                                            : "effect ",
