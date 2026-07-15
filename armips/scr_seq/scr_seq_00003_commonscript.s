@@ -1738,6 +1738,8 @@ scr_seq_0003_073_autobattle_testing:
     npc_msg 120
     closemsg
     trainer_battle 5, 0, 0, 0
+    //setvar 0x800B, 1
+    //WildBattleSp 785 | (1 << 11), 50, 0
     releaseall
     end
 

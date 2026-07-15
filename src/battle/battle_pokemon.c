@@ -468,6 +468,30 @@ void BattleMessage_BufferNickname(struct BattleSystem *battleSystem, int bufferI
         mon = Party_GetMonByIndex(party, Party_GetIllusionImitatedIndex(party, ctx->sel_mons_no[client]));
     }
     BufferBoxMonNickname(battleSystem->msgFormat, bufferIndex, &mon->box);
+    // yes i am currently restricting totems to be client 1, whatever
+    if (BattleTypeGet(battleSystem) & BATTLE_TYPE_TOTEM && client == 1) {
+        String *name = battleSystem->msgFormat->fields[bufferIndex].msg;
+        //debug_printf("name's maxsize is %d with a current size of %d\n", name->maxsize, name->size);
+        // 6 is NELEMS("Totem ")
+        // maxsize here has always been 32 actually...  should be more than fine to buffer a full extended species name, at least in battle
+        if (name->maxsize >= (name->size + 6)) {
+            s32 i;
+            vu16 temp = 0; // vu16 so the below doesn't optimize to a memmove...
+            for (i = name->size-1; i >= 0; i--) {
+                temp = name->data[i];
+                name->data[i + 6] = temp;
+            }
+            name->size += 6;
+            name->data[0] = 0x013E; // T
+            name->data[1] = 0x0153; // o
+            name->data[2] = 0x0158; // t
+            name->data[3] = 0x0149; // e
+            name->data[4] = 0x0151; // m
+            name->data[5] = 0x01DE; // " "
+        //} else {
+        //    debug_printf("name is not big enough for Totem prefix :(");
+        }
+    }
 }
 
 void BattleMessage_BufferPokemon(struct BattleSystem *battleSystem, int bufferIndex, int param) {

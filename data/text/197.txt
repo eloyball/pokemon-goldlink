@@ -1755,7 +1755,7 @@ The wild {STRVAR_1 1, 0, 0} trapped\n{STRVAR_1 1, 1, 0}!
 The wild {STRVAR_1 1, 0, 0} trapped\nthe wild {STRVAR_1 1, 1, 0}!
 The opposing {STRVAR_1 1, 0, 0} trapped\n{STRVAR_1 1, 1, 0}!
 The opposing {STRVAR_1 1, 0, 0} trapped\nthe opposing {STRVAR_1 1, 1, 0}!
-You are challenged by Totem\n{STRVAR_1 1, 0, 0}!
+You are challenged by\n{STRVAR_1 1, 0, 0}!
 {STRVAR_1 1, 0, 0}’s aura flared to life!\nIts {STRVAR_1 13, 1, 0} rose!
 The wild {STRVAR_1 1, 0, 0}’s aura flared to life!\nIts {STRVAR_1 13, 1, 0} rose!
 The opposing {STRVAR_1 1, 0, 0}’s aura flared\nto life!\fIts {STRVAR_1 13, 1, 0} rose!
