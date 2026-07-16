@@ -107,6 +107,8 @@ BEGIN_TEST
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Cofagrigus's Mummy" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arcanine’s ability became Mummy!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arcanine’s Rock Head" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arcanine’s Mummy" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Arcanine was damaged by the recoil!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Oinkologne's Lingering Aroma" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "A lingering aroma clings to Golem!" },
