@@ -625,6 +625,10 @@ BOOL LONG_CALL CalcAccuracy(void *bw, struct BattleStruct *sp, int attacker, int
 
     accuracy = sp->moveTbl[move_no].accuracy;
 
+#ifdef DEBUG_BATTLE_SCENARIOS
+    accuracy = 100;
+#endif // DEBUG_BATTLE_SCENARIOS
+
     if (accuracy == 0) {
         return FALSE;
     }
