@@ -2844,6 +2844,13 @@ int LONG_CALL IsTargetFoesAndAlly(struct BattleSystem *bsys, struct BattleStruct
     }
     return FALSE;
 }
+int LONG_CALL IsTargetSelfAndAlly(struct BattleSystem* bsys, struct BattleStruct* ctx, int move)
+{
+    if (move == MOVE_HOWL || move == MOVE_LIFE_DEW) {
+        return BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI);
+    }
+    return FALSE;
+}
 
 int LONG_CALL IsTargetFoes(struct BattleSystem *bsys, struct BattleStruct *ctx, int move)
 {
