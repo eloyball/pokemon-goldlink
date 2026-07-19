@@ -2722,21 +2722,6 @@ BOOL BattleController_CheckAbilityFailures2(struct BattleSystem *bsys UNUSED, st
             return TRUE;
         }
     }
-    int ally = BATTLER_ALLY(ctx->attack_client);
-    if ((ctx->current_move_index == MOVE_HOWL
-        || ctx->current_move_index == MOVE_LIFE_DEW)
-        && BattleTypeGet(bsys) & (BATTLE_TYPE_MULTI | BATTLE_TYPE_DOUBLE)
-        && IsValidMoveTarget(ctx, ally)) {
-        int scriptNum = MoveCheckDamageNegatingAbilities(ctx, ctx->attack_client, ally);
-        if (scriptNum) {
-            ctx->moveStatusFlagForSpreadMoves[ally] = MOVE_STATUS_FLAG_FAILED;
-            ctx->battlerIdTemp = ally;
-            LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, scriptNum);
-            ctx->next_server_seq_no = ctx->server_seq_no;
-            ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
-            return TRUE;
-        }
-    }
     return FALSE;
 }
 
