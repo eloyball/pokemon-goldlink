@@ -2723,9 +2723,10 @@ BOOL BattleController_CheckAbilityFailures2(struct BattleSystem *bsys UNUSED, st
         }
     }
     int ally = BATTLER_ALLY(ctx->attack_client);
-    if (ctx->current_move_index == MOVE_HOWL 
+    if ((ctx->current_move_index == MOVE_HOWL
+        || ctx->current_move_index == MOVE_LIFE_DEW)
         && BattleTypeGet(bsys) & (BATTLE_TYPE_MULTI | BATTLE_TYPE_DOUBLE)
-        && IsValidMoveTarget(ctx, ally) {
+        && IsValidMoveTarget(ctx, ally)) {
         int scriptNum = MoveCheckDamageNegatingAbilities(ctx, ctx->attack_client, ally);
         if (scriptNum) {
             ctx->moveStatusFlagForSpreadMoves[ally] = MOVE_STATUS_FLAG_FAILED;
