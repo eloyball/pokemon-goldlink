@@ -2722,6 +2722,16 @@ BOOL BattleController_CheckAbilityFailures2(struct BattleSystem *bsys UNUSED, st
             return TRUE;
         }
     }
+    if (ctx->current_move_index == MOVE_HOWL
+        && MoldBreakerAbilityCheck(ctx, ctx->attack_client, defender, ABILITY_SOUNDPROOF) == TRUE
+        && defender == BATTLER_ALLY(ctx->attack_client)) {
+        ctx->moveStatusFlagForSpreadMoves[defender] = MOVE_STATUS_FLAG_FAILED;
+        ctx->battlerIdTemp = defender;
+        LoadBattleSubSeqScript(ctx, ARC_BATTLE_SUB_SEQ, SUB_SEQ_SOUNDPROOF);
+        ctx->next_server_seq_no = ctx->server_seq_no;
+        ctx->server_seq_no = CONTROLLER_COMMAND_RUN_SCRIPT;
+        return TRUE;
+    }
     return FALSE;
 }
 

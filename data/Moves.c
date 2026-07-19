@@ -9080,7 +9080,7 @@ const MoveSourceEntry sMoveSource[NUM_OF_MOVES + 1] = {
             .fullName = "Howl",
         },
         .data = {
-            .effect = MOVE_EFFECT_ATK_UP,
+            .effect = MOVE_EFFECT_HOWL,
             .split = SPLIT_STATUS,
             .power = 0,
             .type = TYPE_NORMAL,
