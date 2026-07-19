@@ -2870,7 +2870,8 @@ int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct 
         switch (ctx->clientLoopForSpreadMoves) {
         case SPREAD_MOVE_LOOP_ALLY:
             ctx->clientLoopForSpreadMoves++;
-            if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) && IsValidMoveTarget(ctx, BATTLER_ALLY(ctx->attack_client))) {
+            if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || IsTargetSelfAndAlly(bsys, ctx, ctx->current_move_index))
+                && IsValidMoveTarget(ctx, BATTLER_ALLY(ctx->attack_client))) {
                 ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
                 return TRUE;
             }
