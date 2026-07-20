@@ -81,10 +81,10 @@ BEGIN_TEST {
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Squirtle used Life Dew!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Squirtle's HP is full!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Poliwag used Life Dew!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Poliwag had its HP restored." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Squirtle used Life Dew!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Squirtle's HP is full!" },
     },
 }
 END_TEST
