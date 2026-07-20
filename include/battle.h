@@ -2311,7 +2311,7 @@ BOOL LONG_CALL CheckFieldMoveEffect(void *bw, void *, int);
 struct PartyPokemon *LONG_CALL BattleWorkPokemonParamGet(void *bw, int client_no, int sel_mons_no);
 void *LONG_CALL BattleWorkFightMsgGet(void *bw);
 void LONG_CALL BattleWorkPinchSEFlagSet(void *bw, u32 mode);
-void LONG_CALL Snd_BgmPlay(u32 id);
+void LONG_CALL PlayBGM(u32 id);
 u32 LONG_CALL ST_ServerPokeOneSelfCheckActPP(void *bw, struct PartyPokemon *pp);
 void LONG_CALL PokeExpCalc(struct Party *ppt, int pos, int mons_no, int form_no);
 u8 LONG_CALL BattleWorkConfigMsgSpeedGet(void *bw);
@@ -4303,6 +4303,5 @@ int LONG_CALL BattleSetup_GetWildTransitionEffect(struct BattleSetup *setup);
 int LONG_CALL BattleSetup_GetWildBattleMusic(struct BattleSetup *setup);
 
 BOOL LONG_CALL ShouldPreventMonCapture(struct BattleSystem *bsys);
-void LONG_CALL PrintTotemDodgeMessage(struct tcb_skill_intp_work *data, struct MsgData *msgData);
 
 #endif // BATTLE_H

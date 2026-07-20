@@ -1,8 +1,12 @@
 #include "../include/types.h"
 #include "../include/config.h"
 #include "../include/debug.h"
+#include "../include/battle.h"
 #include "../include/sound.h"
+#include "../include/trainer_data.h"
 
+#include "../include/constants/sndseq.h"
+#include "../include/constants/trainerclass.h"
 
 BOOL LONG_CALL GF_Snd_LoadSeq(int seqNo) {
     BOOL ret;
@@ -233,4 +237,42 @@ int LONG_CALL NNSi_SndArcLoadBank(int bankNo, u32 loadFlag, void *heap, BOOL bSe
 #endif // DEBUG_SOUND_SBNK_LOADS
 
     return NNS_SND_ARC_LOAD_SUCCESS;
+}
+
+void LONG_CALL PlayTrainerVictoryBGM(struct TrainerData *trainer) {
+    switch (trainer->data.trainerClass) {
+        case TRAINERCLASS_LEADER_FALKNER:
+        case TRAINERCLASS_LEADER_BUGSY:
+        case TRAINERCLASS_LEADER_WHITNEY:
+        case TRAINERCLASS_LEADER_MORTY:
+        case TRAINERCLASS_LEADER_PRYCE:
+        case TRAINERCLASS_LEADER_JASMINE:
+        case TRAINERCLASS_LEADER_CHUCK:
+        case TRAINERCLASS_LEADER_CLAIR:
+        case TRAINERCLASS_CHAMPION:
+        case TRAINERCLASS_ELITE_FOUR_WILL:
+        case TRAINERCLASS_ELITE_FOUR_KAREN:
+        case TRAINERCLASS_ELITE_FOUR_KOGA:
+        case TRAINERCLASS_ELITE_FOUR_BRUNO:
+        case TRAINERCLASS_LEADER_BROCK:
+        case TRAINERCLASS_LEADER_MISTY:
+        case TRAINERCLASS_LEADER_LT_SURGE:
+        case TRAINERCLASS_LEADER_ERIKA:
+        case TRAINERCLASS_LEADER_JANINE:
+        case TRAINERCLASS_LEADER_SABRINA:
+        case TRAINERCLASS_LEADER_BLAINE:
+        case TRAINERCLASS_LEADER_BLUE:
+            PlayBGM(SEQ_GS_WIN3);
+            break;
+        case TRAINERCLASS_TOWER_TYCOON:
+        case TRAINERCLASS_HALL_MATRON:
+        case TRAINERCLASS_FACTORY_HEAD:
+        case TRAINERCLASS_ARCADE_STAR:
+        case TRAINERCLASS_CASTLE_VALET:
+            PlayBGM(SEQ_GS_WINBRAIN);
+            break;
+        default:
+            PlayBGM(SEQ_GS_WIN1);
+            break;
+    }
 }

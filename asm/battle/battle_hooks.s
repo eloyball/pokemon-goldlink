@@ -771,7 +771,17 @@ GetPokemon_BallBlocked_hook:
 mov r0, r4 // data is in r4, move to r0 for positional argument into PrintBallBlockedMessage
 bl PrintBallBlockedMessage // (data, msgData)
 ldr r0, [r4, #0x28] // overwrite r0 with our current state, as it has already been set, to prevent it from getting scrambled.
-ldr r5, = 0x022470CA | 1 // near end of case. r0 and r4 are still in use
+ldr r5, =0x022470CA | 1 // near end of case. r0 and r4 are still in use
 bx r5
+
+.pool
+
+.global PlayerTrainerVictoryBGM_hook
+PlayerTrainerVictoryBGM_hook:
+mov r1, #1 // BATTLER_ENEMY
+bl BattleSystem_GetTrainer // Replicate instructions. This could be done in the following function but this makes it more clear.
+bl PlayTrainerVictoryBGM // (trainer)
+ldr r0, =0x0224DB3C | 1 // Immediately after the switch case. No registers are in use.
+bx r0
 
 .pool
