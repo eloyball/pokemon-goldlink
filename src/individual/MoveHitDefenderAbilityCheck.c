@@ -395,6 +395,14 @@ BOOL MoveHitDefenderAbilityCheckInternal(struct BattleSystem *bw, struct BattleS
             seq_no[0] = SUB_SEQ_COTTON_DOWN;
             ret = TRUE;
         }
+    } else if (MoldBreakerAbilityCheck(sp, sp->attack_client, sp->defence_client, ABILITY_PERISH_BODY)) {
+        //defender does need to be alive
+        if ((sp->oneSelfFlag[sp->defence_client].physical_damage || sp->oneSelfFlag[sp->defence_client].special_damage)
+            && (IsContactBeingMade(GetBattlerAbility(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->defence_client), sp->current_move_index, sp->moveTbl[sp->current_move_index].flag))){
+            sp->addeffect_type = ADD_EFFECT_PRINT_WORK_ABILITY;
+            seq_no[0] = SUB_SEQ_START_PERISH_SONG;
+            ret = TRUE;
+        }
     }
 
     return ret;
