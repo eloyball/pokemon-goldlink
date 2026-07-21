@@ -106,14 +106,14 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow used Ice Shard!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow used Aqua Jet!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Cursola's Perish Body" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokémon will faint in three turns!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokemon will faint in three turns!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Cursola's Perish Body" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokémon will faint in three turns!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cursola’s perish count fell to 3!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow’s perish count fell to 3!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Ekans’s perish count fell to 3!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokemon will faint in three turns!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow's perish count fell to 3!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cursola's perish count fell to 3!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Ekans's perish count fell to 3!" },
     }
 }
 END_TEST
