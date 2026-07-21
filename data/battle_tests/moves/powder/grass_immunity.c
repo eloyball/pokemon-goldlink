@@ -83,7 +83,7 @@ BEGIN_TEST
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Vivillon used Powder!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "t doesn’t affect the opposing Scovillain..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect the opposing Scovillain..." },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Scovillain used Ember!" },
         { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_PLAYER_FIRST, .expectationValue.hpTaken = { 84, 86, 86, 86, 90, 90, 90, 92, 92, 92, 96, 96, 96, 98, 98, 102 } },
     },
