@@ -1,4 +1,5 @@
 // Test: Perish Body - trigger on contact, not blocked by Soundproof
+// https://www.youtube.com/watch?v=k7tufD3mu-M
 #include "../../battle_tests.h"
 BEGIN_TEST
 {
@@ -21,11 +22,11 @@ BEGIN_TEST
         },
         {
             .species = SPECIES_ABOMASNOW,
-            .level = 50,
-            .form = 1,
+            .level = 20,
+            .form = 0,
             .ability = ABILITY_SOUNDPROOF,
             .item = ITEM_NONE,
-            .moves = { MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+            .moves = { MOVE_ICE_SHARD, MOVE_NONE, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = 0,
             .condition2 = 0,
@@ -50,7 +51,7 @@ BEGIN_TEST
                     },
         {
             .species = SPECIES_EKANS,
-            .level = 50,
+            .level = 20,
             .form = 0,
             .ability = ABILITY_SHED_SKIN,
             .item = ITEM_NONE,
@@ -105,7 +106,14 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "All Pokemon that heard the song will faint in three turns!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow used Ice Shard!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Cursola's Perish Body" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokémon will faint in three turns!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Cursola's Perish Body" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Both Pokémon will faint in three turns!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Cursola’s perish count fell to 3!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Abomasnow’s perish count fell to 3!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Ekans’s perish count fell to 3!" },
     }
 }
 END_TEST

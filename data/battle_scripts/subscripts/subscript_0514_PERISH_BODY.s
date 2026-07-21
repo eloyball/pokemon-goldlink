@@ -5,7 +5,7 @@
 _000:
     UpdateVar OPCODE_SET, BSCRIPT_VAR_SIDE_EFFECT_TYPE, SIDE_EFFECT_TYPE_ABILITY
     TryPerishSong _045
-    PlayBattleAnimation BATTLER_CATEGORY_DEFENDER, BATTLE_ANIMATION_PERISH_SONG
+    AbilityPopup BATTLER_CATEGORY_DEFENDER
     // All Pokémon hearing the song will faint in three turns!
     PrintMessage 822, TAG_NONE
     Wait 

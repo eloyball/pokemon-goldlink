@@ -5786,6 +5786,12 @@ BOOL BtlCmd_TryPerishSong(struct BattleSystem *bsys, struct BattleStruct *ctx)
             || (ctx->addeffect_type != ADD_EFFECT_ABILITY && MoldBreakerAbilityCheck(ctx, ctx->attack_client, battlerId, ABILITY_SOUNDPROOF) == TRUE)) {
             cnt++;
         } else {
+            if (ctx->addeffect_type == ADD_EFFECT_ABILITY
+                && battlerId != ctx->attack_client
+                && battlerId != ctx->defence_client)
+            {
+                continue;
+            }
             ctx->battlemon[battlerId].effect_of_moves |= MOVE_EFFECT_FLAG_PERISH_SONG_ACTIVE;
             ctx->battlemon[battlerId].moveeffect.perishSongTurns = 3;
         }
