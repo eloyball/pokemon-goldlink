@@ -778,8 +778,7 @@ bx r5
 
 .global PlayerTrainerVictoryBGM_hook
 PlayerTrainerVictoryBGM_hook:
-mov r1, #1 // BATTLER_ENEMY
-bl BattleSystem_GetTrainer // Replicate instructions. This could be done in the following function but this makes it more clear.
+// No need to preserve original instructions since we are replicating the switch case in C.
 bl PlayTrainerVictoryBGM // (trainer)
 ldr r0, =0x0224DB3C | 1 // Immediately after the switch case. No registers are in use.
 bx r0

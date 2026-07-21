@@ -15,6 +15,10 @@
 #include "../../include/q412.h"
 #include "../../include/types.h"
 
+#include "../../include/trainer_data.h"
+#include "../../include/constants/sndseq.h"
+#include "../../include/constants/trainerclass.h"
+
 typedef struct
 {
     u8 numerator;
@@ -4455,5 +4459,44 @@ void LONG_CALL PrintBallBlockedMessage(struct tcb_skill_intp_work *data)
         data->work[1] = 30;
         data->seq_no = isTrainerBattle ? 27 : 28; // STATE_GET_POKEMON_DONE_NO_STEALING
         // debug_printf("Case: %d\n", data->seq_no);
+    }
+}
+
+// Modifying this switch case allows you to assign any music to victory over a specific trainer class.
+void LONG_CALL PlayTrainerVictoryBGM(struct TrainerData *trainer) {
+    switch (trainer->data.trainerClass) {
+        case TRAINERCLASS_LEADER_FALKNER:
+        case TRAINERCLASS_LEADER_BUGSY:
+        case TRAINERCLASS_LEADER_WHITNEY:
+        case TRAINERCLASS_LEADER_MORTY:
+        case TRAINERCLASS_LEADER_PRYCE:
+        case TRAINERCLASS_LEADER_JASMINE:
+        case TRAINERCLASS_LEADER_CHUCK:
+        case TRAINERCLASS_LEADER_CLAIR:
+        case TRAINERCLASS_CHAMPION:
+        case TRAINERCLASS_ELITE_FOUR_WILL:
+        case TRAINERCLASS_ELITE_FOUR_KAREN:
+        case TRAINERCLASS_ELITE_FOUR_KOGA:
+        case TRAINERCLASS_ELITE_FOUR_BRUNO:
+        case TRAINERCLASS_LEADER_BROCK:
+        case TRAINERCLASS_LEADER_MISTY:
+        case TRAINERCLASS_LEADER_LT_SURGE:
+        case TRAINERCLASS_LEADER_ERIKA:
+        case TRAINERCLASS_LEADER_JANINE:
+        case TRAINERCLASS_LEADER_SABRINA:
+        case TRAINERCLASS_LEADER_BLAINE:
+        case TRAINERCLASS_LEADER_BLUE:
+            PlayBGM(SEQ_GS_WIN3);
+            break;
+        case TRAINERCLASS_TOWER_TYCOON:
+        case TRAINERCLASS_HALL_MATRON:
+        case TRAINERCLASS_FACTORY_HEAD:
+        case TRAINERCLASS_ARCADE_STAR:
+        case TRAINERCLASS_CASTLE_VALET:
+            PlayBGM(SEQ_GS_WINBRAIN);
+            break;
+        default:
+            PlayBGM(SEQ_GS_WIN1);
+            break;
     }
 }
