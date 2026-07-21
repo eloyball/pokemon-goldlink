@@ -26,7 +26,7 @@ BEGIN_TEST
             .form = 0,
             .ability = ABILITY_SOUNDPROOF,
             .item = ITEM_NONE,
-            .moves = { MOVE_ICE_SHARD, MOVE_NONE, MOVE_NONE, MOVE_NONE },
+            .moves = { MOVE_AQUA_JET, MOVE_NONE, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = 0,
             .condition2 = 0,

@@ -7,7 +7,7 @@ _000:
     TryPerishSong _045
     AbilityPopup BATTLER_CATEGORY_DEFENDER
     // All Pokémon hearing the song will faint in three turns!
-    PrintMessage 822, TAG_NONE
+    PrintMessage 1571, TAG_NONE
     Wait 
     WaitButtonABTime 30
 

@@ -400,7 +400,7 @@ BOOL MoveHitDefenderAbilityCheckInternal(struct BattleSystem *bw, struct BattleS
         if ((sp->oneSelfFlag[sp->defence_client].physical_damage || sp->oneSelfFlag[sp->defence_client].special_damage)
             && (IsContactBeingMade(GetBattlerAbility(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->attack_client), HeldItemHoldEffectGet(sp, sp->defence_client), sp->current_move_index, sp->moveTbl[sp->current_move_index].flag))){
             sp->addeffect_type = ADD_EFFECT_PRINT_WORK_ABILITY;
-            seq_no[0] = SUB_SEQ_START_PERISH_SONG;
+            seq_no[0] = SUB_SEQ_PERISH_BODY;
             ret = TRUE;
         }
     }
