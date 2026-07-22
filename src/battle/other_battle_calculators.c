@@ -2834,6 +2834,8 @@ int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *c
 {
     if ((ctx->moveTbl[move].target == RANGE_ADJACENT_OPPONENTS)
         || (ctx->moveTbl[move].target == RANGE_ALL_ADJACENT)
+        || (move == MOVE_HOWL)
+        || (move == MOVE_LIFE_DEW)
         || (move == MOVE_EXPANDING_FORCE
             && ctx->terrainOverlay.numberOfTurnsLeft > 0
             && ctx->terrainOverlay.type == PSYCHIC_TERRAIN
@@ -2846,6 +2848,13 @@ int LONG_CALL IsMoveSpreadMove(struct BattleSystem *bsys, struct BattleStruct *c
 int LONG_CALL IsTargetFoesAndAlly(struct BattleSystem *bsys, struct BattleStruct *ctx, int move)
 {
     if (ctx->moveTbl[move].target == RANGE_ALL_ADJACENT) {
+        return BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI);
+    }
+    return FALSE;
+}
+int LONG_CALL IsTargetSelfAndAlly(struct BattleSystem *bsys, struct BattleStruct *ctx UNUSED, int move)
+{
+    if (move == MOVE_HOWL || move == MOVE_LIFE_DEW) {
         return BattleTypeGet(bsys) & (BATTLE_TYPE_DOUBLE | BATTLE_TYPE_MULTI);
     }
     return FALSE;
@@ -2869,21 +2878,24 @@ int LONG_CALL CanGetNextDefender(struct BattleSystem *bsys, struct BattleStruct 
         switch (ctx->clientLoopForSpreadMoves) {
         case SPREAD_MOVE_LOOP_ALLY:
             ctx->clientLoopForSpreadMoves++;
-            if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) && IsValidMoveTarget(ctx, BATTLER_ALLY(ctx->attack_client))) {
+            if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || IsTargetSelfAndAlly(bsys, ctx, ctx->current_move_index))
+                && IsValidMoveTarget(ctx, BATTLER_ALLY(ctx->attack_client))) {
                 ctx->defence_client = BATTLER_ALLY(ctx->attack_client);
                 return TRUE;
             }
             FALLTHROUGH;
         case SPREAD_MOVE_LOOP_OPPONENT_LEFT:
             ctx->clientLoopForSpreadMoves++;
-            if (IsValidMoveTarget(ctx, BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client))) {
+            if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)) 
+                && IsValidMoveTarget(ctx, BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client))) {
                 ctx->defence_client = BATTLER_OPPONENT_SIDE_LEFT(ctx->attack_client);
                 return TRUE;
             }
             FALLTHROUGH;
         case SPREAD_MOVE_LOOP_OPPONENT_RIGHT:
             ctx->clientLoopForSpreadMoves++;
-            if (IsValidMoveTarget(ctx, BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client))) {
+            if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)) 
+                && IsValidMoveTarget(ctx, BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client))) {
                 ctx->defence_client = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
                 return TRUE;
             }
@@ -2904,7 +2916,7 @@ void LONG_CALL SetupCurrentMoveContext(struct BattleSystem *bsys, struct BattleS
             int oppRight = BATTLER_OPPONENT_SIDE_RIGHT(ctx->attack_client);
             int ally = BATTLER_ALLY(ctx->attack_client);
 
-            if (IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)
+            if ((IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index) || IsTargetSelfAndAlly(bsys, ctx, ctx->current_move_index))
                 && IsValidMoveTarget(ctx, ally)) {
                 if (CheckSubstitute(ctx, ally) == TRUE) {
                     ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = ally;
@@ -2914,7 +2926,8 @@ void LONG_CALL SetupCurrentMoveContext(struct BattleSystem *bsys, struct BattleS
                 }
             }
 
-            if (IsValidMoveTarget(ctx, oppLeft)) {
+            if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)) 
+                && IsValidMoveTarget(ctx, oppLeft)) {
                 if (CheckSubstitute(ctx, oppLeft) == TRUE) {
                     ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = oppLeft;
                     ctx->moveContext.hitSubstituteCount++;
@@ -2924,7 +2937,8 @@ void LONG_CALL SetupCurrentMoveContext(struct BattleSystem *bsys, struct BattleS
                 }
             }
 
-            if (IsValidMoveTarget(ctx, oppRight)) {
+            if ((IsTargetFoes(bsys, ctx, ctx->current_move_index) || IsTargetFoesAndAlly(bsys, ctx, ctx->current_move_index)) 
+                && IsValidMoveTarget(ctx, oppRight)) {
                 if (CheckSubstitute(ctx, oppRight) == TRUE) {
                     ctx->moveContext.hitSubstitute[ctx->moveContext.hitSubstituteCount] = oppRight;
                     ctx->moveContext.hitSubstituteCount++;
