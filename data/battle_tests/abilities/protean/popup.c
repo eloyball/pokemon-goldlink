@@ -85,12 +85,12 @@ BEGIN_TEST
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja’s Protean" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja’s Protean made it the Water type!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean made it the Water type!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja used Surf!" },
 #if PROTEAN_GENERATION < 9
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja’s Protean" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja’s Protean made it the Poison type!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja's Protean made it the Poison type!" },
 #endif
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Greninja used Toxic!" },
     }
