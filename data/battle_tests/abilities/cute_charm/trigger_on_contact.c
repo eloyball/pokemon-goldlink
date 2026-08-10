@@ -27,7 +27,7 @@ BEGIN_TEST
         { .species = SPECIES_NONE }
     },
     .enemyParty = { {
-                        .species = SPECIES_NIDORAN_M,
+                        .species = SPECIES_NIDORINO,
                         .level = 50,
                         .form = 0,
                         .ability = ABILITY_CUTE_CHARM,
