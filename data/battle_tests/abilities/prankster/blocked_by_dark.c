@@ -105,14 +105,17 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect Incineroar..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Incineroar..." },
         { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "Pointed stones float in the air" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect Incineroar..." },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Litten’s Defense fell!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Sableye’s HP is full!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Incineroar..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Litten's Defense fell!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Sableye's HP is full!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "A tailwind started blowing on the opposing side!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "rose sharply!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Gravity intensified!" },
+        //{ .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Incineroar..." },
+        //{ .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Sableye became confused!" },
+        //{ .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Litten became confused!" },//TODO add once more than 8 expectations are supported
     }
 }
 END_TEST
