@@ -20,7 +20,7 @@ BEGIN_TEST
             .moveEffectFlags = 0,
         },
         {
-            .species = SPECIES_AGRON,
+            .species = SPECIES_AGGRON,
             .level = 50,
             .form = 0,
             .ability = ABILITY_STURDY,
@@ -96,7 +96,7 @@ BEGIN_TEST
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Archaludon used Solar Beam!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Archaludon became fully charged due to its Power Herb!" },
-        { .expectationType = EXPECTATION_TYPE_HP_BAR, .expectationValue.hpTaken = { 43, 43, 44, 44, 45, 45, 46, 46, 47, 47, 48, 48, 49, 49, 50, 51 } },
+        { .expectationType = EXPECTATION_TYPE_HP_BAR, .expectationValue.hpTaken = { 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97 } },
     }
 }
 END_TEST

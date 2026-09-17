@@ -1,4 +1,4 @@
-// Test: Will O Wisp - 
+// Test: Will O Wisp - No effectiveness messages
 #include "../../battle_tests.h"
 BEGIN_TEST {
     .battleType = BATTLE_TYPE_DOUBLES,
@@ -104,13 +104,13 @@ BEGIN_TEST {
         } },
     .expectations = {
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Celebi used Will-O-Wisp!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Rolycoly’s Flash Fire" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The power of Rolycoly’s Fire-type moves rose!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Rolycoly's Flash Fire" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The power of Rolycoly's Fire-type moves rose!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Ponyta used Will-O-Wisp!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "It’s not very effective..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "It's not very effective..." },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Onix used Will-O-Wisp!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn’t affect Ponyta..." },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "It doesn't affect Ponyta..." },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Rolycoly used Will-O-Wisp!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "It’s super effective!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "It's super effective!" },
     },
 } END_TEST
