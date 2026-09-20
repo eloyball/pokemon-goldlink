@@ -1,4 +1,4 @@
-// Test: Stomping Tantrum - Doubles
+// Test: Stomping Tantrum - Double Damage after Move Failure
 #include "../../battle_tests.h"
 BEGIN_TEST {
     .battleType = BATTLE_TYPE_DOUBLES,
@@ -7,12 +7,12 @@ BEGIN_TEST {
     .terrain = TERRAIN_NONE,
     .playerParty = {
         {
-            .species = SPECIES_TURTWIG,
-            .level = 5,
+            .species = SPECIES_TORTERRA,
+            .level = 30,
             .form = 0,
             .ability = ABILITY_THICK_FAT,
-            .item = ITEM_NONE,
-            .moves = { MOVE_STOMPING_TANTRUM, MOVE_REST, MOVE_NONE, MOVE_NONE },
+            .item = ITEM_IRON_BALL,
+            .moves = { MOVE_STOMPING_TANTRUM, MOVE_SLEEP_TALK, MOVE_NONE, MOVE_NONE },
             .hp = FULL_HP,
             .status = 0,
             .condition2 = 0,
@@ -20,7 +20,7 @@ BEGIN_TEST {
         },
         {
             .species = SPECIES_TORTERRA,
-            .level = 5,
+            .level = 30,
             .form = 0,
             .ability = ABILITY_THICK_FAT,
             .item = ITEM_NONE,
@@ -37,7 +37,7 @@ BEGIN_TEST {
     },
     .enemyParty = {
         {
-            .species = SPECIES_WARTORTLE,
+            .species = SPECIES_BLASTOISE,
             .level = 30,
             .form = 0,
             .ability = ABILITY_TORRENT,
@@ -67,8 +67,8 @@ BEGIN_TEST {
     },
     .playerScript = {
         {
-            { ACTION_MOVE_SLOT_2, BATTLER_PLAYER_FIRST },
-            { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_FIRST },
+            { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_FIRST },
+            { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_FIRST },
             { ACTION_NONE, 0 },
             { ACTION_NONE, 0 },
             { ACTION_NONE, 0 },
@@ -76,8 +76,8 @@ BEGIN_TEST {
             { ACTION_NONE, 0 },
         },
         {
-            { ACTION_MOVE_SLOT_2, BATTLER_PLAYER_SECOND },
-            { ACTION_MOVE_SLOT_1, BATTLER_PLAYER_SECOND },
+            { ACTION_MOVE_SLOT_1, BATTLER_ENEMY_SECOND },
+            { ACTION_MOVE_SLOT_2, BATTLER_ENEMY_SECOND },
             { ACTION_NONE, 0 },
             { ACTION_NONE, 0 },
             { ACTION_NONE, 0 },
@@ -108,6 +108,11 @@ BEGIN_TEST {
         },
     },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Turtwig used Stomping Tantrum!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Torterra used Sleep Talk!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "But it failed!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Torterra used Stomping Tantrum!" },
+        { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_SECOND, .expectationValue.hpTaken = { 30, 30, 30, 31, 31, 31, 31, 33, 33, 33, 33, 34, 34, 34, 34, 36) } },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Torterra used Stomping Tantrum!" },        
+        { .expectationType = EXPECTATION_TYPE_HP_BAR, .battlerIDOrPartySlot = BATTLER_ENEMY_FIRST, .expectationValue.hpTaken = { 58, 58, 60, 60, 60, 61, 61, 63, 63, 64, 64, 66, 66, 67, 67, 69 } }, // boosted
     },
 } END_TEST
