@@ -83,7 +83,11 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE_CONTAINS, .expectationValue.message = "mega" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Floette's Floettite is reacting to the Key Stone!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Floette has Mega Evolved into Mega Floette!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Floette's Fairy Aura" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Floette is radiating a fairy aura!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "Floette's Floettite" },
     }
 }
 END_TEST
