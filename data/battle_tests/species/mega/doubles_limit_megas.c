@@ -105,11 +105,11 @@ BEGIN_TEST
             { ACTION_NONE, 0 },
         } },
     .expectations = {
-        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Darkrai’s Darkranite is reacting to the Key Stone!" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Darkrai's Darkranite is reacting to the Key Stone!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "Darkrai has Mega Evolved into Mega Darkrai!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Heatran's Heatranite is reacting to the Key Stone!" },
         { .expectationType = EXPECTATION_TYPE_MESSAGE, .expectationValue.message = "The opposing Heatran has Mega Evolved into Mega Heatran!" },
-        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "Slowbro’s Slowbronite" },
+        { .expectationType = EXPECTATION_TYPE_MESSAGE_DOES_NOT_CONTAIN, .expectationValue.message = "Slowbro's Slowbronite" },
     }
 }
 END_TEST
