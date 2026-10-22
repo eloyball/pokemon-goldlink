@@ -9,7 +9,7 @@ use tokio::time::interval;
 
 use coop_relay::protocol::{
     ClientToServerPacket, PlayerState, AUTO_PLAYER_ID, COOP_MAGIC, PROTOCOL_VERSION,
-    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_STATUS_OK,
+    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_SYNC, ROOM_STATUS_OK,
 };
 
 const STRESS_ROOM: [u8; 6] = *b"STRESS";
@@ -17,7 +17,6 @@ const STRESS_HOST_TOKEN: u32 = 0xCAFE_BEEF;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Remove any previous STRESS.json save file so repeated runs start fresh
     let _ = fs::remove_file("campaigns/STRESS.json");
 
     let server_addr: SocketAddr = "127.0.0.1:7777".parse()?;
@@ -40,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sockets.push(UdpSocket::bind("127.0.0.1:0").await?);
     }
 
-    // Have Client 0 create the room with target_party_size = 6 before joiners start
+    // 1. Client 0 creates the room with party_size = 6 in Bedroom (Map 4)
     let init_pkt = ClientToServerPacket {
         magic: COOP_MAGIC,
         version: PROTOCOL_VERSION,
@@ -94,8 +93,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut send_timestamps = std::collections::HashMap::new();
             let mut buf = [0u8; 512];
 
-            let action = if client_id == 0 {
-                ROOM_ACTION_CREATE
+            let mut current_action = if client_id == 0 {
+                ROOM_ACTION_SYNC
             } else {
                 ROOM_ACTION_JOIN
             };
@@ -111,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             magic: COOP_MAGIC,
                             version: PROTOCOL_VERSION,
                             room_code: STRESS_ROOM,
-                            room_action: action,
+                            room_action: current_action,
                             requested_player_id: AUTO_PLAYER_ID,
                             client_ready: 1,
                             pad_header: 0,
@@ -151,6 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     Ok((len, _)) = socket.recv_from(&mut buf) => {
                         if len >= 320 && buf[12] == ROOM_STATUS_OK {
+                            current_action = ROOM_ACTION_SYNC;
                             total_recv_clone.fetch_add(1, Ordering::Relaxed);
                             if let Some(&sent_time) = send_timestamps.get(&seq) {
                                 let rtt = sent_time.elapsed().as_micros() as u64;
@@ -195,8 +195,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Maximum Spike RTT                 : {max_rtt:.3} ms");
     println!("------------------------------------------------------------");
 
-    assert!(sent > 0 && recv >= 1750, "All 6 clients must receive 30 Hz broadcasts");
-    assert!(avg_rtt < 35.0, "Average RTT must stay within the 30 Hz tick window (~33.3ms)");
+    assert!(
+        sent > 0 && recv >= 1750,
+        "All 6 clients must receive 30 Hz broadcasts"
+    );
+    assert!(
+        avg_rtt < 35.0,
+        "Average RTT must stay within the 30 Hz tick window (~33.3ms)"
+    );
 
     Ok(())
 }

@@ -5,11 +5,12 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
-pub const DEFAULT_ROOM_CODE: [u8; 6] = *b"JOHTO1";
 
-// Client Room Intent Actions
-pub const ROOM_ACTION_JOIN: u8 = 0;
+// Client Room Actions (Byte 12 of ClientToServerPacket)
 pub const ROOM_ACTION_CREATE: u8 = 1;
+pub const ROOM_ACTION_JOIN: u8 = 2;
+pub const ROOM_ACTION_SYNC: u8 = 3;
+pub const ROOM_ACTION_LEAVE: u8 = 4;
 
 // Server Status & Error Codes (Byte 12 of ServerToClientPacket)
 pub const ROOM_STATUS_OK: u8 = 0;
@@ -17,6 +18,8 @@ pub const ROOM_STATUS_ERR_NOT_FOUND: u8 = 1;
 pub const ROOM_STATUS_ERR_ALREADY_EXISTS: u8 = 2;
 pub const ROOM_STATUS_ERR_LOCKED: u8 = 3;
 pub const ROOM_STATUS_ERR_FULL: u8 = 4;
+pub const ROOM_STATUS_ERR_INVALID_CODE: u8 = 5;
+pub const ROOM_STATUS_ERR_MIDGAME_SAVE: u8 = 6;
 
 // Wire Payload Sizes (in bytes)
 pub const PLAYER_STATE_SIZE: usize = 32;
@@ -48,21 +51,22 @@ impl fmt::Display for ProtocolError {
 
 impl std::error::Error for ProtocolError {}
 
-pub fn sanitize_room_code(raw: [u8; 6]) -> [u8; 6] {
-    let mut out = DEFAULT_ROOM_CODE;
+/// Strictly validates that a 6-byte room code consists of 6 ASCII alphanumeric characters (A-Z, 0-9).
+pub fn validate_room_code(raw: [u8; 6]) -> Result<[u8; 6], u8> {
+    let mut out = [0u8; 6];
     for (i, b) in raw.into_iter().enumerate() {
         let c = (b as char).to_ascii_uppercase();
-        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+        if c.is_ascii_uppercase() || c.is_ascii_digit() {
             out[i] = c as u8;
-        } else if b == 0 {
-            out[i] = b'_';
+        } else {
+            return Err(ROOM_STATUS_ERR_INVALID_CODE);
         }
     }
-    out
+    Ok(out)
 }
 
 pub fn room_code_to_string(code: &[u8; 6]) -> String {
-    String::from_utf8_lossy(code).trim_end_matches('_').to_string()
+    String::from_utf8_lossy(code).to_string()
 }
 
 /// Matches `CoopPlayerState` (32 bytes) in `hg-engine/include/coop_sync.h`
@@ -150,15 +154,15 @@ impl PlayerState {
 /// Matches `CoopFollowerState` (24 bytes) in `hg-engine/include/coop_sync.h`
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FollowerState {
-    pub species: u16,    // 0x00
-    pub form: u16,       // 0x02
-    pub is_shiny: u8,    // 0x04
-    pub gender: u8,      // 0x05
-    pub x: i16,          // 0x06
-    pub y: i16,          // 0x08
-    pub direction: u8,   // 0x0A
-    pub is_visible: u8,  // 0x0B
-    pub pad: [u8; 12],   // 0x0C..0x17
+    pub species: u16,   // 0x00
+    pub form: u16,      // 0x02
+    pub is_shiny: u8,   // 0x04
+    pub gender: u8,     // 0x05
+    pub x: i16,         // 0x06
+    pub y: i16,         // 0x08
+    pub direction: u8,  // 0x0A
+    pub is_visible: u8, // 0x0B
+    pub pad: [u8; 12],  // 0x0C..0x17
 }
 
 impl FollowerState {
@@ -205,11 +209,11 @@ pub struct ClientToServerPacket {
     pub magic: u32,                // 0..4
     pub version: u16,              // 4..6
     pub room_code: [u8; 6],        // 6..12
-    pub room_action: u8,           // 12 (0 = Join, 1 = Create)
+    pub room_action: u8,           // 12 (1 = Create, 2 = Join, 3 = Sync, 4 = Leave)
     pub requested_player_id: u8,   // 13 (0..5 or 0xFF)
-    pub client_ready: u8,          // 14 (1 = Ready to lock party)
+    pub client_ready: u8,          // 14
     pub pad_header: u8,            // 15
-    pub host_token: u32,           // 16..20 (Host secret token)
+    pub host_token: u32,           // 16..20
     pub badge_mask_local: u16,     // 20..22
     pub sequence: u32,             // 22..26
     pub heartbeat_rom: u32,        // 26..30
@@ -222,7 +226,7 @@ impl ClientToServerPacket {
         let mut buf = [0u8; CLIENT_PACKET_SIZE];
         buf[0..4].copy_from_slice(&self.magic.to_le_bytes());
         buf[4..6].copy_from_slice(&self.version.to_le_bytes());
-        buf[6..12].copy_from_slice(&sanitize_room_code(self.room_code));
+        buf[6..12].copy_from_slice(&self.room_code);
         buf[12] = self.room_action;
         buf[13] = self.requested_player_id;
         buf[14] = self.client_ready;
@@ -261,7 +265,7 @@ impl ClientToServerPacket {
         Ok(Self {
             magic,
             version,
-            room_code: sanitize_room_code(raw_room),
+            room_code: raw_room,
             room_action: buf[12],
             requested_player_id: buf[13],
             client_ready: buf[14],
@@ -276,7 +280,7 @@ impl ClientToServerPacket {
     }
 }
 
-/// Sent by Rust Relay Server -> BizHawk C# Plugin at 30 Hz (320 bytes)
+/// Sent by Rust Relay Server -> BizHawk C# Plugin (320 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerToClientPacket {
     pub magic: u32,
@@ -411,6 +415,19 @@ mod tests {
         let bytes = pkt.encode_le();
         let decoded = ClientToServerPacket::decode_le(&bytes).expect("valid decode");
         assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_strict_room_code_validation() {
+        assert_eq!(validate_room_code(*b"johTo9"), Ok(*b"JOHTO9"));
+        assert_eq!(
+            validate_room_code(*b"JOHT_1"),
+            Err(ROOM_STATUS_ERR_INVALID_CODE)
+        );
+        assert_eq!(
+            validate_room_code([b'A', b'B', b'C', 0, 0, 0]),
+            Err(ROOM_STATUS_ERR_INVALID_CODE)
+        );
     }
 
     #[test]
