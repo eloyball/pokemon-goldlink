@@ -5,17 +5,18 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::protocol::{
     room_code_to_string, sanitize_room_code, ClientToServerPacket, FollowerState, PlayerState,
     ServerToClientPacket, AUTO_PLAYER_ID, COOP_MAGIC, DEFAULT_ROOM_CODE, MAX_PLAYERS,
-    PROTOCOL_VERSION, REMOTE_SLOTS, SERVER_PACKET_SIZE,
+    PROTOCOL_VERSION, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
+    ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
+    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
 };
 
 const MAX_NPCS_BEFORE_FOLLOWER_CULL: u8 = 26;
 
-/// Persisted to `campaigns/<ROOM>.json` once all players ready up at the Bedroom Start Gate.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredTrainer {
     pub slot_id: u8,
@@ -27,6 +28,7 @@ pub struct RegisteredTrainer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CampaignSaveFile {
     pub room_code: String,
+    pub host_token: u32,
     pub campaign_started: bool,
     pub expected_party_size: u8,
     pub roster: Vec<RegisteredTrainer>,
@@ -47,12 +49,13 @@ pub struct ConnectedPlayer {
 
 pub struct LobbyState {
     room_code: [u8; 6],
+    host_token: u32,
     slots: [Option<ConnectedPlayer>; MAX_PLAYERS],
     campaign_started: bool,
     roster: Vec<RegisteredTrainer>,
+    target_party_size: usize,
     save_dir: Option<PathBuf>,
     client_timeout: Duration,
-    min_players_for_sync: usize,
     server_tick: u32,
     inspect_all_packets: bool,
 }
@@ -60,13 +63,14 @@ pub struct LobbyState {
 impl LobbyState {
     pub fn new(
         client_timeout: Duration,
-        min_players_for_sync: usize,
+        default_party_size: usize,
         inspect_all_packets: bool,
     ) -> Self {
         Self::with_room(
             DEFAULT_ROOM_CODE,
+            0,
             client_timeout,
-            min_players_for_sync,
+            default_party_size,
             inspect_all_packets,
             None,
         )
@@ -74,25 +78,31 @@ impl LobbyState {
 
     pub fn with_room(
         room_code: [u8; 6],
+        host_token: u32,
         client_timeout: Duration,
-        min_players_for_sync: usize,
+        default_party_size: usize,
         inspect_all_packets: bool,
         save_dir: Option<PathBuf>,
     ) -> Self {
         let clean_code = sanitize_room_code(room_code);
         let mut lobby = Self {
             room_code: clean_code,
+            host_token,
             slots: Default::default(),
             campaign_started: false,
             roster: Vec::new(),
+            target_party_size: default_party_size.clamp(2, MAX_PLAYERS),
             save_dir,
             client_timeout,
-            min_players_for_sync: min_players_for_sync.clamp(1, MAX_PLAYERS),
             server_tick: 0,
             inspect_all_packets,
         };
         lobby.try_load_campaign_from_disk();
         lobby
+    }
+
+    pub fn host_token(&self) -> u32 {
+        self.host_token
     }
 
     pub fn is_campaign_started(&self) -> bool {
@@ -103,13 +113,21 @@ impl LobbyState {
         if self.campaign_started {
             self.roster.len()
         } else {
-            self.slots.iter().filter(|s| s.is_some()).count()
+            self.target_party_size
         }
     }
 
-    pub fn handle_client_packet(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Option<u8> {
+    pub fn handle_client_packet(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Result<u8, u8> {
         let now = Instant::now();
         let trainer_id = pkt.local_player.trainer_id;
+
+        if !self.campaign_started
+            && pkt.local_player.target_party_size >= 2
+            && pkt.host_token == self.host_token
+        {
+            self.target_party_size =
+                (pkt.local_player.target_party_size as usize).clamp(2, MAX_PLAYERS);
+        }
 
         let slot_idx = self.resolve_or_assign_slot(addr, pkt.requested_player_id, trainer_id)?;
         let room_str = room_code_to_string(&self.room_code);
@@ -125,7 +143,7 @@ impl LobbyState {
             if pkt.sequence < existing.last_sequence
                 && existing.last_sequence.wrapping_sub(pkt.sequence) < 10_000
             {
-                return Some(slot_idx as u8);
+                return Ok(slot_idx as u8);
             }
 
             let old = &existing.state;
@@ -206,10 +224,8 @@ impl LobbyState {
             });
         }
 
-        // Check if Bedroom Start Gate conditions are met to lock the roster
         self.check_and_lock_bedroom_gate();
-
-        Some(slot_idx as u8)
+        Ok(slot_idx as u8)
     }
 
     fn resolve_or_assign_slot(
@@ -217,12 +233,12 @@ impl LobbyState {
         addr: SocketAddr,
         requested_id: u8,
         trainer_id: u32,
-    ) -> Option<usize> {
-        // 1. Existing active socket match
+    ) -> Result<usize, u8> {
+        // 1. Existing socket match
         for (idx, slot) in self.slots.iter().enumerate() {
             if let Some(player) = slot {
                 if player.addr == addr {
-                    return Some(idx);
+                    return Ok(idx);
                 }
             }
         }
@@ -233,13 +249,14 @@ impl LobbyState {
                 for reg in &self.roster {
                     let idx = reg.slot_id as usize;
                     if reg.trainer_id == trainer_id && self.slots[idx].is_none() {
-                        return Some(idx);
+                        return Ok(idx);
                     }
                 }
             }
-            // Fallback for reconnection when trainer_id hasn't loaded yet (Title screen)
-            if (requested_id as usize) < self.roster.len() && self.slots[requested_id as usize].is_none() {
-                return Some(requested_id as usize);
+            if (requested_id as usize) < self.roster.len()
+                && self.slots[requested_id as usize].is_none()
+            {
+                return Ok(requested_id as usize);
             }
 
             warn!(
@@ -247,40 +264,40 @@ impl LobbyState {
                 room_code_to_string(&self.room_code),
                 self.roster.len()
             );
-            return None;
+            return Err(ROOM_STATUS_ERR_LOCKED);
         }
 
-        // 3. Campaign is still Forming: honor requested slot if free
-        if (requested_id as usize) < MAX_PLAYERS && requested_id != AUTO_PLAYER_ID {
+        // 3. Campaign is Forming: honor requested slot if within target_party_size and free
+        if (requested_id as usize) < self.target_party_size && requested_id != AUTO_PLAYER_ID {
             let idx = requested_id as usize;
             if self.slots[idx].is_none() {
-                return Some(idx);
+                return Ok(idx);
             }
         }
 
-        // 4. Auto-assign lowest free slot
-        for (idx, slot) in self.slots.iter().enumerate() {
-            if slot.is_none() {
-                return Some(idx);
+        // 4. Auto-assign lowest free slot up to target_party_size
+        for idx in 0..self.target_party_size {
+            if self.slots[idx].is_none() {
+                return Ok(idx);
             }
         }
 
         warn!(
-            "[Room {}] Lobby full ({MAX_PLAYERS}/{MAX_PLAYERS}) — rejected {addr}",
-            room_code_to_string(&self.room_code)
+            "[Room {}] Room full ({}/{}) — rejected {addr}",
+            room_code_to_string(&self.room_code),
+            self.target_party_size,
+            self.target_party_size
         );
-        None
+        Err(ROOM_STATUS_ERR_FULL)
     }
 
-    /// Locks the campaign roster once at least `min_players_for_sync` are online,
-    /// have finished Oak's intro (or set a test position), and checked `Ready`.
     fn check_and_lock_bedroom_gate(&mut self) {
         if self.campaign_started {
             return;
         }
 
         let active: Vec<&ConnectedPlayer> = self.slots.iter().filter_map(|s| s.as_ref()).collect();
-        if active.len() < self.min_players_for_sync {
+        if active.len() < self.target_party_size {
             return;
         }
 
@@ -293,7 +310,6 @@ impl LobbyState {
         self.roster.clear();
 
         for p in &active {
-            // If trainer_id is 0 during synthetic harness testing, synthesize a stable ID per slot
             let effective_otid = if p.state.trainer_id != 0 {
                 p.state.trainer_id
             } else {
@@ -309,9 +325,10 @@ impl LobbyState {
         }
 
         info!(
-            "=== [Room {} | BEDROOM GATE UNLOCKED] Campaign Roster Locked with {} Players! Adventure Started! ===",
+            "=== [Room {} | BEDROOM GATE UNLOCKED] Roster Locked with {}/{} Players! Adventure Started! ===",
             room_code_to_string(&self.room_code),
-            self.roster.len()
+            self.roster.len(),
+            self.target_party_size
         );
         self.save_campaign_to_disk();
     }
@@ -343,11 +360,7 @@ impl LobbyState {
             .filter_map(|s| s.as_ref())
             .filter(|p| p.client_ready)
             .count() as u8;
-        let expected_size = if self.campaign_started {
-            self.roster.len() as u8
-        } else {
-            online_count.max(self.min_players_for_sync as u8)
-        };
+        let expected_size = self.expected_party_size() as u8;
 
         let (synced_badges, sync_ready) = self.compute_progression_gates();
 
@@ -401,7 +414,8 @@ impl LobbyState {
                 assigned_player_id: recipient.slot_id,
                 active_players_mask: active_mask,
                 server_tick: self.server_tick,
-                reserved_header: 0,
+                status_code: ROOM_STATUS_OK,
+                reserved_header: [0u8; 3],
                 remote_players,
                 remote_followers,
                 badge_mask_local_echo: recipient.badge_mask,
@@ -423,21 +437,13 @@ impl LobbyState {
         batch
     }
 
-    /// Computes `(synced_badge_mask, gym_gate_ready)`.
-    /// If a registered party member from the locked roster is offline, `gym_gate_ready` is strictly `false`.
     fn compute_progression_gates(&self) -> (u16, bool) {
         let active: Vec<&ConnectedPlayer> = self.slots.iter().filter_map(|s| s.as_ref()).collect();
         if active.is_empty() {
             return (0, false);
         }
 
-        let required_party_size = if self.campaign_started {
-            self.roster.len()
-        } else {
-            self.min_players_for_sync
-        };
-
-        // Block progression if ANY registered member from the start of the adventure is offline
+        let required_party_size = self.expected_party_size();
         let all_registered_online = active.len() >= required_party_size;
 
         let mut common_badges = 0xFFFFu16;
@@ -456,7 +462,6 @@ impl LobbyState {
             }
         }
 
-        // Also fold in offline roster members' last known badges so synced_badges never inflates
         if self.campaign_started {
             for reg in &self.roster {
                 if self.slots[reg.slot_id as usize].is_none() {
@@ -491,7 +496,7 @@ impl LobbyState {
         info!(
             "--- [Room {room_str} | Online: {}/{} | Started: {} | Synced Badges: 0b{:08b} | Gym Gate: {}] ---",
             connected.len(),
-            self.expected_party_size().max(self.min_players_for_sync),
+            self.expected_party_size(),
             self.campaign_started,
             synced_badges,
             if ready { "UNLOCKED" } else { "LOCKED" }
@@ -526,6 +531,7 @@ impl LobbyState {
         }
         let payload = CampaignSaveFile {
             room_code: room_code_to_string(&self.room_code),
+            host_token: self.host_token,
             campaign_started: self.campaign_started,
             expected_party_size: self.roster.len() as u8,
             roster: self.roster.clone(),
@@ -544,11 +550,14 @@ impl LobbyState {
         }
         if let Ok(raw) = fs::read_to_string(&path) {
             if let Ok(saved) = serde_json::from_str::<CampaignSaveFile>(&raw) {
+                self.host_token = saved.host_token;
                 self.campaign_started = saved.campaign_started;
                 self.roster = saved.roster;
+                self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
                 info!(
-                    "[Room {}] Restored locked campaign from disk ({} registered trainers)",
+                    "[Room {}] Restored locked campaign from disk (Host Token: 0x{:08X}, {} trainers)",
                     saved.room_code,
+                    saved.host_token,
                     self.roster.len()
                 );
             }
@@ -556,11 +565,10 @@ impl LobbyState {
     }
 }
 
-/// Multi-room router capable of hosting hundreds of independent 6-player campaigns on one port.
 pub struct RoomManager {
     rooms: HashMap<[u8; 6], LobbyState>,
     client_timeout: Duration,
-    min_players_for_sync: usize,
+    default_party_size: usize,
     inspect_all_packets: bool,
     save_dir: PathBuf,
 }
@@ -568,31 +576,107 @@ pub struct RoomManager {
 impl RoomManager {
     pub fn new(
         client_timeout: Duration,
-        min_players_for_sync: usize,
+        default_party_size: usize,
         inspect_all_packets: bool,
         save_dir: impl AsRef<Path>,
     ) -> Self {
         Self {
             rooms: HashMap::new(),
             client_timeout,
-            min_players_for_sync,
+            default_party_size: default_party_size.clamp(2, MAX_PLAYERS),
             inspect_all_packets,
             save_dir: save_dir.as_ref().to_path_buf(),
         }
     }
 
-    pub fn handle_client_packet(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Option<u8> {
+    pub fn handle_client_packet(
+        &mut self,
+        addr: SocketAddr,
+        pkt: ClientToServerPacket,
+    ) -> Result<u8, [u8; SERVER_PACKET_SIZE]> {
         let code = sanitize_room_code(pkt.room_code);
-        let timeout = self.client_timeout;
-        let min_p = self.min_players_for_sync;
-        let inspect = self.inspect_all_packets;
-        let save_dir = self.save_dir.clone();
+        let room_str = room_code_to_string(&code);
+        let save_path = self.save_dir.join(format!("{room_str}.json"));
+        let room_in_memory = self.rooms.contains_key(&code);
+        let room_on_disk = save_path.exists();
 
-        let room = self.rooms.entry(code).or_insert_with(|| {
-            LobbyState::with_room(code, timeout, min_p, inspect, Some(save_dir))
-        });
+        match pkt.room_action {
+            ROOM_ACTION_CREATE => {
+                if let Some(existing_room) = self.rooms.get(&code) {
+                    if existing_room.host_token() != pkt.host_token {
+                        warn!(
+                            "[RoomManager] Rejected CREATE for room {room_str} from {addr}: room already exists with different host_token"
+                        );
+                        return Err(ServerToClientPacket::create_error_response(
+                            ROOM_STATUS_ERR_ALREADY_EXISTS,
+                        ));
+                    }
+                } else if room_on_disk {
+                    if let Ok(raw) = fs::read_to_string(&save_path) {
+                        if let Ok(saved) = serde_json::from_str::<CampaignSaveFile>(&raw) {
+                            if saved.host_token != pkt.host_token {
+                                warn!(
+                                    "[RoomManager] Rejected CREATE for room {room_str} from {addr}: saved campaign exists on disk"
+                                );
+                                return Err(ServerToClientPacket::create_error_response(
+                                    ROOM_STATUS_ERR_ALREADY_EXISTS,
+                                ));
+                            }
+                        }
+                    }
+                }
 
-        room.handle_client_packet(addr, pkt)
+                let timeout = self.client_timeout;
+                let def_party = self.default_party_size;
+                let inspect = self.inspect_all_packets;
+                let save_dir = self.save_dir.clone();
+
+                let room = self.rooms.entry(code).or_insert_with(|| {
+                    info!(
+                        "[RoomManager] Created room {room_str} (Host Token: 0x{:08X})",
+                        pkt.host_token
+                    );
+                    LobbyState::with_room(
+                        code,
+                        pkt.host_token,
+                        timeout,
+                        def_party,
+                        inspect,
+                        Some(save_dir),
+                    )
+                });
+
+                room.handle_client_packet(addr, pkt)
+                    .map_err(ServerToClientPacket::create_error_response)
+            }
+
+            ROOM_ACTION_JOIN => {
+                if !room_in_memory && !room_on_disk {
+                    debug!(
+                        "[RoomManager] Rejected JOIN from {addr}: room {room_str} does not exist"
+                    );
+                    return Err(ServerToClientPacket::create_error_response(
+                        ROOM_STATUS_ERR_NOT_FOUND,
+                    ));
+                }
+
+                let timeout = self.client_timeout;
+                let def_party = self.default_party_size;
+                let inspect = self.inspect_all_packets;
+                let save_dir = self.save_dir.clone();
+
+                let room = self.rooms.entry(code).or_insert_with(|| {
+                    LobbyState::with_room(code, 0, timeout, def_party, inspect, Some(save_dir))
+                });
+
+                room.handle_client_packet(addr, pkt)
+                    .map_err(ServerToClientPacket::create_error_response)
+            }
+
+            _ => Err(ServerToClientPacket::create_error_response(
+                ROOM_STATUS_ERR_NOT_FOUND,
+            )),
+        }
     }
 
     pub fn tick_all_rooms(&mut self) -> Vec<(SocketAddr, [u8; SERVER_PACKET_SIZE])> {

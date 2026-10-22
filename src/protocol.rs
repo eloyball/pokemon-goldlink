@@ -3,14 +3,25 @@ use std::fmt;
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_PLAYERS: usize = 6;
-pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1; // 5 remote slots per client
+pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
 pub const DEFAULT_ROOM_CODE: [u8; 6] = *b"JOHTO1";
 
-/// Wire size constants (in bytes)
+// Client Room Intent Actions
+pub const ROOM_ACTION_JOIN: u8 = 0;
+pub const ROOM_ACTION_CREATE: u8 = 1;
+
+// Server Status & Error Codes (Byte 12 of ServerToClientPacket)
+pub const ROOM_STATUS_OK: u8 = 0;
+pub const ROOM_STATUS_ERR_NOT_FOUND: u8 = 1;
+pub const ROOM_STATUS_ERR_ALREADY_EXISTS: u8 = 2;
+pub const ROOM_STATUS_ERR_LOCKED: u8 = 3;
+pub const ROOM_STATUS_ERR_FULL: u8 = 4;
+
+// Wire Payload Sizes (in bytes)
 pub const PLAYER_STATE_SIZE: usize = 32;
 pub const FOLLOWER_STATE_SIZE: usize = 24;
-pub const CLIENT_PACKET_SIZE: usize = 56;
+pub const CLIENT_PACKET_SIZE: usize = 64;
 pub const SERVER_PACKET_SIZE: usize =
     16 + (REMOTE_SLOTS * PLAYER_STATE_SIZE) + (REMOTE_SLOTS * FOLLOWER_STATE_SIZE) + 24; // 320 bytes
 
@@ -27,7 +38,9 @@ impl fmt::Display for ProtocolError {
             Self::PacketTooShort { expected, actual } => {
                 write!(f, "packet too short: expected {expected} bytes, got {actual}")
             }
-            Self::InvalidMagic(m) => write!(f, "invalid magic: 0x{m:08X} (expected 0x{COOP_MAGIC:08X})"),
+            Self::InvalidMagic(m) => {
+                write!(f, "invalid magic: 0x{m:08X} (expected 0x{COOP_MAGIC:08X})")
+            }
             Self::UnsupportedVersion(v) => write!(f, "unsupported protocol version: {v}"),
         }
     }
@@ -35,7 +48,6 @@ impl fmt::Display for ProtocolError {
 
 impl std::error::Error for ProtocolError {}
 
-/// normalizes a 6-byte room code into uppercase ASCII alphanumeric bytes
 pub fn sanitize_room_code(raw: [u8; 6]) -> [u8; 6] {
     let mut out = DEFAULT_ROOM_CODE;
     for (i, b) in raw.into_iter().enumerate() {
@@ -53,27 +65,28 @@ pub fn room_code_to_string(code: &[u8; 6]) -> String {
     String::from_utf8_lossy(code).trim_end_matches('_').to_string()
 }
 
-/// Matches `struct CoopPlayerState` (32 bytes) in `include/coop_sync.h`
+/// Matches `CoopPlayerState` (32 bytes) in `hg-engine/include/coop_sync.h`
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlayerState {
-    pub map_id: u16,          // 0x00
-    pub x: i16,               // 0x02
-    pub y: i16,               // 0x04
-    pub prev_x: i16,          // 0x06
-    pub prev_y: i16,          // 0x08
-    pub direction: u8,        // 0x0A
-    pub movement_type: u8,    // 0x0B
-    pub sprite_id: u16,       // 0x0C
-    pub animation_frame: u8,  // 0x0E
-    pub is_active: u8,        // 0x0F
-    pub lead_species: u16,    // 0x10
-    pub lead_form: u16,       // 0x12
-    pub lead_is_shiny: u8,    // 0x14
-    pub lead_gender: u8,      // 0x15
-    pub map_npc_count: u8,    // 0x16
-    pub client_ready: u8,     // 0x17
-    pub trainer_id: u32,      // 0x18..0x1B (4-byte aligned)
-    pub pad: [u8; 4],         // 0x1C..0x1F
+    pub map_id: u16,           // 0x00
+    pub x: i16,                // 0x02
+    pub y: i16,                // 0x04
+    pub prev_x: i16,           // 0x06
+    pub prev_y: i16,           // 0x08
+    pub direction: u8,         // 0x0A
+    pub movement_type: u8,     // 0x0B
+    pub sprite_id: u16,        // 0x0C
+    pub animation_frame: u8,   // 0x0E
+    pub is_active: u8,         // 0x0F
+    pub lead_species: u16,     // 0x10
+    pub lead_form: u16,        // 0x12
+    pub lead_is_shiny: u8,     // 0x14
+    pub lead_gender: u8,       // 0x15
+    pub map_npc_count: u8,     // 0x16
+    pub client_ready: u8,      // 0x17
+    pub trainer_id: u32,       // 0x18..0x1B (4-byte aligned)
+    pub target_party_size: u8, // 0x1C (2..6 players)
+    pub pad: [u8; 3],          // 0x1D..0x1F
 }
 
 impl PlayerState {
@@ -96,7 +109,8 @@ impl PlayerState {
         out[22] = self.map_npc_count;
         out[23] = self.client_ready;
         out[24..28].copy_from_slice(&self.trainer_id.to_le_bytes());
-        out[28..32].copy_from_slice(&self.pad);
+        out[28] = self.target_party_size;
+        out[29..32].copy_from_slice(&self.pad);
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
@@ -106,8 +120,8 @@ impl PlayerState {
                 actual: buf.len(),
             });
         }
-        let mut pad = [0u8; 4];
-        pad.copy_from_slice(&buf[28..32]);
+        let mut pad = [0u8; 3];
+        pad.copy_from_slice(&buf[29..32]);
 
         Ok(Self {
             map_id: u16::from_le_bytes([buf[0], buf[1]]),
@@ -127,23 +141,24 @@ impl PlayerState {
             map_npc_count: buf[22],
             client_ready: buf[23],
             trainer_id: u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
+            target_party_size: buf[28],
             pad,
         })
     }
 }
 
-/// Matches `struct CoopFollowerState` (24 bytes)
+/// Matches `CoopFollowerState` (24 bytes) in `hg-engine/include/coop_sync.h`
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FollowerState {
-    pub species: u16,
-    pub form: u16,
-    pub is_shiny: u8,
-    pub gender: u8,
-    pub x: i16,
-    pub y: i16,
-    pub direction: u8,
-    pub is_visible: u8,
-    pub pad: [u8; 12],
+    pub species: u16,    // 0x00
+    pub form: u16,       // 0x02
+    pub is_shiny: u8,    // 0x04
+    pub gender: u8,      // 0x05
+    pub x: i16,          // 0x06
+    pub y: i16,          // 0x08
+    pub direction: u8,   // 0x0A
+    pub is_visible: u8,  // 0x0B
+    pub pad: [u8; 12],   // 0x0C..0x17
 }
 
 impl FollowerState {
@@ -184,18 +199,22 @@ impl FollowerState {
     }
 }
 
-/// Sent by BizHawk C# Plugin -> Rust Relay Server (56 bytes)
+/// Sent by BizHawk C# Plugin -> Rust Relay Server (64 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientToServerPacket {
-    pub magic: u32,              // 0..4
-    pub version: u16,            // 4..6
-    pub room_code: [u8; 6],      // 6..12 (6-char ASCII room identifier, e.g. "JOHTO1")
-    pub requested_player_id: u8, // 12 (0..5 or 0xFF for auto)
-    pub client_ready: u8,        // 13 (1 = Ready to lock party & start adventure)
-    pub badge_mask_local: u16,   // 14..16
-    pub sequence: u32,           // 16..20
-    pub heartbeat_rom: u32,      // 20..24
-    pub local_player: PlayerState, // 24..56 (32 bytes)
+    pub magic: u32,                // 0..4
+    pub version: u16,              // 4..6
+    pub room_code: [u8; 6],        // 6..12
+    pub room_action: u8,           // 12 (0 = Join, 1 = Create)
+    pub requested_player_id: u8,   // 13 (0..5 or 0xFF)
+    pub client_ready: u8,          // 14 (1 = Ready to lock party)
+    pub pad_header: u8,            // 15
+    pub host_token: u32,           // 16..20 (Host secret token)
+    pub badge_mask_local: u16,     // 20..22
+    pub sequence: u32,             // 22..26
+    pub heartbeat_rom: u32,        // 26..30
+    pub reserved: u16,             // 30..32
+    pub local_player: PlayerState, // 32..64 (32 bytes)
 }
 
 impl ClientToServerPacket {
@@ -204,12 +223,16 @@ impl ClientToServerPacket {
         buf[0..4].copy_from_slice(&self.magic.to_le_bytes());
         buf[4..6].copy_from_slice(&self.version.to_le_bytes());
         buf[6..12].copy_from_slice(&sanitize_room_code(self.room_code));
-        buf[12] = self.requested_player_id;
-        buf[13] = self.client_ready;
-        buf[14..16].copy_from_slice(&self.badge_mask_local.to_le_bytes());
-        buf[16..20].copy_from_slice(&self.sequence.to_le_bytes());
-        buf[20..24].copy_from_slice(&self.heartbeat_rom.to_le_bytes());
-        self.local_player.encode_le(&mut buf[24..56]);
+        buf[12] = self.room_action;
+        buf[13] = self.requested_player_id;
+        buf[14] = self.client_ready;
+        buf[15] = self.pad_header;
+        buf[16..20].copy_from_slice(&self.host_token.to_le_bytes());
+        buf[20..22].copy_from_slice(&self.badge_mask_local.to_le_bytes());
+        buf[22..26].copy_from_slice(&self.sequence.to_le_bytes());
+        buf[26..30].copy_from_slice(&self.heartbeat_rom.to_le_bytes());
+        buf[30..32].copy_from_slice(&self.reserved.to_le_bytes());
+        self.local_player.encode_le(&mut buf[32..64]);
         buf
     }
 
@@ -232,19 +255,22 @@ impl ClientToServerPacket {
         let mut raw_room = [0u8; 6];
         raw_room.copy_from_slice(&buf[6..12]);
 
-        let mut local_player = PlayerState::decode_le(&buf[24..56])?;
-        let client_ready = buf[13];
-        local_player.client_ready = client_ready;
+        let mut local_player = PlayerState::decode_le(&buf[32..64])?;
+        local_player.client_ready = buf[14];
 
         Ok(Self {
             magic,
             version,
             room_code: sanitize_room_code(raw_room),
-            requested_player_id: buf[12],
-            client_ready,
-            badge_mask_local: u16::from_le_bytes([buf[14], buf[15]]),
-            sequence: u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
-            heartbeat_rom: u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]),
+            room_action: buf[12],
+            requested_player_id: buf[13],
+            client_ready: buf[14],
+            pad_header: buf[15],
+            host_token: u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
+            badge_mask_local: u16::from_le_bytes([buf[20], buf[21]]),
+            sequence: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
+            heartbeat_rom: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
+            reserved: u16::from_le_bytes([buf[30], buf[31]]),
             local_player,
         })
     }
@@ -258,21 +284,21 @@ pub struct ServerToClientPacket {
     pub assigned_player_id: u8,
     pub active_players_mask: u8,
     pub server_tick: u32,
-    pub reserved_header: u32,
+    pub status_code: u8,          // Byte 12: ROOM_STATUS_*
+    pub reserved_header: [u8; 3], // Bytes 13..16
     pub remote_players: [PlayerState; REMOTE_SLOTS],
     pub remote_followers: [FollowerState; REMOTE_SLOTS],
-    // Progression Gates (24 bytes -> 0x148..0x15F in gCoopCommBlock)
-    pub badge_mask_local_echo: u16, // 0x148
-    pub badge_mask_synced: u16,     // 0x14A
-    pub flag_coop_sync_ready: u8,   // 0x14C
-    pub current_checkpoint: u8,     // 0x14D
-    pub assigned_monolocke: u8,     // 0x14E
-    pub nuzlocke_failed: u8,        // 0x14F
-    pub flag_campaign_started: u8,  // 0x150 (1 = Bedroom Start Gate unlocked, roster locked)
-    pub expected_party_size: u8,    // 0x151 (Locked party count from start of run)
-    pub online_party_count: u8,     // 0x152 (Currently connected players)
-    pub ready_party_count: u8,      // 0x153 (Players who checked Ready)
-    pub gates_pad: [u8; 12],        // 0x154..0x15F
+    pub badge_mask_local_echo: u16,
+    pub badge_mask_synced: u16,
+    pub flag_coop_sync_ready: u8,
+    pub current_checkpoint: u8,
+    pub assigned_monolocke: u8,
+    pub nuzlocke_failed: u8,
+    pub flag_campaign_started: u8,
+    pub expected_party_size: u8,
+    pub online_party_count: u8,
+    pub ready_party_count: u8,
+    pub gates_pad: [u8; 12],
 }
 
 impl ServerToClientPacket {
@@ -283,7 +309,8 @@ impl ServerToClientPacket {
         buf[6] = self.assigned_player_id;
         buf[7] = self.active_players_mask;
         buf[8..12].copy_from_slice(&self.server_tick.to_le_bytes());
-        buf[12..16].copy_from_slice(&self.reserved_header.to_le_bytes());
+        buf[12] = self.status_code;
+        buf[13..16].copy_from_slice(&self.reserved_header);
 
         for (i, player) in self.remote_players.iter().enumerate() {
             let start = 16 + i * PLAYER_STATE_SIZE;
@@ -311,6 +338,32 @@ impl ServerToClientPacket {
 
         buf
     }
+
+    pub fn create_error_response(status_code: u8) -> [u8; SERVER_PACKET_SIZE] {
+        let pkt = Self {
+            magic: COOP_MAGIC,
+            version: PROTOCOL_VERSION,
+            assigned_player_id: AUTO_PLAYER_ID,
+            active_players_mask: 0,
+            server_tick: 0,
+            status_code,
+            reserved_header: [0u8; 3],
+            remote_players: [PlayerState::default(); REMOTE_SLOTS],
+            remote_followers: [FollowerState::default(); REMOTE_SLOTS],
+            badge_mask_local_echo: 0,
+            badge_mask_synced: 0,
+            flag_coop_sync_ready: 0,
+            current_checkpoint: 0,
+            assigned_monolocke: 18,
+            nuzlocke_failed: 0,
+            flag_campaign_started: 0,
+            expected_party_size: 0,
+            online_party_count: 0,
+            ready_party_count: 0,
+            gates_pad: [0u8; 12],
+        };
+        pkt.encode_le()
+    }
 }
 
 #[cfg(test)]
@@ -318,16 +371,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_client_packet_roundtrip_with_room_and_trainer_id() {
+    fn test_client_packet_roundtrip() {
         let pkt = ClientToServerPacket {
             magic: COOP_MAGIC,
             version: PROTOCOL_VERSION,
             room_code: *b"JOHTO1",
+            room_action: ROOM_ACTION_CREATE,
             requested_player_id: AUTO_PLAYER_ID,
             client_ready: 1,
+            pad_header: 0,
+            host_token: 0x1234_5678,
             badge_mask_local: 0b0000_0011,
             sequence: 512,
             heartbeat_rom: 1024,
+            reserved: 0,
             local_player: PlayerState {
                 map_id: 4,
                 x: 12,
@@ -346,7 +403,8 @@ mod tests {
                 map_npc_count: 14,
                 client_ready: 1,
                 trainer_id: 0xA1B2_C3D4,
-                pad: [0u8; 4],
+                target_party_size: 4,
+                pad: [0u8; 3],
             },
         };
 

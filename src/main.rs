@@ -21,9 +21,9 @@ struct Args {
     #[arg(short, long, default_value_t = 30)]
     tick_rate: u32,
 
-    /// Minimum connected players required to lock a campaign roster at the Bedroom Gate
-    #[arg(short, long, default_value_t = 2)]
-    min_players: usize,
+    /// Fallback party size if room creator does not specify one (2..6)
+    #[arg(short = 'm', long = "min-players", default_value_t = 2)]
+    default_party_size: usize,
 
     /// Directory where locked campaign rosters (<ROOM>.json) are persisted
     #[arg(long, default_value = "campaigns")]
@@ -47,13 +47,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let socket = UdpSocket::bind(args.bind).await?;
     info!(
-        "HGSS Multi-Room Co-op Relay listening on UDP {} (Tick: {} Hz | Min Party: {} | Saves: {:?})",
-        args.bind, args.tick_rate, args.min_players, args.save_dir
+        "HGSS Multi-Room Co-op Relay listening on UDP {} (Tick: {} Hz | Saves: {:?})",
+        args.bind, args.tick_rate, args.save_dir
     );
 
     let mut manager = RoomManager::new(
         Duration::from_secs(5),
-        args.min_players,
+        args.default_party_size,
         args.inspect_all,
         &args.save_dir,
     );
@@ -74,7 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok((len, peer_addr)) => {
                         match ClientToServerPacket::decode_le(&recv_buf[..len]) {
                             Ok(pkt) => {
-                                manager.handle_client_packet(peer_addr, pkt);
+                                if let Err(err_pkt) = manager.handle_client_packet(peer_addr, pkt) {
+                                    let _ = socket.send_to(&err_pkt, peer_addr).await;
+                                }
                             }
                             Err(err) => {
                                 debug!("Dropped malformed packet from {peer_addr}: {err}");
