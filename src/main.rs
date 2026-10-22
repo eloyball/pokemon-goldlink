@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
@@ -6,11 +7,11 @@ use tokio::net::UdpSocket;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
 
-use coop_relay::lobby::LobbyState;
+use coop_relay::lobby::RoomManager;
 use coop_relay::protocol::ClientToServerPacket;
 
 #[derive(Parser, Debug)]
-#[command(name = "coop-relay", about = "Pokemon HeartGold 6-Player Co-op UDP Relay Server")]
+#[command(name = "coop-relay", about = "Pokemon HeartGold 6-Player Co-op Multi-Room Relay Server")]
 struct Args {
     /// Address and UDP port to bind
     #[arg(short, long, default_value = "0.0.0.0:7777")]
@@ -20,9 +21,13 @@ struct Args {
     #[arg(short, long, default_value_t = 30)]
     tick_rate: u32,
 
-    /// Minimum connected players required to unlock gym progression gates (set to 2 for dual-emulator testing)
+    /// Minimum connected players required to lock a campaign roster at the Bedroom Gate
     #[arg(short, long, default_value_t = 2)]
     min_players: usize,
+
+    /// Directory where locked campaign rosters (<ROOM>.json) are persisted
+    #[arg(long, default_value = "campaigns")]
+    save_dir: PathBuf,
 
     /// Log every incoming UDP packet even when coordinates have not changed
     #[arg(long, default_value_t = false)]
@@ -42,11 +47,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let socket = UdpSocket::bind(args.bind).await?;
     info!(
-        "HGSS Co-op Relay Server listening on UDP {} (Tick: {} Hz | Min Sync Players: {})",
-        args.bind, args.tick_rate, args.min_players
+        "HGSS Multi-Room Co-op Relay listening on UDP {} (Tick: {} Hz | Min Party: {} | Saves: {:?})",
+        args.bind, args.tick_rate, args.min_players, args.save_dir
     );
 
-    let mut lobby = LobbyState::new(Duration::from_secs(5), args.min_players, args.inspect_all);
+    let mut manager = RoomManager::new(
+        Duration::from_secs(5),
+        args.min_players,
+        args.inspect_all,
+        &args.save_dir,
+    );
 
     let tick_period = Duration::from_micros(1_000_000 / u64::from(args.tick_rate.max(1)));
     let mut broadcast_timer = interval(tick_period);
@@ -64,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok((len, peer_addr)) => {
                         match ClientToServerPacket::decode_le(&recv_buf[..len]) {
                             Ok(pkt) => {
-                                lobby.handle_client_packet(peer_addr, pkt);
+                                manager.handle_client_packet(peer_addr, pkt);
                             }
                             Err(err) => {
                                 debug!("Dropped malformed packet from {peer_addr}: {err}");
@@ -78,8 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             _ = broadcast_timer.tick() => {
-                lobby.prune_stale_clients();
-                let batch = lobby.build_broadcast_batch();
+                let batch = manager.tick_all_rooms();
                 for (addr, payload) in batch {
                     if let Err(err) = socket.send_to(&payload, addr).await {
                         debug!("Failed sending broadcast to {addr}: {err}");
@@ -88,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             _ = summary_timer.tick() => {
-                lobby.print_periodic_summary();
+                manager.print_all_summaries();
             }
 
             _ = tokio::signal::ctrl_c() => {

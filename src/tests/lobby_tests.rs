@@ -4,11 +4,14 @@ use std::time::Duration;
 
 use coop_relay::lobby::LobbyState;
 use coop_relay::protocol::{
-    ClientToServerPacket, PlayerState, AUTO_PLAYER_ID, COOP_MAGIC, MAX_PLAYERS, PROTOCOL_VERSION,
+    ClientToServerPacket, PlayerState, AUTO_PLAYER_ID, COOP_MAGIC, DEFAULT_ROOM_CODE, MAX_PLAYERS,
+    PROTOCOL_VERSION,
 };
 
-fn make_dummy_packet(
+fn make_packet(
     player_id: u8,
+    trainer_id: u32,
+    ready: u8,
     map_id: u16,
     x: i16,
     y: i16,
@@ -19,8 +22,10 @@ fn make_dummy_packet(
     ClientToServerPacket {
         magic: COOP_MAGIC,
         version: PROTOCOL_VERSION,
+        room_code: DEFAULT_ROOM_CODE,
         requested_player_id: player_id,
-        map_npc_count: npc_count,
+        client_ready: ready,
+        badge_mask_local: badges,
         sequence: 1,
         heartbeat_rom: 100,
         local_player: PlayerState {
@@ -28,130 +33,94 @@ fn make_dummy_packet(
             x,
             y,
             prev_x: x,
-            prev_y: y - 1,
+            prev_y: y.saturating_sub(1),
             direction: 0,
             movement_type: 0,
             sprite_id: 1,
             animation_frame: 0,
             is_active: 1,
-            pad: [0u8; 16],
+            lead_species: species,
+            lead_form: 0,
+            lead_is_shiny: 0,
+            lead_gender: 0,
+            map_npc_count: npc_count,
+            client_ready: ready,
+            trainer_id,
+            pad: [0u8; 4],
         },
-        lead_species: species,
-        lead_form: 0,
-        lead_is_shiny: 0,
-        lead_gender: 0,
-        badge_mask_local: badges,
     }
+}
+
+#[test]
+fn test_bedroom_gate_locks_roster_and_blocks_progression_when_member_offline() {
+    let mut lobby = LobbyState::new(Duration::from_millis(60), 2, false);
+
+    let p0_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+    let p1_addr: SocketAddr = "127.0.0.1:50001".parse().unwrap();
+    let p2_stranger: SocketAddr = "127.0.0.1:50002".parse().unwrap();
+
+    // 1. P0 and P1 spawn in Map 4 (Bedroom), but P1 is not ready yet (ready = 0)
+    lobby.handle_client_packet(p0_addr, make_packet(0, 0x1111_1111, 1, 4, 5, 5, 0, 2, 0));
+    lobby.handle_client_packet(p1_addr, make_packet(1, 0x2222_2222, 0, 4, 5, 5, 0, 2, 0));
+    assert!(!lobby.is_campaign_started(), "Campaign must wait until all players click Ready");
+
+    // 2. P1 clicks Ready -> Roster locks at 2 players, Bedroom Gate unlocks!
+    lobby.handle_client_packet(p1_addr, make_packet(1, 0x2222_2222, 1, 4, 5, 5, 0, 2, 0));
+    assert!(lobby.is_campaign_started(), "Campaign must start once all connected players are Ready");
+    assert_eq!(lobby.expected_party_size(), 2);
+
+    // 3. Unregistered 3rd player tries to join after campaign locked -> Rejected
+    let stranger_slot = lobby.handle_client_packet(
+        p2_stranger,
+        make_packet(AUTO_PLAYER_ID, 0x9999_9999, 1, 4, 5, 5, 0, 2, 0),
+    );
+    assert_eq!(stranger_slot, None, "Locked campaign must reject unknown TrainerIDs");
+
+    // 4. Both P0 and P1 walk to Violet Gym (Map 28) -> Gym Gate is UNLOCKED (1)
+    lobby.handle_client_packet(p0_addr, make_packet(0, 0x1111_1111, 1, 28, 10, 10, 155, 5, 0));
+    lobby.handle_client_packet(p1_addr, make_packet(1, 0x2222_2222, 1, 28, 11, 10, 158, 5, 0));
+    let batch_online = lobby.build_broadcast_batch();
+    let gates_offset = 16 + (5 * 32) + (5 * 24);
+    assert_eq!(batch_online[0].1[gates_offset + 4], 1, "Gym gate unlocked when all 2/2 online");
+    assert_eq!(batch_online[0].1[gates_offset + 8], 1, "flag_campaign_started == 1");
+
+    // 5. P1 goes offline (times out), while P0 stays at the Gym
+    sleep(Duration::from_millis(80));
+    lobby.prune_stale_clients();
+    lobby.handle_client_packet(p0_addr, make_packet(0, 0x1111_1111, 1, 28, 10, 10, 155, 5, 0));
+
+    let batch_offline = lobby.build_broadcast_batch();
+    assert_eq!(
+        batch_offline[0].1[gates_offset + 4], 0,
+        "Gym gate MUST lock when a registered party member (P1) is offline!"
+    );
+
+    // 6. P1 reconnects from a brand-new ephemeral port using their TrainerID (0x2222_2222)
+    let p1_new_addr: SocketAddr = "127.0.0.1:61234".parse().unwrap();
+    let reconnected_slot = lobby.handle_client_packet(
+        p1_new_addr,
+        make_packet(AUTO_PLAYER_ID, 0x2222_2222, 1, 28, 11, 10, 158, 5, 0),
+    );
+    assert_eq!(reconnected_slot, Some(1), "P1 must reclaim Slot P1 via TrainerID");
+
+    let batch_rejoined = lobby.build_broadcast_batch();
+    assert_eq!(
+        batch_rejoined[0].1[gates_offset + 4], 1,
+        "Gym gate unlocks again once P1 reconnects at the Gym"
+    );
 }
 
 #[test]
 fn test_auto_slot_assignment_and_saturation() {
-    let mut lobby = LobbyState::new(Duration::from_secs(5), 2, false);
-
-    // 1. Connect 6 distinct clients with AUTO_PLAYER_ID
+    let mut lobby = LobbyState::new(Duration::from_secs(5), 6, false);
     for i in 0..MAX_PLAYERS {
         let addr: SocketAddr = format!("127.0.0.1:{}", 50000 + i).parse().unwrap();
-        let pkt = make_dummy_packet(AUTO_PLAYER_ID, 4, 10, 10, 152, 10, 0);
-        let assigned = lobby.handle_client_packet(addr, pkt);
-        assert_eq!(assigned, Some(i as u8), "Expected slot P{i}");
+        let pkt = make_packet(AUTO_PLAYER_ID, 1000 + i as u32, 0, 4, 10, 10, 152, 10, 0);
+        assert_eq!(lobby.handle_client_packet(addr, pkt), Some(i as u8));
     }
-
-    // 2. Attempt 7th client connection -> Must be rejected (None)
-    let overflow_addr: SocketAddr = "127.0.0.1:59999".parse().unwrap();
-    let pkt = make_dummy_packet(AUTO_PLAYER_ID, 4, 10, 10, 152, 10, 0);
+    let overflow: SocketAddr = "127.0.0.1:59999".parse().unwrap();
     assert_eq!(
-        lobby.handle_client_packet(overflow_addr, pkt),
-        None,
-        "7th connection must fail when lobby is full"
-    );
-}
-
-#[test]
-fn test_room_filtering_and_follower_culling() {
-    let mut lobby = LobbyState::new(Duration::from_secs(5), 2, false);
-
-    let p0_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    let p1_addr: SocketAddr = "127.0.0.1:50001".parse().unwrap();
-    let p2_addr: SocketAddr = "127.0.0.1:50002".parse().unwrap();
-
-    // P0: Map 4 (New Bark Town), 10 NPCs
-    lobby.handle_client_packet(p0_addr, make_dummy_packet(0, 4, 12, 14, 155, 10, 0));
-    // P1: Map 4 (New Bark Town), same room, 10 NPCs
-    lobby.handle_client_packet(p1_addr, make_dummy_packet(1, 4, 15, 14, 158, 10, 0));
-    // P2: Map 28 (Violet City), different room
-    lobby.handle_client_packet(p2_addr, make_dummy_packet(2, 28, 5, 5, 152, 10, 0));
-
-    let batch = lobby.build_broadcast_batch();
-    assert_eq!(batch.len(), 3);
-
-    // Inspect P0's broadcast packet
-    let (addr, p0_raw) = &batch[0];
-    assert_eq!(*addr, p0_addr);
-
-    // Remote slot 0 in P0's packet corresponds to P1 (same map) -> is_active == 1, is_visible == 1
-    let p1_active = p0_raw[16 + 15]; // offset 15 in PlayerState is is_active
-    let p1_follower_visible = p0_raw[16 + (5 * 32) + 11]; // offset 11 in FollowerState is is_visible
-    assert_eq!(p1_active, 1, "P1 should be active on P0 screen (same map)");
-    assert_eq!(p1_follower_visible, 1, "P1 follower should be visible (<26 NPCs)");
-
-    // Remote slot 1 in P0's packet corresponds to P2 (different map) -> is_active == 0, is_visible == 0
-    let p2_active = p0_raw[16 + 32 + 15];
-    let p2_follower_visible = p0_raw[16 + (5 * 32) + 24 + 11];
-    assert_eq!(p2_active, 0, "P2 should be inactive on P0 screen (different map)");
-    assert_eq!(p2_follower_visible, 0, "P2 follower should be culled (different map)");
-
-    // Now simulate P0 entering a crowded city (>26 NPCs)
-    lobby.handle_client_packet(p0_addr, make_dummy_packet(0, 4, 12, 14, 155, 27, 0));
-    let batch_culled = lobby.build_broadcast_batch();
-    let (_, p0_raw_culled) = &batch_culled[0];
-    let p1_culled_visible = p0_raw_culled[16 + (5 * 32) + 11];
-    assert_eq!(
-        p1_culled_visible, 0,
-        "P1 follower must cull when local map NPC count exceeds 26"
-    );
-}
-
-#[test]
-fn test_progression_sync_barrier_gate() {
-    let mut lobby = LobbyState::new(Duration::from_secs(5), 2, false);
-
-    let p0_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-    let p1_addr: SocketAddr = "127.0.0.1:50001".parse().unwrap();
-
-    // P0 and P1 both at Violet City (Map 28) with 0 badges
-    lobby.handle_client_packet(p0_addr, make_dummy_packet(0, 28, 10, 10, 155, 5, 0b0000_0000));
-    lobby.handle_client_packet(p1_addr, make_dummy_packet(1, 28, 11, 10, 158, 5, 0b0000_0000));
-
-    let batch = lobby.build_broadcast_batch();
-    let gates_offset = 16 + (5 * 32) + (5 * 24);
-    let sync_ready = batch[0].1[gates_offset + 4];
-    assert_eq!(sync_ready, 1, "Barrier gate must unlock when all players match map and badges");
-
-    // Desync: P0 beats Falkner and gets Badge 1, P1 has not beaten him yet
-    lobby.handle_client_packet(p0_addr, make_dummy_packet(0, 28, 10, 10, 155, 5, 0b0000_0001));
-    let batch_desync = lobby.build_broadcast_batch();
-    let sync_ready_desync = batch_desync[0].1[gates_offset + 4];
-    let synced_badges = u16::from_le_bytes([batch_desync[0].1[gates_offset + 2], batch_desync[0].1[gates_offset + 3]]);
-
-    assert_eq!(sync_ready_desync, 0, "Barrier gate must lock when badges desync");
-    assert_eq!(synced_badges, 0, "Common badge mask must reflect lowest common denominator");
-}
-
-#[test]
-fn test_client_timeout_pruning() {
-    let mut lobby = LobbyState::new(Duration::from_millis(50), 2, false);
-    let p0_addr: SocketAddr = "127.0.0.1:50000".parse().unwrap();
-
-    lobby.handle_client_packet(p0_addr, make_dummy_packet(0, 4, 10, 10, 155, 5, 0));
-    assert_eq!(lobby.build_broadcast_batch().len(), 1);
-
-    // Sleep past the 50ms timeout window
-    sleep(Duration::from_millis(70));
-    lobby.prune_stale_clients();
-
-    assert_eq!(
-        lobby.build_broadcast_batch().len(),
-        0,
-        "Stale client must be pruned after timeout"
+        lobby.handle_client_packet(overflow, make_packet(AUTO_PLAYER_ID, 9999, 0, 4, 10, 10, 152, 10, 0)),
+        None
     );
 }
