@@ -1,0 +1,14 @@
+[package]
+name = "coop-relay"
+version = "0.1.0"
+edition = "2024"
+description = "6-Player UDP state synchronization relay server for Pokemon HeartGold (hg-engine)"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[dependencies]
+clap = { version = "4.6", features = ["derive"] }
+tokio = { version = "1.53", features = ["net", "time", "rt-multi-thread", "macros", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
