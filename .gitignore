@@ -97,6 +97,7 @@ graphify-out/
 
 # bizhawk instances
 emulators/
+BizHawk/
 
 # coop-bridge
 coop-bridge/src/bin/
