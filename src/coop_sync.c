@@ -5,7 +5,18 @@
 #include "constants/pokemon_nickname.h"
 
 #include "message.h"
+#include "pokemon.h"
+#include "save.h"
+#include "map_events_internal.h"
 #include "coop_sync.h"
+
+// Vanilla accessor for the main party, mapped in rom.ld (0x02074904).
+// Not declared in any hg-engine header, so declared here for the
+// overworld lead-Pokémon read.
+struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
+extern BOOL LONG_CALL FieldSystem_ApplicationIsRunning(void);
+extern struct Party * LONG_CALL SaveArray_Party_Get(void *saveData);
+extern void * LONG_CALL CreateSysTask(void (*func)(void *task, void *param), void *param, u32 priority);
 
 // 512-byte shared mailbox, placed in the Overlay 129 .data section so
 // arm-none-eabi-nm emits it as a defined (type D) symbol inside
@@ -199,4 +210,93 @@ void LONG_CALL Coop_CheckStartupGate(void)
     {
         Coop_ShowDisconnectedGateAndReset();
     }
+}
+
+// Publish the local player's overworld state into gCoopCommBlock so the
+// BizHawk bridge / relay can read it at 30-60 Hz. Called once per
+// overworld frame from the 60 Hz Coop_MainSysTask.
+void Coop_UpdateLocalPlayerState(FieldSystem *fsys)
+{
+    struct CoopPlayerState *ps = &gCoopCommBlock.local_player;
+
+    // Default the fields we own to zero so a stale value never leaks across
+    // a map transition or a NULL pointer below.
+    ps->map_id = 0;
+    ps->x = 0;
+    ps->y = 0;
+    ps->prev_x = 0;
+    ps->prev_y = 0;
+    ps->direction = 0;
+    ps->movement_type = 0;
+    ps->sprite_id = 0;
+    ps->animation_frame = 0;
+    ps->lead_species = 0;
+    ps->lead_form = 0;
+    ps->lead_is_shiny = 0;
+    ps->lead_gender = 0;
+    ps->trainer_id = 0;
+    ps->is_active = 0;
+
+    if (fsys == NULL)
+        return;
+    if (fsys->playerAvatar == NULL)
+        return;
+    LocalMapObject *mo = fsys->playerAvatar->mapObject;
+    if (mo == NULL)
+        return;
+
+    // Raw coordinates are stored as-is (fx32); the bridge/relay interprets
+    // the scaling - do NOT divide by 0x10000 here.
+    ps->map_id = (u16)fsys->location->mapId;
+    ps->x = (s16)mo->xCurr;
+    ps->y = (s16)mo->yCurr;
+    ps->prev_x = (s16)mo->xPrev;
+    ps->prev_y = (s16)mo->yPrev;
+    ps->direction = (u8)mo->curFacing;
+    ps->movement_type = (u8)mo->movement;
+    ps->sprite_id = (u16)mo->gfxId;
+    ps->animation_frame = (u8)mo->movementStep;
+
+    // --- Trainer id + badge mask (PlayerProfile.id) ---
+    struct PlayerProfile *profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
+    if (profile != NULL)
+    {
+        ps->trainer_id = profile->id;
+        u16 badge_mask_local = 0;
+        u32 i;
+        for (i = 0; i < 16; i++)
+        {
+            if (PlayerProfile_TestBadgeFlag(profile, (s32)i) == TRUE)
+                badge_mask_local |= (u16)(1u << i);
+        }
+        gCoopCommBlock.badge_mask_local = badge_mask_local;
+    }
+
+    // --- Lead Pokémon (party slot 0) ---
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    if (party != NULL && party->count > 0)
+    {
+        struct PartyPokemon *lead = Party_GetMonByIndex(party, 0);
+        if (lead != NULL)
+        {
+            ps->lead_species = (u16)GetMonData(lead, MON_DATA_SPECIES, NULL);
+            ps->lead_form = (u16)GetMonData(lead, MON_DATA_FORM, NULL);
+            ps->lead_is_shiny = MonIsShiny(lead) ? 1 : 0;
+            ps->lead_gender = (u8)GetMonData(lead, MON_DATA_GENDER, NULL);
+        }
+    }
+
+    ps->is_active = 1;
+}
+
+// 60 Hz background SysTask (created in SaveData_New). Ticks the ROM-side
+// heartbeat every frame and republishes local player state while the
+// field system is running.
+void Coop_MainSysTask(struct SysTask *task, void *param)
+{
+    gCoopCommBlock.heartbeat_rom++;
+    if (FieldSystem_ApplicationIsRunning() && gFieldSysPtr != NULL)
+        Coop_UpdateLocalPlayerState(gFieldSysPtr);
+    else
+        gCoopCommBlock.local_player.is_active = 0;
 }

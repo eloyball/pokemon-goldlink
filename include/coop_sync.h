@@ -39,7 +39,9 @@ struct CoopCommBlock
     u32 heartbeat_rom;               // 0x008 last ROM-side heartbeat tick
     u32 server_tick;                  // 0x00C relay server tick
     struct CoopPlayerState local_player; // 0x010..0x02F (32 bytes)
-    u8  server_payload[304];         // 0x030..0x15F opaque relay payload
+    u8  server_payload[280];         // 0x030..0x147 opaque relay payload
+    u16 badge_mask_local;            // 0x148 local 16-bit badge mask
+    u8  server_payload_tail[22];     // 0x14A..0x15F opaque relay payload tail
     volatile u8 is_connected_to_room; // 0x160 1 = in a room, 0 = disconnected
     volatile u8 is_boot_done;          // 0x161 startup gate armed (1 = boot complete)
     u8  reserved[158];                 // 0x162..0x1FF pad to exactly 512 bytes
@@ -52,5 +54,11 @@ extern volatile struct CoopCommBlock gCoopCommBlock;
 BOOL LONG_CALL Coop_IsConnectedToRoom(void);
 void LONG_CALL Coop_ShowDisconnectedGateAndReset(void);
 void LONG_CALL Coop_CheckStartupGate(void);
+
+// Forward declaration; the full type is defined in pokemon.h.
+struct FieldSystem;
+// Publish the local player's overworld state into gCoopCommBlock at
+// 30-60 Hz for the BizHawk bridge / relay. Called once per overworld frame.
+void LONG_CALL Coop_UpdateLocalPlayerState(struct FieldSystem *fsys);
 
 #endif // COOP_SYNC_H
