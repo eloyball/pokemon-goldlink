@@ -1,7 +1,7 @@
 {
   "symbol": "gCoopCommBlock",
-  "arm9_bus_address": "0x023DDBEC",
-  "main_ram_offset": "0x3DDBEC",
-  "main_ram_offset_int": 4053996,
+  "arm9_bus_address": "0x023DDD1C",
+  "main_ram_offset": "0x3DDD1C",
+  "main_ram_offset_int": 4054300,
   "mailbox_size": 512
 }
