@@ -26,6 +26,7 @@ namespace CoopBridge
         private const uint CoopMagic = 0x434F4F50;
         private const ushort ProtocolVersion = 1;
         private const ushort BedroomMapId = 4;
+        private const uint ConnectedFlagOffset = 0x160;
 
         // Wire Action Constants
         private const byte RoomActionCreate = 1;
@@ -33,7 +34,7 @@ namespace CoopBridge
         private const byte RoomActionSync = 3;
         private const byte RoomActionLeave = 4;
 
-        private uint _mailboxOffset = 0x1E6D40;
+        private uint _mailboxOffset = 0x3DDBCC; // fallback; LoadOffsetsFromJson() overrides from coop_offsets.json
         private uint _sequence;
         private byte _assignedSlot = 0xFF;
         private readonly ushort _ephemeralPort;
@@ -333,10 +334,15 @@ namespace CoopBridge
 
             if (_memoryApi != null)
             {
-                // Inform ROM that connection is closed
-                _memoryApi.WriteU8(_mailboxOffset + 0x006, 0xFF, MemoryDomain);
-                _memoryApi.WriteU8(_mailboxOffset + 0x007, 0, MemoryDomain);
-                _memoryApi.WriteU8(_mailboxOffset + 0x150, 0, MemoryDomain);
+                try
+                {
+                    // Inform ROM that connection is closed
+                    _memoryApi.WriteU8(_mailboxOffset + 0x006, 0xFF, MemoryDomain);
+                    _memoryApi.WriteU8(_mailboxOffset + 0x007, 0, MemoryDomain);
+                    _memoryApi.WriteU8(_mailboxOffset + 0x150, 0, MemoryDomain);
+                    _memoryApi.WriteU8(_mailboxOffset + ConnectedFlagOffset, 0, MemoryDomain);
+                }
+                catch { }
             }
 
             SetConnectedUiState(false);
@@ -584,7 +590,9 @@ namespace CoopBridge
         {
             if (_memoryApi == null) return;
 
-            uint localBase = _mailboxOffset + 0x010;
+            try
+            {
+                uint localBase = _mailboxOffset + 0x010;
             ushort locMap = (ushort)_memoryApi.ReadU16(localBase + 0x00, MemoryDomain);
             short locX = (short)_memoryApi.ReadS16(localBase + 0x02, MemoryDomain);
             short locY = (short)_memoryApi.ReadS16(localBase + 0x04, MemoryDomain);
@@ -604,6 +612,7 @@ namespace CoopBridge
                     $"Start Gate  : LOCKED (Connect to a room first)\n" +
                     $"Gym Gate    : LOCKED\n" +
                     $"Local Pos   : Map {locMap} ({locX}, {locY})";
+                _memoryApi.WriteU8(_mailboxOffset + ConnectedFlagOffset, 0, MemoryDomain);
                 return;
             }
 
@@ -637,6 +646,7 @@ namespace CoopBridge
                     {
                         _memoryApi.WriteU8(_mailboxOffset + 0x030 + i, serverPkt[16 + i], MemoryDomain);
                     }
+                    _memoryApi.WriteU8(_mailboxOffset + ConnectedFlagOffset, 1, MemoryDomain);
                 }
                 else
                 {
@@ -669,6 +679,16 @@ namespace CoopBridge
                 $"Start Gate  : {(campaignStarted == 1 ? "UNLOCKED (Adventure Started)" : "WAITING FOR PARTY IN BEDROOM")}\n" +
                 $"Gym Gate    : {(syncReady == 1 ? "UNLOCKED" : "LOCKED")}\n" +
                 $"Local Pos   : Map {locMap} ({locX}, {locY}) | Remote[0]: ({rem0X}, {rem0Y})";
+            }
+            catch (NotImplementedException)
+            {
+                // Core is NullHawk during ROM close/shutdown
+                return;
+            }
+            catch (Exception)
+            {
+                return;
+            }
         }
     }
 }
