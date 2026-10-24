@@ -14,7 +14,7 @@ cargo build --release
 
 echo "[2/4] Compiling hg-engine ROM (C / ARMIPS)..."
 cd "$ROOT_DIR/hg-engine"
-make -j24
+make -j$(nproc)
 
 echo "[3/4] Extracting & validating gCoopCommBlock symbol offset..."
 cd "$ROOT_DIR"
