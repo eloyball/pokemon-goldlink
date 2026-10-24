@@ -17,6 +17,7 @@ SECTIONS {
                 *(.ctors)
                 *(.dtors)
                 *(.rodata)
+                *(.data)
                 *(.fini)
                 *(COMMON)
                 __text_end  = . ;

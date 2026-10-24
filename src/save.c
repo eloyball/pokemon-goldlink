@@ -14,6 +14,7 @@
 #include "script.h"
 #include "sprite.h"
 #include "task.h"
+#include "coop_sync.h"
 
 // these functions are configured to not hook from hooks directly under ALLOW_SAVE_CHANGES
 // can't get linking to work properly when i strip these
@@ -180,6 +181,9 @@ SaveData *SaveData_New(void)
         break;
     }
 
+    (void)gCoopCommBlock.magic; // keep the coop mailbox linked into Overlay 129
+    gCoopCommBlock.is_boot_done = 1;
+
     return ret;
 }
 
@@ -251,6 +255,11 @@ int Save_NowWriteFile_AfterMGInit(SaveData *saveData, int a1)
 
 void Save_InitDynamicRegion(SaveData *saveData)
 {
+    if (gCoopCommBlock.is_boot_done != 0)
+    {
+        Coop_CheckStartupGate();
+    }
+
     saveData->isNewGame = TRUE;
     saveData->sectorCleanFlag[0] = 1;
     saveData->sectorCleanFlag[1] = 1;
@@ -959,6 +968,9 @@ void DestroyHeap(u32 heapId UNUSED)
  */
 void LONG_CALL FieldSystem_RestoreMapObjectsFromSave(FieldSystem *fieldSystem)
 {
+    // CONTINUE hook: fires when loading a saved game into the overworld.
+    Coop_CheckStartupGate();
+
     struct SavedMapObjectList *unk = Save_MapObjects_Get(fieldSystem->savedata);
     struct SavedMapObject *follower = NULL;
 
