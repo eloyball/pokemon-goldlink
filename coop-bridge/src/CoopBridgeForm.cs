@@ -25,7 +25,7 @@ namespace CoopBridge
         private const string ConfigFilePath = "coop_config.json";
         private const uint CoopMagic = 0x434F4F50;
         private const ushort ProtocolVersion = 1;
-        private const ushort BedroomMapId = 4;
+        private const ushort BedroomMapId = 64;
         private const uint ConnectedFlagOffset = 0x160;
 
         // Wire Action Constants
@@ -538,7 +538,7 @@ namespace CoopBridge
             _memoryApi.WriteS16(localBase + 0x08, curY, MemoryDomain);
             _memoryApi.WriteS16(localBase + 0x02, (short)(curX + 1), MemoryDomain);
             _memoryApi.WriteS16(localBase + 0x04, curY, MemoryDomain);
-            _memoryApi.WriteU16(localBase + 0x10, 155, MemoryDomain);
+            _memoryApi.WriteU16(localBase + 0x10, 0, MemoryDomain); // No starter: 0 party members
             _memoryApi.WriteU8(localBase + 0x17, 1, MemoryDomain); // Auto-ready in bedroom
             _memoryApi.WriteU32(localBase + 0x18, trainerId, MemoryDomain);
         }
@@ -597,9 +597,11 @@ namespace CoopBridge
             short locX = (short)_memoryApi.ReadS16(localBase + 0x02, MemoryDomain);
             short locY = (short)_memoryApi.ReadS16(localBase + 0x04, MemoryDomain);
             uint otid = _memoryApi.ReadU32(localBase + 0x18, MemoryDomain);
+            ushort leadSpecies = (ushort)_memoryApi.ReadU16(localBase + 0x10, MemoryDomain);
 
-            // Automatic Bedroom Ready check: Player is ready once spawned in Bedroom (Map 4) with a valid TrainerID
-            byte autoReady = (byte)((locMap == BedroomMapId && otid != 0) ? 1 : 0);
+            // Automatic Bedroom Ready check: Player is ready once spawned in the starting
+            // Bedroom with a valid TrainerID and no starter Pokémon (0 party members).
+            byte autoReady = (byte)((locMap == BedroomMapId && otid != 0 && leadSpecies == 0) ? 1 : 0);
             _memoryApi.WriteU8(localBase + 0x17, autoReady, MemoryDomain);
             _memoryApi.WriteU8(localBase + 0x1C, (byte)_partySizeInput.Value, MemoryDomain);
 
