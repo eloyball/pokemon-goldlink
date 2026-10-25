@@ -12,12 +12,10 @@ use crate::protocol::{
     ServerToClientPacket, AUTO_PLAYER_ID, COOP_MAGIC, MAX_PLAYERS, PROTOCOL_VERSION, REMOTE_SLOTS,
     ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC,
     ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
-    ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
+    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
 };
 
 const MAX_NPCS_BEFORE_FOLLOWER_CULL: u8 = 26;
-const BEDROOM_START_MAP_ID: u16 = 4;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredTrainer {
     pub slot_id: u8,
@@ -144,21 +142,10 @@ impl LobbyState {
     ) -> Result<u8, u8> {
         let now = Instant::now();
         let trainer_id = pkt.local_player.trainer_id;
-        let map_id = pkt.local_player.map_id;
         let room_str = room_code_to_string(&self.room_code);
 
-        // Rule: In an unstarted campaign, players may only be at Title Screen (Map 0) or Bedroom (Map 4) with 0 badges
-        if !self.campaign_started
-            && (pkt.badge_mask_local != 0 || (map_id != 0 && map_id != BEDROOM_START_MAP_ID))
-        {
-            warn!(
-                "[Room {room_str}] Rejected mid-game save from {addr} (Map: {map_id}, Badges: 0b{:08b})",
-                pkt.badge_mask_local
-            );
-            self.remove_client_by_addr(addr);
-            return Err(ROOM_STATUS_ERR_MIDGAME_SAVE);
-        }
-
+        // Game-agnostic admission: the relay never inspects map numbers or badge
+        // masks during lobby formation. Readiness is carried by pkt.client_ready.
         // Only the room creator can configure target_party_size while forming
         if !self.campaign_started
             && pkt.local_player.target_party_size >= 2
@@ -185,9 +172,9 @@ impl LobbyState {
             .map(|r| r.assigned_monolocke)
             .unwrap_or(18);
 
-        // Automatic Bedroom Ready: True once the player spawns into Map 4 with a valid TrainerID
-        let in_bedroom_ready =
-            self.campaign_started || (map_id == BEDROOM_START_MAP_ID && trainer_id != 0);
+        // Trust the wire flag directly: the client (ROM bridge) decides readiness.
+        let client_ready = pkt.client_ready;
+        let in_bedroom_ready = client_ready == 1;
 
         if let Some(existing) = &mut self.slots[slot_idx] {
             if pkt.sequence < existing.last_sequence
@@ -209,7 +196,7 @@ impl LobbyState {
 
             if state_changed || self.inspect_all_packets {
                 info!(
-                    "[Room {room_str} | P{slot_idx} @ {addr}] OTID: 0x{:08X} | InBedroom: {} | Map: {} | Pos: ({}, {}) | Lead: #{} | Badges: 0b{:08b}",
+                    "[Room {room_str} | P{slot_idx} @ {addr}] OTID: 0x{:08X} | Ready: {} | Map: {} | Pos: ({}, {}) | Lead: #{} | Badges: 0b{:08b}",
                     new.trainer_id,
                     in_bedroom_ready,
                     new.map_id,
@@ -222,7 +209,7 @@ impl LobbyState {
 
             let mut updated_state = pkt.local_player;
             updated_state.is_active = 1;
-            updated_state.client_ready = u8::from(in_bedroom_ready);
+            updated_state.client_ready = client_ready;
 
             if (updated_state.x != old.x || updated_state.y != old.y)
                 && updated_state.prev_x == updated_state.x
@@ -250,7 +237,7 @@ impl LobbyState {
         } else {
             let mut initial_state = pkt.local_player;
             initial_state.is_active = 1;
-            initial_state.client_ready = u8::from(in_bedroom_ready);
+            initial_state.client_ready = client_ready;
 
             if initial_state.prev_x == 0 && initial_state.prev_y == 0 {
                 initial_state.prev_x = initial_state.x;
@@ -258,7 +245,7 @@ impl LobbyState {
             }
 
             info!(
-                "[Room {room_str} | JOIN] Slot P{slot_idx} assigned to {addr} (OTID: 0x{:08X} | Map: {} | InBedroom: {})",
+                "[Room {room_str} | JOIN] Slot P{slot_idx} assigned to {addr} (OTID: 0x{:08X} | Map: {} | Ready: {})",
                 initial_state.trainer_id,
                 initial_state.map_id,
                 in_bedroom_ready
@@ -277,7 +264,7 @@ impl LobbyState {
             });
         }
 
-        self.check_and_lock_bedroom_gate();
+        self.check_and_lock_start_gate();
         Ok(slot_idx as u8)
     }
 
@@ -391,7 +378,7 @@ impl LobbyState {
         Err(ROOM_STATUS_ERR_FULL)
     }
 
-    fn check_and_lock_bedroom_gate(&mut self) {
+    fn check_and_lock_start_gate(&mut self) {
         if self.campaign_started {
             return;
         }
@@ -401,14 +388,13 @@ impl LobbyState {
             return;
         }
 
-        // Automatically lock and start once every party member is in their Bedroom (Map 4) with a valid TrainerID
-        let all_in_bedroom = active.iter().all(|p| {
-            p.in_bedroom_ready
-                && p.state.map_id == BEDROOM_START_MAP_ID
-                && p.state.trainer_id != 0
-                && p.badge_mask == 0
-        });
-        if !all_in_bedroom {
+        // Automatically lock and start once every active player reports
+        // client_ready == 1 with a valid TrainerID. The relay never inspects
+        // map numbers or badge masks.
+        let all_ready = active
+            .iter()
+            .all(|p| p.state.client_ready == 1 && p.state.trainer_id != 0);
+        if !all_ready {
             return;
         }
 
@@ -425,7 +411,7 @@ impl LobbyState {
         }
 
         info!(
-            "=== [Room {} | BEDROOM GATE UNLOCKED] Roster Locked with {}/{} Players! Adventure Started! ===",
+            "=== [Room {} | START GATE UNLOCKED] Roster Locked with {}/{} Players! Campaign Started! ===",
             room_code_to_string(&self.room_code),
             self.roster.len(),
             self.target_party_size

@@ -3,12 +3,12 @@ use std::net::SocketAddr;
 use std::thread::sleep;
 use std::time::Duration;
 
-use coop_relay::lobby::{LobbyState, RoomManager};
-use coop_relay::protocol::{
+use crate::lobby::{LobbyState, RoomManager};
+use crate::protocol::{
     ClientToServerPacket, PlayerState, AUTO_PLAYER_ID, COOP_MAGIC, MAX_PLAYERS, PROTOCOL_VERSION,
     ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS,
     ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_INVALID_CODE, ROOM_STATUS_ERR_LOCKED,
-    ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND,
+    ROOM_STATUS_ERR_NOT_FOUND,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -26,7 +26,8 @@ fn make_packet(
     npc_count: u8,
     badges: u16,
 ) -> ClientToServerPacket {
-    let ready = u8::from(map_id == 4 && trainer_id != 0);
+    // Readiness is decided by the client (ROM bridge); the relay just relays the wire flag.
+    let ready = u8::from(trainer_id != 0);
     ClientToServerPacket {
         magic: COOP_MAGIC,
         version: PROTOCOL_VERSION,
@@ -65,7 +66,7 @@ fn make_packet(
 }
 
 #[test]
-fn test_safeguards_room_code_create_join_and_midgame_block() {
+fn test_safeguards_room_code_create_join_and_open_admission() {
     let test_dir = "target/test_saves_safeguards";
     let _ = fs::remove_dir_all(test_dir);
     let mut manager = RoomManager::new(Duration::from_secs(5), 2, false, test_dir);
@@ -175,7 +176,8 @@ fn test_safeguards_room_code_create_join_and_midgame_block() {
         ROOM_STATUS_ERR_ALREADY_EXISTS
     );
 
-    // 5. Attempting to join an unstarted room with a mid-game save (Map 28, outside Bedroom) is rejected
+    // 5. Joining an unstarted room with a mid-game save (Map 28) is now ALLOWED:
+    //    the relay is game-agnostic and trusts the client's client_ready wire flag
     let midgame_join = make_packet(
         *b"SAFE01",
         ROOM_ACTION_JOIN,
@@ -190,18 +192,13 @@ fn test_safeguards_room_code_create_join_and_midgame_block() {
         5,
         0,
     );
-    assert_eq!(
-        manager
-            .handle_client_packet(second_addr, midgame_join)
-            .unwrap_err()[12],
-        ROOM_STATUS_ERR_MIDGAME_SAVE
-    );
+    assert_eq!(manager.handle_client_packet(second_addr, midgame_join), Ok(1));
 
     let _ = fs::remove_dir_all(test_dir);
 }
 
 #[test]
-fn test_auto_bedroom_lock_and_offline_progression_block() {
+fn test_auto_start_lock_and_offline_progression_block() {
     let mut lobby = LobbyState::with_room(
         *b"JOHTO1",
         0x1234_5678,
@@ -233,7 +230,7 @@ fn test_auto_bedroom_lock_and_offline_progression_block() {
     );
     assert!(!lobby.is_campaign_started());
 
-    // 2. P0 finishes Oak's intro and enters Bedroom (Map 4, OTID 0x1111_1111), P1 still with Oak (Map 0)
+    // 2. P0 loads save (Map 4, OTID 0x1111_1111) and reports client_ready=1; P1 still at Title
     assert_eq!(
         lobby.handle_client_packet(
             p0_addr,
@@ -243,7 +240,7 @@ fn test_auto_bedroom_lock_and_offline_progression_block() {
     );
     assert!(!lobby.is_campaign_started());
 
-    // 3. P1 finishes Oak's intro and enters Bedroom (Map 4, OTID 0x2222_2222) -> Automatically locks & starts!
+    // 3. P1 loads save (Map 4, OTID 0x2222_2222) and reports client_ready=1 -> Automatically locks & starts!
     assert_eq!(
         lobby.handle_client_packet(
             p1_addr,
@@ -275,13 +272,17 @@ fn test_auto_bedroom_lock_and_offline_progression_block() {
     let gates_offset = 16 + (5 * 32) + (5 * 24);
     assert_eq!(batch_online[0].1[gates_offset + 4], 1);
 
-    // 6. P1 disconnects -> Gym Gate locks (0)
+    // 6. P1 goes stale (80ms > 60ms timeout) and is pruned -> progress gate locks (0)
     sleep(Duration::from_millis(80));
+    let _ = lobby.handle_client_packet(
+        p0_addr,
+        make_packet(*b"JOHTO1", ROOM_ACTION_SYNC, 0x1234_5678, 0, 0x1111_1111, 2, 28, 10, 10, 155, 5, 0),
+    );
     lobby.prune_stale_clients();
     let batch_offline = lobby.build_broadcast_batch();
     assert_eq!(batch_offline[0].1[gates_offset + 4], 0);
 
-    // 7. P1 reconnects at Title Screen (Map 0, OTID 0) and then loads save (OTID 0x2222_2222)
+    // 7. P1 reconnects at Title Screen (OTID 0) and then loads save (Map 28 -> OTID 0x2222_2222)
     let p1_new_addr: SocketAddr = "127.0.0.1:61234".parse().unwrap();
     assert_eq!(
         lobby.handle_client_packet(
