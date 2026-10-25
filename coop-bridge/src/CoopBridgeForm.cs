@@ -245,7 +245,8 @@ namespace CoopBridge
     [ExternalTool("HGSS Co-op Bridge")]
     public sealed class CoopBridgeForm : ToolFormBase, IExternalToolForm
     {
-        protected override string WindowTitleStatic => "HGSS Co-op Bridge";
+        protected override string WindowTitleStatic =>
+            InstanceName == null ? "HGSS Co-op Bridge" : $"HGSS Co-op Bridge ({InstanceName})";
 
         [RequiredApi]
         public IMemoryApi? _memoryApi { get; set; }
@@ -259,11 +260,21 @@ namespace CoopBridge
 
         private const string MemoryDomain = "Main RAM";
         private const string ConfigFileName = "coop_config.json";
-        // <BizHawk>/coop_config.json, resolved from the DLL location
-        // (<BizHawk>/ExternalTools) so it does not depend on the working
-        // directory BizHawk was launched from: it holds the player secret.
-        private static readonly string ConfigFilePath = Path.GetFullPath(Path.Combine(
-            Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "..", ConfigFileName));
+        // BizHawk config passed with --config (null for the default config.ini).
+        private static readonly string? BizHawkConfigPath = FindBizHawkConfigArg();
+        // Name of the instance directory when launched with --config
+        // (scripts/run_bizhawk.sh <name>), shown in the window title.
+        private static readonly string? InstanceName = BizHawkConfigPath == null
+            ? null : Path.GetFileName(Path.GetDirectoryName(BizHawkConfigPath));
+        // One coop_config.json per BizHawk config, because it holds the player
+        // secret: two instances sharing one secret would be treated as the same
+        // player by a locked campaign. Default instance: <BizHawk>/coop_config.json,
+        // resolved from the DLL location (<BizHawk>/ExternalTools) so it does
+        // not depend on the working directory.
+        private static readonly string ConfigFilePath = BizHawkConfigPath != null
+            ? Path.Combine(Path.GetDirectoryName(BizHawkConfigPath) ?? ".", ConfigFileName)
+            : Path.GetFullPath(Path.Combine(
+                Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "..", ConfigFileName));
         private const string OffsetsFileName = "coop_offsets.json";
         private const double ServerTimeoutSeconds = 3.0;
         // Challenges prove the relay is reachable, but must lead to a real
@@ -1149,6 +1160,24 @@ namespace CoopBridge
         // ------------------------------------------------------------------
         // Config & helpers
         // ------------------------------------------------------------------
+
+        /// <summary>Full path given to BizHawk's --config (both "--config=x" and "--config x").</summary>
+        private static string? FindBizHawkConfigArg()
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                string? value = null;
+                if (args[i].StartsWith("--config=", StringComparison.Ordinal)) value = args[i].Substring("--config=".Length);
+                else if (args[i] == "--config" && i + 1 < args.Length) value = args[i + 1];
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    try { return Path.GetFullPath(value!.Trim('"')); }
+                    catch (ArgumentException) { return null; }
+                }
+            }
+            return null;
+        }
 
         private static uint GenerateCryptoToken()
         {

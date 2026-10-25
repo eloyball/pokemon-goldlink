@@ -325,31 +325,23 @@ static BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
 }
 
 // ---------------------------------------------------------------------------
-// Mid-game disconnect: native field task (freeze, dialog, save, reset)
+// Native overworld dialog box + field task helpers
 // ---------------------------------------------------------------------------
 
-enum CoopDisconnectTaskState
-{
-    COOP_TASK_OPEN_DIALOG,
-    COOP_TASK_WAIT_SAVING_TEXT,
-    COOP_TASK_SAVE,
-    COOP_TASK_WAIT_RESULT_TEXT,
-    COOP_TASK_WAIT_A,
-};
-
-struct CoopDisconnectTaskEnv
+// Vanilla dialog box (pret ScrCmd_OpenMsg / DialogBox_LoadFrame) on BG3.
+struct CoopDialog
 {
     GF_BGL_BMPWIN window;
     String *text;
     u8 printerId;
     u8 textDelay;
-    u8 frameWait;
 };
 
 static u8 Coop_GetTextFrameDelay(void *saveData)
 {
     // pret Options_GetTextFrameDelay: Options.textSpeed is bits 0-3.
-    u16 options = *(u16 *)Save_PlayerData_GetOptionsAddr(saveData);
+    u16 options;
+    __builtin_memcpy(&options, Save_PlayerData_GetOptionsAddr(saveData), sizeof(options));
     u32 textSpeed = options & 0xF;
 
     if (textSpeed == 0)
@@ -359,11 +351,50 @@ static u8 Coop_GetTextFrameDelay(void *saveData)
     return 1;
 }
 
-static void Coop_PrintDialogPage(struct CoopDisconnectTaskEnv *env, const char *msg)
+static void Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
 {
-    FillWindowPixelBuffer(&env->window, DIALOG_BG_FILL);
-    Coop_SetStringFromAscii(env->text, msg);
-    env->printerId = AddTextPrinterParameterized(&env->window, DIALOG_FONT, env->text, 0, 0, env->textDelay, NULL);
+    void *options = Save_PlayerData_GetOptionsAddr(fsys->savedata);
+
+    AddWindowParameterized(fsys->bg_config, &dialog->window, DIALOG_BG_LAYER,
+                           DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
+                           DIALOG_PLTT_TEXT, DIALOG_BASE_TILE);
+    TalkWinGraphicSet(fsys->bg_config, DIALOG_BG_LAYER, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME,
+                      CONFIG_GetWindowType(options), HEAP_ID_FIELD1);
+    FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
+    BmpTalkWinWrite(&dialog->window, FALSE, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME);
+    fsys->textbox_open = TRUE;
+
+    dialog->text = String_New(COOP_TEXT_MAX * 2, HEAP_ID_FIELD3);
+    dialog->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
+}
+
+// Prints one page (two lines max: the box is 4 tiles tall).
+static void Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
+{
+    FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
+    Coop_SetStringFromAscii(dialog->text, msg);
+    dialog->printerId = AddTextPrinterParameterized(&dialog->window, DIALOG_FONT, dialog->text, 0, 0, dialog->textDelay, NULL);
+}
+
+static BOOL Coop_DialogIsPrinting(const struct CoopDialog *dialog)
+{
+    return TextPrinterCheckActive(dialog->printerId);
+}
+
+// pret ScrCmd_CloseMsg.
+static void Coop_DialogClose(FieldSystem *fsys, struct CoopDialog *dialog)
+{
+    ClearFrameAndWindow2(&dialog->window, FALSE);
+    RemoveWindow(&dialog->window);
+    String_Delete(dialog->text);
+    dialog->text = NULL;
+    fsys->textbox_open = FALSE;
+}
+
+// A or B, like every vanilla overworld message (ScrCmd_WaitButton).
+static BOOL Coop_DialogButtonPressed(void)
+{
+    return (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)) != 0;
 }
 
 // Same allocation as pret FieldSystem_CreateTask / Task_New (task.c), which
@@ -394,6 +425,48 @@ static TaskManager *Coop_FieldSystem_CreateTask(FieldSystem *fsys, TaskFunc func
     return taskman;
 }
 
+// Allocates a zeroed env of envSize bytes and starts func as a field task.
+// While it runs, vanilla blocks player input (no FieldInput_Process /
+// PlayerAvatar_MoveControl), exactly like an NPC script. Returns FALSE,
+// freeing everything, if the field heap is full (callers retry next frame).
+static BOOL Coop_StartFieldTask(FieldSystem *fsys, TaskFunc func, u32 envSize)
+{
+    void *env = sys_AllocMemory(HEAP_ID_FIELD3, envSize);
+    u8 *bytes = env;
+    u32 i;
+
+    if (env == NULL)
+        return FALSE;
+    for (i = 0; i < envSize; i++)
+        bytes[i] = 0;
+
+    if (Coop_FieldSystem_CreateTask(fsys, func, env) == NULL)
+    {
+        sys_FreeMemoryEz(env);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Mid-game disconnect: native field task (freeze, dialog, save, reset)
+// ---------------------------------------------------------------------------
+
+enum CoopDisconnectTaskState
+{
+    COOP_TASK_OPEN_DIALOG,
+    COOP_TASK_WAIT_SAVING_TEXT,
+    COOP_TASK_SAVE,
+    COOP_TASK_WAIT_RESULT_TEXT,
+    COOP_TASK_WAIT_A,
+};
+
+struct CoopDisconnectTaskEnv
+{
+    struct CoopDialog dialog;
+    u8 frameWait;
+};
+
 // Never returns TRUE: the task ends in OS_ResetSystem, so the field task
 // manager never frees it.
 static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
@@ -404,31 +477,15 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
     switch (taskman->state)
     {
     case COOP_TASK_OPEN_DIALOG:
-    {
-        void *options = Save_PlayerData_GetOptionsAddr(fsys->savedata);
-
         // Freeze every map object, like the LockAll script command.
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
-
-        // Vanilla dialog box (pret ScrCmd_OpenMsg / DialogBox_LoadFrame).
-        AddWindowParameterized(fsys->bg_config, &env->window, DIALOG_BG_LAYER,
-                               DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
-                               DIALOG_PLTT_TEXT, DIALOG_BASE_TILE);
-        TalkWinGraphicSet(fsys->bg_config, DIALOG_BG_LAYER, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME,
-                          CONFIG_GetWindowType(options), HEAP_ID_FIELD1);
-        FillWindowPixelBuffer(&env->window, DIALOG_BG_FILL);
-        BmpTalkWinWrite(&env->window, FALSE, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME);
-        fsys->textbox_open = TRUE;
-
-        env->text = String_New(COOP_TEXT_MAX * 2, HEAP_ID_FIELD3);
-        env->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
-        Coop_PrintDialogPage(env, "Disconnected from the Co-op Room.\nSaving your adventure...");
+        Coop_DialogOpen(fsys, &env->dialog);
+        Coop_DialogPrint(&env->dialog, "Disconnected from the Co-op Room.\nSaving your adventure...");
         taskman->state = COOP_TASK_WAIT_SAVING_TEXT;
         break;
-    }
 
     case COOP_TASK_WAIT_SAVING_TEXT:
-        if (!TextPrinterCheckActive(env->printerId))
+        if (!Coop_DialogIsPrinting(&env->dialog))
         {
             env->frameWait = 0;
             taskman->state = COOP_TASK_SAVE;
@@ -441,20 +498,19 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
             break;
 
         if (Field_SaveGameNormal(fsys))
-            Coop_PrintDialogPage(env, "Your adventure was saved!\nReturning to the Title Screen...");
+            Coop_DialogPrint(&env->dialog, "Your adventure was saved!\nReturning to the Title Screen...");
         else
-            Coop_PrintDialogPage(env, "The save failed!\nReturning to the Title Screen...");
+            Coop_DialogPrint(&env->dialog, "The save failed!\nReturning to the Title Screen...");
         taskman->state = COOP_TASK_WAIT_RESULT_TEXT;
         break;
 
     case COOP_TASK_WAIT_RESULT_TEXT:
-        if (!TextPrinterCheckActive(env->printerId))
+        if (!Coop_DialogIsPrinting(&env->dialog))
             taskman->state = COOP_TASK_WAIT_A;
         break;
 
     case COOP_TASK_WAIT_A:
-        // A or B, like every vanilla overworld message (ScrCmd_WaitButton).
-        if (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B))
+        if (Coop_DialogButtonPressed())
             OS_ResetSystem(0);
         break;
     }
@@ -462,26 +518,153 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
     return FALSE;
 }
 
-// Returns FALSE (and stays pending, retrying next frame) if the field heap
-// cannot fit the task right now.
 static BOOL Coop_BeginDisconnectSaveAndReset(FieldSystem *fsys)
 {
-    struct CoopDisconnectTaskEnv *env = sys_AllocMemory(HEAP_ID_FIELD3, sizeof(*env));
-    u8 *bytes = (u8 *)env;
-    u32 i;
-
-    if (env == NULL)
+    if (!Coop_StartFieldTask(fsys, Coop_Task_DisconnectSaveAndReset, sizeof(struct CoopDisconnectTaskEnv)))
         return FALSE;
-    for (i = 0; i < sizeof(*env); i++)
-        bytes[i] = 0;
-
-    if (Coop_FieldSystem_CreateTask(fsys, Coop_Task_DisconnectSaveAndReset, env) == NULL)
-    {
-        sys_FreeMemoryEz(env);
-        return FALSE;
-    }
     gCoopCommBlock.disconnect_state = COOP_DISCONNECT_RUNNING;
     return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Bedroom stairs block (lobby): nobody leaves before the adventure starts
+// ---------------------------------------------------------------------------
+
+#define COOP_DIR_WEST 2 // pret DIR_WEST (constants/global_fieldmap.h)
+
+// pret constants/movements.h, run through the script movement engine.
+#define COOP_MOVEMENT_STEP_RIGHT 15
+#define COOP_MOVEMENT_STEP_END   254
+
+struct CoopMovementCommand // pret MovementScriptCommand
+{
+    u16 command;
+    u16 length;
+};
+
+void *LONG_CALL EventObjectMovementMan_Create(LocalMapObject *object, const struct CoopMovementCommand *data);
+BOOL LONG_CALL EventObjectMovementMan_IsFinish(void *movementMan);
+void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
+
+// The block only fires while facing west, so stepping back east always
+// returns the player to (4, 4), the tile they came from or an open one.
+static const struct CoopMovementCommand sStepAwayFromStairs[] = {
+    { COOP_MOVEMENT_STEP_RIGHT, 1 },
+    { COOP_MOVEMENT_STEP_END, 0 },
+};
+
+enum CoopBedroomBlockState
+{
+    COOP_BLOCK_WAIT_STILL,
+    COOP_BLOCK_OPEN_DIALOG,
+    COOP_BLOCK_WAIT_PAGE1_TEXT,
+    COOP_BLOCK_WAIT_PAGE1_BUTTON,
+    COOP_BLOCK_WAIT_PAGE2_TEXT,
+    COOP_BLOCK_WAIT_PAGE2_BUTTON,
+    COOP_BLOCK_WAIT_STEP,
+};
+
+struct CoopBedroomBlockEnv
+{
+    struct CoopDialog dialog;
+    void *movement;
+};
+
+BOOL LONG_CALL Coop_IsAdventureStarted(void)
+{
+    return gCoopCommBlock.gates.flag_campaign_started == 1;
+}
+
+// Runs at the end of every frame. The stairs warp
+// (FieldSystem_CheckMapTransition) only fires in a later frame's field
+// control, once the player's move state is END/NONE while standing on
+// (3, 4) facing west with Left held. Facing only changes inside a frame
+// (PlayerAvatar_MoveControl or the map-object update), so this check always
+// sees "on (3, 4) facing west" before any frame that could warp. Deliberately
+// no "standing still" requirement: a field task may start mid-step or
+// mid-turn (it only blocks new input), and the task waits for the player to
+// stop before showing the message.
+static BOOL Coop_ShouldBlockBedroomStairs(FieldSystem *fsys)
+{
+    LocalMapObject *player;
+
+    if (Coop_IsAdventureStarted() || !Coop_IsFieldMapActive(fsys))
+        return FALSE;
+    if (fsys->taskman != NULL || fsys->textbox_open)
+        return FALSE;
+    if (fsys->location->mapId != COOP_BEDROOM_MAP_ID)
+        return FALSE;
+    player = Coop_GetPlayerMapObject(fsys);
+    return player != NULL
+        && player->xCurr == COOP_BEDROOM_STAIRS_X
+        && player->yCurr == COOP_BEDROOM_STAIRS_Z
+        && player->curFacing == COOP_DIR_WEST;
+}
+
+// Returns TRUE when done: the field task manager then frees the task, and
+// the env is freed here.
+static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
+{
+    FieldSystem *fsys = taskman->fieldSystem;
+    struct CoopBedroomBlockEnv *env = taskman->env;
+
+    switch (taskman->state)
+    {
+    case COOP_BLOCK_WAIT_STILL:
+        // Let a step/turn already in progress finish (pret LockAll waits the
+        // same way); no new input is accepted while this task exists.
+        if (MapObject_IsSingleMovementActive(Coop_GetPlayerMapObject(fsys)))
+            break;
+        taskman->state = COOP_BLOCK_OPEN_DIALOG;
+        // fallthrough
+    case COOP_BLOCK_OPEN_DIALOG:
+        MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
+        Coop_DialogOpen(fsys, &env->dialog);
+        Coop_DialogPrint(&env->dialog, "Oops! Looks like some trainers\nare still asleep.");
+        taskman->state = COOP_BLOCK_WAIT_PAGE1_TEXT;
+        break;
+
+    case COOP_BLOCK_WAIT_PAGE1_TEXT:
+        if (!Coop_DialogIsPrinting(&env->dialog))
+            taskman->state = COOP_BLOCK_WAIT_PAGE1_BUTTON;
+        break;
+
+    case COOP_BLOCK_WAIT_PAGE1_BUTTON:
+        if (Coop_DialogButtonPressed())
+        {
+            Coop_DialogPrint(&env->dialog, "Please wait until everyone is\nready to start your adventure.");
+            taskman->state = COOP_BLOCK_WAIT_PAGE2_TEXT;
+        }
+        break;
+
+    case COOP_BLOCK_WAIT_PAGE2_TEXT:
+        if (!Coop_DialogIsPrinting(&env->dialog))
+            taskman->state = COOP_BLOCK_WAIT_PAGE2_BUTTON;
+        break;
+
+    case COOP_BLOCK_WAIT_PAGE2_BUTTON:
+        if (Coop_DialogButtonPressed())
+        {
+            Coop_DialogClose(fsys, &env->dialog);
+            MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
+            // Same engine as the applymovement script command; player input
+            // stays blocked until this task ends.
+            env->movement = EventObjectMovementMan_Create(Coop_GetPlayerMapObject(fsys), sStepAwayFromStairs);
+            taskman->state = COOP_BLOCK_WAIT_STEP;
+        }
+        break;
+
+    case COOP_BLOCK_WAIT_STEP:
+        // Delete asserts the movement finished, so only after IsFinish.
+        if (env->movement != NULL && !EventObjectMovementMan_IsFinish(env->movement))
+            break;
+        if (env->movement != NULL)
+            EventObjectMovementMan_Delete(env->movement);
+        sys_FreeMemoryEz(env);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,12 +741,18 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, struct CoopPlayerState
 static void Coop_PublishLocalPlayerState(const struct CoopPlayerState *ps, u16 badgeMask)
 {
     volatile u32 *dst = (volatile u32 *)&gCoopCommBlock.local_player;
-    const u32 *src = (const u32 *)ps;
+    u32 words[sizeof(*ps) / sizeof(u32)];
     u32 i;
 
+    // memcpy, not a (const u32 *) cast of ps: reading the struct through an
+    // incompatible pointer type is undefined behaviour, and at -Os with
+    // -fipa-pta GCC deleted the byte stores (is_active, client_ready,
+    // lead_gender) as dead, publishing them as 0.
+    __builtin_memcpy(words, ps, sizeof(words));
+
     gCoopCommBlock.local_player_seq++;
-    for (i = 0; i < sizeof(*ps) / sizeof(u32); i++)
-        dst[i] = src[i];
+    for (i = 0; i < sizeof(words) / sizeof(u32); i++)
+        dst[i] = words[i];
     gCoopCommBlock.badge_mask_local = badgeMask;
     gCoopCommBlock.local_player_seq++;
 }
@@ -685,6 +874,10 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
             // been in the overworld while connected.
             if (fieldActive)
                 gCoopCommBlock.was_in_active_session = 1;
+
+            // Lobby: keep everyone in the bedroom until the adventure starts.
+            if (Coop_ShouldBlockBedroomStairs(fsys))
+                (void)Coop_StartFieldTask(fsys, Coop_Task_BedroomBlock, sizeof(struct CoopBedroomBlockEnv));
         }
         else if (gCoopCommBlock.was_in_active_session || fieldActive)
         {

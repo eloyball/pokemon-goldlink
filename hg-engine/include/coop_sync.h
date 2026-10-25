@@ -33,6 +33,14 @@
 // Players spawn in the bedroom (player's house 2F) after New Game.
 #define COOP_BEDROOM_MAP_ID 64
 
+// The bedroom's only exit: a stairs warp on (3, 4) that fires while the
+// player stands on it facing west and holds Left (pret zone_event
+// 061_T20R0202 warp + FieldSystem_CheckMapTransition). Until the adventure
+// starts, standing there facing the stairs shows a message and steps the
+// player back east to (4, 4).
+#define COOP_BEDROOM_STAIRS_X 3
+#define COOP_BEDROOM_STAIRS_Z 4
+
 // The bridge bumps heartbeat_bridge once per emulated frame. If the ROM sees
 // no change for this many of its own main-loop ticks, the bridge is treated
 // as gone (window closed, crashed, or a stale savestate was loaded).
@@ -167,6 +175,8 @@ extern volatile struct CoopCommBlock gCoopCommBlock;
 struct SysTask;
 
 BOOL LONG_CALL Coop_IsConnectedToRoom(void);
+// TRUE once the relay locked the roster (everyone was ready in the bedroom).
+BOOL LONG_CALL Coop_IsAdventureStarted(void);
 void LONG_CALL Coop_CheckStartupGate(void);
 
 // Validated copies of relay-provided data for ROM consumers (ghosts,
