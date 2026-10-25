@@ -1,0 +1,4 @@
+[submodule "hg-engine/tools/source/nitrogfx"]
+	path = hg-engine/tools/source/nitrogfx
+	url = https://github.com/BluRosie/nitrogfx.git
+	branch = master

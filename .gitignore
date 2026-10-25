@@ -1,104 +1,42 @@
-# VSCode folder
-.vscode/
+# Root ignore rules for the pokemon-hg monorepo.
+# Subprojects keep their own rules: hg-engine/.gitignore (build outputs,
+# generated sources, base ROM) and coop-relay/.gitignore (target/).
+# The reference decomps are submodules (see .gitmodules).
 
-# Object files
+# --- Never commit: copyrighted ROMs, saves and savestates (any directory) ---
 *.nds
-
-# ROM
 *.srl
-
-# Tool executables
-*.exe
-
-# Generated files
-*.4bpp
-*.lz
-*.gbapal
-
-# For asmdiff
-*/baserom.*
-*.dump
-
-# For decomp.me
-ctx.c
-
-*.lcf.template
-*.lcf
-*.response.template
-*.response
-
-# Working files
-overlays/*/module_*.s
-overlays/*/module_*.sbin
-overlays/*/module_*.cfg
-
-*.sbin
-*.bnr
-*.nbfp
-*.nbfc
-
-# Dism scripts
-dism.sh
-asmdiff.sh
-
-# Symbols CSV
-symbols.csv
-
-# NARCs
-*.narc
-*.arc
-files/**/*.c
-*.o
-*.naix
-*.a
-
-# Utilities
-ntruncompbw
-*.elf
-cmake-build-*
-*.sbin_LZ
-*.diff
-
-*.dSYM
-
-# MacOS garbage
-.DS_Store
-
-# Depfiles
-*.d
-
-diff.txt
-
-.vscode/
-
-# Save files
-*.dsv
 *.sav
-
-# Savestate files
+*.dsv
 *.ds[0-9]
 *.dst
 *.ml[0-9]
 *.mln
 
-# clangd
-.cache
-compile_commands.json
+# --- Emulator install (binaries, user config, installed CoopBridge.dll) ---
+/BizHawk/
+/emulators/
 
-# python
-/pyscripts/
-__pycache__
-.local-tools/
-.venv/
-*.pyc
+# --- coop-bridge build outputs ---
+/coop-bridge/src/bin/
+/coop-bridge/src/obj/
 
-# graphify
+# --- coop-relay runtime data (campaign rosters; default --save-dir) ---
+/campaigns/
+/coop-relay/campaigns/
+
+# --- Generated knowledge graphs (regenerate with `graphify update .`) ---
 graphify-out/
 
-# bizhawk instances
-emulators/
-BizHawk/
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+.local-tools/
 
-# coop-bridge
-coop-bridge/src/bin/
-coop-bridge/src/obj/
+# --- Editors / OS / tooling ---
+.vscode/
+.idea/
+.cache/
+.DS_Store
+compile_commands.json
