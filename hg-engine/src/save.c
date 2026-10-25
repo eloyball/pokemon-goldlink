@@ -990,5 +990,14 @@ void LONG_CALL FieldSystem_RestoreMapObjectsFromSave(FieldSystem *fieldSystem)
         follower->flags &= ~MAPOBJECTFLAG_ACTIVE;
     }
 
+    // Co-op ghosts are saved like any active map object (vanilla
+    // FieldSystem_SyncMapObjectsToSave has no filter); never restore them, or
+    // they would come back as frozen NPCs. The ghost manager respawns them.
+    for (u32 i = 0; i < NELEMS(unk->subs); i++) {
+        if (COOP_IS_GHOST_ID(unk->subs[i].objId)) {
+            unk->subs[i].flags &= ~MAPOBJECTFLAG_ACTIVE;
+        }
+    }
+
     MapObjectManager_RestoreFromSave(fieldSystem->mapObjectMan, unk->subs, 64);
 }

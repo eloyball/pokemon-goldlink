@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Net;
@@ -24,7 +25,7 @@ namespace CoopBridge
     {
         public const int Size = 512;
         public const uint Magic = 0x434F4F50;
-        public const ushort Version = 3; // COOP_MAILBOX_VERSION
+        public const ushort Version = 5; // COOP_MAILBOX_VERSION
 
         public const uint MagicOff = 0x000;          // u32
         public const uint VersionOff = 0x004;        // u16
@@ -43,6 +44,57 @@ namespace CoopBridge
         public const uint LocalPlayerSeq = 0x16C;    // u32  rom (odd while writing)
         public const uint LimitMapId = 0x178;        // u16  rom: map_id < limit
         public const uint LimitSpecies = 0x17A;      // u16  rom: species <= limit
+        public const uint Diag = 0x17C;              // 24 B rom: CoopDiagnostics
+        public const int DiagSize = 24;
+        public const uint DebugCmd = 0x194;          // u8   bridge: CoopDebugCommand
+        public const uint DebugSeq = 0x195;          // u8   bridge: bumped per command
+        public const uint DebugArg = 0x196;          // u8   bridge: command argument
+        public const uint DebugResult = 0x197;       // u8   rom: CoopDebugResult
+        public const uint PlayerState = 0x198;       // u8   rom: pret PLAYER_STATE_*
+
+        // CoopDiagnostics field offsets (relative to Diag)
+        public const int DgFieldEntryCalls = 0x00;   // u32
+        public const int DgRenderReady = 0x04;
+        public const int DgTexResident = 0x05;
+        public const int DgTexDynamic = 0x06;
+        public const int DgTexDynamicFree = 0x07;
+        public const int DgModelDynamic = 0x08;
+        public const int DgModelDynamicFree = 0x09;
+        public const int DgSeqDynamic = 0x0A;
+        public const int DgSeqDynamicFree = 0x0B;
+        public const int DgMapObjects = 0x0C;
+        public const int DgGhostState = 0x0D;        // 0 none, 1 idle, 2 moving
+        public const int DgDebugAck = 0x0E;          // last DebugSeq processed
+        public const int DgFieldEntryStatus = 0x0F;  // CoopFieldEntryStatus
+        public const int DgGhostX = 0x10;            // s16
+        public const int DgGhostZ = 0x12;            // s16
+        public const int DgGhostY = 0x14;            // s16 render height
+        public const int DgPlayerY = 0x16;           // s16 render height
+
+        // CoopDebugCommand. DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md).
+        public const byte DebugSpawnGhost = 1;
+        public const byte DebugStepGhost = 2;
+        public const byte DebugEmoteGhost = 3;
+        public const byte DebugRemoveGhost = 4;
+        public const byte DebugWarp = 5;             // DebugArg = CoopWarpPreset
+        public const byte DebugToggleBike = 6;
+        public const byte DebugSurf = 7;
+        public const byte DebugFish = 8;
+
+        // CoopWarpPreset, in order (hg-engine/include/coop_sync.h).
+        public static readonly string[] WarpPresets =
+        {
+            "New Bark Town (Route 29 border, water)",
+            "Cherrygrove City (beach)",
+            "Violet City (route borders)",
+            "Goldenrod City (dense)",
+            "Ecruteak City (dense)",
+            "Olivine City (harbor)",
+            "Route 40 (beach, sea)",
+            "Cerulean City (Nugget Bridge north)",
+            "Lavender Town (Silence Bridge south)",
+            "Celadon City (dense)",
+        };
 
         // CoopPlayerState field offsets
         public const int PlayerStateSize = 32;
@@ -341,6 +393,25 @@ namespace CoopBridge
         private readonly Label _adventureValue;
         private readonly Label _gymValue;
         private readonly Label _locationValue;
+        private readonly ThemedButton _diagToggle;
+        private readonly TableLayoutPanel _diagCard;
+        private readonly Label _diagFieldValue;
+        private readonly Label _diagTexturesValue;
+        private readonly Label _diagModelsValue;
+        private readonly Label _diagSequencesValue;
+        private readonly Label _diagObjectsValue;
+        private readonly Label _diagGhostValue;
+        private readonly Label _diagHeightValue;
+        private readonly Label _diagPlayerStateValue;
+        private readonly Label _diagCommandValue;
+        private readonly ComboBox _warpPicker;
+        private readonly ThemedButton[] _diagButtons;
+        private byte _pendingDebugCmd;
+        private byte _pendingDebugArg;
+        private string _sentDebugName = "";
+        private byte _debugSeq;
+        private uint _lastFieldEntryCalls;
+        private DateTime _lastFieldEntryChangeUtc;
         private readonly System.Windows.Forms.Timer _keepAliveTimer;
 
         private readonly UdpClient _udpClient;
@@ -555,12 +626,140 @@ namespace CoopBridge
                 Margin = new Padding(0)
             };
             serverCard.Controls.Add(_serverInput);
+            _diagToggle = Theme.MakeButton("Show diagnostics", Theme.ButtonKind.Neutral);
+            _diagToggle.Height = 28;
+            _diagToggle.Margin = new Padding(0, 10, 0, 0);
+            _diagToggle.Click += (_, _) =>
+            {
+                _diagCard!.Visible = !_diagCard.Visible;
+                _diagToggle.Text = _diagCard.Visible ? "Hide diagnostics" : "Show diagnostics";
+            };
+            serverCard.Controls.Add(_diagToggle);
+
+            // --- Diagnostics (DEVELOPMENT ONLY, docs/DEBUG_TOOLS.md) ---
+            _diagCard = Theme.MakeCard();
+            _diagCard.Margin = new Padding(0, 12, 0, 0);
+            _diagCard.Visible = false;
+            _diagCard.Controls.Add(Theme.MakeLabel("Diagnostics", Theme.BodyBold, Theme.TextPrimary));
+            var diagGrid = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 4, 0, 8)
+            };
+            diagGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 120f));
+            diagGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            Label AddDiagRow(string name)
+            {
+                var key = Theme.MakeLabel(name, Theme.Body, Theme.TextSecondary);
+                var value = Theme.MakeLabel("—", Theme.Body, Theme.TextPrimary);
+                value.MaximumSize = new Size(contentWidth - 150, 0);
+                diagGrid.Controls.Add(key);
+                diagGrid.Controls.Add(value);
+                return value;
+            }
+            _diagFieldValue = AddDiagRow("Field code");
+            _diagTexturesValue = AddDiagRow("Textures");
+            _diagModelsValue = AddDiagRow("Models");
+            _diagSequencesValue = AddDiagRow("Animations");
+            _diagObjectsValue = AddDiagRow("Map objects");
+            _diagGhostValue = AddDiagRow("Test ghost");
+            _diagHeightValue = AddDiagRow("Ghost height");
+            _diagPlayerStateValue = AddDiagRow("You are");
+            _diagCommandValue = AddDiagRow("Last command");
+            _diagCard.Controls.Add(diagGrid);
+
+            var buttons = new List<ThemedButton>();
+            TableLayoutPanel AddActionRow((string label, byte cmd)[] actions, int topMargin)
+            {
+                var row = new TableLayoutPanel
+                {
+                    ColumnCount = actions.Length,
+                    AutoSize = true,
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(0, topMargin, 0, 0)
+                };
+                for (int i = 0; i < actions.Length; i++)
+                {
+                    byte cmd = actions[i].cmd;
+                    string name = actions[i].label;
+                    row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / actions.Length));
+                    var b = Theme.MakeButton(name, Theme.ButtonKind.Neutral);
+                    b.Height = 30;
+                    b.Margin = new Padding(i == 0 ? 0 : 2, 0, i == actions.Length - 1 ? 0 : 2, 0);
+                    b.Click += (_, _) => QueueDebugCommand(cmd, 0, name);
+                    buttons.Add(b);
+                    row.Controls.Add(b, i, 0);
+                }
+                _diagCard.Controls.Add(row);
+                return row;
+            }
+            AddActionRow(new[]
+            {
+                ("Spawn", Mailbox.DebugSpawnGhost),
+                ("Step", Mailbox.DebugStepGhost),
+                ("Emote", Mailbox.DebugEmoteGhost),
+                ("Remove", Mailbox.DebugRemoveGhost),
+            }, 0);
+            AddActionRow(new[]
+            {
+                ("Bike", Mailbox.DebugToggleBike),
+                ("Surf", Mailbox.DebugSurf),
+                ("Fish", Mailbox.DebugFish),
+            }, 4);
+
+            var warpRow = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 4, 0, 0)
+            };
+            warpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            warpRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80f));
+            _warpPicker = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Input,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.Body,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 3, 4, 0)
+            };
+            _warpPicker.Items.AddRange(Mailbox.WarpPresets);
+            _warpPicker.SelectedIndex = 0;
+            warpRow.Controls.Add(_warpPicker, 0, 0);
+            var warpButton = Theme.MakeButton("Warp", Theme.ButtonKind.Neutral);
+            warpButton.Height = 30;
+            warpButton.Dock = DockStyle.Fill;
+            warpButton.Margin = new Padding(0);
+            warpButton.Click += (_, _) =>
+            {
+                int preset = Math.Max(0, _warpPicker.SelectedIndex);
+                QueueDebugCommand(Mailbox.DebugWarp, (byte)preset, "Warp to " + Mailbox.WarpPresets[preset]);
+            };
+            buttons.Add(warpButton);
+            warpRow.Controls.Add(warpButton, 1, 0);
+            _diagCard.Controls.Add(warpRow);
+            _diagButtons = buttons.ToArray();
+
+            var diagHint = Theme.MakeLabel(
+                "Developer tools. The test ghost spawns in front of you with your sprite; Step walks it the way you face. "
+                + "Surf and Fish need you to face water (no Pokemon needed to surf). Reeling in a bite starts a real battle. "
+                + "Warping skips the bedroom lock and story events.",
+                Theme.Caption, Theme.TextSecondary);
+            diagHint.MaximumSize = new Size(contentWidth - 28, 0);
+            diagHint.Margin = new Padding(0, 8, 0, 0);
+            _diagCard.Controls.Add(diagHint);
 
             root.Controls.Add(header);
             root.Controls.Add(_messageLabel);
             root.Controls.Add(roomCard);
             root.Controls.Add(sessionCard);
             root.Controls.Add(serverCard);
+            root.Controls.Add(_diagCard);
             Controls.Add(root);
             AcceptButton = _primaryButton; // Enter in the room code submits
             ActiveControl = _roomInput;    // type the code straight away
@@ -899,6 +1098,8 @@ namespace CoopBridge
                 // Tell the ROM we are alive (drives its disconnect watchdog).
                 _memoryApi!.WriteU32(mb + Mailbox.HeartbeatBridge, ++_bridgeHeartbeat, MemoryDomain);
                 ReadLocalPlayerSnapshot(mb);
+                SendPendingDebugCommand(mb);
+                RefreshDiagnostics(mb);
 
                 if (_link != LinkState.Connecting && _link != LinkState.Connected)
                 {
@@ -1081,6 +1282,130 @@ namespace CoopBridge
             if (!gatesOk) Array.Clear(p, g, Mailbox.GatesSize);
 
             return p;
+        }
+
+        /// <summary>
+        /// Hands a diagnostics-card command to the ROM (handled by the
+        /// Overlay 131 field entry): the command byte first, then a new
+        /// sequence number the ROM acknowledges in diag.debug_ack.
+        /// </summary>
+        private void QueueDebugCommand(byte cmd, byte arg, string name)
+        {
+            _pendingDebugCmd = cmd;
+            _pendingDebugArg = arg;
+            _sentDebugName = name;
+        }
+
+        private void SendPendingDebugCommand(uint mb)
+        {
+            if (_pendingDebugCmd == 0) return;
+            _memoryApi!.WriteU8(mb + Mailbox.DebugCmd, _pendingDebugCmd, MemoryDomain);
+            _memoryApi.WriteU8(mb + Mailbox.DebugArg, _pendingDebugArg, MemoryDomain);
+            if (++_debugSeq == 0) _debugSeq = 1;
+            _memoryApi.WriteU8(mb + Mailbox.DebugSeq, _debugSeq, MemoryDomain);
+            _pendingDebugCmd = 0;
+        }
+
+        private static string PlayerStateName(byte state) => state switch
+        {
+            0 => "walking",
+            1 => "cycling",
+            2 => "surfing",
+            3 => "in Team Rocket disguise",
+            4 => "using a field move",
+            7 => "fishing",
+            9 => "saving",
+            _ => $"state {state}",
+        };
+
+        private static (string text, Color color) DebugResultText(byte result) => result switch
+        {
+            1 => ("done", Theme.Connected),
+            2 => ("nothing to act on (spawn the ghost first)", Theme.Connecting),
+            3 => ("not now (wrong riding state)", Theme.Connecting),
+            4 => ("face surfable water first", Theme.Connecting),
+            5 => ("unknown command or preset", Theme.Error),
+            6 => ("failed (no free object or memory)", Theme.Error),
+            7 => ("debug tools are compiled out of this ROM", Theme.Error),
+            _ => ("—", Theme.TextSecondary),
+        };
+
+        private void RefreshDiagnostics(uint mb)
+        {
+            if (!_diagCard.Visible) return;
+            if ((DateTime.UtcNow - _lastInfoRefreshUtc).TotalMilliseconds < InfoRefreshMs) return;
+
+            var raw = _memoryApi!.ReadByteRange(mb + Mailbox.Diag, Mailbox.DiagSize, MemoryDomain);
+            if (raw.Count != Mailbox.DiagSize) return;
+            byte[] d = new byte[Mailbox.DiagSize];
+            for (int i = 0; i < d.Length; i++) d[i] = raw[i];
+
+            // The ROM reports why the Overlay 131 field code did or did not run
+            // this frame (CoopFieldEntryStatus); the counter shows it is ticking.
+            uint calls = BitConverter.ToUInt32(d, Mailbox.DgFieldEntryCalls);
+            if (calls != _lastFieldEntryCalls)
+            {
+                _lastFieldEntryCalls = calls;
+                _lastFieldEntryChangeUtc = DateTime.UtcNow;
+            }
+            bool ticking = (DateTime.UtcNow - _lastFieldEntryChangeUtc).TotalMilliseconds < 500;
+            byte status = d[Mailbox.DgFieldEntryStatus];
+            bool running = status == 3 && ticking;
+            (string fieldText, Color fieldColor) = status switch
+            {
+                3 => (ticking ? $"running · {calls} frames" : $"stalled · {calls} frames", ticking ? Theme.Connected : Theme.Error),
+                2 => ("error: Overlay 131 has no co-op header (rebuild)", Theme.Error),
+                1 => ("error: Overlay 131 is not loaded", Theme.Error),
+                _ => calls == 0
+                    ? ("waiting for the overworld", Theme.TextSecondary)
+                    : ($"paused (battle, menu or transition) · {calls} frames", Theme.Connecting),
+            };
+            SetValue(_diagFieldValue, fieldText, fieldColor);
+            foreach (var b in _diagButtons) b.Enabled = running;
+            _warpPicker.Enabled = running;
+
+            byte playerState = (byte)_memoryApi.ReadU8(mb + Mailbox.PlayerState, MemoryDomain);
+            if (running) SetValue(_diagPlayerStateValue, PlayerStateName(playerState));
+            else SetValue(_diagPlayerStateValue, "—", Theme.TextSecondary);
+
+            if (_debugSeq == 0)
+                SetValue(_diagCommandValue, "—", Theme.TextSecondary);
+            else if (d[Mailbox.DgDebugAck] != _debugSeq || _pendingDebugCmd != 0)
+                SetValue(_diagCommandValue, $"{_sentDebugName}: waiting (event, message or step in progress)", Theme.Connecting);
+            else
+            {
+                var (resultText, resultColor) = DebugResultText((byte)_memoryApi.ReadU8(mb + Mailbox.DebugResult, MemoryDomain));
+                SetValue(_diagCommandValue, $"{_sentDebugName}: {resultText}", resultColor);
+            }
+
+            if (d[Mailbox.DgRenderReady] == 1)
+            {
+                SetValue(_diagTexturesValue, $"{d[Mailbox.DgTexDynamicFree]} of {d[Mailbox.DgTexDynamic]} free · {d[Mailbox.DgTexResident]} resident");
+                SetValue(_diagModelsValue, $"{d[Mailbox.DgModelDynamicFree]} of {d[Mailbox.DgModelDynamic]} free");
+                SetValue(_diagSequencesValue, $"{d[Mailbox.DgSeqDynamicFree]} of {d[Mailbox.DgSeqDynamic]} free");
+                SetValue(_diagObjectsValue, $"{d[Mailbox.DgMapObjects]} of 64");
+            }
+            else
+            {
+                foreach (Label l in new[] { _diagTexturesValue, _diagModelsValue, _diagSequencesValue, _diagObjectsValue })
+                    SetValue(l, "—", Theme.TextSecondary);
+            }
+
+            byte ghost = d[Mailbox.DgGhostState];
+            short gx = BitConverter.ToInt16(d, Mailbox.DgGhostX);
+            short gz = BitConverter.ToInt16(d, Mailbox.DgGhostZ);
+            short gy = BitConverter.ToInt16(d, Mailbox.DgGhostY);
+            short py = BitConverter.ToInt16(d, Mailbox.DgPlayerY);
+            if (ghost == 0)
+            {
+                SetValue(_diagGhostValue, "none", Theme.TextSecondary);
+                SetValue(_diagHeightValue, "—", Theme.TextSecondary);
+            }
+            else
+            {
+                SetValue(_diagGhostValue, $"{(ghost == 2 ? "moving" : "idle")} at ({gx}, {gz})");
+                SetValue(_diagHeightValue, $"ghost {gy} · you {py}", gy == py ? Theme.Connected : Theme.Connecting);
+            }
         }
 
         /// <summary>

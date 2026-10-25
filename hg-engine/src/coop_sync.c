@@ -2,6 +2,7 @@
 #include "types.h"
 
 #include "constants/buttons.h"
+#include "constants/file.h"
 #include "constants/maps.h"
 #include "constants/species.h"
 
@@ -9,6 +10,7 @@
 #include "pokemon.h"
 #include "save.h"
 #include "map_events_internal.h"
+#include "overlay.h"
 #include "system.h"
 #include "task.h"
 #include "window.h"
@@ -399,7 +401,7 @@ static BOOL Coop_DialogButtonPressed(void)
 
 // Same allocation as pret FieldSystem_CreateTask / Task_New (task.c), which
 // is not mapped in rom.ld.
-static TaskManager *Coop_FieldSystem_CreateTask(FieldSystem *fsys, TaskFunc func, void *env)
+TaskManager *Coop_FieldSystem_CreateTask(FieldSystem *fsys, TaskFunc func, void *env)
 {
     TaskManager *taskman = sys_AllocMemoryLo(HEAP_ID_FIELD3, sizeof(TaskManager));
     TaskManagerUnkSub1C *sub;
@@ -429,7 +431,7 @@ static TaskManager *Coop_FieldSystem_CreateTask(FieldSystem *fsys, TaskFunc func
 // While it runs, vanilla blocks player input (no FieldInput_Process /
 // PlayerAvatar_MoveControl), exactly like an NPC script. Returns FALSE,
 // freeing everything, if the field heap is full (callers retry next frame).
-static BOOL Coop_StartFieldTask(FieldSystem *fsys, TaskFunc func, u32 envSize)
+BOOL Coop_StartFieldTask(FieldSystem *fsys, TaskFunc func, u32 envSize)
 {
     void *env = sys_AllocMemory(HEAP_ID_FIELD3, envSize);
     u8 *bytes = env;
@@ -845,6 +847,32 @@ BOOL LONG_CALL Coop_ReadRemoteFollower(u32 remoteSlot, struct CoopFollowerState 
 }
 
 // ---------------------------------------------------------------------------
+// Overlay 131 field code
+// ---------------------------------------------------------------------------
+
+// Calls the co-op field code in Overlay 131 (src/field/coop_ghosts.c) through
+// the header src/field/linker.ld pins at COOP_FIELD_ENTRY_ADDR: this overlay
+// links before 131 and cannot reference its symbols. The magic check guards
+// against a stale or missing Overlay 131 build.
+static void Coop_RunFieldEntry(FieldSystem *fsys)
+{
+    const struct CoopFieldEntryHeader *header = (const struct CoopFieldEntryHeader *)COOP_FIELD_ENTRY_ADDR;
+
+    if (!IsOverlayLoaded(OVERLAY_FIELD_EXTENSION))
+    {
+        gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_NO_OVERLAY;
+        return;
+    }
+    if (header->magic != COOP_FIELD_ENTRY_MAGIC || header->entry == NULL)
+    {
+        gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_BAD_HEADER;
+        return;
+    }
+    gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_CALLED;
+    header->entry(fsys);
+}
+
+// ---------------------------------------------------------------------------
 // Main SysTask
 // ---------------------------------------------------------------------------
 
@@ -864,6 +892,10 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
     connected = Coop_IsConnectedToRoom();
 
     Coop_UpdateLocalPlayerState(fsys, fieldActive);
+    if (fieldActive)
+        Coop_RunFieldEntry(fsys);
+    else
+        gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_NOT_IN_FIELD;
 
     switch (gCoopCommBlock.disconnect_state)
     {

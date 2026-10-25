@@ -18,6 +18,8 @@
 /emulators/
 # Extra BizHawk instances (scripts/run_bizhawk.sh <name>): configs, saves, secrets
 /instances/
+# Probe output (scripts/run_probe.sh)
+/build/
 
 # --- coop-bridge build outputs ---
 /coop-bridge/src/bin/

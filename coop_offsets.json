@@ -4,5 +4,5 @@
   "main_ram_offset": "0x3D8060",
   "main_ram_offset_int": 4030560,
   "mailbox_size": 512,
-  "mailbox_version": 3
+  "mailbox_version": 5
 }

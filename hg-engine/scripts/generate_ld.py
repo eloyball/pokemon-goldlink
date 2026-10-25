@@ -36,11 +36,69 @@ else:  # Linux, OSX, etc.
     AS = (PREFIX + 'as')
 
 
+READELF = NM[:-len('nm')] + 'readelf' if NM.endswith('nm') else 'readelf'
+
+
+def GetSymbolsFromElf(outFile, subtract=0) -> {str: int}:
+    """Exports symbols with the correct Thumb bit.
+
+    The overlay linker scripts merge .data/.rodata into the .text output
+    section, so nm reports every symbol as text ('T'/'t'). Adding the Thumb
+    bit to all of them puts data one byte too high (e.g. gFieldSysPtr), which
+    turns word loads from other overlays into misaligned (rotated) reads on
+    the ARM946E-S. Use the ELF symbol type instead: FUNC values already carry
+    the Thumb bit, OBJECT values are data, and untyped assembly labels follow
+    the closest preceding ARM mapping symbol ($t Thumb code, $a ARM code,
+    $d data).
+    """
+    out = subprocess.check_output([READELF, '-sW', outFile]).decode()
+
+    symbols = []  # (name, value, type, section)
+    mapping = {}  # section -> sorted [(address, kind)]
+    for line in out.split('\n'):
+        parts = line.split()
+        # Num: Value Size Type Bind Vis Ndx Name
+        if len(parts) < 8 or not parts[0].endswith(':') or not parts[6].isdigit():
+            continue
+        value = int(parts[1], 16)
+        symType, section, name = parts[3], parts[6], parts[7]
+        if name.startswith('$'):
+            kind = name[1:2]
+            if kind in {'a', 't', 'd'}:
+                mapping.setdefault(section, []).append((value, kind))
+            continue
+        # Compiler-internal names (CSWTCH.12, foo.part.0) are not referable from C.
+        if symType in {'FUNC', 'OBJECT', 'NOTYPE'} and '.' not in name:
+            symbols.append((name, value, symType, section))
+
+    for section in mapping:
+        mapping[section].sort()
+
+    def MappingKind(section, address):
+        kind = None
+        for start, k in mapping.get(section, []):
+            if start > address:
+                break
+            kind = k
+        return kind
+
+    ret = {}
+    for name, value, symType, section in symbols:
+        if symType == 'NOTYPE' and MappingKind(section, value) in {'t', None}:
+            value |= 1  # Thumb code label (None: keep the historical behaviour)
+        ret[name] = value - subtract
+    return ret
+
+
 def GetSymbols(args, subtract=0) -> {str: int}:
     if (len(args) > 0):
         outFile = args[1].strip()
     else:
         outFile = 'build/linked.o'
+    try:
+        return GetSymbolsFromElf(outFile, subtract)
+    except (OSError, subprocess.CalledProcessError):
+        print("readelf unavailable, falling back to nm (data symbols get the Thumb bit)...")
     out = subprocess.check_output([NM, outFile])
     lines = out.decode().split('\n')
 

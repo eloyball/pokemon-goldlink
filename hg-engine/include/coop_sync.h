@@ -16,16 +16,17 @@
 // Write ownership (never write a field you do not own):
 //   ROM    : heartbeat_rom, local_player, local_player_seq, is_boot_done,
 //            was_in_active_session, disconnect_state, badge_mask_local,
-//            bridge_hb_last_seen, bridge_stale_frames, limit_* (static)
+//            bridge_hb_last_seen, bridge_stale_frames, limit_* (static), diag,
+//            debug_result, player_state
 //   Bridge : assigned_player_id, active_players_mask, server_tick,
 //            remote_players, remote_followers, gates, is_connected_to_room,
-//            heartbeat_bridge
+//            heartbeat_bridge, debug_cmd, debug_seq, debug_arg
 // ---------------------------------------------------------------------------
 
 #define COOP_MAGIC           0x434F4F50 // bytes in RAM: "POOC"
 // Version of this mailbox layout (independent of the UDP wire version).
 // Must match coop_offsets.json "mailbox_version" and the bridge.
-#define COOP_MAILBOX_VERSION 3
+#define COOP_MAILBOX_VERSION 5
 #define COOP_MAX_PLAYERS      6
 #define COOP_REMOTE_SLOTS     (COOP_MAX_PLAYERS - 1)
 #define COOP_PLAYER_ID_NONE   0xFF
@@ -40,6 +41,120 @@
 // player back east to (4, 4).
 #define COOP_BEDROOM_STAIRS_X 3
 #define COOP_BEDROOM_STAIRS_Z 4
+
+// Map object IDs reserved for remote players' ghosts (0xE0-0xE4) and their
+// followers (0xE5-0xE9). Vanilla maps use IDs <= 50; 249-255 are reserved
+// by vanilla scripts (photo subject, daycare, apricorn, partner, player).
+#define COOP_GHOST_ID_FIRST    0xE0
+#define COOP_GHOST_ID_LAST     0xE9
+#define COOP_IS_GHOST_ID(id)   ((id) >= COOP_GHOST_ID_FIRST && (id) <= COOP_GHOST_ID_LAST)
+// Phase 0 probe: one test ghost spawned from the bridge's diagnostics card.
+#define COOP_TEST_GHOST_ID     COOP_GHOST_ID_FIRST
+
+// Overlay 131 (OVERLAY_FIELD_EXTENSION, src/field/) is loaded together with
+// the field overlay. Overlay 129 links before it, so it cannot call 131 by
+// symbol: src/field/linker.ld pins this header at the start of Overlay 131
+// and Coop_MainSysTask calls through it.
+#define COOP_FIELD_ENTRY_ADDR  0x023C8000
+#define COOP_FIELD_ENTRY_MAGIC 0x31464F43 // "COF1"
+
+struct FieldSystem;
+struct CoopFieldEntryHeader
+{
+    u32 magic;
+    void (*entry)(struct FieldSystem *fsys); // runs once per frame while the field map is active
+};
+
+// DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): the bridge's debug commands below
+// (test ghost, warp, bike / surf / fishing). Set to 0 before shipping: the
+// ROM then compiles the handlers out and acknowledges every command with
+// COOP_DEBUG_RESULT_DISABLED. The mailbox fields stay so the layout never
+// changes between builds.
+#define COOP_DEBUG_TOOLS 1
+
+// Bridge -> ROM debug commands (diagnostics card). The bridge writes
+// debug_cmd and debug_arg, then bumps debug_seq; the ROM answers with
+// debug_result and sets diag.debug_ack = debug_seq.
+enum CoopDebugCommand
+{
+    COOP_DEBUG_NONE = 0,
+    COOP_DEBUG_SPAWN_TEST_GHOST = 1, // in front of the player, same sprite and height
+    COOP_DEBUG_STEP_TEST_GHOST = 2,  // one step in the player's facing direction
+    COOP_DEBUG_EMOTE_TEST_GHOST = 3, // "!" emote
+    COOP_DEBUG_REMOVE_TEST_GHOST = 4,
+    COOP_DEBUG_WARP = 5,             // debug_arg = enum CoopWarpPreset
+    COOP_DEBUG_TOGGLE_BIKE = 6,      // walking <-> cycling
+    COOP_DEBUG_SURF = 7,             // start surfing onto the faced water tile
+    COOP_DEBUG_FISH = 8,             // cast the Old Rod into the faced water
+};
+
+enum CoopDebugResult
+{
+    COOP_DEBUG_RESULT_NONE = 0,
+    COOP_DEBUG_RESULT_OK = 1,
+    COOP_DEBUG_RESULT_NO_TARGET = 2,  // ghost commands without a test ghost
+    COOP_DEBUG_RESULT_NOT_NOW = 3,    // wrong player state (e.g. surf while cycling)
+    COOP_DEBUG_RESULT_NO_WATER = 4,   // surf / fish not facing surfable water
+    COOP_DEBUG_RESULT_BAD_ARG = 5,    // unknown command or warp preset
+    COOP_DEBUG_RESULT_FAILED = 6,     // no free map object or heap memory
+    COOP_DEBUG_RESULT_DISABLED = 7,   // built with COOP_DEBUG_TOOLS 0
+};
+
+// Warp presets: vanilla fly landing spots (ccd src/spawn_warp.c) chosen to
+// test dense maps, zone borders, bridges and water. Must match the bridge.
+enum CoopWarpPreset
+{
+    COOP_WARP_NEW_BARK = 0,  // New Bark Town: zone border to Route 29, water to the east
+    COOP_WARP_CHERRYGROVE,   // Cherrygrove City: beach (surf / fish)
+    COOP_WARP_VIOLET,        // Violet City: zone borders to Routes 31, 32, 36
+    COOP_WARP_GOLDENROD,     // Goldenrod City: dense map
+    COOP_WARP_ECRUTEAK,      // Ecruteak City: dense map
+    COOP_WARP_OLIVINE,       // Olivine City: harbor water
+    COOP_WARP_ROUTE_40,      // Route 40: beach and sea
+    COOP_WARP_CERULEAN,      // Cerulean City: Nugget Bridge (Route 24) to the north
+    COOP_WARP_LAVENDER,      // Lavender Town: Route 12 Silence Bridge to the south
+    COOP_WARP_CELADON,       // Celadon City: dense map
+    COOP_WARP_COUNT
+};
+
+// Why Coop_MainSysTask did or did not call the Overlay 131 entry this frame.
+enum CoopFieldEntryStatus
+{
+    COOP_FIELD_ENTRY_NOT_IN_FIELD = 0, // title screen, intro, battle, menu, transition
+    COOP_FIELD_ENTRY_NO_OVERLAY = 1,   // field running but Overlay 131 not loaded
+    COOP_FIELD_ENTRY_BAD_HEADER = 2,   // Overlay 131 loaded without our header
+    COOP_FIELD_ENTRY_CALLED = 3,
+};
+
+enum CoopTestGhostState
+{
+    COOP_TEST_GHOST_NONE = 0,
+    COOP_TEST_GHOST_IDLE = 1,
+    COOP_TEST_GHOST_MOVING = 2,
+};
+
+// ROM-owned diagnostics written by the Overlay 131 field entry
+// (docs/MILESTONE2_PLAN.md, section 9).
+struct CoopDiagnostics
+{
+    u32 field_entry_calls;  // 0x00 frames the Overlay 131 entry ran (pauses outside the field)
+    u8  render_ready;       // 0x04 1 = renderer counters below are valid
+    u8  tex_resident;       // 0x05 resident texture slots (preloaded sprites + 3)
+    u8  tex_dynamic;        // 0x06 dynamic texture slots
+    u8  tex_dynamic_free;   // 0x07
+    u8  model_dynamic;      // 0x08
+    u8  model_dynamic_free; // 0x09
+    u8  seq_dynamic;        // 0x0A
+    u8  seq_dynamic_free;   // 0x0B
+    u8  map_objects_active; // 0x0C live map objects (capacity 64)
+    u8  test_ghost_state;   // 0x0D enum CoopTestGhostState
+    u8  debug_ack;          // 0x0E last debug_seq processed
+    u8  field_entry_status; // 0x0F enum CoopFieldEntryStatus (written by Overlay 129)
+    s16 test_ghost_x;       // 0x10 tile coordinates of the test ghost
+    s16 test_ghost_z;       // 0x12
+    s16 test_ghost_y;       // 0x14 render height (position vector Y, world units)
+    s16 player_y;           // 0x16 local player's render height, for comparison
+}; // 24 bytes
 
 // The bridge bumps heartbeat_bridge once per emulated frame. If the ROM sees
 // no change for this many of its own main-loop ticks, the bridge is treated
@@ -135,7 +250,14 @@ struct CoopCommBlock
     // relay data without duplicating game constants.
     u16 limit_map_id;                                           // 0x178 exclusive: map_id < limit
     u16 limit_species;                                          // 0x17A inclusive: species <= limit
-    u8  reserved[0x200 - 0x17C];                                // 0x17C..0x1FF
+    struct CoopDiagnostics diag;                                // 0x17C ROM
+    u8  debug_cmd;                                              // 0x194 bridge: enum CoopDebugCommand
+    u8  debug_seq;                                              // 0x195 bridge: bumped per command
+    u8  debug_arg;                                              // 0x196 bridge: command argument
+    u8  debug_result;                                           // 0x197 ROM: enum CoopDebugResult
+    u8  player_state;                                           // 0x198 ROM: pret PLAYER_STATE_* (field only)
+    u8  pad199;                                                 // 0x199
+    u8  reserved[0x200 - 0x19A];                                // 0x19A..0x1FF
 };
 
 #define COOP_ASSERT_OFFSET(type, field, off) \
@@ -168,11 +290,29 @@ COOP_ASSERT_OFFSET(CoopCommBlock, bridge_hb_last_seen, 0x170);
 COOP_ASSERT_OFFSET(CoopCommBlock, bridge_stale_frames, 0x174);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_map_id, 0x178);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_species, 0x17A);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x17C);
+COOP_ASSERT_OFFSET(CoopCommBlock, diag, 0x17C);
+COOP_ASSERT_OFFSET(CoopCommBlock, debug_cmd, 0x194);
+COOP_ASSERT_OFFSET(CoopCommBlock, debug_seq, 0x195);
+COOP_ASSERT_OFFSET(CoopCommBlock, debug_arg, 0x196);
+COOP_ASSERT_OFFSET(CoopCommBlock, debug_result, 0x197);
+COOP_ASSERT_OFFSET(CoopCommBlock, player_state, 0x198);
+COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x19A);
+_Static_assert(sizeof(struct CoopDiagnostics) == 24, "CoopDiagnostics must be 24 bytes");
+COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
+COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
 
 extern volatile struct CoopCommBlock gCoopCommBlock;
 
 struct SysTask;
+struct TaskManager;
+
+// Field tasks (Overlay 129, also called from Overlay 131). While one runs,
+// vanilla blocks player input like an NPC script; only one can exist
+// (fsys->taskman must be NULL). Coop_FieldSystem_CreateTask takes an env
+// owned by the task; Coop_StartFieldTask allocates a zeroed one the task
+// must free. Both return NULL / FALSE when the field heap is full.
+struct TaskManager *LONG_CALL Coop_FieldSystem_CreateTask(struct FieldSystem *fsys, BOOL (*func)(struct TaskManager *), void *env);
+BOOL LONG_CALL Coop_StartFieldTask(struct FieldSystem *fsys, BOOL (*func)(struct TaskManager *), u32 envSize);
 
 BOOL LONG_CALL Coop_IsConnectedToRoom(void);
 // TRUE once the relay locked the roster (everyone was ready in the bedroom).

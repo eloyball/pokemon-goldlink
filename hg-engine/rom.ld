@@ -787,6 +787,22 @@ Field_SaveGameNormal = 0x021F43E8 | 1;
 EventObjectMovementMan_Create = 0x02062214 | 1;
 EventObjectMovementMan_IsFinish = 0x02062260 | 1;
 EventObjectMovementMan_Delete = 0x0206226C | 1;
+/* Held movements (flag 0x10 = action active, 0x20 = action finished).
+   Source: pret asm/unk_02062108.s labels. */
+MapObject_AreBitsSetForMovementScriptInit = 0x02062108 | 1;
+MapObject_SetHeldMovement = 0x0206214C | 1;
+MapObject_ClearHeldMovementIfActive = 0x020621C0 | 1;
+/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them.
+   Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
+   the name is the address): fade, load the map, set the player walking. */
+sub_020538C0 = 0x020538C0 | 1;
+/* Overlay 01 (field). Source: pret asm/overlay_01_021F1AFC.s and
+   asm/overlay_01_021FC66C.s labels. */
+Field_PlayerAvatar_OrrTransitionFlags = 0x021F1AFC | 1;
+Field_PlayerAvatar_ApplyTransitionFlags = 0x021F1B04 | 1;
+Field_PlayerCanSurfOnTile = 0x021F20C0 | 1;
+CreateFishingRodTaskEnv = 0x021FC66C | 1;
+Task_OverworldFish = 0x021FC698 | 1;
 FieldSystem_LoadFieldOverlay = 0x020505C0 | 1;
 sub_020505C8 = 0x020505C8 | 1;
 BeginNormalPaletteFade = 0x0200FA24 | 1;

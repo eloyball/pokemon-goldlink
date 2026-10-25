@@ -12,6 +12,9 @@ SECTIONS {
                 FILL (0xABCD)
 
                 __text_start = . ;
+                /* Coop field entry header first, so Overlay 129 can call into
+                   this overlay at a fixed address (COOP_FIELD_ENTRY_ADDR). */
+                KEEP(*(.coop_field_entry))
                 *(.init)
                 *(.text)
                 *(.ctors)
