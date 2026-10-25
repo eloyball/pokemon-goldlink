@@ -1,0 +1,25 @@
+#include "constants/battle_constants.h"
+.include "battle_commands.inc"
+
+.data
+
+_000:
+    UpdateVarFromVar OPCODE_SET, BSCRIPT_VAR_MSG_BATTLER_TEMP, BSCRIPT_VAR_BATTLER_ATTACKER
+    UpdateVarFromVar OPCODE_SET, BSCRIPT_VAR_HP_CALC, BSCRIPT_VAR_ATTACKER_STORED_DAMAGE
+
+_019:
+    CompareVarToValue OPCODE_EQU, BSCRIPT_VAR_HP_CALC, 0, _040
+    DivideVarByValue BSCRIPT_VAR_HP_CALC, 4
+
+_027:
+    UpdateVar OPCODE_FLAG_ON, BSCRIPT_VAR_BATTLE_STATUS, BATTLE_STATUS_NO_BLINK
+    Call BATTLE_SUBSCRIPT_UPDATE_HP
+    // {0} is hit with recoil!
+    PrintMessage 279, TAG_NICKNAME, BATTLER_CATEGORY_ATTACKER
+    Wait 
+    WaitButtonABTime 30
+    CompareVarToValue OPCODE_FLAG_NOT, BSCRIPT_VAR_BATTLE_STATUS, BATTLE_STATUS_FAINTED, _040
+    Call BATTLE_SUBSCRIPT_FAINT_MON
+
+_040:
+    End 

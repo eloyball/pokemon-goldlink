@@ -1,0 +1,26 @@
+#include "constants/battle_constants.h"
+.include "battle_commands.inc"
+
+.data
+
+_000:
+    CompareVarToValue OPCODE_FLAG_SET, BSCRIPT_VAR_FIELD_CONDITION, FIELD_CONDITION_TRICK_ROOM, _endTrickRoom
+    Call BATTLE_SUBSCRIPT_ATTACK_MESSAGE_AND_ANIMATION
+    UpdateVar OPCODE_FLAG_ON, BSCRIPT_VAR_FIELD_CONDITION, FIELD_CONDITION_TRICK_ROOM_INIT
+    // {0} twisted the dimensions!
+    PrintMessage 1070, TAG_NICKNAME, BATTLER_CATEGORY_ATTACKER
+    Wait 
+    WaitButtonABTime 30
+    TrickRoom 
+    Call BATTLE_SUBSCRIPT_HANDLE_ROOM_SERVICE
+    End
+
+_endTrickRoom:
+    UpdateVar OPCODE_FLAG_OFF, BSCRIPT_VAR_FIELD_CONDITION, FIELD_CONDITION_TRICK_ROOM
+    // {0} restored the twisted dimensions!
+    BufferMessage 1073, TAG_NICKNAME, BATTLER_CATEGORY_ATTACKER
+    Wait 
+    WaitButtonABTime 30
+    UpdateVar OPCODE_SET, BSCRIPT_VAR_SIDE_EFFECT_FLAGS_INDIRECT, MOVE_SIDE_EFFECT_ON_HIT|MOVE_SUBSCRIPT_PTR_PRINT_MESSAGE_AND_PLAY_ANIMATION
+    TrickRoom 
+    End  

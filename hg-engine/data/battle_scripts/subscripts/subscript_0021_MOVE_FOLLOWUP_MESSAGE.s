@@ -1,0 +1,38 @@
+#include "constants/battle_constants.h"
+.include "battle_commands.inc"
+
+.data
+
+_000:
+    CompareVarToValue OPCODE_FLAG_SET, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_FLAG_SUPPRESS_FOLLOWUP_MESSAGE, _104
+    WaitButtonABTime 15
+    CompareVarToValue OPCODE_FLAG_NOT, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_SPLASH, _063
+    // But nothing happened!
+    PrintMessage 795, TAG_NONE
+    GoTo _101
+
+_063:
+    CompareVarToValue OPCODE_FLAG_NOT, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_ONE_HIT_KO, _073
+    // It’s a one-hit KO!
+    PrintMessage 775, TAG_NONE
+    GoTo _101
+
+_073:
+    CompareVarToValue OPCODE_FLAG_SET, BSCRIPT_VAR_BATTLE_STATUS, BATTLE_STATUS_IGNORE_TYPE_EFFECTIVENESS, _104
+    CompareVarToValue OPCODE_AND, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_NOT_VERY_EFFECTIVE|MOVE_STATUS_SUPER_EFFECTIVE, _104
+    CompareVarToValue OPCODE_FLAG_NOT, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_SUPER_EFFECTIVE, _093
+    // It’s super effective!
+    PrintMessage 780, TAG_NONE
+    GoTo _101
+
+_093:
+    CompareVarToValue OPCODE_FLAG_NOT, BSCRIPT_VAR_MOVE_STATUS_FLAGS, MOVE_STATUS_NOT_VERY_EFFECTIVE, _104
+    // It’s not very effective...
+    PrintMessage 779, TAG_NONE
+
+_101:
+    Wait 
+    WaitButtonABTime 30
+
+_104:
+    End 

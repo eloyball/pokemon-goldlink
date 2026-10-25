@@ -1,0 +1,3 @@
+# these text files need to be crlf for msgenc
+* text eol=crlf
+custom/* text eol=crlf

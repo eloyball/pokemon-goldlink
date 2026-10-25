@@ -1,0 +1,39 @@
+#include "constants/battle_constants.h"
+.include "battle_commands.inc"
+
+.data
+
+_000:
+    UpdateVarFromVar OPCODE_SET, BSCRIPT_VAR_HP_CALC, BSCRIPT_VAR_HIT_DAMAGE
+    CompareVarToValue OPCODE_EQU, BSCRIPT_VAR_HP_CALC, 0, _037
+    DivideVarByValue BSCRIPT_VAR_HP_CALC, 2
+    CheckItemHoldEffect CHECK_OPCODE_NOT_HAVE, BATTLER_CATEGORY_ATTACKER, HOLD_EFFECT_LEECH_BOOST, _037
+    GetItemEffectParam BATTLER_CATEGORY_ATTACKER, BSCRIPT_VAR_CALC_TEMP
+    UpdateVar OPCODE_ADD, BSCRIPT_VAR_CALC_TEMP, 0x00000064
+    UpdateVarFromVar OPCODE_MUL, BSCRIPT_VAR_HP_CALC, BSCRIPT_VAR_CALC_TEMP
+    UpdateVar OPCODE_DIV, BSCRIPT_VAR_HP_CALC, 100
+
+_037:
+    UpdateVarFromVar OPCODE_SET, BSCRIPT_VAR_MSG_BATTLER_TEMP, BSCRIPT_VAR_BATTLER_ATTACKER
+    UpdateVar OPCODE_FLAG_ON, BSCRIPT_VAR_BATTLE_STATUS, BATTLE_STATUS_NO_BLINK
+    // Generation V: Dream Eater is now affected by Liquid Ooze.
+    CheckAbility CHECK_OPCODE_HAVE, BATTLER_CATEGORY_DEFENDER, ABILITY_LIQUID_OOZE, _DamageInstead
+    UpdateVar OPCODE_MUL, BSCRIPT_VAR_HP_CALC, -1
+    Call BATTLE_SUBSCRIPT_UPDATE_HP
+    // {0}’s dream was eaten!
+    PrintMessage 139, TAG_NICKNAME, BATTLER_CATEGORY_DEFENDER
+    Wait 
+    WaitButtonABTime 30
+    End 
+
+_DamageInstead:
+    CheckAbility CHECK_OPCODE_HAVE, BATTLER_CATEGORY_ATTACKER, ABILITY_MAGIC_GUARD, _End
+    AbilityPopup BATTLER_CATEGORY_DEFENDER
+    Call BATTLE_SUBSCRIPT_UPDATE_HP
+    // It sucked up the liquid ooze!
+    PrintMessage 720, TAG_NONE
+    Wait 
+    WaitButtonABTime 30
+
+_End:
+    End
