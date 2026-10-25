@@ -72,8 +72,8 @@ typedef struct LocalMapObject LocalMapObject;
 
 typedef struct MapObjectMan {
     u32 flags;
-    u32 object_count;
-    u32 unk8;
+    u32 object_count; // capacity of objects[] (64 in the overworld)
+    u32 active_count; // live map objects; pret: unk8, ++ on create, -- in MapObject_Remove
     u32 unkC;
     u8 unk10[4];
     void *mmodel_narc;
@@ -316,8 +316,8 @@ typedef struct FIELD_PLAYER_AVATAR {
 u8 LONG_CALL GetMetatileBehaviorAt(FieldSystem *fieldSystem, int x, int y);
 int LONG_CALL GetPlayerXCoord(FIELD_PLAYER_AVATAR *avatar);
 int LONG_CALL GetPlayerYCoord(FIELD_PLAYER_AVATAR *avatar);
-BOOL MapObject_IsSingleMovementActive(LocalMapObject *obj);
-void MapObject_PauseMovement(LocalMapObject *obj);
+BOOL LONG_CALL MapObject_IsSingleMovementActive(LocalMapObject *obj);
+void LONG_CALL MapObject_PauseMovement(LocalMapObject *obj);
 void LONG_CALL MapObjectManager_RestoreFromSave(void *mapObjectManager, SavedMapObject *savedObjects, u32 objectCount);
 
 #endif // POKEHEARTGOLD_MAP_EVENTS_INTERNAL_H

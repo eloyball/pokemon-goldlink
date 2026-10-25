@@ -179,7 +179,7 @@ void LONG_CALL AddWindow(void *, void *, void *);
 void LONG_CALL FillWindowPixelRect(void *, u32, u32, u32, u32, u32);
 void LONG_CALL DrawFrameAndWindow1(void *, u32, u32, u32);
 void LONG_CALL ReadMsgDataIntoString(void *, u32, void *);
-void LONG_CALL AddTextPrinterParameterized(void *, u32, void *, u32, u32, u32, void *);
+u8 LONG_CALL AddTextPrinterParameterized(void *, u32, void *, u32, u32, u32, void *);
 void LONG_CALL String_Delete(void *);
 void LONG_CALL GfGfx_BothDispOn(void);
 void LONG_CALL SetMasterBrightnessNeutral(u32);

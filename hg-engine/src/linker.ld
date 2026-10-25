@@ -12,6 +12,9 @@ SECTIONS {
                 FILL (0xABCD)
 
                 __text_start = . ;
+                /* Coop mailbox first, so its address (0x023D8060) never moves
+                   when code changes. Read by coop-bridge via coop_offsets.json. */
+                KEEP(*(.coop_mailbox))
                 *(.init)
                 *(.text)
                 *(.ctors)

@@ -1,16 +1,26 @@
 use std::fs;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
 use tokio::time::interval;
 
 use coop_relay::protocol::{
-    ClientToServerPacket, PlayerState, AUTO_PLAYER_ID, COOP_MAGIC, PROTOCOL_VERSION,
-    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_SYNC, ROOM_STATUS_OK,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, PROTOCOL_VERSION, PlayerState,
+    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_SYNC, ROOM_STATUS_CHALLENGE, ROOM_STATUS_OK,
 };
+
+/// Cookie carried by a challenge reply (status 7, bytes 16..24).
+fn challenge_cookie(reply: &[u8]) -> Option<u64> {
+    (reply.len() >= 24 && reply[12] == ROOM_STATUS_CHALLENGE)
+        .then(|| u64::from_le_bytes(reply[16..24].try_into().expect("8 bytes")))
+}
+
+fn player_secret(client_id: usize) -> u64 {
+    0x57E5_0000_0000_0000 + client_id as u64
+}
 
 const STRESS_ROOM: [u8; 6] = *b"STRESS";
 const STRESS_HOST_TOKEN: u32 = 0xCAFE_BEEF;
@@ -19,7 +29,10 @@ const STRESS_HOST_TOKEN: u32 = 0xCAFE_BEEF;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = fs::remove_file("campaigns/STRESS.json");
 
-    let server_addr: SocketAddr = "127.0.0.1:7777".parse()?;
+    // Override with COOP_RELAY_ADDR to target a relay on another address.
+    let server_addr: SocketAddr = std::env::var("COOP_RELAY_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:7777".to_string())
+        .parse()?;
     let duration_secs = 10;
     let num_clients: usize = 6;
 
@@ -40,14 +53,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // 1. Client 0 creates the room with party_size = 6 in Bedroom (Map 4)
-    let init_pkt = ClientToServerPacket {
+    let mut init_pkt = ClientToServerPacket {
         magic: COOP_MAGIC,
         version: PROTOCOL_VERSION,
         room_code: STRESS_ROOM,
         room_action: ROOM_ACTION_CREATE,
         requested_player_id: AUTO_PLAYER_ID,
-        client_ready: 1,
-        pad_header: 0,
+        reserved_14: 0,
+        target_party_size: num_clients as u8,
         host_token: STRESS_HOST_TOKEN,
         badge_mask_local: 0,
         sequence: 1,
@@ -71,11 +84,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             map_npc_count: 8,
             client_ready: 1,
             trainer_id: 0x1000_0000,
-            target_party_size: num_clients as u8,
-            pad: [0u8; 3],
+            pad: [0u8; 4],
         },
+        cookie: 0,
+        player_secret: player_secret(0),
     };
-    sockets[0].send_to(&init_pkt.encode_le(), server_addr).await?;
+    // Cookie handshake: the first send is challenged, the echo creates the room.
+    let mut reply = [0u8; 512];
+    for _ in 0..2 {
+        sockets[0]
+            .send_to(&init_pkt.encode_le(), server_addr)
+            .await?;
+        let (len, _) =
+            tokio::time::timeout(Duration::from_secs(1), sockets[0].recv_from(&mut reply))
+                .await??;
+        if let Some(cookie) = challenge_cookie(&reply[..len]) {
+            init_pkt.cookie = cookie;
+        }
+    }
     tokio::time::sleep(Duration::from_millis(20)).await;
 
     let mut handles = Vec::new();
@@ -99,6 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ROOM_ACTION_JOIN
             };
             let token = if client_id == 0 { STRESS_HOST_TOKEN } else { 0 };
+            let mut cookie = 0u64;
 
             while running_clone.load(Ordering::Relaxed) {
                 tokio::select! {
@@ -112,8 +139,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             room_code: STRESS_ROOM,
                             room_action: current_action,
                             requested_player_id: AUTO_PLAYER_ID,
-                            client_ready: 1,
-                            pad_header: 0,
+                            reserved_14: 0,
+                            target_party_size: num_clients as u8,
                             host_token: token,
                             badge_mask_local: 0,
                             sequence: seq,
@@ -137,9 +164,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 map_npc_count: 8,
                                 client_ready: 1,
                                 trainer_id: 0x1000_0000 + client_id as u32,
-                                target_party_size: num_clients as u8,
-                                pad: [0u8; 3],
+                                pad: [0u8; 4],
                             },
+                            cookie,
+                            player_secret: player_secret(client_id),
                         };
 
                         let bytes = pkt.encode_le();
@@ -149,7 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     Ok((len, _)) = socket.recv_from(&mut buf) => {
-                        if len >= 320 && buf[12] == ROOM_STATUS_OK {
+                        if let Some(issued) = challenge_cookie(&buf[..len]) {
+                            cookie = issued;
+                        } else if len >= 320 && buf[12] == ROOM_STATUS_OK {
                             current_action = ROOM_ACTION_SYNC;
                             total_recv_clone.fetch_add(1, Ordering::Relaxed);
                             if let Some(&sent_time) = send_timestamps.get(&seq) {

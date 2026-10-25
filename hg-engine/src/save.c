@@ -16,10 +16,6 @@
 #include "task.h"
 #include "coop_sync.h"
 
-// 60 Hz background task publishing local player state (defined in
-// coop_sync.c; same Overlay 129, so no LONG_CALL needed).
-extern void Coop_MainSysTask(SysTask *task, void *param);
-
 // these functions are configured to not hook from hooks directly under ALLOW_SAVE_CHANGES
 // can't get linking to work properly when i strip these
 
@@ -185,9 +181,13 @@ SaveData *SaveData_New(void)
         break;
     }
 
-    (void)gCoopCommBlock.magic; // keep the coop mailbox linked into Overlay 129
-    gCoopCommBlock.is_boot_done = 1;
-    CreateSysTask(Coop_MainSysTask, NULL, 1000);
+    // Start the coop background task exactly once per boot (the mailbox's
+    // .data is reloaded with the overlay on every reset).
+    if (gCoopCommBlock.is_boot_done == 0)
+    {
+        gCoopCommBlock.is_boot_done = 1;
+        CreateSysTask(Coop_MainSysTask, NULL, 1000);
+    }
 
     return ret;
 }

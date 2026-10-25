@@ -4,14 +4,17 @@ use std::time::Duration;
 
 use clap::Parser;
 use tokio::net::UdpSocket;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info, warn};
 
-use coop_relay::lobby::RoomManager;
-use coop_relay::protocol::ClientToServerPacket;
+use coop_relay::lobby::{DEFAULT_MAX_ROOMS, Rejection, RoomManager};
+use coop_relay::protocol::{ClientToServerPacket, ServerToClientPacket};
 
 #[derive(Parser, Debug)]
-#[command(name = "coop-relay", about = "Pokemon HeartGold 6-Player Co-op Multi-Room Relay Server")]
+#[command(
+    name = "coop-relay",
+    about = "Pokemon HeartGold 6-Player Co-op Multi-Room Relay Server"
+)]
 struct Args {
     /// Address and UDP port to bind
     #[arg(short, long, default_value = "0.0.0.0:7777")]
@@ -32,6 +35,18 @@ struct Args {
     /// Log every incoming UDP packet even when coordinates have not changed
     #[arg(long, default_value_t = false)]
     inspect_all: bool,
+
+    /// Seconds without packets before a player's slot is freed
+    #[arg(long, default_value_t = 5)]
+    client_timeout_secs: u64,
+
+    /// Seconds an empty room stays in memory before it is closed
+    #[arg(long, default_value_t = 120)]
+    room_idle_secs: u64,
+
+    /// Maximum number of rooms held in memory at once
+    #[arg(long, default_value_t = DEFAULT_MAX_ROOMS)]
+    max_rooms: usize,
 }
 
 #[tokio::main]
@@ -52,11 +67,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let mut manager = RoomManager::new(
-        Duration::from_secs(5),
+        Duration::from_secs(args.client_timeout_secs),
         args.default_party_size,
         args.inspect_all,
         &args.save_dir,
-    );
+    )
+    .with_limits(Duration::from_secs(args.room_idle_secs), args.max_rooms);
 
     let tick_period = Duration::from_micros(1_000_000 / u64::from(args.tick_rate.max(1)));
     let mut broadcast_timer = interval(tick_period);
@@ -67,6 +83,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut recv_buf = [0u8; 512];
 
+    // Created once: re-creating ctrl_c() every loop iteration could drop a
+    // signal that arrives between iterations.
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
+
     loop {
         tokio::select! {
             recv_res = socket.recv_from(&mut recv_buf) => {
@@ -74,8 +95,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok((len, peer_addr)) => {
                         match ClientToServerPacket::decode_le(&recv_buf[..len]) {
                             Ok(pkt) => {
-                                if let Err(err_pkt) = manager.handle_client_packet(peer_addr, pkt) {
-                                    let _ = socket.send_to(&err_pkt, peer_addr).await;
+                                // Both replies are smaller than the request (no amplification).
+                                match manager.handle_client_packet(peer_addr, pkt) {
+                                    Ok(_) => {}
+                                    Err(Rejection::Challenge(cookie)) => {
+                                        let reply = ServerToClientPacket::create_challenge_response(cookie);
+                                        let _ = socket.send_to(&reply, peer_addr).await;
+                                    }
+                                    Err(Rejection::Status(status)) => {
+                                        let reply = ServerToClientPacket::create_error_response(status);
+                                        let _ = socket.send_to(&reply, peer_addr).await;
+                                    }
                                 }
                             }
                             Err(err) => {
@@ -102,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 manager.print_all_summaries();
             }
 
-            _ = tokio::signal::ctrl_c() => {
+            _ = &mut shutdown => {
                 info!("Shutting down HGSS Co-op Relay Server...");
                 break;
             }

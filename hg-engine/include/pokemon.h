@@ -590,8 +590,19 @@ typedef struct FollowMon {
     u32 unk1C;
 } FollowMon;
 
+// pret: FieldProcessManager (include/field_system.h). parent is the field
+// map overlay; child is an application (bag, battle, starter select...)
+// launched on top of it.
+typedef struct FieldProcessManager {
+    void *parent;
+    void *child;
+    BOOL isPaused;
+    BOOL isDone;
+} FieldProcessManager;
+
 typedef struct FieldSystem {
-    /*  0x0 */ u8 unk0[0x8];
+    /*  0x0 */ FieldProcessManager *processManager;
+    /*  0x4 */ u8 unk4[0x4];
     /*  0x8 */ void *bg_config;
     /*  0xc */ void *savedata; // SAVEDATA* savedata;
     /* 0x10 */ void *taskman; // TaskManager* taskman;
@@ -605,11 +616,17 @@ typedef struct FieldSystem {
     /* 0x40 */ FIELD_PLAYER_AVATAR *playerAvatar;
     /* 0x44 */ u8 unk44[0x8];
     /* 0x4C */ void *fog_data;
-    /* 0x50 */ u8 unk50[0x5C];
+    /* 0x50 */ u8 unk50[0x1C];
+    /* 0x6C */ BOOL runningFieldMap;
+    /* 0x70 */ u8 unk70[0x3C];
     /* 0xAC */ u32 unkAC;
     /* 0xB0 */ u8 unkB0[0x4];
     /* 0xB4 */ s64 unkB4;
-    /* 0xBC */ u8 unkBC[0x28];
+    /* 0xBC */ u8 unkBC[0x16];
+    /* 0xD2 */ u8 unkD2_0 : 6;
+    /* 0xD2 */ u8 textbox_open : 1;
+    /* 0xD2 */ u8 unkD2_7 : 1;
+    /* 0xD3 */ u8 unkD3[0x11];
     /* 0xE4 */ FollowMon followMon;
     // u8 unk104[4];
     // void *unk108;//struct FieldSystemUnk108 *unk108;

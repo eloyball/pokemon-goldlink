@@ -5,15 +5,22 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
+use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
-    room_code_to_string, validate_room_code, ClientToServerPacket, FollowerState, PlayerState,
-    ServerToClientPacket, AUTO_PLAYER_ID, COOP_MAGIC, MAX_PLAYERS, PROTOCOL_VERSION, REMOTE_SLOTS,
-    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC,
-    ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
-    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, FollowerState, MAX_PLAYERS, PROTOCOL_VERSION,
+    PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
+    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
+    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
+    ServerToClientPacket, room_code_to_string, validate_room_code,
 };
+
+/// A campaign file exists on disk but could not be read or parsed. The room
+/// is refused rather than silently reset, so a corrupt file can never unlock
+/// a roster.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CampaignLoadError(pub String);
 
 const MAX_NPCS_BEFORE_FOLLOWER_CULL: u8 = 26;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +29,13 @@ pub struct RegisteredTrainer {
     pub trainer_id: u32,
     pub last_badge_mask: u16,
     pub assigned_monolocke: u8,
+    /// Per-install secret of the bridge that registered this trainer. OTIDs
+    /// are broadcast to every room member, so the OTID alone must never be
+    /// enough to take over an offline teammate's slot. 0 = legacy campaign
+    /// file: the first claimant binds it. Reset to 0 by hand to let a player
+    /// rejoin from a new install.
+    #[serde(default)]
+    pub player_secret: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +58,7 @@ pub struct ConnectedPlayer {
     pub state: PlayerState,
     pub badge_mask: u16,
     pub assigned_monolocke: u8,
+    pub player_secret: u64,
 }
 
 pub struct LobbyState {
@@ -58,6 +73,7 @@ pub struct LobbyState {
     client_timeout: Duration,
     server_tick: u32,
     inspect_all_packets: bool,
+    last_activity: Instant,
 }
 
 impl LobbyState {
@@ -75,6 +91,7 @@ impl LobbyState {
             inspect_all_packets,
             None,
         )
+        .expect("a room without a save directory never touches disk")
     }
 
     pub fn with_room(
@@ -85,7 +102,7 @@ impl LobbyState {
         default_party_size: usize,
         inspect_all_packets: bool,
         save_dir: Option<PathBuf>,
-    ) -> Self {
+    ) -> Result<Self, CampaignLoadError> {
         let mut lobby = Self {
             room_code,
             host_token,
@@ -98,9 +115,10 @@ impl LobbyState {
             client_timeout,
             server_tick: 0,
             inspect_all_packets,
+            last_activity: Instant::now(),
         };
-        lobby.try_load_campaign_from_disk();
-        lobby
+        lobby.load_campaign_from_disk()?;
+        Ok(lobby)
     }
 
     pub fn host_token(&self) -> u32 {
@@ -123,14 +141,20 @@ impl LobbyState {
         }
     }
 
+    /// True when nobody is connected and no packet arrived for `idle_timeout`.
+    pub fn is_idle(&self, now: Instant, idle_timeout: Duration) -> bool {
+        self.slots.iter().all(Option::is_none)
+            && now.duration_since(self.last_activity) > idle_timeout
+    }
+
     pub fn remove_client_by_addr(&mut self, addr: SocketAddr) {
         let room_str = room_code_to_string(&self.room_code);
         for (idx, slot) in self.slots.iter_mut().enumerate() {
-            if let Some(p) = slot {
-                if p.addr == addr {
-                    info!("[Room {room_str} | LEAVE] Slot P{idx} ({addr}) disconnected");
-                    *slot = None;
-                }
+            if let Some(p) = slot
+                && p.addr == addr
+            {
+                info!("[Room {room_str} | LEAVE] Slot P{idx} ({addr}) disconnected");
+                *slot = None;
             }
         }
     }
@@ -141,23 +165,28 @@ impl LobbyState {
         pkt: ClientToServerPacket,
     ) -> Result<u8, u8> {
         let now = Instant::now();
+        self.last_activity = now;
         let trainer_id = pkt.local_player.trainer_id;
         let room_str = room_code_to_string(&self.room_code);
 
         // Game-agnostic admission: the relay never inspects map numbers or badge
-        // masks during lobby formation. Readiness is carried by pkt.client_ready.
+        // masks during lobby formation. Readiness is computed by the ROM and
+        // carried in local_player.client_ready.
         // Only the room creator can configure target_party_size while forming
         if !self.campaign_started
-            && pkt.local_player.target_party_size >= 2
+            && pkt.target_party_size >= 2
             && pkt.host_token != 0
             && pkt.host_token == self.host_token
         {
-            self.target_party_size =
-                (pkt.local_player.target_party_size as usize).clamp(2, MAX_PLAYERS);
+            self.target_party_size = (pkt.target_party_size as usize).clamp(2, MAX_PLAYERS);
         }
 
-        let slot_idx = match self.resolve_or_assign_slot(addr, pkt.requested_player_id, trainer_id)
-        {
+        let slot_idx = match self.resolve_or_assign_slot(
+            addr,
+            pkt.requested_player_id,
+            trainer_id,
+            pkt.player_secret,
+        ) {
             Ok(idx) => idx,
             Err(err_code) => {
                 self.remove_client_by_addr(addr);
@@ -172,12 +201,14 @@ impl LobbyState {
             .map(|r| r.assigned_monolocke)
             .unwrap_or(18);
 
-        // Trust the wire flag directly: the client (ROM bridge) decides readiness.
-        let client_ready = pkt.client_ready;
-        let in_bedroom_ready = client_ready == 1;
+        // Trust the ROM-computed flag directly: the client decides readiness.
+        let in_bedroom_ready = pkt.local_player.client_ready == 1;
 
         if let Some(existing) = &mut self.slots[slot_idx] {
-            if pkt.sequence < existing.last_sequence
+            // Drop reordered packets from the same socket. A new socket (the
+            // owner reconnecting from a restarted bridge) restarts its sequence.
+            if existing.addr == addr
+                && pkt.sequence < existing.last_sequence
                 && existing.last_sequence.wrapping_sub(pkt.sequence) < 10_000
             {
                 return Ok(slot_idx as u8);
@@ -208,8 +239,6 @@ impl LobbyState {
             }
 
             let mut updated_state = pkt.local_player;
-            updated_state.is_active = 1;
-            updated_state.client_ready = client_ready;
 
             if (updated_state.x != old.x || updated_state.y != old.y)
                 && updated_state.prev_x == updated_state.x
@@ -221,6 +250,7 @@ impl LobbyState {
 
             let badge_changed = existing.badge_mask != pkt.badge_mask_local;
             existing.addr = addr;
+            existing.player_secret = pkt.player_secret;
             existing.last_seen = now;
             existing.last_sequence = pkt.sequence;
             existing.heartbeat_rom = pkt.heartbeat_rom;
@@ -228,16 +258,18 @@ impl LobbyState {
             existing.state = updated_state;
             existing.badge_mask = pkt.badge_mask_local;
 
-            if badge_changed && self.campaign_started {
-                if let Some(r) = self.roster.iter_mut().find(|r| r.slot_id as usize == slot_idx) {
-                    r.last_badge_mask = pkt.badge_mask_local;
-                    self.save_campaign_to_disk();
-                }
+            if badge_changed
+                && self.campaign_started
+                && let Some(r) = self
+                    .roster
+                    .iter_mut()
+                    .find(|r| r.slot_id as usize == slot_idx)
+            {
+                r.last_badge_mask = pkt.badge_mask_local;
+                self.save_campaign_to_disk();
             }
         } else {
             let mut initial_state = pkt.local_player;
-            initial_state.is_active = 1;
-            initial_state.client_ready = client_ready;
 
             if initial_state.prev_x == 0 && initial_state.prev_y == 0 {
                 initial_state.prev_x = initial_state.x;
@@ -246,9 +278,7 @@ impl LobbyState {
 
             info!(
                 "[Room {room_str} | JOIN] Slot P{slot_idx} assigned to {addr} (OTID: 0x{:08X} | Map: {} | Ready: {})",
-                initial_state.trainer_id,
-                initial_state.map_id,
-                in_bedroom_ready
+                initial_state.trainer_id, initial_state.map_id, in_bedroom_ready
             );
 
             self.slots[slot_idx] = Some(ConnectedPlayer {
@@ -261,6 +291,7 @@ impl LobbyState {
                 state: initial_state,
                 badge_mask: pkt.badge_mask_local,
                 assigned_monolocke,
+                player_secret: pkt.player_secret,
             });
         }
 
@@ -273,88 +304,22 @@ impl LobbyState {
         addr: SocketAddr,
         requested_id: u8,
         trainer_id: u32,
+        player_secret: u64,
     ) -> Result<usize, u8> {
-        // 1. If campaign is locked and client has loaded their save (trainer_id != 0),
-        //    authenticate strictly against the locked roster and bind to their registered slot.
-        if self.campaign_started && trainer_id != 0 {
-            let Some(reg_slot) = self
-                .roster
-                .iter()
-                .find(|r| r.trainer_id == trainer_id)
-                .map(|r| r.slot_id as usize)
-            else {
-                warn!(
-                    "[Room {}] Rejected {addr} (OTID: 0x{trainer_id:08X}) — TrainerID is not in locked campaign roster!",
-                    room_code_to_string(&self.room_code)
-                );
-                return Err(ROOM_STATUS_ERR_LOCKED);
-            };
-
-            // If this addr was temporarily sitting in a different slot at the Title Screen, move it to reg_slot
-            let current_addr_slot = self
-                .slots
-                .iter()
-                .position(|s| s.as_ref().is_some_and(|p| p.addr == addr));
-
-            if let Some(cur_idx) = current_addr_slot {
-                if cur_idx != reg_slot {
-                    if self.slots[reg_slot].is_none()
-                        || self.slots[reg_slot]
-                            .as_ref()
-                            .is_some_and(|p| p.state.trainer_id == 0)
-                    {
-                        self.slots.swap(cur_idx, reg_slot);
-                        if let Some(p) = &mut self.slots[reg_slot] {
-                            p.slot_id = reg_slot as u8;
-                        }
-                        if let Some(p) = &mut self.slots[cur_idx] {
-                            p.slot_id = cur_idx as u8;
-                        }
-                        return Ok(reg_slot);
-                    }
-                    return Err(ROOM_STATUS_ERR_LOCKED);
-                }
-                return Ok(reg_slot);
-            }
-
-            if self.slots[reg_slot].is_none() {
-                return Ok(reg_slot);
-            }
-
-            warn!(
-                "[Room {}] Rejected {addr}: registered Slot P{reg_slot} (OTID: 0x{trainer_id:08X}) is already online",
-                room_code_to_string(&self.room_code)
-            );
-            return Err(ROOM_STATUS_ERR_LOCKED);
-        }
-
-        // 2. Existing active socket match
-        for (idx, slot) in self.slots.iter().enumerate() {
-            if let Some(player) = slot {
-                if player.addr == addr {
-                    return Ok(idx);
-                }
-            }
-        }
-
-        // 3. Locked campaign while player is still at Title Screen (trainer_id == 0):
-        //    Allow temporary Title Screen connection only if a roster slot is currently empty.
         if self.campaign_started {
-            for reg in &self.roster {
-                let idx = reg.slot_id as usize;
-                if self.slots[idx].is_none() {
-                    return Ok(idx);
-                }
-            }
-            warn!(
-                "[Room {}] Rejected {addr} — All {} registered roster slots are currently occupied",
-                room_code_to_string(&self.room_code),
-                self.roster.len()
-            );
-            return Err(ROOM_STATUS_ERR_LOCKED);
+            return self.resolve_campaign_slot(addr, trainer_id, player_secret);
         }
 
-        // 4. Forming campaign: honor requested slot if free
+        // Existing active socket match
+        for (idx, slot) in self.slots.iter().enumerate() {
+            if let Some(player) = slot
+                && player.addr == addr
+            {
+                return Ok(idx);
+            }
+        }
+
+        // Forming campaign: honor requested slot if free
         if (requested_id as usize) < self.target_party_size && requested_id != AUTO_PLAYER_ID {
             let idx = requested_id as usize;
             if self.slots[idx].is_none() {
@@ -362,7 +327,7 @@ impl LobbyState {
             }
         }
 
-        // 5. Auto-assign lowest free slot up to target_party_size
+        // Auto-assign lowest free slot up to target_party_size
         for idx in 0..self.target_party_size {
             if self.slots[idx].is_none() {
                 return Ok(idx);
@@ -376,6 +341,103 @@ impl LobbyState {
             self.target_party_size
         );
         Err(ROOM_STATUS_ERR_FULL)
+    }
+
+    /// Slot resolution once the roster is locked. A player is identified by
+    /// OTID (after loading their save) plus their bridge's player secret, or
+    /// by the secret alone while still at the title screen. Unrecognized
+    /// title-screen guests may borrow a free roster slot but are displaced
+    /// as soon as that slot's owner shows up.
+    fn resolve_campaign_slot(
+        &mut self,
+        addr: SocketAddr,
+        trainer_id: u32,
+        player_secret: u64,
+    ) -> Result<usize, u8> {
+        let room_str = room_code_to_string(&self.room_code);
+
+        let reg_idx = if trainer_id != 0 {
+            let Some(idx) = self.roster.iter().position(|r| r.trainer_id == trainer_id) else {
+                warn!(
+                    "[Room {room_str}] Rejected {addr} (OTID: 0x{trainer_id:08X}) — TrainerID is not in locked campaign roster!"
+                );
+                return Err(ROOM_STATUS_ERR_LOCKED);
+            };
+            let reg = &mut self.roster[idx];
+            if reg.player_secret == 0 && player_secret != 0 {
+                // Legacy campaign file: the first claimant binds the slot.
+                reg.player_secret = player_secret;
+                info!("[Room {room_str}] Bound OTID 0x{trainer_id:08X} to {addr}'s bridge");
+                self.save_campaign_to_disk();
+            } else if reg.player_secret != player_secret {
+                warn!(
+                    "[Room {room_str}] Rejected {addr}: OTID 0x{trainer_id:08X} is registered to a different bridge"
+                );
+                return Err(ROOM_STATUS_ERR_LOCKED);
+            }
+            Some(idx)
+        } else {
+            self.roster
+                .iter()
+                .position(|r| r.player_secret != 0 && r.player_secret == player_secret)
+        };
+
+        let current = self
+            .slots
+            .iter()
+            .position(|s| s.as_ref().is_some_and(|p| p.addr == addr));
+
+        let Some(reg_idx) = reg_idx else {
+            // Unrecognized title-screen guest: keep its slot or borrow a free one.
+            if let Some(cur) = current {
+                return Ok(cur);
+            }
+            if let Some(idx) = self.free_roster_slot() {
+                return Ok(idx);
+            }
+            warn!(
+                "[Room {room_str}] Rejected {addr} — All {} registered roster slots are currently occupied",
+                self.roster.len()
+            );
+            return Err(ROOM_STATUS_ERR_LOCKED);
+        };
+
+        let reg_slot = self.roster[reg_idx].slot_id as usize;
+        let owner_secret = self.roster[reg_idx].player_secret;
+        if current == Some(reg_slot) {
+            return Ok(reg_slot);
+        }
+
+        // Lift our own entry out of any borrowed slot before rearranging.
+        let mine = current.and_then(|cur| self.slots[cur].take());
+
+        let occupied_by_guest = self.slots[reg_slot]
+            .as_ref()
+            .is_some_and(|p| owner_secret == 0 || p.player_secret != owner_secret);
+        if occupied_by_guest {
+            // Someone else borrowed our slot: move them to a free roster slot,
+            // or drop them (their next packet is resolved again).
+            let guest = self.slots[reg_slot].take();
+            if let (Some(mut guest), Some(free)) = (guest, self.free_roster_slot()) {
+                guest.slot_id = free as u8;
+                self.slots[free] = Some(guest);
+            }
+        }
+        // else: the slot holds our own previous socket (bridge restarted);
+        // the caller updates it in place, taking it over.
+
+        if let Some(mut mine) = mine {
+            mine.slot_id = reg_slot as u8;
+            self.slots[reg_slot] = Some(mine);
+        }
+        Ok(reg_slot)
+    }
+
+    fn free_roster_slot(&self) -> Option<usize> {
+        self.roster
+            .iter()
+            .map(|r| r.slot_id as usize)
+            .find(|&idx| self.slots[idx].is_none())
     }
 
     fn check_and_lock_start_gate(&mut self) {
@@ -407,6 +469,7 @@ impl LobbyState {
                 trainer_id: p.state.trainer_id,
                 last_badge_mask: p.badge_mask,
                 assigned_monolocke: p.assigned_monolocke,
+                player_secret: p.player_secret,
             });
         }
 
@@ -423,14 +486,14 @@ impl LobbyState {
         let now = Instant::now();
         let room_str = room_code_to_string(&self.room_code);
         for (idx, slot) in self.slots.iter_mut().enumerate() {
-            if let Some(player) = slot {
-                if now.duration_since(player.last_seen) > self.client_timeout {
-                    info!(
-                        "[Room {room_str} | TIMEOUT] Slot P{idx} ({}) went offline",
-                        player.addr
-                    );
-                    *slot = None;
-                }
+            if let Some(player) = slot
+                && now.duration_since(player.last_seen) > self.client_timeout
+            {
+                info!(
+                    "[Room {room_str} | TIMEOUT] Slot P{idx} ({}) went offline",
+                    player.addr
+                );
+                *slot = None;
             }
         }
     }
@@ -467,8 +530,11 @@ impl LobbyState {
                 }
 
                 if let Some(other) = &self.slots[other_idx] {
-                    let same_map =
-                        other.state.map_id == recipient.state.map_id && other.state.map_id != 0;
+                    // Visible only when both are in the same running field map
+                    // (is_active == 0 while in a battle, app or transition).
+                    let same_map = other.state.is_active != 0
+                        && other.state.map_id == recipient.state.map_id
+                        && other.state.map_id != 0;
 
                     let mut r_player = other.state;
                     r_player.is_active = u8::from(same_map);
@@ -612,12 +678,20 @@ impl LobbyState {
         Some(dir.join(format!("{room_str}.json")))
     }
 
+    /// Persists the campaign atomically (write to a temp file, then rename),
+    /// so a crash mid-write can never leave a truncated roster behind.
     fn save_campaign_to_disk(&self) {
         let Some(path) = self.save_file_path() else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+        if let Some(parent) = path.parent()
+            && let Err(err) = fs::create_dir_all(parent)
+        {
+            error!(
+                "[Room {}] Cannot create save dir {parent:?}: {err}",
+                room_code_to_string(&self.room_code)
+            );
+            return;
         }
         let payload = CampaignSaveFile {
             room_code: room_code_to_string(&self.room_code),
@@ -626,32 +700,85 @@ impl LobbyState {
             expected_party_size: self.roster.len() as u8,
             roster: self.roster.clone(),
         };
-        if let Ok(json) = serde_json::to_string_pretty(&payload) {
-            let _ = fs::write(&path, json);
+        let json = match serde_json::to_string_pretty(&payload) {
+            Ok(json) => json,
+            Err(err) => {
+                error!(
+                    "[Room {}] Cannot serialize campaign: {err}",
+                    payload.room_code
+                );
+                return;
+            }
+        };
+        let tmp_path = path.with_extension("json.tmp");
+        if let Err(err) =
+            write_private(&tmp_path, json.as_bytes()).and_then(|()| fs::rename(&tmp_path, &path))
+        {
+            error!(
+                "[Room {}] Failed to save campaign to {path:?}: {err}",
+                payload.room_code
+            );
         }
     }
 
-    fn try_load_campaign_from_disk(&mut self) {
+    fn load_campaign_from_disk(&mut self) -> Result<(), CampaignLoadError> {
         let Some(path) = self.save_file_path() else {
-            return;
+            return Ok(());
         };
         if !path.exists() {
-            return;
+            return Ok(());
         }
-        if let Ok(raw) = fs::read_to_string(&path) {
-            if let Ok(saved) = serde_json::from_str::<CampaignSaveFile>(&raw) {
-                self.host_token = saved.host_token;
-                self.campaign_started = saved.campaign_started;
-                self.roster = saved.roster;
-                self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
-                info!(
-                    "[Room {}] Restored locked campaign from disk ({} registered trainers)",
-                    saved.room_code,
-                    self.roster.len()
-                );
-            }
-        }
+        let raw = fs::read_to_string(&path)
+            .map_err(|err| CampaignLoadError(format!("cannot read {path:?}: {err}")))?;
+        let saved = serde_json::from_str::<CampaignSaveFile>(&raw)
+            .map_err(|err| CampaignLoadError(format!("cannot parse {path:?}: {err}")))?;
+
+        self.host_token = saved.host_token;
+        self.campaign_started = saved.campaign_started;
+        self.roster = saved.roster;
+        self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
+        info!(
+            "[Room {}] Restored locked campaign from disk ({} registered trainers)",
+            saved.room_code,
+            self.roster.len()
+        );
+        Ok(())
     }
+}
+
+/// Writes a file readable only by the relay's user on Unix: campaign files
+/// contain each player's bridge secret.
+fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(contents)
+}
+
+/// Rooms with nobody connected are dropped from memory after this long.
+/// Started campaigns live on disk and are reloaded on the next JOIN/SYNC.
+pub const DEFAULT_ROOM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// Upper bound on rooms held in memory at once.
+pub const DEFAULT_MAX_ROOMS: usize = 256;
+/// Rooms one IP may host at once, so a single client cannot exhaust the cap.
+pub const MAX_ROOMS_PER_HOST_IP: usize = 4;
+/// Rejected admissions (wrong code, locked roster, ...) allowed per IP in a
+/// burst, refilled at `FAILURE_REFILL_PER_SEC`: ~30 guesses/minute at most.
+pub const FAILURE_BURST: u32 = 10;
+pub const FAILURE_REFILL_PER_SEC: f64 = 0.5;
+
+/// Why a packet was not accepted; `main` turns this into the reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejection {
+    /// A `ROOM_STATUS_*` error code.
+    Status(u8),
+    /// No valid cookie yet: reply with this cookie and let the client retry.
+    Challenge(u64),
 }
 
 pub struct RoomManager {
@@ -660,6 +787,10 @@ pub struct RoomManager {
     default_party_size: usize,
     inspect_all_packets: bool,
     save_dir: PathBuf,
+    room_idle_timeout: Duration,
+    max_rooms: usize,
+    cookies: CookieJar,
+    failures: FailureLimiter,
 }
 
 impl RoomManager {
@@ -675,22 +806,57 @@ impl RoomManager {
             default_party_size: default_party_size.clamp(2, MAX_PLAYERS),
             inspect_all_packets,
             save_dir: save_dir.as_ref().to_path_buf(),
+            room_idle_timeout: DEFAULT_ROOM_IDLE_TIMEOUT,
+            max_rooms: DEFAULT_MAX_ROOMS,
+            cookies: CookieJar::new(),
+            failures: FailureLimiter::new(FAILURE_BURST, FAILURE_REFILL_PER_SEC),
         }
     }
 
+    pub fn with_limits(mut self, room_idle_timeout: Duration, max_rooms: usize) -> Self {
+        self.room_idle_timeout = room_idle_timeout;
+        self.max_rooms = max_rooms.max(1);
+        self
+    }
+
+    pub fn room_count(&self) -> usize {
+        self.rooms.len()
+    }
+
+    /// The cookie a challenge reply would hand to `addr` right now.
+    pub fn cookie_for(&self, addr: SocketAddr) -> u64 {
+        self.cookies.issue(addr, Instant::now())
+    }
+
+    /// Admission gate, then room dispatch. Returns the assigned slot, or how
+    /// to reply (see `ServerToClientPacket::create_error_response` /
+    /// `create_challenge_response`).
     pub fn handle_client_packet(
         &mut self,
         addr: SocketAddr,
         pkt: ClientToServerPacket,
-    ) -> Result<u8, [u8; SERVER_PACKET_SIZE]> {
+    ) -> Result<u8, Rejection> {
+        let now = Instant::now();
+
+        // Cookie first: nothing below (rooms, slots, broadcasts, LEAVE, even
+        // the failure limiter's memory) is reachable from a spoofed address.
+        if !self.cookies.verify(addr, pkt.cookie, now) {
+            return Err(Rejection::Challenge(self.cookies.issue(addr, now)));
+        }
+        if !self.failures.allows(addr.ip(), now) {
+            return Err(Rejection::Status(ROOM_STATUS_ERR_RATE_LIMITED));
+        }
+        self.dispatch(addr, pkt).map_err(|status| {
+            self.failures.record_failure(addr.ip(), now);
+            Rejection::Status(status)
+        })
+    }
+
+    fn dispatch(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Result<u8, u8> {
         // 1. Strictly enforce 6-character alphanumeric Room Code
-        let code = match validate_room_code(pkt.room_code) {
-            Ok(c) => c,
-            Err(status_err) => {
-                warn!("[RoomManager] Rejected invalid room code from {addr}");
-                return Err(ServerToClientPacket::create_error_response(status_err));
-            }
-        };
+        let code = validate_room_code(pkt.room_code).inspect_err(|_| {
+            warn!("[RoomManager] Rejected invalid room code from {addr}");
+        })?;
 
         let room_str = room_code_to_string(&code);
         let save_path = self.save_dir.join(format!("{room_str}.json"));
@@ -711,9 +877,7 @@ impl RoomManager {
                     warn!(
                         "[RoomManager] Rejected CREATE for room {room_str} from {addr}: campaign already exists on disk"
                     );
-                    return Err(ServerToClientPacket::create_error_response(
-                        ROOM_STATUS_ERR_ALREADY_EXISTS,
-                    ));
+                    return Err(ROOM_STATUS_ERR_ALREADY_EXISTS);
                 }
 
                 // Reject if room already exists in memory (unless it is an in-flight 60Hz handshake packet from the exact creator socket & token)
@@ -726,76 +890,114 @@ impl RoomManager {
                         warn!(
                             "[RoomManager] Rejected CREATE for room {room_str} from {addr}: room already exists"
                         );
-                        return Err(ServerToClientPacket::create_error_response(
-                            ROOM_STATUS_ERR_ALREADY_EXISTS,
-                        ));
+                        return Err(ROOM_STATUS_ERR_ALREADY_EXISTS);
                     }
                 }
 
-                let timeout = self.client_timeout;
-                let party_size = (pkt.local_player.target_party_size as usize)
+                let party_size = (pkt.target_party_size as usize)
                     .clamp(2, MAX_PLAYERS)
                     .max(self.default_party_size);
-                let inspect = self.inspect_all_packets;
-                let save_dir = self.save_dir.clone();
-
-                let room = self.rooms.entry(code).or_insert_with(|| {
-                    info!(
-                        "[RoomManager] Created room {room_str} (Host: {addr}, Token: 0x{:08X}, Party Size: {})",
-                        pkt.host_token,
-                        pkt.local_player.target_party_size.clamp(2, MAX_PLAYERS as u8)
-                    );
-                    LobbyState::with_room(
-                        code,
-                        pkt.host_token,
-                        Some(addr),
-                        timeout,
-                        party_size,
-                        inspect,
-                        Some(save_dir),
-                    )
-                });
-
+                let room = self.get_or_open_room(code, pkt.host_token, Some(addr), party_size)?;
                 room.handle_client_packet(addr, pkt)
-                    .map_err(ServerToClientPacket::create_error_response)
             }
 
             ROOM_ACTION_JOIN | ROOM_ACTION_SYNC => {
                 if !room_in_memory && !room_on_disk {
                     warn!(
                         "[RoomManager] Rejected {} from {addr}: room {room_str} does not exist",
-                        if pkt.room_action == ROOM_ACTION_JOIN { "JOIN" } else { "SYNC" }
+                        if pkt.room_action == ROOM_ACTION_JOIN {
+                            "JOIN"
+                        } else {
+                            "SYNC"
+                        }
                     );
-                    return Err(ServerToClientPacket::create_error_response(
-                        ROOM_STATUS_ERR_NOT_FOUND,
-                    ));
+                    return Err(ROOM_STATUS_ERR_NOT_FOUND);
                 }
 
-                let timeout = self.client_timeout;
-                let def_party = self.default_party_size;
-                let inspect = self.inspect_all_packets;
-                let save_dir = self.save_dir.clone();
-
-                let room = self.rooms.entry(code).or_insert_with(|| {
-                    LobbyState::with_room(code, 0, None, timeout, def_party, inspect, Some(save_dir))
-                });
-
+                let party_size = self.default_party_size;
+                let room = self.get_or_open_room(code, 0, None, party_size)?;
                 room.handle_client_packet(addr, pkt)
-                    .map_err(ServerToClientPacket::create_error_response)
             }
 
-            _ => Err(ServerToClientPacket::create_error_response(
-                ROOM_STATUS_ERR_NOT_FOUND,
-            )),
+            _ => Err(ROOM_STATUS_ERR_NOT_FOUND),
         }
     }
 
+    /// Returns the in-memory room, or opens it (fresh, or restored from its
+    /// campaign file). Refuses when the room cap is reached or the campaign
+    /// file is unreadable.
+    fn get_or_open_room(
+        &mut self,
+        code: [u8; 6],
+        host_token: u32,
+        host_addr: Option<SocketAddr>,
+        party_size: usize,
+    ) -> Result<&mut LobbyState, u8> {
+        if !self.rooms.contains_key(&code) {
+            let room_str = room_code_to_string(&code);
+            if self.rooms.len() >= self.max_rooms {
+                warn!(
+                    "[RoomManager] Refused room {room_str}: room limit ({}) reached",
+                    self.max_rooms
+                );
+                return Err(ROOM_STATUS_ERR_FULL);
+            }
+            if let Some(host) = host_addr {
+                let hosted = self
+                    .rooms
+                    .values()
+                    .filter(|r| r.host_addr().is_some_and(|a| a.ip() == host.ip()))
+                    .count();
+                if hosted >= MAX_ROOMS_PER_HOST_IP {
+                    warn!(
+                        "[RoomManager] Refused room {room_str}: {} already hosts {hosted} rooms",
+                        host.ip()
+                    );
+                    return Err(ROOM_STATUS_ERR_FULL);
+                }
+            }
+            let room = LobbyState::with_room(
+                code,
+                host_token,
+                host_addr,
+                self.client_timeout,
+                party_size,
+                self.inspect_all_packets,
+                Some(self.save_dir.clone()),
+            )
+            .map_err(|CampaignLoadError(reason)| {
+                error!("[RoomManager] Refused room {room_str}: {reason}");
+                ROOM_STATUS_ERR_LOCKED
+            })?;
+            if let Some(addr) = host_addr {
+                info!(
+                    "[RoomManager] Created room {room_str} (Host: {addr}, Token: 0x{host_token:08X}, Party Size: {party_size})"
+                );
+            }
+            self.rooms.insert(code, room);
+        }
+        Ok(self.rooms.get_mut(&code).expect("room inserted above"))
+    }
+
     pub fn tick_all_rooms(&mut self) -> Vec<(SocketAddr, [u8; SERVER_PACKET_SIZE])> {
+        let now = Instant::now();
+        let idle_timeout = self.room_idle_timeout;
         let mut all_packets = Vec::new();
         for room in self.rooms.values_mut() {
             room.prune_stale_clients();
             all_packets.extend(room.build_broadcast_batch());
         }
+        self.failures.prune(now);
+        self.rooms.retain(|code, room| {
+            let keep = !room.is_idle(now, idle_timeout);
+            if !keep {
+                info!(
+                    "[RoomManager] Closed idle room {}",
+                    room_code_to_string(code)
+                );
+            }
+            keep
+        });
         all_packets
     }
 

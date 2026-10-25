@@ -2,10 +2,12 @@
 """Extracts gCoopCommBlock's exact ARM9 address and Main RAM offset into coop_offsets.json.
 
 Uses arm-none-eabi-nm on hg-engine/build/linked.o. Fails hard (exit 1) if the
-symbol is missing or its address does not fall within Overlay 129
-(0x023D8060..0x023E0000); no default offset is ever substituted.
+symbol is missing, is not exactly MAILBOX_SIZE bytes, does not fit entirely
+within Overlay 129 (0x023D8060..0x023E0000), or is not at the pinned address
+src/linker.ld places it at. No default offset is ever substituted.
 """
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +16,10 @@ TARGET_SYMBOL = "gCoopCommBlock"
 MAIN_RAM_MASK = 0x003FFFFF
 OVERLAY_129_START = 0x023D8060
 OVERLAY_129_END = 0x023E0000
+# src/linker.ld places the .coop_mailbox section first in Overlay 129.
+PINNED_ADDRESS = OVERLAY_129_START
+MAILBOX_SIZE = 512
+HEADER = Path("hg-engine/include/coop_sync.h")
 
 
 def die(msg: str) -> None:
@@ -31,7 +37,7 @@ def find_symbol_address(hg_root: Path) -> int:
 
     try:
         out = subprocess.check_output(
-            ["arm-none-eabi-nm", str(linked_o)],
+            ["arm-none-eabi-nm", "-S", str(linked_o)],
             text=True,
             stderr=subprocess.PIPE,
         )
@@ -44,14 +50,14 @@ def find_symbol_address(hg_root: Path) -> int:
     matches = []
     for line in out.splitlines():
         parts = line.split()
-        # arm-none-eabi-nm format: <address> <type> <symbol>
-        if len(parts) >= 3 and parts[2] == TARGET_SYMBOL:
+        # arm-none-eabi-nm -S format: <address> <size> <type> <symbol>
+        if len(parts) >= 4 and parts[3] == TARGET_SYMBOL:
             try:
-                matches.append((parts[1], int(parts[0], 16)))
+                matches.append((parts[2], int(parts[0], 16), int(parts[1], 16)))
             except ValueError:
                 continue
 
-    defined = [addr for sym_type, addr in matches if sym_type not in {"U", "u", "N", "n"}]
+    defined = [(addr, size) for sym_type, addr, size in matches if sym_type not in {"U", "u", "N", "n"}]
     if not defined:
         die(
             f"{TARGET_SYMBOL} is missing (or only referenced) in {linked_o}; "
@@ -59,18 +65,35 @@ def find_symbol_address(hg_root: Path) -> int:
             f"mailbox code is compiled and linked into the build."
         )
 
-    in_range = [addr for addr in defined if OVERLAY_129_START <= addr < OVERLAY_129_END]
-    if not in_range:
-        shown = ", ".join(f"0x{addr:08X}" for addr in defined)
+    if len(defined) != 1:
+        shown = ", ".join(f"0x{addr:08X}" for addr, _ in defined)
+        die(f"{TARGET_SYMBOL} is defined {len(defined)} times ({shown}); expected exactly one.")
+    arm9_addr, size = defined[0]
+
+    if size != MAILBOX_SIZE:
+        die(f"{TARGET_SYMBOL} is {size} bytes; expected {MAILBOX_SIZE}. Check include/coop_sync.h.")
+    if not (OVERLAY_129_START <= arm9_addr and arm9_addr + size <= OVERLAY_129_END):
         die(
-            f"{TARGET_SYMBOL} defined at {shown} in {linked_o}; no definition "
-            f"falls within Overlay 129 (0x{OVERLAY_129_START:08X}..0x{OVERLAY_129_END:08X}); "
-            f"refusing to write coop_offsets.json."
+            f"{TARGET_SYMBOL} spans 0x{arm9_addr:08X}..0x{arm9_addr + size:08X}, outside Overlay 129 "
+            f"(0x{OVERLAY_129_START:08X}..0x{OVERLAY_129_END:08X}); refusing to write coop_offsets.json."
         )
-    arm9_addr = in_range[0]
+    if arm9_addr != PINNED_ADDRESS:
+        die(
+            f"{TARGET_SYMBOL} is at 0x{arm9_addr:08X}, not the pinned 0x{PINNED_ADDRESS:08X}. "
+            f"Check that src/linker.ld keeps *(.coop_mailbox) first in .text."
+        )
 
     print(f"[*] Found {TARGET_SYMBOL} in {linked_o} at 0x{arm9_addr:08X}")
     return arm9_addr
+
+
+def read_mailbox_version(repo_root: Path) -> int:
+    """COOP_MAILBOX_VERSION from coop_sync.h, the single source of truth."""
+    header = repo_root / HEADER
+    match = re.search(r"^#define\s+COOP_MAILBOX_VERSION\s+(\d+)", header.read_text(encoding="utf-8"), re.M)
+    if not match:
+        die(f"COOP_MAILBOX_VERSION not found in {header}.")
+    return int(match.group(1))
 
 
 def main() -> None:
@@ -84,7 +107,8 @@ def main() -> None:
         "arm9_bus_address": f"0x{arm9_addr:08X}",
         "main_ram_offset": f"0x{main_ram_offset:06X}",
         "main_ram_offset_int": main_ram_offset,
-        "mailbox_size": 512,
+        "mailbox_size": MAILBOX_SIZE,
+        "mailbox_version": read_mailbox_version(repo_root),
     }
 
     out_file = repo_root / "coop_offsets.json"

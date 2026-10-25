@@ -1,3 +1,4 @@
+pub mod admission;
 pub mod lobby;
 pub mod protocol;
 

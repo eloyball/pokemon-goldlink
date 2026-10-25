@@ -2,96 +2,176 @@
 #include "types.h"
 
 #include "constants/buttons.h"
-#include "constants/pokemon_nickname.h"
+#include "constants/maps.h"
+#include "constants/species.h"
 
 #include "message.h"
 #include "pokemon.h"
 #include "save.h"
 #include "map_events_internal.h"
+#include "system.h"
+#include "task.h"
+#include "window.h"
 #include "coop_sync.h"
 
-// Vanilla accessor for the main party, mapped in rom.ld (0x02074904).
-// Not declared in any hg-engine header, so declared here for the
-// overworld lead-Pokémon read.
+// Vanilla functions not declared (or declared without LONG_CALL) in any
+// hg-engine header. Addresses live in rom.ld.
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
-extern BOOL LONG_CALL FieldSystem_ApplicationIsRunning(void);
-extern struct Party * LONG_CALL SaveArray_Party_Get(void *saveData);
-extern void * LONG_CALL CreateSysTask(void (*func)(void *task, void *param), void *param, u32 priority);
+void *LONG_CALL Save_PlayerData_GetOptionsAddr(void *saveData);
+u8 LONG_CALL TextPrinterCheckActive(u8 printerId);
+void LONG_CALL AddWindowParameterized(void *bgConfig, void *window, u8 bgId, u8 x, u8 y, u8 width, u8 height, u8 paletteNum, u16 baseTile);
+// Overlay 01: syncs map objects + player position into the save, then
+// calls SaveGameNormal. Returns TRUE on success.
+BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 
-// 512-byte shared mailbox, placed in the Overlay 129 .data section so
-// arm-none-eabi-nm emits it as a defined (type D) symbol inside
-// 0x023D8060..0x023E0000. The BizHawk coop-bridge writes the
-// is_connected_to_room flag (offset 0x160) here at 60Hz.
-__attribute__((section(".data"), used, aligned(4)))
+// Heaps (pret include/constants/heap.h).
+#define HEAP_ID_DEFAULT 0
+#define HEAP_ID_FIELD1  4
+#define HEAP_ID_FIELD3  32 // field task heap (pret Task_New)
+
+// Vanilla field dialog box (pret src/dialog_box.c).
+#define DIALOG_BG_LAYER     3 // GF_BG_LYR_MAIN_3
+#define DIALOG_X            2
+#define DIALOG_Y            19
+#define DIALOG_W            27
+#define DIALOG_H            4
+#define DIALOG_PLTT_TEXT    12
+#define DIALOG_PLTT_FRAME   10
+#define DIALOG_BASE_TILE    0x237
+#define DIALOG_FRAME_TILE   0x3E2
+#define DIALOG_FONT         1
+#define DIALOG_BG_FILL      15
+
+#define COOP_TEXT_MAX 96
+
+// 512-byte shared mailbox. Its own initialized section, placed first in
+// Overlay 129 by src/linker.ld, so it carries its initial values (Overlay
+// 129 is loaded without BSS init) and sits at a fixed address
+// (0x023D8060) that extract_coop_sym.py verifies.
+__attribute__((section(".coop_mailbox"), used, aligned(4)))
 volatile struct CoopCommBlock gCoopCommBlock = {
-    .magic = 0x434F4F50,
-    .version = 1,
-    .assigned_player_id = 0xFF,
-    .active_players_mask = 0,
-    .is_connected_to_room = 0,
-    .is_boot_done = 0,
+    .magic = COOP_MAGIC,
+    .version = COOP_MAILBOX_VERSION,
+    .assigned_player_id = COOP_PLAYER_ID_NONE,
+    .disconnect_state = COOP_DISCONNECT_NONE,
+    // Not connected until the bridge proves it is alive.
+    .bridge_stale_frames = COOP_BRIDGE_TIMEOUT_FRAMES,
+    .limit_map_id = MAP_ID_MAX,
+    .limit_species = MAX_SPECIES_INCLUDING_FORMS,
 };
 
-// Black-screen gate message lines, encoded with the HG font charmap
-// (include/constants/pokemon_nickname.h).
-struct CoopGateLine
+// ---------------------------------------------------------------------------
+// Text helpers
+// ---------------------------------------------------------------------------
+
+// Converts a plain ASCII message into an HG-encoded String (charmap.txt).
+// Supports A-Z a-z 0-9, space, ! ? , . - ' and \n; "..." becomes the
+// ellipsis glyph. Anything else is rendered as '?'.
+static void Coop_SetStringFromAscii(String *dst, const char *src)
 {
-    const u16 *text;
-    u16 y;
-};
+    u16 buf[COOP_TEXT_MAX + 1];
+    u32 n = 0;
 
-static const u16 sGateLine1[] = {
-    _Y, _o_, _u_, CHAR_SPACE, _a_, _r_, _e_, CHAR_SPACE, _n_, _o_, _t_, CHAR_SPACE,
-    _i_, _n_, CHAR_SPACE, _a_, CHAR_SPACE, _r_, _o_, _o_, _m_, _endstr
-}; // "You are not in a room"
-
-static const u16 sGateLine2[] = {
-    _P, _l_, _e_, _a_, _s_, _e_, CHAR_SPACE, _c_, _r_, _e_, _a_, _t_, _e_, CHAR_SPACE,
-    _o_, _r_, CHAR_SPACE, _j_, _o_, _i_, _n_, _endstr
-}; // "Please create or join"
-
-static const u16 sGateLine3[] = {
-    _a_, CHAR_SPACE, _r_, _o_, _o_, _m_, CHAR_SPACE, _i_, _n_, CHAR_SPACE,
-    _C, _o_, CHAR_SPACE, _o_, _p_, CHAR_SPACE, _B, _r_, _i_, _d_, _g_, _e_, _endstr
-}; // "a room in Co op Bridge"
-
-static const u16 sGateLine4[] = {
-    _b_, _e_, _f_, _o_, _r_, _e_, CHAR_SPACE, _c_, _o_, _n_, _t_, _i_, _n_, _u_, _i_, _n_, _g_, _endstr
-}; // "before continuing"
-
-static const u16 sGateLine5[] = {
-    _P, _r_, _e_, _s_, _s_, CHAR_SPACE, _A, CHAR_SPACE, _t_, _o_, CHAR_SPACE,
-    _r_, _e_, _t_, _u_, _r_, _n_, _endstr
-}; // "Press A to return"
-
-static const struct CoopGateLine sGateLines[] = {
-    { sGateLine1, 16 },
-    { sGateLine2, 36 },
-    { sGateLine3, 56 },
-    { sGateLine4, 76 },
-    { sGateLine5, 104 },
-};
-
-BOOL LONG_CALL Coop_IsConnectedToRoom(void)
-{
-    if (gCoopCommBlock.is_connected_to_room != 0)
+    while (*src != '\0' && n < COOP_TEXT_MAX)
     {
-        return TRUE;
+        char c = *src++;
+        u16 out;
+
+        if (c >= 'A' && c <= 'Z')
+            out = 0x012B + (c - 'A');
+        else if (c >= 'a' && c <= 'z')
+            out = 0x0145 + (c - 'a');
+        else if (c >= '0' && c <= '9')
+            out = 0x0121 + (c - '0');
+        else if (c == '.' && src[0] == '.' && src[1] == '.')
+        {
+            out = 0x01AF; // …
+            src += 2;
+        }
+        else
+        {
+            switch (c)
+            {
+            case ' ':  out = 0x01DE; break;
+            case '!':  out = 0x01AB; break;
+            case ',':  out = 0x01AD; break;
+            case '.':  out = 0x01AE; break;
+            case '-':  out = 0x01BE; break;
+            case '\'': out = 0x01B3; break;
+            case '\n': out = 0xE000; break;
+            default:   out = 0x01AC; break; // ?
+            }
+        }
+        buf[n++] = out;
     }
-    if (gCoopCommBlock.assigned_player_id < 6)
-    {
-        return TRUE;
-    }
-    return FALSE;
+    buf[n] = 0xFFFF;
+    CopyU16ArrayToString(dst, buf);
 }
 
-// Standalone black-screen gate. Adapted from PrintCrashMessageAndReset
-// (src/save.c): same heap/IRQ/BG setup, but with a black mask color and
-// a static message instead of NARC msgdata. Blocks on A, then resets.
-void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
+// ---------------------------------------------------------------------------
+// Connection state
+// ---------------------------------------------------------------------------
+
+// Connected only when the bridge says so AND it is still alive. The
+// heartbeat check covers the bridge window being closed, the bridge
+// crashing, and savestates restoring a stale "connected" flag.
+BOOL LONG_CALL Coop_IsConnectedToRoom(void)
+{
+    return gCoopCommBlock.is_connected_to_room != 0
+        && gCoopCommBlock.bridge_stale_frames < COOP_BRIDGE_TIMEOUT_FRAMES;
+}
+
+static void Coop_UpdateBridgeWatchdog(void)
+{
+    u32 hb = gCoopCommBlock.heartbeat_bridge;
+
+    if (hb != gCoopCommBlock.bridge_hb_last_seen)
+    {
+        gCoopCommBlock.bridge_hb_last_seen = hb;
+        gCoopCommBlock.bridge_stale_frames = 0;
+    }
+    else if (gCoopCommBlock.bridge_stale_frames < COOP_BRIDGE_TIMEOUT_FRAMES)
+    {
+        gCoopCommBlock.bridge_stale_frames++;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Startup gate (title screen, before the overworld exists)
+// ---------------------------------------------------------------------------
+
+// Kept to <= 22 characters per line: the window is 208 px wide.
+static const char *const sGateLines[] = {
+    "Not in a Co-op Room.",
+    "Open the Co-op Bridge,",
+    "create or join a room,",
+    "then start again.",
+    "Press A, B or START.",
+};
+
+static const u16 sGateLineY[] = { 16, 44, 60, 76, 108 };
+
+// Any of these dismisses the startup gate. A and B are how every vanilla
+// message is dismissed, and START is what players press on the title flow
+// this screen interrupts. SELECT is left out (it is part of the vanilla
+// soft-reset chord) and so are the D-pad and shoulders, so resting a thumb
+// or holding L/R never skips the message by accident.
+#define COOP_GATE_DISMISS_KEYS (PAD_BUTTON_A | PAD_BUTTON_B | PAD_BUTTON_START)
+
+// Full-screen message adapted from PrintCrashMessageAndReset (src/save.c):
+// same heap/IRQ/BG setup with a black background. Only used before the
+// overworld is running (New Game / Continue), never mid-game: it rebuilds
+// the heap system. Blocks on a fresh A press, then soft-resets.
+static void Coop_ShowStartupGateAndReset(void)
 {
     u32 window;
     u32 line;
+
+    // Quiesce interrupts BEFORE touching the heap: a VBlank IRQ firing while
+    // InitHeapSystem runs would walk freed SysTask lists / DMA buffers.
+    OS_DisableIrqMask(1);
+    Main_SetVBlankIntrCB(NULL, NULL);
+    Main_SetHBlankIntrCB(NULL, NULL);
 
     OS_SetArenaHi(0, OS_GetInitArenaHi(0));
     OS_SetArenaLo(0, OS_GetInitArenaLo(0));
@@ -100,12 +180,8 @@ void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
     sub_0200FBF4(0, 0);
     sub_0200FBF4(1, 0);
 
-    OS_DisableIrqMask(1);
     OS_SetIrqFunction(1, (void *)(0x2096318 | 1));
     OS_EnableIrqMask(1);
-
-    Main_SetVBlankIntrCB(NULL, NULL);
-    Main_SetHBlankIntrCB(NULL, NULL);
 
     GfGfx_DisableEngineAPlanes();
     GfGfx_DisableEngineBPlanes();
@@ -123,15 +199,14 @@ void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
     GXS_SetVisibleWnd(0);
     GfGfx_SetBanks((void *)0x0210855C);
 
-    void *bg_config = BgConfig_Alloc(0);
+    void *bg_config = BgConfig_Alloc(HEAP_ID_DEFAULT);
     SetBothScreensModesAndDisable((void *)0x02108530);
     InitBgFromTemplate(bg_config, 0, (void *)0x02108540, 0);
     BgClearTilemapBufferAndCommit(bg_config, 0);
-    LoadUserFrameGfx1(bg_config, 0, 0x1F7, 2, 0, 0);
-    LoadFontPal0(0, 0x20, 0);
+    LoadUserFrameGfx1(bg_config, 0, 0x1F7, 2, 0, HEAP_ID_DEFAULT);
+    LoadFontPal0(0, 0x20, HEAP_ID_DEFAULT);
     BG_ClearCharDataRange(0, 0x20, 0, 0);
 
-    // Black background (crash screen uses RGB(27, 1, 1))
     BG_SetMaskColor(0, 0x0000);
     BG_SetMaskColor(4, 0x0000);
 
@@ -143,9 +218,9 @@ void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
 
     for (line = 0; line < NELEMS(sGateLines); line++)
     {
-        String *msg_str = String_New(64, 0);
-        CopyU16ArrayToString(msg_str, sGateLines[line].text);
-        AddTextPrinterParameterized(&window, 0, msg_str, 8, sGateLines[line].y, 0, NULL);
+        String *msg_str = String_New(64, HEAP_ID_DEFAULT);
+        Coop_SetStringFromAscii(msg_str, sGateLines[line]);
+        AddTextPrinterParameterized(&window, 0, msg_str, 8, sGateLineY[line], 0, NULL);
         String_Delete(msg_str);
     }
 
@@ -154,42 +229,28 @@ void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
     SetMasterBrightnessNeutral(1);
     SetBlendBrightness(0, 0x3F, 3);
 
-    // Flush the window and text printers to VRAM and turn on the visible
-    // BG plane (same as PrintCrashMessageAndReset in src/save.c).
+    // Flush the window and text printers to VRAM (as PrintCrashMessageAndReset).
     sub_02038D90();
 
     while (TRUE)
     {
         HandleDSLidAction();
         sub_02036144();
-
         if (sub_02039AA4())
-        {
             break;
-        }
         OS_WaitIrq(TRUE, 1);
     }
 
-    // The player is almost certainly still holding A/START from the menu
-    // selection, so first wait for A to be RELEASED...
-    while (TRUE)
+    // A/START is usually still held from the title menu: wait until every
+    // dismiss key is released, then for a fresh press of any of them.
+    while (PAD_Read() & COOP_GATE_DISMISS_KEYS)
     {
         HandleDSLidAction();
-        if ((PAD_Read() & PAD_BUTTON_A) == 0)
-        {
-            break;
-        }
         OS_WaitIrq(TRUE, 1);
     }
-
-    // ...then wait for a fresh A PRESS before resetting.
-    while (TRUE)
+    while (!(PAD_Read() & COOP_GATE_DISMISS_KEYS))
     {
         HandleDSLidAction();
-        if (PAD_Read() & PAD_BUTTON_A)
-        {
-            break;
-        }
         OS_WaitIrq(TRUE, 1);
     }
 
@@ -202,101 +263,447 @@ void LONG_CALL Coop_ShowDisconnectedGateAndReset(void)
     OS_ResetSystem(0);
 }
 
-// Startup gate: if the player is not in a coop room, block game start
-// with the black-screen message and reset back to the title screen.
+// Called from the New Game (Save_InitDynamicRegion) and Continue
+// (FieldSystem_RestoreMapObjectsFromSave) hooks in src/save.c.
 void LONG_CALL Coop_CheckStartupGate(void)
 {
     if (!Coop_IsConnectedToRoom())
     {
-        Coop_ShowDisconnectedGateAndReset();
+        Coop_ShowStartupGateAndReset();
     }
+    // Passing the gate starts the session: a drop from here on (even during
+    // the New Game intro) is latched and handled at the first safe overworld
+    // frame, so nobody reaches the overworld offline.
+    gCoopCommBlock.was_in_active_session = 1;
 }
 
-// Publish the local player's overworld state into gCoopCommBlock so the
-// BizHawk bridge / relay can read it at 30-60 Hz. Called once per
-// overworld frame from the 60 Hz Coop_MainSysTask.
-void Coop_UpdateLocalPlayerState(FieldSystem *fsys)
+// ---------------------------------------------------------------------------
+// Overworld state
+// ---------------------------------------------------------------------------
+
+static LocalMapObject *Coop_GetPlayerMapObject(FieldSystem *fsys)
 {
-    struct CoopPlayerState *ps = &gCoopCommBlock.local_player;
+    if (fsys == NULL || fsys->playerAvatar == NULL)
+        return NULL;
+    return fsys->playerAvatar->mapObject;
+}
 
-    // Default the fields we own to zero so a stale value never leaks across
-    // a map transition or a NULL pointer below.
-    ps->map_id = 0;
-    ps->x = 0;
-    ps->y = 0;
-    ps->prev_x = 0;
-    ps->prev_y = 0;
-    ps->direction = 0;
-    ps->movement_type = 0;
-    ps->sprite_id = 0;
-    ps->animation_frame = 0;
-    ps->lead_species = 0;
-    ps->lead_form = 0;
-    ps->lead_is_shiny = 0;
-    ps->lead_gender = 0;
-    ps->trainer_id = 0;
-    ps->is_active = 0;
+// The field map overlay is running with no application (battle, bag,
+// starter select, ...) on top of it. Mirrors pret sub_0203DF8C plus the
+// child check.
+static BOOL Coop_IsFieldMapActive(FieldSystem *fsys)
+{
+    FieldProcessManager *pm;
 
-    if (fsys == NULL)
-        return;
-    if (fsys->playerAvatar == NULL)
-        return;
-    LocalMapObject *mo = fsys->playerAvatar->mapObject;
-    if (mo == NULL)
-        return;
+    if (fsys == NULL || fsys->savedata == NULL || fsys->location == NULL)
+        return FALSE;
+    pm = fsys->processManager;
+    if (pm == NULL)
+        return FALSE;
+    return pm->parent != NULL && pm->child == NULL && !pm->isPaused && fsys->runningFieldMap;
+}
 
-    // Raw coordinates are stored as-is (fx32); the bridge/relay interprets
-    // the scaling - do NOT divide by 0x10000 here.
+// Safe to freeze, save and show a dialog: the vanilla
+// FieldSystem_IsPlayerMovementAllowed() conditions (field map running, not
+// paused, no field task - scripts, cutscenes, the start menu and warps all
+// run as field tasks), no message box open, and the player is standing on
+// a tile rather than mid-step.
+static BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
+{
+    LocalMapObject *player;
+
+    if (!Coop_IsFieldMapActive(fsys))
+        return FALSE;
+    if (fsys->taskman != NULL || fsys->textbox_open)
+        return FALSE;
+    player = Coop_GetPlayerMapObject(fsys);
+    if (player == NULL || MapObject_IsSingleMovementActive(player))
+        return FALSE;
+    if (fsys->location->mapId == 0)
+        return FALSE;
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Mid-game disconnect: native field task (freeze, dialog, save, reset)
+// ---------------------------------------------------------------------------
+
+enum CoopDisconnectTaskState
+{
+    COOP_TASK_OPEN_DIALOG,
+    COOP_TASK_WAIT_SAVING_TEXT,
+    COOP_TASK_SAVE,
+    COOP_TASK_WAIT_RESULT_TEXT,
+    COOP_TASK_WAIT_A,
+};
+
+struct CoopDisconnectTaskEnv
+{
+    GF_BGL_BMPWIN window;
+    String *text;
+    u8 printerId;
+    u8 textDelay;
+    u8 frameWait;
+};
+
+static u8 Coop_GetTextFrameDelay(void *saveData)
+{
+    // pret Options_GetTextFrameDelay: Options.textSpeed is bits 0-3.
+    u16 options = *(u16 *)Save_PlayerData_GetOptionsAddr(saveData);
+    u32 textSpeed = options & 0xF;
+
+    if (textSpeed == 0)
+        return 8;
+    if (textSpeed == 1)
+        return 4;
+    return 1;
+}
+
+static void Coop_PrintDialogPage(struct CoopDisconnectTaskEnv *env, const char *msg)
+{
+    FillWindowPixelBuffer(&env->window, DIALOG_BG_FILL);
+    Coop_SetStringFromAscii(env->text, msg);
+    env->printerId = AddTextPrinterParameterized(&env->window, DIALOG_FONT, env->text, 0, 0, env->textDelay, NULL);
+}
+
+// Same allocation as pret FieldSystem_CreateTask / Task_New (task.c), which
+// is not mapped in rom.ld.
+static TaskManager *Coop_FieldSystem_CreateTask(FieldSystem *fsys, TaskFunc func, void *env)
+{
+    TaskManager *taskman = sys_AllocMemoryLo(HEAP_ID_FIELD3, sizeof(TaskManager));
+    TaskManagerUnkSub1C *sub;
+
+    if (taskman == NULL)
+        return NULL;
+    sub = sys_AllocMemoryLo(HEAP_ID_FIELD3, sizeof(TaskManagerUnkSub1C));
+    if (sub == NULL)
+    {
+        sys_FreeMemoryEz(taskman);
+        return NULL;
+    }
+
+    taskman->prev = NULL;
+    taskman->func = func;
+    taskman->state = 0;
+    taskman->env = env;
+    taskman->unk10 = 0;
+    taskman->unk14 = NULL;
+    taskman->fieldSystem = fsys;
+    taskman->unk1C = sub;
+    fsys->taskman = taskman;
+    return taskman;
+}
+
+// Never returns TRUE: the task ends in OS_ResetSystem, so the field task
+// manager never frees it.
+static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
+{
+    FieldSystem *fsys = taskman->fieldSystem;
+    struct CoopDisconnectTaskEnv *env = taskman->env;
+
+    switch (taskman->state)
+    {
+    case COOP_TASK_OPEN_DIALOG:
+    {
+        void *options = Save_PlayerData_GetOptionsAddr(fsys->savedata);
+
+        // Freeze every map object, like the LockAll script command.
+        MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
+
+        // Vanilla dialog box (pret ScrCmd_OpenMsg / DialogBox_LoadFrame).
+        AddWindowParameterized(fsys->bg_config, &env->window, DIALOG_BG_LAYER,
+                               DIALOG_X, DIALOG_Y, DIALOG_W, DIALOG_H,
+                               DIALOG_PLTT_TEXT, DIALOG_BASE_TILE);
+        TalkWinGraphicSet(fsys->bg_config, DIALOG_BG_LAYER, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME,
+                          CONFIG_GetWindowType(options), HEAP_ID_FIELD1);
+        FillWindowPixelBuffer(&env->window, DIALOG_BG_FILL);
+        BmpTalkWinWrite(&env->window, FALSE, DIALOG_FRAME_TILE, DIALOG_PLTT_FRAME);
+        fsys->textbox_open = TRUE;
+
+        env->text = String_New(COOP_TEXT_MAX * 2, HEAP_ID_FIELD3);
+        env->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
+        Coop_PrintDialogPage(env, "Disconnected from the Co-op Room.\nSaving your adventure...");
+        taskman->state = COOP_TASK_WAIT_SAVING_TEXT;
+        break;
+    }
+
+    case COOP_TASK_WAIT_SAVING_TEXT:
+        if (!TextPrinterCheckActive(env->printerId))
+        {
+            env->frameWait = 0;
+            taskman->state = COOP_TASK_SAVE;
+        }
+        break;
+
+    case COOP_TASK_SAVE:
+        // Let the finished text reach VRAM before the save blocks the CPU.
+        if (++env->frameWait < 2)
+            break;
+
+        if (Field_SaveGameNormal(fsys))
+            Coop_PrintDialogPage(env, "Your adventure was saved!\nReturning to the Title Screen...");
+        else
+            Coop_PrintDialogPage(env, "The save failed!\nReturning to the Title Screen...");
+        taskman->state = COOP_TASK_WAIT_RESULT_TEXT;
+        break;
+
+    case COOP_TASK_WAIT_RESULT_TEXT:
+        if (!TextPrinterCheckActive(env->printerId))
+            taskman->state = COOP_TASK_WAIT_A;
+        break;
+
+    case COOP_TASK_WAIT_A:
+        // A or B, like every vanilla overworld message (ScrCmd_WaitButton).
+        if (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B))
+            OS_ResetSystem(0);
+        break;
+    }
+
+    return FALSE;
+}
+
+// Returns FALSE (and stays pending, retrying next frame) if the field heap
+// cannot fit the task right now.
+static BOOL Coop_BeginDisconnectSaveAndReset(FieldSystem *fsys)
+{
+    struct CoopDisconnectTaskEnv *env = sys_AllocMemory(HEAP_ID_FIELD3, sizeof(*env));
+    u8 *bytes = (u8 *)env;
+    u32 i;
+
+    if (env == NULL)
+        return FALSE;
+    for (i = 0; i < sizeof(*env); i++)
+        bytes[i] = 0;
+
+    if (Coop_FieldSystem_CreateTask(fsys, Coop_Task_DisconnectSaveAndReset, env) == NULL)
+    {
+        sys_FreeMemoryEz(env);
+        return FALSE;
+    }
+    gCoopCommBlock.disconnect_state = COOP_DISCONNECT_RUNNING;
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Local player telemetry
+// ---------------------------------------------------------------------------
+
+static void Coop_BuildLocalPlayerState(FieldSystem *fsys, struct CoopPlayerState *ps, u16 *badgeMask)
+{
+    LocalMapObject *mo = Coop_GetPlayerMapObject(fsys);
+    MapObjectMan *mapObjects = fsys->mapObjectMan;
+    struct PlayerProfile *profile;
+    struct Party *party;
+    u32 partyCount = 0;
+    u32 i;
+
     ps->map_id = (u16)fsys->location->mapId;
-    ps->x = (s16)mo->xCurr;
-    ps->y = (s16)mo->yCurr;
-    ps->prev_x = (s16)mo->xPrev;
-    ps->prev_y = (s16)mo->yPrev;
-    ps->direction = (u8)mo->curFacing;
-    ps->movement_type = (u8)mo->movement;
-    ps->sprite_id = (u16)mo->gfxId;
-    ps->animation_frame = (u8)mo->movementStep;
+    if (mo != NULL)
+    {
+        // Tile coordinates (ints in LocalMapObject).
+        ps->x = (s16)mo->xCurr;
+        ps->y = (s16)mo->yCurr;
+        ps->prev_x = (s16)mo->xPrev;
+        ps->prev_y = (s16)mo->yPrev;
+        ps->direction = (u8)mo->curFacing;
+        ps->movement_type = (u8)mo->movement;
+        ps->sprite_id = (u16)mo->gfxId;
+        ps->animation_frame = (u8)mo->movementStep;
+    }
 
-    // --- Trainer id + badge mask (PlayerProfile.id) ---
-    struct PlayerProfile *profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
+    // Live map objects other than the player (NPCs, follower, props). The
+    // relay hides remote followers above a threshold to protect OBJ VRAM.
+    if (mapObjects != NULL && mapObjects->active_count > 0)
+    {
+        u32 others = mapObjects->active_count - 1;
+        ps->map_npc_count = (u8)(others > 0xFF ? 0xFF : others);
+    }
+
+    profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
     if (profile != NULL)
     {
         ps->trainer_id = profile->id;
-        u16 badge_mask_local = 0;
-        u32 i;
         for (i = 0; i < 16; i++)
         {
             if (PlayerProfile_TestBadgeFlag(profile, (s32)i) == TRUE)
-                badge_mask_local |= (u16)(1u << i);
+                *badgeMask |= (u16)(1u << i);
         }
-        gCoopCommBlock.badge_mask_local = badge_mask_local;
     }
 
-    // --- Lead Pokémon (party slot 0) ---
-    struct Party *party = SaveArray_Party_Get(fsys->savedata);
-    if (party != NULL && party->count > 0)
+    party = SaveArray_Party_Get(fsys->savedata);
+    if (party != NULL)
     {
-        struct PartyPokemon *lead = Party_GetMonByIndex(party, 0);
-        if (lead != NULL)
+        partyCount = (u32)party->count;
+        if (partyCount > 0)
         {
-            ps->lead_species = (u16)GetMonData(lead, MON_DATA_SPECIES, NULL);
-            ps->lead_form = (u16)GetMonData(lead, MON_DATA_FORM, NULL);
-            ps->lead_is_shiny = MonIsShiny(lead) ? 1 : 0;
-            ps->lead_gender = (u8)GetMonData(lead, MON_DATA_GENDER, NULL);
+            struct PartyPokemon *lead = Party_GetMonByIndex(party, 0);
+            if (lead != NULL)
+            {
+                ps->lead_species = (u16)GetMonData(lead, MON_DATA_SPECIES, NULL);
+                ps->lead_form = (u16)GetMonData(lead, MON_DATA_FORM, NULL);
+                ps->lead_is_shiny = MonIsShiny(lead) ? 1 : 0;
+                ps->lead_gender = (u8)GetMonData(lead, MON_DATA_GENDER, NULL);
+            }
         }
     }
 
+    // Lobby readiness lives here, next to the game state it depends on.
+    ps->client_ready = (ps->map_id == COOP_BEDROOM_MAP_ID && ps->trainer_id != 0 && partyCount == 0) ? 1 : 0;
     ps->is_active = 1;
 }
 
-// 60 Hz background SysTask (created in SaveData_New). Ticks the ROM-side
-// heartbeat every frame and republishes local player state while the
-// field system is running.
+// Publishes a complete snapshot under a sequence lock: local_player_seq is
+// odd while the copy is in progress, so the bridge can reject a torn read
+// (possible on lag frames, when a frame boundary lands mid-copy).
+static void Coop_PublishLocalPlayerState(const struct CoopPlayerState *ps, u16 badgeMask)
+{
+    volatile u32 *dst = (volatile u32 *)&gCoopCommBlock.local_player;
+    const u32 *src = (const u32 *)ps;
+    u32 i;
+
+    gCoopCommBlock.local_player_seq++;
+    for (i = 0; i < sizeof(*ps) / sizeof(u32); i++)
+        dst[i] = src[i];
+    gCoopCommBlock.badge_mask_local = badgeMask;
+    gCoopCommBlock.local_player_seq++;
+}
+
+static void Coop_UpdateLocalPlayerState(FieldSystem *fsys, BOOL fieldActive)
+{
+    if (fieldActive)
+    {
+        struct CoopPlayerState ps = { 0 };
+        u16 badgeMask = 0;
+
+        Coop_BuildLocalPlayerState(fsys, &ps, &badgeMask);
+        Coop_PublishLocalPlayerState(&ps, badgeMask);
+    }
+    else if (gCoopCommBlock.local_player.is_active)
+    {
+        // In a battle / app / transition: keep the last known position and
+        // OTID (other players keep seeing where we stood), but flag inactive.
+        gCoopCommBlock.local_player_seq++;
+        gCoopCommBlock.local_player.is_active = 0;
+        gCoopCommBlock.local_player_seq++;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Remote data (untrusted: written by the bridge from relay packets)
+// ---------------------------------------------------------------------------
+
+static BOOL Coop_IsValidDirection(u8 direction)
+{
+    return direction <= 3; // DIR_NORTH, DIR_SOUTH, DIR_WEST, DIR_EAST
+}
+
+static void Coop_Zero(void *dst, u32 size)
+{
+    u8 *bytes = dst;
+    u32 i;
+
+    for (i = 0; i < size; i++)
+        bytes[i] = 0;
+}
+
+// Snapshot copy: the bridge only writes between frames, but copying first
+// guarantees the checks below apply to exactly the bytes the caller uses.
+static void Coop_CopyFromMailbox(void *dst, const volatile void *src, u32 size)
+{
+    u8 *d = dst;
+    const volatile u8 *s = src;
+    u32 i;
+
+    for (i = 0; i < size; i++)
+        d[i] = s[i];
+}
+
+BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out)
+{
+    Coop_Zero(out, sizeof(*out));
+    if (remoteSlot >= COOP_REMOTE_SLOTS)
+        return FALSE;
+
+    Coop_CopyFromMailbox(out, &gCoopCommBlock.remote_players[remoteSlot], sizeof(*out));
+    if (out->is_active != 1
+        || out->map_id == 0 || out->map_id >= MAP_ID_MAX
+        || !Coop_IsValidDirection(out->direction)
+        || out->lead_species > MAX_SPECIES_INCLUDING_FORMS
+        || out->lead_is_shiny > 1 || out->lead_gender > 2 || out->client_ready > 1)
+    {
+        Coop_Zero(out, sizeof(*out));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL LONG_CALL Coop_ReadRemoteFollower(u32 remoteSlot, struct CoopFollowerState *out)
+{
+    Coop_Zero(out, sizeof(*out));
+    if (remoteSlot >= COOP_REMOTE_SLOTS)
+        return FALSE;
+
+    Coop_CopyFromMailbox(out, &gCoopCommBlock.remote_followers[remoteSlot], sizeof(*out));
+    if (out->is_visible != 1
+        || out->species == 0 || out->species > MAX_SPECIES_INCLUDING_FORMS
+        || !Coop_IsValidDirection(out->direction)
+        || out->is_shiny > 1 || out->gender > 2)
+    {
+        Coop_Zero(out, sizeof(*out));
+        return FALSE;
+    }
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Main SysTask
+// ---------------------------------------------------------------------------
+
 void Coop_MainSysTask(struct SysTask *task, void *param)
 {
+    FieldSystem *fsys = gFieldSysPtr;
+    BOOL fieldActive;
+    BOOL connected;
+
+    (void)task;
+    (void)param;
+
     gCoopCommBlock.heartbeat_rom++;
-    if (FieldSystem_ApplicationIsRunning() && gFieldSysPtr != NULL)
-        Coop_UpdateLocalPlayerState(gFieldSysPtr);
-    else
-        gCoopCommBlock.local_player.is_active = 0;
+    Coop_UpdateBridgeWatchdog();
+
+    fieldActive = Coop_IsFieldMapActive(fsys);
+    connected = Coop_IsConnectedToRoom();
+
+    Coop_UpdateLocalPlayerState(fsys, fieldActive);
+
+    switch (gCoopCommBlock.disconnect_state)
+    {
+    case COOP_DISCONNECT_NONE:
+        if (connected)
+        {
+            // A session is "live" once the startup gate passed or we have
+            // been in the overworld while connected.
+            if (fieldActive)
+                gCoopCommBlock.was_in_active_session = 1;
+        }
+        else if (gCoopCommBlock.was_in_active_session || fieldActive)
+        {
+            // Latched: a reconnect before the safe window does not cancel it.
+            // Being in the overworld without a connection is never allowed,
+            // even if the startup gate was bypassed (e.g. the vanilla
+            // "continue from Union Room" path skips the Continue hook).
+            gCoopCommBlock.disconnect_state = COOP_DISCONNECT_PENDING;
+        }
+        break;
+
+    case COOP_DISCONNECT_PENDING:
+        // Deferred through battles, apps, scripts, menus and mid-step frames.
+        if (Coop_IsSafeOverworldWindow(fsys))
+            (void)Coop_BeginDisconnectSaveAndReset(fsys);
+        break;
+
+    case COOP_DISCONNECT_RUNNING:
+    default:
+        break;
+    }
 }

@@ -779,6 +779,9 @@ MapHeader_GetMapSec = 0x0203B36C | 1;
 ChooseStarter_LaunchApp = 0x0203F808 | 1;
 sub_0203E30C = 0x0203E30C | 1;
 FieldSystem_ApplicationIsRunning = 0x020505A0 | 1;
+/* Overlay 01 (field); only callable while the field map is running.
+   Source: pret asm/overlay_01_021F3F50.s label "Field_SaveGameNormal: ; 0x021F43E8" */
+Field_SaveGameNormal = 0x021F43E8 | 1;
 FieldSystem_LoadFieldOverlay = 0x020505C0 | 1;
 sub_020505C8 = 0x020505C8 | 1;
 BeginNormalPaletteFade = 0x0200FA24 | 1;
