@@ -16,6 +16,8 @@
 # --- Emulator install (binaries, user config, installed CoopBridge.dll) ---
 /BizHawk/
 /emulators/
+# Extra BizHawk instances (scripts/run_bizhawk.sh <name>): configs, saves, secrets
+/instances/
 
 # --- coop-bridge build outputs ---
 /coop-bridge/src/bin/
