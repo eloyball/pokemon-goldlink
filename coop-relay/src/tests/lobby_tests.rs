@@ -5,10 +5,12 @@ use std::time::Duration;
 
 use crate::lobby::{CampaignLoadError, LobbyState, Rejection, RoomManager};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, PROTOCOL_VERSION, PlayerState,
-    ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC,
-    ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_INVALID_CODE,
-    ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, PLAYER_STATE_SIZE,
+    PROTOCOL_VERSION, PlayerState, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
+    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
+    ROOM_STATUS_ERR_INVALID_CODE, ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE,
+    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM,
+    SAVE_STATUS_FRESH, SAVE_STATUS_IN_PROGRESS, SAVE_STATUS_UNKNOWN,
 };
 
 /// Sends like a real client that already completed the cookie handshake.
@@ -36,6 +38,8 @@ fn secret_for(trainer_id: u32) -> u64 {
     }
 }
 
+/// A forming-room-friendly packet: a loaded save (trainer_id != 0) reports
+/// a fresh save in the field, like a new game standing in the bedroom.
 #[allow(clippy::too_many_arguments)]
 fn make_packet(
     room_code: [u8; 6],
@@ -46,12 +50,11 @@ fn make_packet(
     target_party_size: u8,
     map_id: u16,
     x: i16,
-    y: i16,
+    z: i16,
     species: u16,
-    npc_count: u8,
     badges: u16,
 ) -> ClientToServerPacket {
-    // Readiness is computed by the ROM; the relay just relays local_player.client_ready.
+    // Readiness and save status are computed by the ROM; the relay just relays them.
     let ready = u8::from(trainer_id != 0);
     ClientToServerPacket {
         magic: COOP_MAGIC,
@@ -69,22 +72,20 @@ fn make_packet(
         local_player: PlayerState {
             map_id,
             x,
-            y,
-            prev_x: x,
-            prev_y: y.saturating_sub(1),
-            direction: 0,
-            movement_type: 0,
+            z,
             sprite_id: 1,
-            animation_frame: 0,
             is_active: 1,
-            lead_species: species,
-            lead_form: 0,
-            lead_is_shiny: 0,
-            lead_gender: 0,
-            map_npc_count: npc_count,
             client_ready: ready,
+            save_status: if trainer_id != 0 {
+                SAVE_STATUS_FRESH
+            } else {
+                SAVE_STATUS_UNKNOWN
+            },
+            activity: 1,
             trainer_id,
-            pad: [0u8; 4],
+            follower_species: species,
+            follower_visible: u8::from(species != 0),
+            ..PlayerState::default()
         },
         cookie: 0,
         player_secret: secret_for(trainer_id),
@@ -113,7 +114,6 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(
         send(&mut manager, host_addr, bad_code).unwrap_err(),
@@ -128,7 +128,6 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -153,7 +152,6 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(send(&mut manager, host_addr, create_ok), Ok(0));
 
@@ -165,7 +163,6 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -189,16 +186,15 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(
         send(&mut manager, second_addr, dup_create_other_addr).unwrap_err(),
         ROOM_STATUS_ERR_ALREADY_EXISTS
     );
 
-    // 5. Joining an unstarted room with a mid-game save (Map 28) is now ALLOWED:
-    //    the relay is game-agnostic and trusts the client's client_ready wire flag
-    let midgame_join = make_packet(
+    // 5. Joining an unstarted room with a mid-game save is REJECTED: the ROM
+    //    reports save_status = in progress, and a forming room takes fresh saves only
+    let mut midgame_join = make_packet(
         *b"SAFE01",
         ROOM_ACTION_JOIN,
         0,
@@ -209,10 +205,22 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
         10,
         10,
         158,
-        5,
         0,
     );
-    assert_eq!(send(&mut manager, second_addr, midgame_join), Ok(1));
+    midgame_join.local_player.save_status = SAVE_STATUS_IN_PROGRESS;
+    midgame_join.local_player.client_ready = 0;
+    assert_eq!(
+        send(&mut manager, second_addr, midgame_join),
+        Err(ROOM_STATUS_ERR_MIDGAME_SAVE)
+    );
+
+    // ...while the same player at the title screen (not in the field yet) may wait in the room.
+    let mut title_join = midgame_join;
+    title_join.local_player.trainer_id = 0;
+    title_join.local_player.is_active = 0;
+    title_join.local_player.save_status = SAVE_STATUS_UNKNOWN;
+    title_join.player_secret = secret_for(0);
+    assert_eq!(send(&mut manager, second_addr, title_join), Ok(1));
 
     let _ = fs::remove_dir_all(test_dir);
 }
@@ -249,7 +257,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 0,
                 0,
                 0,
-                0,
                 0
             )
         ),
@@ -258,7 +265,7 @@ fn test_auto_start_lock_and_offline_progression_block() {
     assert_eq!(
         lobby.handle_client_packet(
             p1_addr,
-            make_packet(*b"JOHTO1", ROOM_ACTION_JOIN, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0)
+            make_packet(*b"JOHTO1", ROOM_ACTION_JOIN, 0, 1, 0, 2, 0, 0, 0, 0, 0)
         ),
         Ok(1)
     );
@@ -279,7 +286,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 5,
                 5,
                 0,
-                2,
                 0
             )
         ),
@@ -302,7 +308,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 5,
                 5,
                 0,
-                2,
                 0
             )
         ),
@@ -325,7 +330,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 5,
                 5,
                 0,
-                2,
                 0
             )
         ),
@@ -346,7 +350,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
             10,
             10,
             155,
-            5,
             0,
         ),
     );
@@ -363,12 +366,11 @@ fn test_auto_start_lock_and_offline_progression_block() {
             11,
             10,
             158,
-            5,
             0,
         ),
     );
     let batch_online = lobby.build_broadcast_batch();
-    let gates_offset = 16 + (5 * 32) + (5 * 24);
+    let gates_offset = 16 + 5 * PLAYER_STATE_SIZE;
     assert_eq!(batch_online[0].1[gates_offset + 4], 1);
 
     // 6. P1 goes stale (80ms > 60ms timeout) and is pruned -> progress gate locks (0)
@@ -386,7 +388,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
             10,
             10,
             155,
-            5,
             0,
         ),
     );
@@ -410,7 +411,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 0,
                 0,
                 0,
-                0,
                 0
             )
         ),
@@ -430,7 +430,6 @@ fn test_auto_start_lock_and_offline_progression_block() {
                 11,
                 10,
                 158,
-                5,
                 0
             )
         ),
@@ -457,7 +456,6 @@ fn test_auto_slot_assignment_and_saturation() {
             0,
             0,
             0,
-            0,
         );
         assert_eq!(lobby.handle_client_packet(addr, pkt), Ok(i as u8));
     }
@@ -475,7 +473,6 @@ fn test_auto_slot_assignment_and_saturation() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(
         lobby.handle_client_packet(overflow, overflow_pkt),
@@ -484,57 +481,35 @@ fn test_auto_slot_assignment_and_saturation() {
 }
 
 #[test]
-fn test_inactive_player_is_hidden_from_others() {
+fn test_inactive_player_is_forwarded_frozen() {
     let mut lobby = LobbyState::new(Duration::from_secs(5), 2, false);
     let p0: SocketAddr = "127.0.0.1:50100".parse().unwrap();
     let p1: SocketAddr = "127.0.0.1:50101".parse().unwrap();
 
-    let a = make_packet(
-        *b"TEST01",
-        ROOM_ACTION_JOIN,
-        0,
-        0,
-        0x1,
-        2,
-        28,
-        5,
-        5,
-        155,
-        0,
-        0,
-    );
-    let mut b = make_packet(
-        *b"TEST01",
-        ROOM_ACTION_JOIN,
-        0,
-        1,
-        0x2,
-        2,
-        28,
-        6,
-        5,
-        158,
-        0,
-        0,
-    );
+    let a = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 0, 0x1, 2, 28, 5, 5, 155, 0);
+    let mut b = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 1, 0x2, 2, 28, 6, 5, 158, 0);
     assert_eq!(lobby.handle_client_packet(p0, a), Ok(0));
     assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
 
-    // Same map, both active: P0 sees P1 (remote slot 0 = player 1) and its follower.
+    // Both in the field: P0 receives P1's state verbatim (remote slot 0 = player 1).
+    let is_active = 16 + 0x10;
+    let follower_visible = 16 + 0x2F;
     let batch = lobby.build_broadcast_batch();
     let p0_pkt = &batch.iter().find(|(addr, _)| *addr == p0).unwrap().1;
-    assert_eq!(p0_pkt[16 + 0x0F], 1);
-    let follower_visible = 16 + 5 * 32 + 0x0B;
+    assert_eq!(p0_pkt[is_active], 1);
     assert_eq!(p0_pkt[follower_visible], 1);
 
-    // P1 enters a battle: the ROM reports is_active = 0 and the relay must not override it.
+    // P1 enters a battle: the ROM reports is_active = 0 with its last position,
+    // and the relay forwards it so P1's ghost can stay frozen in place.
     b.local_player.is_active = 0;
+    b.local_player.activity = 2;
     b.sequence = 2;
     assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
     let batch = lobby.build_broadcast_batch();
     let p0_pkt = &batch.iter().find(|(addr, _)| *addr == p0).unwrap().1;
-    assert_eq!(p0_pkt[16 + 0x0F], 0);
-    assert_eq!(p0_pkt[follower_visible], 0);
+    assert_eq!(p0_pkt[is_active], 0);
+    assert_eq!(p0_pkt[16 + 0x13], 2); // activity: battle
+    assert_eq!(&p0_pkt[16 + 0x04..16 + 0x06], &6i16.to_le_bytes()); // x kept
 }
 
 #[test]
@@ -557,7 +532,6 @@ fn test_idle_rooms_are_closed_and_room_cap_enforced() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(send(&mut manager, host, create), Ok(0));
 
@@ -569,7 +543,6 @@ fn test_idle_rooms_are_closed_and_room_cap_enforced() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -592,7 +565,6 @@ fn test_idle_rooms_are_closed_and_room_cap_enforced() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -637,7 +609,6 @@ fn test_corrupt_campaign_file_is_refused_not_reset() {
         0,
         0,
         0,
-        0,
     );
     assert_eq!(send(&mut manager, addr, join), Err(ROOM_STATUS_ERR_LOCKED));
     assert_eq!(manager.room_count(), 0);
@@ -667,7 +638,6 @@ fn test_started_campaign_is_saved_atomically_and_restored() {
                 3,
                 3,
                 0,
-                0,
                 0
             )
         ),
@@ -687,7 +657,6 @@ fn test_started_campaign_is_saved_atomically_and_restored() {
                 64,
                 4,
                 3,
-                0,
                 0,
                 0
             )
@@ -733,20 +702,7 @@ fn started_two_player_campaign(
         send(
             &mut manager,
             p0,
-            make_packet(
-                code,
-                ROOM_ACTION_CREATE,
-                0x42,
-                0,
-                0x1111,
-                2,
-                64,
-                3,
-                3,
-                0,
-                0,
-                0
-            )
+            make_packet(code, ROOM_ACTION_CREATE, 0x42, 0, 0x1111, 2, 64, 3, 3, 0, 0)
         ),
         Ok(0)
     );
@@ -754,7 +710,7 @@ fn started_two_player_campaign(
         send(
             &mut manager,
             p1,
-            make_packet(code, ROOM_ACTION_JOIN, 0, 1, 0x2222, 2, 64, 4, 3, 0, 0, 0)
+            make_packet(code, ROOM_ACTION_JOIN, 0, 1, 0x2222, 2, 64, 4, 3, 0, 0)
         ),
         Ok(1)
     );
@@ -777,7 +733,6 @@ fn test_cookie_handshake_is_required_and_bound_to_address() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -821,7 +776,6 @@ fn test_spoofed_leave_cannot_kick_a_player() {
         3,
         0,
         0,
-        0,
     );
     leave.cookie = 0;
     assert!(matches!(
@@ -854,7 +808,6 @@ fn test_failed_admissions_are_rate_limited_per_ip() {
             0,
             0,
             0,
-            0,
         );
         assert_eq!(
             send(&mut manager, guesser, join),
@@ -868,7 +821,6 @@ fn test_failed_admissions_are_rate_limited_per_ip() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -906,7 +858,6 @@ fn test_one_ip_cannot_host_unlimited_rooms() {
             0,
             0,
             0,
-            0,
         );
         assert_eq!(send(&mut manager, addr, create), Ok(0));
     }
@@ -918,7 +869,6 @@ fn test_one_ip_cannot_host_unlimited_rooms() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -951,7 +901,6 @@ fn test_known_otid_without_matching_secret_cannot_take_a_slot() {
         3,
         0,
         0,
-        0,
     );
     claim.player_secret = 0xBAD;
     assert_eq!(
@@ -971,7 +920,6 @@ fn test_known_otid_without_matching_secret_cannot_take_a_slot() {
         64,
         4,
         3,
-        0,
         0,
         0,
     );
@@ -999,7 +947,6 @@ fn test_title_screen_guest_is_displaced_by_slot_owner() {
         3,
         0,
         0,
-        0,
     );
     assert_eq!(send(&mut manager, p0, keep_alive), Ok(0));
     let guest: SocketAddr = "127.0.0.1:52777".parse().unwrap();
@@ -1010,7 +957,6 @@ fn test_title_screen_guest_is_displaced_by_slot_owner() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -1029,7 +975,6 @@ fn test_title_screen_guest_is_displaced_by_slot_owner() {
         AUTO_PLAYER_ID,
         0,
         2,
-        0,
         0,
         0,
         0,
@@ -1076,7 +1021,6 @@ fn test_legacy_roster_without_secret_binds_first_claimant() {
         3,
         0,
         0,
-        0,
     );
     assert_eq!(send(&mut manager, first, claim), Ok(0));
     let saved = fs::read_to_string(format!("{test_dir}/OLDIE1.json")).unwrap();
@@ -1088,5 +1032,173 @@ fn test_legacy_roster_without_secret_binds_first_claimant() {
         send(&mut manager, second, other),
         Err(ROOM_STATUS_ERR_LOCKED)
     );
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+#[test]
+fn test_trainer_of_a_locked_campaign_cannot_join_another_room() {
+    let test_dir = "/tmp/coop_relay_other_room_test";
+    let _ = fs::remove_dir_all(test_dir);
+    let mut manager = RoomManager::new(Duration::from_secs(5), 2, false, test_dir);
+    let a: SocketAddr = "127.0.0.1:52001".parse().unwrap();
+    let b: SocketAddr = "127.0.0.2:52002".parse().unwrap();
+    let c: SocketAddr = "127.0.0.3:52003".parse().unwrap();
+
+    // Room ROOMA1 locks with trainers 0xA1 and 0xA2.
+    let host = make_packet(
+        *b"ROOMA1",
+        ROOM_ACTION_CREATE,
+        0x1111,
+        AUTO_PLAYER_ID,
+        0xA1,
+        2,
+        4,
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, a, host), Ok(0));
+    let guest = make_packet(
+        *b"ROOMA1",
+        ROOM_ACTION_JOIN,
+        0,
+        AUTO_PLAYER_ID,
+        0xA2,
+        2,
+        4,
+        2,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, b, guest), Ok(1));
+    let mut sync = host;
+    sync.room_action = ROOM_ACTION_SYNC;
+    assert_eq!(send(&mut manager, a, sync), Ok(0));
+
+    // Trainer 0xA2 tries a brand-new room with that (still fresh-looking) save.
+    let other = make_packet(
+        *b"ROOMB1",
+        ROOM_ACTION_CREATE,
+        0x2222,
+        AUTO_PLAYER_ID,
+        0xA2,
+        2,
+        4,
+        2,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(
+        send(&mut manager, c, other),
+        Err(ROOM_STATUS_ERR_SAVE_OTHER_ROOM)
+    );
+
+    // A different trainer may create it, and 0xA2 still belongs in ROOMA1.
+    let fresh = make_packet(
+        *b"ROOMB1",
+        ROOM_ACTION_CREATE,
+        0x2222,
+        AUTO_PLAYER_ID,
+        0xB1,
+        2,
+        4,
+        2,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, c, fresh), Ok(0));
+    let back = make_packet(
+        *b"ROOMA1",
+        ROOM_ACTION_SYNC,
+        0,
+        AUTO_PLAYER_ID,
+        0xA2,
+        2,
+        4,
+        2,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, b, back), Ok(1));
+
+    // A relay restart rebuilds the index from the campaign files.
+    let mut restarted = RoomManager::new(Duration::from_secs(5), 2, false, test_dir);
+    let other_again = make_packet(
+        *b"ROOMC1",
+        ROOM_ACTION_CREATE,
+        0x3333,
+        AUTO_PLAYER_ID,
+        0xA1,
+        2,
+        4,
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(
+        send(&mut restarted, c, other_again),
+        Err(ROOM_STATUS_ERR_SAVE_OTHER_ROOM)
+    );
+
+    let _ = fs::remove_dir_all(test_dir);
+}
+
+#[test]
+fn test_room_uid_is_broadcast_and_persisted() {
+    let test_dir = "/tmp/coop_relay_room_uid_test";
+    let _ = fs::remove_dir_all(test_dir);
+    let mut manager = RoomManager::new(Duration::from_secs(5), 2, false, test_dir);
+    let a: SocketAddr = "127.0.0.1:53001".parse().unwrap();
+    let b: SocketAddr = "127.0.0.2:53002".parse().unwrap();
+
+    let host = make_packet(
+        *b"UIDRM1",
+        ROOM_ACTION_CREATE,
+        0x4444,
+        AUTO_PLAYER_ID,
+        0xC1,
+        2,
+        4,
+        1,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, a, host), Ok(0));
+    let guest = make_packet(
+        *b"UIDRM1",
+        ROOM_ACTION_JOIN,
+        0,
+        AUTO_PLAYER_ID,
+        0xC2,
+        2,
+        4,
+        2,
+        1,
+        0,
+        0,
+    );
+    assert_eq!(send(&mut manager, b, guest), Ok(1));
+
+    let uid_at = 16 + 5 * PLAYER_STATE_SIZE + 0x0C;
+    let packets = manager.tick_all_rooms();
+    let uid = u32::from_le_bytes(packets[0].1[uid_at..uid_at + 4].try_into().unwrap());
+    assert_ne!(uid, 0);
+    assert!(
+        packets
+            .iter()
+            .all(|(_, p)| p[uid_at..uid_at + 4] == uid.to_le_bytes())
+    );
+
+    // Locked (both fresh and ready): the campaign file keeps the same UID.
+    let raw = fs::read_to_string(format!("{test_dir}/UIDRM1.json")).unwrap();
+    assert!(raw.contains(&format!("\"room_uid\": {uid}")));
+
     let _ = fs::remove_dir_all(test_dir);
 }

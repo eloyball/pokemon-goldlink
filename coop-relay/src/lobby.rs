@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::collections::hash_map::RandomState;
 use std::fs;
+use std::hash::BuildHasher;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -9,10 +11,11 @@ use tracing::{error, info, warn};
 
 use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, FollowerState, MAX_PLAYERS, PROTOCOL_VERSION,
-    PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
-    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
-    ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_OK, SERVER_PACKET_SIZE,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, PROTOCOL_VERSION, PlayerState,
+    REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC,
+    ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
+    ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
+    ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SERVER_PACKET_SIZE,
     ServerToClientPacket, room_code_to_string, validate_room_code,
 };
 
@@ -22,7 +25,6 @@ use crate::protocol::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CampaignLoadError(pub String);
 
-const MAX_NPCS_BEFORE_FOLLOWER_CULL: u8 = 26;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredTrainer {
     pub slot_id: u8,
@@ -41,6 +43,10 @@ pub struct RegisteredTrainer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CampaignSaveFile {
     pub room_code: String,
+    /// Random per room, never reused; keys the bridge's per-room saves.
+    /// 0 in files written before it existed: a new one is assigned on load.
+    #[serde(default)]
+    pub room_uid: u32,
     pub host_token: u32,
     pub campaign_started: bool,
     pub expected_party_size: u8,
@@ -63,6 +69,7 @@ pub struct ConnectedPlayer {
 
 pub struct LobbyState {
     room_code: [u8; 6],
+    room_uid: u32,
     host_token: u32,
     host_addr: Option<SocketAddr>,
     slots: [Option<ConnectedPlayer>; MAX_PLAYERS],
@@ -105,6 +112,7 @@ impl LobbyState {
     ) -> Result<Self, CampaignLoadError> {
         let mut lobby = Self {
             room_code,
+            room_uid: new_room_uid(room_code),
             host_token,
             host_addr,
             slots: Default::default(),
@@ -123,6 +131,15 @@ impl LobbyState {
 
     pub fn host_token(&self) -> u32 {
         self.host_token
+    }
+
+    pub fn room_uid(&self) -> u32 {
+        self.room_uid
+    }
+
+    /// Trainer IDs of the locked roster (empty while the room is forming).
+    pub fn roster_trainer_ids(&self) -> impl Iterator<Item = u32> + '_ {
+        self.roster.iter().map(|r| r.trainer_id)
     }
 
     pub fn host_addr(&self) -> Option<SocketAddr> {
@@ -181,6 +198,20 @@ impl LobbyState {
             self.target_party_size = (pkt.target_party_size as usize).clamp(2, MAX_PLAYERS);
         }
 
+        // Save admission (docs/MILESTONE2_PLAN.md 7.1): a room that has not
+        // started only takes fresh saves. The ROM decides what "fresh" means
+        // (bedroom, empty party); the relay compares a number.
+        if !self.campaign_started
+            && pkt.local_player.is_active == 1
+            && pkt.local_player.save_status == SAVE_STATUS_IN_PROGRESS
+        {
+            warn!(
+                "[Room {room_str}] Rejected {addr} (OTID: 0x{trainer_id:08X}): mid-game save in a room that has not started"
+            );
+            self.remove_client_by_addr(addr);
+            return Err(ROOM_STATUS_ERR_MIDGAME_SAVE);
+        }
+
         let slot_idx = match self.resolve_or_assign_slot(
             addr,
             pkt.requested_player_id,
@@ -218,34 +249,29 @@ impl LobbyState {
             let new = &pkt.local_player;
             let state_changed = old.map_id != new.map_id
                 || old.x != new.x
-                || old.y != new.y
+                || old.z != new.z
                 || old.direction != new.direction
-                || old.lead_species != new.lead_species
+                || old.avatar_state != new.avatar_state
+                || old.activity != new.activity
+                || old.follower_species != new.follower_species
                 || old.trainer_id != new.trainer_id
                 || existing.in_bedroom_ready != in_bedroom_ready
                 || existing.badge_mask != pkt.badge_mask_local;
 
             if state_changed || self.inspect_all_packets {
                 info!(
-                    "[Room {room_str} | P{slot_idx} @ {addr}] OTID: 0x{:08X} | Ready: {} | Map: {} | Pos: ({}, {}) | Lead: #{} | Badges: 0b{:08b}",
+                    "[Room {room_str} | P{slot_idx} @ {addr}] OTID: 0x{:08X} | Ready: {} | Map: {} (matrix {}) | Pos: ({}, {}) | State: {} | Activity: {} | Follower: #{} | Badges: 0b{:08b}",
                     new.trainer_id,
                     in_bedroom_ready,
                     new.map_id,
+                    new.matrix_id,
                     new.x,
-                    new.y,
-                    new.lead_species,
+                    new.z,
+                    new.avatar_state,
+                    new.activity,
+                    new.follower_species,
                     pkt.badge_mask_local
                 );
-            }
-
-            let mut updated_state = pkt.local_player;
-
-            if (updated_state.x != old.x || updated_state.y != old.y)
-                && updated_state.prev_x == updated_state.x
-                && updated_state.prev_y == updated_state.y
-            {
-                updated_state.prev_x = old.x;
-                updated_state.prev_y = old.y;
             }
 
             let badge_changed = existing.badge_mask != pkt.badge_mask_local;
@@ -255,7 +281,7 @@ impl LobbyState {
             existing.last_sequence = pkt.sequence;
             existing.heartbeat_rom = pkt.heartbeat_rom;
             existing.in_bedroom_ready = in_bedroom_ready;
-            existing.state = updated_state;
+            existing.state = pkt.local_player;
             existing.badge_mask = pkt.badge_mask_local;
 
             if badge_changed
@@ -269,12 +295,7 @@ impl LobbyState {
                 self.save_campaign_to_disk();
             }
         } else {
-            let mut initial_state = pkt.local_player;
-
-            if initial_state.prev_x == 0 && initial_state.prev_y == 0 {
-                initial_state.prev_x = initial_state.x;
-                initial_state.prev_y = initial_state.y.saturating_sub(1);
-            }
+            let initial_state = pkt.local_player;
 
             info!(
                 "[Room {room_str} | JOIN] Slot P{slot_idx} assigned to {addr} (OTID: 0x{:08X} | Map: {} | Ready: {})",
@@ -520,43 +541,19 @@ impl LobbyState {
                 continue;
             };
 
+            // Every other member's state, untouched: the receiving ROM decides
+            // what to show (same matrix and map, distance, renderer budget).
+            // Players outside the field keep their last position with
+            // is_active = 0, so their ghost can stay frozen in place.
             let mut remote_players = [PlayerState::default(); REMOTE_SLOTS];
-            let mut remote_followers = [FollowerState::default(); REMOTE_SLOTS];
-
             let mut remote_cursor = 0;
             for other_idx in 0..MAX_PLAYERS {
                 if other_idx == recipient_idx {
                     continue;
                 }
-
                 if let Some(other) = &self.slots[other_idx] {
-                    // Visible only when both are in the same running field map
-                    // (is_active == 0 while in a battle, app or transition).
-                    let same_map = other.state.is_active != 0
-                        && other.state.map_id == recipient.state.map_id
-                        && other.state.map_id != 0;
-
-                    let mut r_player = other.state;
-                    r_player.is_active = u8::from(same_map);
-                    remote_players[remote_cursor] = r_player;
-
-                    let show_follower = same_map
-                        && other.state.lead_species > 0
-                        && recipient.state.map_npc_count <= MAX_NPCS_BEFORE_FOLLOWER_CULL;
-
-                    remote_followers[remote_cursor] = FollowerState {
-                        species: other.state.lead_species,
-                        form: other.state.lead_form,
-                        is_shiny: other.state.lead_is_shiny,
-                        gender: other.state.lead_gender,
-                        x: other.state.prev_x,
-                        y: other.state.prev_y,
-                        direction: other.state.direction,
-                        is_visible: u8::from(show_follower),
-                        pad: [0u8; 12],
-                    };
+                    remote_players[remote_cursor] = other.state;
                 }
-
                 remote_cursor += 1;
             }
 
@@ -569,7 +566,6 @@ impl LobbyState {
                 status_code: ROOM_STATUS_OK,
                 reserved_header: [0u8; 3],
                 remote_players,
-                remote_followers,
                 badge_mask_local_echo: recipient.badge_mask,
                 badge_mask_synced: synced_badges,
                 flag_coop_sync_ready: u8::from(sync_ready),
@@ -580,7 +576,8 @@ impl LobbyState {
                 expected_party_size: expected_size,
                 online_party_count: online_count,
                 ready_party_count: ready_count,
-                gates_pad: [0u8; 12],
+                room_uid: self.room_uid,
+                gates_pad: [0u8; 8],
             };
 
             batch.push((recipient.addr, pkt.encode_le()));
@@ -659,15 +656,16 @@ impl LobbyState {
         );
         for p in connected {
             info!(
-                "    Slot P{} ({}) -> OTID: 0x{:08X} | InBedroom: {} | Map {:3} | XY: ({:3}, {:3}) | Lead: #{:4}",
+                "    Slot P{} ({}) -> OTID: 0x{:08X} | InBedroom: {} | Map {:3} | XZ: ({:3}, {:3}) | Activity: {} | Follower: #{:4}",
                 p.slot_id,
                 p.addr,
                 p.state.trainer_id,
                 p.in_bedroom_ready,
                 p.state.map_id,
                 p.state.x,
-                p.state.y,
-                p.state.lead_species
+                p.state.z,
+                p.state.activity,
+                p.state.follower_species
             );
         }
     }
@@ -695,6 +693,7 @@ impl LobbyState {
         }
         let payload = CampaignSaveFile {
             room_code: room_code_to_string(&self.room_code),
+            room_uid: self.room_uid,
             host_token: self.host_token,
             campaign_started: self.campaign_started,
             expected_party_size: self.roster.len() as u8,
@@ -742,8 +741,26 @@ impl LobbyState {
             saved.room_code,
             self.roster.len()
         );
+        if saved.room_uid != 0 {
+            self.room_uid = saved.room_uid;
+        } else {
+            // Written before room UIDs existed: keep the one generated above.
+            self.save_campaign_to_disk();
+        }
         Ok(())
     }
+}
+
+/// A random, non-zero room identity. It only has to differ between rooms
+/// that reuse a code (the per-room save files are keyed by it), not resist
+/// guessing, so a per-process random hasher over the code and time is enough.
+fn new_room_uid(room_code: [u8; 6]) -> u32 {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let uid = RandomState::new().hash_one((room_code, nanos)) as u32;
+    uid.max(1)
 }
 
 /// Writes a file readable only by the relay's user on Unix: campaign files
@@ -791,6 +808,10 @@ pub struct RoomManager {
     max_rooms: usize,
     cookies: CookieJar,
     failures: FailureLimiter,
+    /// Trainer ID -> rooms whose locked roster holds it (every campaign file
+    /// in `save_dir`, plus rooms that lock while running). A save registered
+    /// in one campaign cannot join another room.
+    trainer_rooms: HashMap<u32, Vec<[u8; 6]>>,
 }
 
 impl RoomManager {
@@ -810,7 +831,24 @@ impl RoomManager {
             max_rooms: DEFAULT_MAX_ROOMS,
             cookies: CookieJar::new(),
             failures: FailureLimiter::new(FAILURE_BURST, FAILURE_REFILL_PER_SEC),
+            trainer_rooms: index_campaign_trainers(save_dir.as_ref()),
         }
+    }
+
+    fn register_trainer(&mut self, trainer_id: u32, code: [u8; 6]) {
+        let rooms = self.trainer_rooms.entry(trainer_id).or_default();
+        if !rooms.contains(&code) {
+            rooms.push(code);
+        }
+    }
+
+    /// A trainer locked in another campaign may not use this room.
+    fn trainer_belongs_elsewhere(&self, trainer_id: u32, code: [u8; 6]) -> bool {
+        trainer_id != 0
+            && self
+                .trainer_rooms
+                .get(&trainer_id)
+                .is_some_and(|rooms| !rooms.contains(&code))
     }
 
     pub fn with_limits(mut self, room_idle_timeout: Duration, max_rooms: usize) -> Self {
@@ -863,6 +901,19 @@ impl RoomManager {
         let room_in_memory = self.rooms.contains_key(&code);
         let room_on_disk = save_path.exists();
 
+        if pkt.room_action != ROOM_ACTION_LEAVE
+            && self.trainer_belongs_elsewhere(pkt.local_player.trainer_id, code)
+        {
+            warn!(
+                "[RoomManager] Rejected {addr} for room {room_str}: OTID 0x{:08X} belongs to another campaign",
+                pkt.local_player.trainer_id
+            );
+            if let Some(room) = self.rooms.get_mut(&code) {
+                room.remove_client_by_addr(addr);
+            }
+            return Err(ROOM_STATUS_ERR_SAVE_OTHER_ROOM);
+        }
+
         match pkt.room_action {
             ROOM_ACTION_LEAVE => {
                 if let Some(room) = self.rooms.get_mut(&code) {
@@ -898,7 +949,9 @@ impl RoomManager {
                     .clamp(2, MAX_PLAYERS)
                     .max(self.default_party_size);
                 let room = self.get_or_open_room(code, pkt.host_token, Some(addr), party_size)?;
-                room.handle_client_packet(addr, pkt)
+                let result = room.handle_client_packet(addr, pkt);
+                self.register_if_locked(code);
+                result
             }
 
             ROOM_ACTION_JOIN | ROOM_ACTION_SYNC => {
@@ -916,10 +969,23 @@ impl RoomManager {
 
                 let party_size = self.default_party_size;
                 let room = self.get_or_open_room(code, 0, None, party_size)?;
-                room.handle_client_packet(addr, pkt)
+                let result = room.handle_client_packet(addr, pkt);
+                self.register_if_locked(code);
+                result
             }
 
             _ => Err(ROOM_STATUS_ERR_NOT_FOUND),
+        }
+    }
+
+    /// Adds a room's roster to the trainer index once it is locked.
+    fn register_if_locked(&mut self, code: [u8; 6]) {
+        let ids: Vec<u32> = match self.rooms.get(&code) {
+            Some(room) if room.is_campaign_started() => room.roster_trainer_ids().collect(),
+            _ => return,
+        };
+        for id in ids {
+            self.register_trainer(id, code);
         }
     }
 
@@ -1006,4 +1072,38 @@ impl RoomManager {
             room.print_periodic_summary();
         }
     }
+}
+
+/// Trainer ID -> rooms, from every readable campaign file in `dir`.
+/// Unreadable files are skipped here; opening that room reports them.
+fn index_campaign_trainers(dir: &Path) -> HashMap<u32, Vec<[u8; 6]>> {
+    let mut index: HashMap<u32, Vec<[u8; 6]>> = HashMap::new();
+    let Ok(entries) = fs::read_dir(dir) else {
+        return index;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(saved) = fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<CampaignSaveFile>(&raw).ok())
+        else {
+            continue;
+        };
+        let Ok(code) = <[u8; 6]>::try_from(saved.room_code.as_bytes()) else {
+            continue;
+        };
+        if !saved.campaign_started {
+            continue;
+        }
+        for reg in &saved.roster {
+            let rooms = index.entry(reg.trainer_id).or_default();
+            if !rooms.contains(&code) {
+                rooms.push(code);
+            }
+        }
+    }
+    index
 }

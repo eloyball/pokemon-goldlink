@@ -25,7 +25,7 @@ namespace CoopBridge
     {
         public const int Size = 512;
         public const uint Magic = 0x434F4F50;
-        public const ushort Version = 5; // COOP_MAILBOX_VERSION
+        public const ushort Version = 6; // COOP_MAILBOX_VERSION
 
         public const uint MagicOff = 0x000;          // u32
         public const uint VersionOff = 0x004;        // u16
@@ -33,24 +33,24 @@ namespace CoopBridge
         public const uint ActivePlayersMask = 0x007; // u8   bridge
         public const uint HeartbeatRom = 0x008;      // u32  rom
         public const uint ServerTick = 0x00C;        // u32  bridge
-        public const uint LocalPlayer = 0x010;       // 32 B rom
-        public const uint ServerPayload = 0x030;     // 304 B bridge (remote players, followers, gates)
-        public const int ServerPayloadSize = 304;
-        public const uint Gates = 0x148;             // 24 B bridge
-        public const uint IsConnectedToRoom = 0x160; // u8   bridge
-        public const uint DisconnectState = 0x163;   // u8   rom
-        public const uint BadgeMaskLocal = 0x164;    // u16  rom
-        public const uint HeartbeatBridge = 0x168;   // u32  bridge
-        public const uint LocalPlayerSeq = 0x16C;    // u32  rom (odd while writing)
-        public const uint LimitMapId = 0x178;        // u16  rom: map_id < limit
-        public const uint LimitSpecies = 0x17A;      // u16  rom: species <= limit
-        public const uint Diag = 0x17C;              // 24 B rom: CoopDiagnostics
+        public const uint LocalPlayer = 0x010;       // 64 B rom
+        public const uint ServerPayload = 0x050;     // 344 B bridge (remote players, gates)
+        public const int ServerPayloadSize = 344;
+        public const uint Gates = 0x190;             // 24 B bridge
+        public const uint IsConnectedToRoom = 0x1A8; // u8   bridge
+        public const uint DisconnectState = 0x1AB;   // u8   rom
+        public const uint BadgeMaskLocal = 0x1AC;    // u16  rom
+        public const uint RoomRejection = 0x1AE;     // u8   bridge: relay status that turned this save away
+        public const uint HeartbeatBridge = 0x1B0;   // u32  bridge
+        public const uint LocalPlayerSeq = 0x1B4;    // u32  rom (odd while writing)
+        public const uint LimitMapId = 0x1C0;        // u16  rom: map_id < limit
+        public const uint LimitSpecies = 0x1C2;      // u16  rom: species <= limit
+        public const uint Diag = 0x1C4;              // 24 B rom: CoopDiagnostics
         public const int DiagSize = 24;
-        public const uint DebugCmd = 0x194;          // u8   bridge: CoopDebugCommand
-        public const uint DebugSeq = 0x195;          // u8   bridge: bumped per command
-        public const uint DebugArg = 0x196;          // u8   bridge: command argument
-        public const uint DebugResult = 0x197;       // u8   rom: CoopDebugResult
-        public const uint PlayerState = 0x198;       // u8   rom: pret PLAYER_STATE_*
+        public const uint DebugCmd = 0x1DC;          // u8   bridge: CoopDebugCommand
+        public const uint DebugSeq = 0x1DD;          // u8   bridge: bumped per command
+        public const uint DebugArg = 0x1DE;          // u8   bridge: command argument
+        public const uint DebugResult = 0x1DF;       // u8   rom: CoopDebugResult
 
         // CoopDiagnostics field offsets (relative to Diag)
         public const int DgFieldEntryCalls = 0x00;   // u32
@@ -96,26 +96,33 @@ namespace CoopBridge
             "Celadon City (dense)",
         };
 
-        // CoopPlayerState field offsets
-        public const int PlayerStateSize = 32;
-        public const int PsMapId = 0x00;
-        public const int PsX = 0x02;
-        public const int PsY = 0x04;
+        // CoopPlayerState field offsets (64 bytes, follower included)
+        public const int PlayerStateSize = 64;
+        public const int PsMapId = 0x00;             // u16
+        public const int PsMatrixId = 0x02;
+        public const int PsAvatarState = 0x03;       // pret PLAYER_STATE_*
+        public const int PsX = 0x04;                 // s16
+        public const int PsZ = 0x06;                 // s16
         public const int PsDirection = 0x0A;
-        public const int PsIsActive = 0x0F;
-        public const int PsLeadSpecies = 0x10;
-        public const int PsLeadShiny = 0x14;
-        public const int PsLeadGender = 0x15;
-        public const int PsClientReady = 0x17;
-        public const int PsTrainerId = 0x18;
-
-        // CoopFollowerState field offsets
-        public const int FollowerStateSize = 24;
-        public const int FsSpecies = 0x00;
-        public const int FsShiny = 0x04;
-        public const int FsGender = 0x05;
-        public const int FsDirection = 0x0A;
-        public const int FsVisible = 0x0B;
+        public const int PsGender = 0x0B;
+        public const int PsMoveAction = 0x0E;
+        public const int PsIsActive = 0x10;
+        public const int PsClientReady = 0x11;
+        public const int PsSaveStatus = 0x12;        // CoopSaveStatus
+        public const int PsActivity = 0x13;          // CoopActivity
+        public const int PsTrainerId = 0x14;         // u32
+        public const int PsName = 0x18;              // u16[8] HG charset
+        public const int PsFollowerSpecies = 0x28;   // u16
+        public const int PsFollowerShiny = 0x2D;
+        public const int PsFollowerGender = 0x2E;
+        public const int PsFollowerVisible = 0x2F;
+        public const int PsFollowerDirection = 0x36;
+        public const int PsFollowerMoveAction = 0x37;
+        public const int PsAvatarId = 0x3C;          // follower block ends here
+        public const int MaxHeldMovement = 0x71;     // MapObject_SetHeldMovement limit
+        public const byte MoveActionNone = 0xFF;     // no action since the map loaded
+        public const int MaxAvatarState = 14;
+        public const int MaxActivity = 4;
 
         // CoopProgressionGates field offsets (relative to Gates)
         public const int GatesSize = 24;
@@ -127,11 +134,11 @@ namespace CoopBridge
         public const int GateExpectedParty = 0x09;
         public const int GateOnlineParty = 0x0A;
         public const int GateReadyParty = 0x0B;
+        public const int GateRoomUid = 0x0C;         // u32
 
-        // Layout of the 304-byte server payload (relative to ServerPayload)
+        // Layout of the 344-byte server payload (relative to ServerPayload)
         public const int RemoteSlots = 5;
-        public const int PayloadFollowers = RemoteSlots * PlayerStateSize;                  // 160
-        public const int PayloadGates = PayloadFollowers + RemoteSlots * FollowerStateSize; // 280
+        public const int PayloadGates = RemoteSlots * PlayerStateSize; // 320
 
         public const byte PlayerIdNone = 0xFF;
         public const int MaxPlayers = 6;
@@ -140,16 +147,18 @@ namespace CoopBridge
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 3;
-        public const int ClientPacketSize = 80;
-        public const int ServerPacketSize = 320;
+        public const ushort ProtocolVersion = 4;
+        public const int ClientPacketSize = 112;
+        public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
         public const int ChallengePacketSize = 24; // header + cookie (u64 @16)
-        public const int ServerPayloadOffset = 16; // packet[16..320] -> mailbox 0x030..0x15F
+        public const int ServerPayloadOffset = 16; // packet[16..360] -> mailbox 0x050..0x1A7
 
         public const byte StatusOk = 0;
         public const byte StatusChallenge = 7;   // not an error: echo the cookie
         public const byte StatusRateLimited = 8;
+        public const byte StatusMidgameSave = 6;   // forming room, save already in progress
+        public const byte StatusSaveOtherRoom = 9; // trainer belongs to another locked campaign
 
         public const byte ActionCreate = 1;
         public const byte ActionJoin = 2;
@@ -393,6 +402,7 @@ namespace CoopBridge
         private readonly Label _adventureValue;
         private readonly Label _gymValue;
         private readonly Label _locationValue;
+        private readonly Label _othersValue;
         private readonly ThemedButton _diagToggle;
         private readonly TableLayoutPanel _diagCard;
         private readonly Label _diagFieldValue;
@@ -609,7 +619,8 @@ namespace CoopBridge
             _playersValue = AddRow("Players online");
             _adventureValue = AddRow("Adventure");
             _gymValue = AddRow("Gym gate");
-            _locationValue = AddRow("Location");
+            _locationValue = AddRow("You");
+            _othersValue = AddRow("Players");
             sessionCard.Controls.Add(grid);
 
             // --- Server (set once, so it sits at the bottom) ---
@@ -1055,8 +1066,8 @@ namespace CoopBridge
             Buffer.BlockCopy(BitConverter.GetBytes(++_sequence), 0, tx, 22, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(_heartbeatRom), 0, tx, 26, 4);
             Buffer.BlockCopy(_localPlayer, 0, tx, 32, Mailbox.PlayerStateSize);
-            Buffer.BlockCopy(BitConverter.GetBytes(Interlocked.Read(ref _cookie)), 0, tx, 64, 8);
-            Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 72, 8);
+            Buffer.BlockCopy(BitConverter.GetBytes(Interlocked.Read(ref _cookie)), 0, tx, 96, 8);
+            Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
 
             return tx;
         }
@@ -1070,7 +1081,8 @@ namespace CoopBridge
                 3 => $"Room {room} is locked to its original players (or this trainer is registered to another install).",
                 4 => $"Room {room} is full, or the server is at capacity.",
                 5 => "Room codes are 6 letters or numbers.",
-                6 => "A new room can't start from a mid-game save.",
+                Wire.StatusMidgameSave => $"Room {room} hasn't started yet, so it only takes a New Game (this save is already under way).",
+                Wire.StatusSaveOtherRoom => $"This save belongs to another room. Load that room's save, or start a New Game for {room}.",
                 Wire.StatusRateLimited => "Too many failed attempts. Wait a few seconds and try again.",
                 _ => $"The server rejected the connection (code {code})."
             };
@@ -1204,7 +1216,12 @@ namespace CoopBridge
             byte status = pkt[12];
             if (status != Wire.StatusOk)
             {
-                // Server rejected the Create/Join/Sync request
+                // Server rejected the Create/Join/Sync request. A rejected save
+                // also tells the ROM why, so it shows the reason in game and
+                // returns to the title without saving (written in the same
+                // frame as the disconnect, so it wins over the disconnect save).
+                if (status == Wire.StatusMidgameSave || status == Wire.StatusSaveOtherRoom)
+                    _memoryApi!.WriteU8(mb + Mailbox.RoomRejection, status, MemoryDomain);
                 DisconnectFromServer(MapServerStatusToError(status, _activeRoomString), isError: true);
                 ClearRomConnectionState(mb, clearPayload: true);
                 return;
@@ -1252,22 +1269,26 @@ namespace CoopBridge
                     && map < _limitMapId
                     && (active == 0 || map != 0)
                     && p[o + Mailbox.PsDirection] <= 3
-                    && BitConverter.ToUInt16(p, o + Mailbox.PsLeadSpecies) <= _limitSpecies
-                    && p[o + Mailbox.PsLeadShiny] <= 1
-                    && p[o + Mailbox.PsLeadGender] <= 2
-                    && p[o + Mailbox.PsClientReady] <= 1;
-                if (!ok) Array.Clear(p, o, Mailbox.PlayerStateSize);
-            }
-
-            for (int i = 0; i < Mailbox.RemoteSlots; i++)
-            {
-                int o = Mailbox.PayloadFollowers + i * Mailbox.FollowerStateSize;
-                bool ok = BitConverter.ToUInt16(p, o + Mailbox.FsSpecies) <= _limitSpecies
-                    && p[o + Mailbox.FsShiny] <= 1
-                    && p[o + Mailbox.FsGender] <= 2
-                    && p[o + Mailbox.FsDirection] <= 3
-                    && p[o + Mailbox.FsVisible] <= 1;
-                if (!ok) Array.Clear(p, o, Mailbox.FollowerStateSize);
+                    && p[o + Mailbox.PsGender] <= 1
+                    && p[o + Mailbox.PsAvatarState] <= Mailbox.MaxAvatarState
+                    && IsValidMoveAction(p[o + Mailbox.PsMoveAction])
+                    && p[o + Mailbox.PsClientReady] <= 1
+                    && p[o + Mailbox.PsSaveStatus] <= 2
+                    && p[o + Mailbox.PsActivity] <= Mailbox.MaxActivity;
+                if (!ok)
+                {
+                    Array.Clear(p, o, Mailbox.PlayerStateSize);
+                    continue;
+                }
+                // A bad follower hides only the follower, not the player.
+                bool followerOk = BitConverter.ToUInt16(p, o + Mailbox.PsFollowerSpecies) <= _limitSpecies
+                    && p[o + Mailbox.PsFollowerShiny] <= 1
+                    && p[o + Mailbox.PsFollowerGender] <= 2
+                    && p[o + Mailbox.PsFollowerVisible] <= 1
+                    && p[o + Mailbox.PsFollowerDirection] <= 3
+                    && IsValidMoveAction(p[o + Mailbox.PsFollowerMoveAction]);
+                if (!followerOk)
+                    Array.Clear(p, o + Mailbox.PsFollowerSpecies, Mailbox.PsAvatarId - Mailbox.PsFollowerSpecies);
             }
 
             int g = Mailbox.PayloadGates;
@@ -1304,6 +1325,46 @@ namespace CoopBridge
             if (++_debugSeq == 0) _debugSeq = 1;
             _memoryApi.WriteU8(mb + Mailbox.DebugSeq, _debugSeq, MemoryDomain);
             _pendingDebugCmd = 0;
+        }
+
+        private static bool IsValidMoveAction(byte action) =>
+            action < Mailbox.MaxHeldMovement || action == Mailbox.MoveActionNone;
+
+        /// <summary>Player name from a CoopPlayerState (HG charset: digits, letters, space).</summary>
+        private static string DecodeName(byte[] state, int offset)
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < 8; i++)
+            {
+                ushort ch = BitConverter.ToUInt16(state, offset + Mailbox.PsName + i * 2);
+                if (ch == 0xFFFF || ch == 0) break;
+                if (ch >= 0x121 && ch <= 0x12A) sb.Append((char)('0' + ch - 0x121));
+                else if (ch >= 0x12B && ch <= 0x144) sb.Append((char)('A' + ch - 0x12B));
+                else if (ch >= 0x145 && ch <= 0x15E) sb.Append((char)('a' + ch - 0x145));
+                else if (ch == 0x1DE) sb.Append(' ');
+                else sb.Append('?');
+            }
+            return sb.Length > 0 ? sb.ToString() : "Trainer";
+        }
+
+        /// <summary>Where a player is and what they are doing, from a CoopPlayerState.</summary>
+        private static string DescribePlayer(byte[] state, int offset)
+        {
+            ushort map = BitConverter.ToUInt16(state, offset + Mailbox.PsMapId);
+            short x = BitConverter.ToInt16(state, offset + Mailbox.PsX);
+            short z = BitConverter.ToInt16(state, offset + Mailbox.PsZ);
+            string where = $"map {map} ({x}, {z})";
+            switch (state[offset + Mailbox.PsActivity])
+            {
+                case 2: return $"in a battle · {where}";
+                case 3: return $"in a menu · {where}";
+                case 4: return $"changing maps · {where}";
+            }
+            if (state[offset + Mailbox.PsIsActive] != 1) return $"away · {where}";
+            string text = $"{where} · {PlayerStateName(state[offset + Mailbox.PsAvatarState])}";
+            ushort follower = BitConverter.ToUInt16(state, offset + Mailbox.PsFollowerSpecies);
+            if (state[offset + Mailbox.PsFollowerVisible] == 1 && follower != 0) text += $" · follower #{follower}";
+            return text;
         }
 
         private static string PlayerStateName(byte state) => state switch
@@ -1364,7 +1425,7 @@ namespace CoopBridge
             foreach (var b in _diagButtons) b.Enabled = running;
             _warpPicker.Enabled = running;
 
-            byte playerState = (byte)_memoryApi.ReadU8(mb + Mailbox.PlayerState, MemoryDomain);
+            byte playerState = _localPlayer[Mailbox.PsAvatarState];
             if (running) SetValue(_diagPlayerStateValue, PlayerStateName(playerState));
             else SetValue(_diagPlayerStateValue, "—", Theme.TextSecondary);
 
@@ -1434,7 +1495,7 @@ namespace CoopBridge
             if (mb is not uint box)
             {
                 SetValue(_gameValue, waitReason ?? none, Theme.Connecting);
-                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _gymValue, _locationValue })
+                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _gymValue, _locationValue, _othersValue })
                     SetValue(l, none, Theme.TextSecondary);
                 return;
             }
@@ -1449,17 +1510,14 @@ namespace CoopBridge
 
             uint otid = BitConverter.ToUInt32(_localPlayer, Mailbox.PsTrainerId);
             bool ready = _localPlayer[Mailbox.PsClientReady] == 1;
-            bool inField = _localPlayer[Mailbox.PsIsActive] == 1;
-            ushort map = BitConverter.ToUInt16(_localPlayer, Mailbox.PsMapId);
-            short x = BitConverter.ToInt16(_localPlayer, Mailbox.PsX);
-            short y = BitConverter.ToInt16(_localPlayer, Mailbox.PsY);
 
-            SetValue(_trainerValue, otid != 0 ? $"{otid & 0xFFFF:D5}  (0x{otid:X8})" : "No trainer yet", otid != 0 ? (Color?)null : Theme.TextSecondary);
+            SetValue(_trainerValue, otid != 0 ? $"{DecodeName(_localPlayer, 0)} · {otid & 0xFFFF:D5}  (0x{otid:X8})" : "No trainer yet", otid != 0 ? (Color?)null : Theme.TextSecondary);
             SetValue(_bedroomValue, ready ? "Yes" : "No", ready ? Theme.Connected : Theme.TextSecondary);
-            SetValue(_locationValue, inField ? $"Map {map} · ({x}, {y})" : "Not in the overworld", inField ? (Color?)null : Theme.TextSecondary);
+            SetValue(_locationValue, otid != 0 ? DescribePlayer(_localPlayer, 0) : "Not in the overworld", otid != 0 ? (Color?)null : Theme.TextSecondary);
 
             if (_link != LinkState.Connected)
             {
+                SetValue(_othersValue, none, Theme.TextSecondary);
                 SetValue(_playersValue, none, Theme.TextSecondary);
                 SetValue(_adventureValue, none, Theme.TextSecondary);
                 SetValue(_gymValue, none, Theme.TextSecondary);
@@ -1476,6 +1534,19 @@ namespace CoopBridge
             SetValue(_playersValue, started == 1
                 ? $"{online} of {expected}"
                 : $"{online} of {expected} · {readyCount} ready in bedroom");
+
+            var remote = _memoryApi.ReadByteRange(box + Mailbox.ServerPayload, Mailbox.PayloadGates, MemoryDomain);
+            byte[] rp = new byte[Mailbox.PayloadGates];
+            for (int i = 0; i < rp.Length && i < remote.Count; i++) rp[i] = remote[i];
+            var lines = new List<string>();
+            for (int i = 0; i < Mailbox.RemoteSlots; i++)
+            {
+                int o = i * Mailbox.PlayerStateSize;
+                if (BitConverter.ToUInt32(rp, o + Mailbox.PsTrainerId) == 0) continue;
+                lines.Add($"{DecodeName(rp, o)}: {DescribePlayer(rp, o)}");
+            }
+            SetValue(_othersValue, lines.Count > 0 ? string.Join("\n", lines) : "Nobody else yet",
+                lines.Count > 0 ? (Color?)null : Theme.TextSecondary);
             SetValue(_adventureValue, started == 1 ? "Started · room locked" : "Waiting for everyone in the bedroom",
                 started == 1 ? Theme.Connected : Theme.Connecting);
             SetValue(_gymValue, syncReady == 1 ? "Open" : "Closed · needs everyone, equal badges",

@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
@@ -19,19 +19,26 @@ pub const ROOM_STATUS_ERR_ALREADY_EXISTS: u8 = 2;
 pub const ROOM_STATUS_ERR_LOCKED: u8 = 3;
 pub const ROOM_STATUS_ERR_FULL: u8 = 4;
 pub const ROOM_STATUS_ERR_INVALID_CODE: u8 = 5;
-/// Reserved: the relay is game-agnostic and never sends this (mid-game saves may join).
+/// A room that has not started yet only takes fresh saves: the ROM reported
+/// `save_status == SAVE_STATUS_IN_PROGRESS` while in the overworld.
 pub const ROOM_STATUS_ERR_MIDGAME_SAVE: u8 = 6;
 /// Not an error: echo `cookie` (bytes 16..24 of the reply) and retry.
 pub const ROOM_STATUS_CHALLENGE: u8 = 7;
 /// Too many rejected attempts from this IP; back off for a few seconds.
 pub const ROOM_STATUS_ERR_RATE_LIMITED: u8 = 8;
+/// The save's trainer ID is registered in another locked campaign on this relay.
+pub const ROOM_STATUS_ERR_SAVE_OTHER_ROOM: u8 = 9;
+
+// PlayerState.save_status, computed by the ROM (the relay never inspects maps).
+pub const SAVE_STATUS_UNKNOWN: u8 = 0; // not in the overworld yet
+pub const SAVE_STATUS_FRESH: u8 = 1; // in the bedroom with an empty party
+pub const SAVE_STATUS_IN_PROGRESS: u8 = 2;
 
 // Wire Payload Sizes (in bytes)
-pub const PLAYER_STATE_SIZE: usize = 32;
-pub const FOLLOWER_STATE_SIZE: usize = 24;
-pub const CLIENT_PACKET_SIZE: usize = 80;
-pub const SERVER_PACKET_SIZE: usize =
-    16 + (REMOTE_SLOTS * PLAYER_STATE_SIZE) + (REMOTE_SLOTS * FOLLOWER_STATE_SIZE) + 24; // 320 bytes
+pub const PLAYER_STATE_SIZE: usize = 64;
+pub const GATES_SIZE: usize = 24;
+pub const CLIENT_PACKET_SIZE: usize = 32 + PLAYER_STATE_SIZE + 16; // 112 bytes
+pub const SERVER_PACKET_SIZE: usize = 16 + (REMOTE_SLOTS * PLAYER_STATE_SIZE) + GATES_SIZE; // 360 bytes
 /// Error replies carry only the 16-byte header, so a rejected request never
 /// produces a reply larger than the 64-byte request (no UDP amplification).
 pub const ERROR_PACKET_SIZE: usize = 16;
@@ -82,50 +89,94 @@ pub fn room_code_to_string(code: &[u8; 6]) -> String {
     String::from_utf8_lossy(code).to_string()
 }
 
-/// Matches `CoopPlayerState` (32 bytes) in `hg-engine/include/coop_sync.h`
+/// Matches `CoopPlayerState` (64 bytes) in `hg-engine/include/coop_sync.h`.
+/// The relay reads only a few fields (identity, readiness, save status) and
+/// forwards the rest untouched.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlayerState {
-    pub map_id: u16,         // 0x00
-    pub x: i16,              // 0x02
-    pub y: i16,              // 0x04
-    pub prev_x: i16,         // 0x06
-    pub prev_y: i16,         // 0x08
-    pub direction: u8,       // 0x0A
-    pub movement_type: u8,   // 0x0B
-    pub sprite_id: u16,      // 0x0C
-    pub animation_frame: u8, // 0x0E
-    pub is_active: u8,       // 0x0F
-    pub lead_species: u16,   // 0x10
-    pub lead_form: u16,      // 0x12
-    pub lead_is_shiny: u8,   // 0x14
-    pub lead_gender: u8,     // 0x15
-    pub map_npc_count: u8,   // 0x16
-    pub client_ready: u8,    // 0x17 (computed by the ROM)
-    pub trainer_id: u32,     // 0x18..0x1B (4-byte aligned)
-    pub pad: [u8; 4],        // 0x1C..0x1F
+    pub map_id: u16,              // 0x00
+    pub matrix_id: u8,            // 0x02
+    pub avatar_state: u8,         // 0x03
+    pub x: i16,                   // 0x04
+    pub z: i16,                   // 0x06
+    pub height: i16,              // 0x08
+    pub direction: u8,            // 0x0A
+    pub gender: u8,               // 0x0B
+    pub sprite_id: u16,           // 0x0C
+    pub move_action: u8,          // 0x0E
+    pub move_seq: u8,             // 0x0F
+    pub is_active: u8,            // 0x10
+    pub client_ready: u8,         // 0x11 (computed by the ROM)
+    pub save_status: u8,          // 0x12 SAVE_STATUS_* (computed by the ROM)
+    pub activity: u8,             // 0x13
+    pub trainer_id: u32,          // 0x14
+    pub name: [u16; 8],           // 0x18
+    pub follower_species: u16,    // 0x28
+    pub follower_sprite_id: u16,  // 0x2A
+    pub follower_form: u8,        // 0x2C
+    pub follower_shiny: u8,       // 0x2D
+    pub follower_gender: u8,      // 0x2E
+    pub follower_visible: u8,     // 0x2F
+    pub follower_x: i16,          // 0x30
+    pub follower_z: i16,          // 0x32
+    pub follower_height: i16,     // 0x34
+    pub follower_direction: u8,   // 0x36
+    pub follower_move_action: u8, // 0x37
+    pub follower_move_seq: u8,    // 0x38
+    pub pad39: [u8; 3],           // 0x39
+    pub avatar_id: u8,            // 0x3C
+    pub pad3d: [u8; 3],           // 0x3D
+}
+
+fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {
+    out[at..at + 2].copy_from_slice(&v);
+}
+
+fn get_u16(buf: &[u8], at: usize) -> u16 {
+    u16::from_le_bytes([buf[at], buf[at + 1]])
+}
+
+fn get_i16(buf: &[u8], at: usize) -> i16 {
+    i16::from_le_bytes([buf[at], buf[at + 1]])
 }
 
 impl PlayerState {
     pub fn encode_le(&self, out: &mut [u8]) {
         debug_assert!(out.len() >= PLAYER_STATE_SIZE);
-        out[0..2].copy_from_slice(&self.map_id.to_le_bytes());
-        out[2..4].copy_from_slice(&self.x.to_le_bytes());
-        out[4..6].copy_from_slice(&self.y.to_le_bytes());
-        out[6..8].copy_from_slice(&self.prev_x.to_le_bytes());
-        out[8..10].copy_from_slice(&self.prev_y.to_le_bytes());
-        out[10] = self.direction;
-        out[11] = self.movement_type;
-        out[12..14].copy_from_slice(&self.sprite_id.to_le_bytes());
-        out[14] = self.animation_frame;
-        out[15] = self.is_active;
-        out[16..18].copy_from_slice(&self.lead_species.to_le_bytes());
-        out[18..20].copy_from_slice(&self.lead_form.to_le_bytes());
-        out[20] = self.lead_is_shiny;
-        out[21] = self.lead_gender;
-        out[22] = self.map_npc_count;
-        out[23] = self.client_ready;
-        out[24..28].copy_from_slice(&self.trainer_id.to_le_bytes());
-        out[28..32].copy_from_slice(&self.pad);
+        put16(out, 0x00, self.map_id.to_le_bytes());
+        out[0x02] = self.matrix_id;
+        out[0x03] = self.avatar_state;
+        put16(out, 0x04, self.x.to_le_bytes());
+        put16(out, 0x06, self.z.to_le_bytes());
+        put16(out, 0x08, self.height.to_le_bytes());
+        out[0x0A] = self.direction;
+        out[0x0B] = self.gender;
+        put16(out, 0x0C, self.sprite_id.to_le_bytes());
+        out[0x0E] = self.move_action;
+        out[0x0F] = self.move_seq;
+        out[0x10] = self.is_active;
+        out[0x11] = self.client_ready;
+        out[0x12] = self.save_status;
+        out[0x13] = self.activity;
+        out[0x14..0x18].copy_from_slice(&self.trainer_id.to_le_bytes());
+        for (i, ch) in self.name.iter().enumerate() {
+            put16(out, 0x18 + i * 2, ch.to_le_bytes());
+        }
+        put16(out, 0x28, self.follower_species.to_le_bytes());
+        put16(out, 0x2A, self.follower_sprite_id.to_le_bytes());
+        out[0x2C] = self.follower_form;
+        out[0x2D] = self.follower_shiny;
+        out[0x2E] = self.follower_gender;
+        out[0x2F] = self.follower_visible;
+        put16(out, 0x30, self.follower_x.to_le_bytes());
+        put16(out, 0x32, self.follower_z.to_le_bytes());
+        put16(out, 0x34, self.follower_height.to_le_bytes());
+        out[0x36] = self.follower_direction;
+        out[0x37] = self.follower_move_action;
+        out[0x38] = self.follower_move_seq;
+        out[0x39..0x3C].copy_from_slice(&self.pad39);
+        out[0x3C] = self.avatar_id;
+        out[0x3D..0x40].copy_from_slice(&self.pad3d);
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
@@ -135,85 +186,48 @@ impl PlayerState {
                 actual: buf.len(),
             });
         }
-        let mut pad = [0u8; 4];
-        pad.copy_from_slice(&buf[28..32]);
-
-        Ok(Self {
-            map_id: u16::from_le_bytes([buf[0], buf[1]]),
-            x: i16::from_le_bytes([buf[2], buf[3]]),
-            y: i16::from_le_bytes([buf[4], buf[5]]),
-            prev_x: i16::from_le_bytes([buf[6], buf[7]]),
-            prev_y: i16::from_le_bytes([buf[8], buf[9]]),
-            direction: buf[10],
-            movement_type: buf[11],
-            sprite_id: u16::from_le_bytes([buf[12], buf[13]]),
-            animation_frame: buf[14],
-            is_active: buf[15],
-            lead_species: u16::from_le_bytes([buf[16], buf[17]]),
-            lead_form: u16::from_le_bytes([buf[18], buf[19]]),
-            lead_is_shiny: buf[20],
-            lead_gender: buf[21],
-            map_npc_count: buf[22],
-            client_ready: buf[23],
-            trainer_id: u32::from_le_bytes([buf[24], buf[25], buf[26], buf[27]]),
-            pad,
-        })
-    }
-}
-
-/// Matches `CoopFollowerState` (24 bytes) in `hg-engine/include/coop_sync.h`
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FollowerState {
-    pub species: u16,   // 0x00
-    pub form: u16,      // 0x02
-    pub is_shiny: u8,   // 0x04
-    pub gender: u8,     // 0x05
-    pub x: i16,         // 0x06
-    pub y: i16,         // 0x08
-    pub direction: u8,  // 0x0A
-    pub is_visible: u8, // 0x0B
-    pub pad: [u8; 12],  // 0x0C..0x17
-}
-
-impl FollowerState {
-    pub fn encode_le(&self, out: &mut [u8]) {
-        debug_assert!(out.len() >= FOLLOWER_STATE_SIZE);
-        out[0..2].copy_from_slice(&self.species.to_le_bytes());
-        out[2..4].copy_from_slice(&self.form.to_le_bytes());
-        out[4] = self.is_shiny;
-        out[5] = self.gender;
-        out[6..8].copy_from_slice(&self.x.to_le_bytes());
-        out[8..10].copy_from_slice(&self.y.to_le_bytes());
-        out[10] = self.direction;
-        out[11] = self.is_visible;
-        out[12..24].copy_from_slice(&self.pad);
-    }
-
-    pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
-        if buf.len() < FOLLOWER_STATE_SIZE {
-            return Err(ProtocolError::PacketTooShort {
-                expected: FOLLOWER_STATE_SIZE,
-                actual: buf.len(),
-            });
+        let mut name = [0u16; 8];
+        for (i, ch) in name.iter_mut().enumerate() {
+            *ch = get_u16(buf, 0x18 + i * 2);
         }
-        let mut pad = [0u8; 12];
-        pad.copy_from_slice(&buf[12..24]);
-
         Ok(Self {
-            species: u16::from_le_bytes([buf[0], buf[1]]),
-            form: u16::from_le_bytes([buf[2], buf[3]]),
-            is_shiny: buf[4],
-            gender: buf[5],
-            x: i16::from_le_bytes([buf[6], buf[7]]),
-            y: i16::from_le_bytes([buf[8], buf[9]]),
-            direction: buf[10],
-            is_visible: buf[11],
-            pad,
+            map_id: get_u16(buf, 0x00),
+            matrix_id: buf[0x02],
+            avatar_state: buf[0x03],
+            x: get_i16(buf, 0x04),
+            z: get_i16(buf, 0x06),
+            height: get_i16(buf, 0x08),
+            direction: buf[0x0A],
+            gender: buf[0x0B],
+            sprite_id: get_u16(buf, 0x0C),
+            move_action: buf[0x0E],
+            move_seq: buf[0x0F],
+            is_active: buf[0x10],
+            client_ready: buf[0x11],
+            save_status: buf[0x12],
+            activity: buf[0x13],
+            trainer_id: u32::from_le_bytes([buf[0x14], buf[0x15], buf[0x16], buf[0x17]]),
+            name,
+            follower_species: get_u16(buf, 0x28),
+            follower_sprite_id: get_u16(buf, 0x2A),
+            follower_form: buf[0x2C],
+            follower_shiny: buf[0x2D],
+            follower_gender: buf[0x2E],
+            follower_visible: buf[0x2F],
+            follower_x: get_i16(buf, 0x30),
+            follower_z: get_i16(buf, 0x32),
+            follower_height: get_i16(buf, 0x34),
+            follower_direction: buf[0x36],
+            follower_move_action: buf[0x37],
+            follower_move_seq: buf[0x38],
+            pad39: [buf[0x39], buf[0x3A], buf[0x3B]],
+            avatar_id: buf[0x3C],
+            pad3d: [buf[0x3D], buf[0x3E], buf[0x3F]],
         })
     }
 }
 
-/// Sent by BizHawk C# Plugin -> Rust Relay Server (64 bytes)
+/// Sent by BizHawk C# Plugin -> Rust Relay Server (112 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientToServerPacket {
     pub magic: u32,                // 0..4
@@ -228,9 +242,9 @@ pub struct ClientToServerPacket {
     pub sequence: u32,             // 22..26
     pub heartbeat_rom: u32,        // 26..30
     pub reserved: u16,             // 30..32
-    pub local_player: PlayerState, // 32..64 (32 bytes)
-    pub cookie: u64,               // 64..72 (0 until the relay issues one)
-    pub player_secret: u64,        // 72..80 (random per bridge install, never 0)
+    pub local_player: PlayerState, // 32..96 (64 bytes)
+    pub cookie: u64,               // 96..104 (0 until the relay issues one)
+    pub player_secret: u64,        // 104..112 (random per bridge install, never 0)
 }
 
 impl ClientToServerPacket {
@@ -248,9 +262,9 @@ impl ClientToServerPacket {
         buf[22..26].copy_from_slice(&self.sequence.to_le_bytes());
         buf[26..30].copy_from_slice(&self.heartbeat_rom.to_le_bytes());
         buf[30..32].copy_from_slice(&self.reserved.to_le_bytes());
-        self.local_player.encode_le(&mut buf[32..64]);
-        buf[64..72].copy_from_slice(&self.cookie.to_le_bytes());
-        buf[72..80].copy_from_slice(&self.player_secret.to_le_bytes());
+        self.local_player.encode_le(&mut buf[32..96]);
+        buf[96..104].copy_from_slice(&self.cookie.to_le_bytes());
+        buf[104..112].copy_from_slice(&self.player_secret.to_le_bytes());
         buf
     }
 
@@ -273,7 +287,7 @@ impl ClientToServerPacket {
         let mut raw_room = [0u8; 6];
         raw_room.copy_from_slice(&buf[6..12]);
 
-        let local_player = PlayerState::decode_le(&buf[32..64])?;
+        let local_player = PlayerState::decode_le(&buf[32..96])?;
 
         Ok(Self {
             magic,
@@ -289,13 +303,14 @@ impl ClientToServerPacket {
             heartbeat_rom: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
             reserved: u16::from_le_bytes([buf[30], buf[31]]),
             local_player,
-            cookie: u64::from_le_bytes(buf[64..72].try_into().expect("8 bytes")),
-            player_secret: u64::from_le_bytes(buf[72..80].try_into().expect("8 bytes")),
+            cookie: u64::from_le_bytes(buf[96..104].try_into().expect("8 bytes")),
+            player_secret: u64::from_le_bytes(buf[104..112].try_into().expect("8 bytes")),
         })
     }
 }
 
-/// Sent by Rust Relay Server -> BizHawk C# Plugin (320 bytes)
+/// Sent by Rust Relay Server -> BizHawk C# Plugin (360 bytes). Bytes 16..360
+/// are copied verbatim to mailbox 0x050..0x1A8 (remote players, then gates).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerToClientPacket {
     pub magic: u32,
@@ -306,7 +321,6 @@ pub struct ServerToClientPacket {
     pub status_code: u8,          // Byte 12: ROOM_STATUS_*
     pub reserved_header: [u8; 3], // Bytes 13..16
     pub remote_players: [PlayerState; REMOTE_SLOTS],
-    pub remote_followers: [FollowerState; REMOTE_SLOTS],
     pub badge_mask_local_echo: u16,
     pub badge_mask_synced: u16,
     pub flag_coop_sync_ready: u8,
@@ -317,7 +331,8 @@ pub struct ServerToClientPacket {
     pub expected_party_size: u8,
     pub online_party_count: u8,
     pub ready_party_count: u8,
-    pub gates_pad: [u8; 12],
+    pub room_uid: u32,
+    pub gates_pad: [u8; 8],
 }
 
 impl ServerToClientPacket {
@@ -336,13 +351,7 @@ impl ServerToClientPacket {
             player.encode_le(&mut buf[start..start + PLAYER_STATE_SIZE]);
         }
 
-        let followers_base = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;
-        for (i, follower) in self.remote_followers.iter().enumerate() {
-            let start = followers_base + i * FOLLOWER_STATE_SIZE;
-            follower.encode_le(&mut buf[start..start + FOLLOWER_STATE_SIZE]);
-        }
-
-        let gates_base = followers_base + REMOTE_SLOTS * FOLLOWER_STATE_SIZE;
+        let gates_base = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;
         buf[gates_base..gates_base + 2].copy_from_slice(&self.badge_mask_local_echo.to_le_bytes());
         buf[gates_base + 2..gates_base + 4].copy_from_slice(&self.badge_mask_synced.to_le_bytes());
         buf[gates_base + 4] = self.flag_coop_sync_ready;
@@ -353,7 +362,8 @@ impl ServerToClientPacket {
         buf[gates_base + 9] = self.expected_party_size;
         buf[gates_base + 10] = self.online_party_count;
         buf[gates_base + 11] = self.ready_party_count;
-        buf[gates_base + 12..gates_base + 24].copy_from_slice(&self.gates_pad);
+        buf[gates_base + 12..gates_base + 16].copy_from_slice(&self.room_uid.to_le_bytes());
+        buf[gates_base + 16..gates_base + 24].copy_from_slice(&self.gates_pad);
 
         buf
     }
@@ -383,6 +393,43 @@ impl ServerToClientPacket {
 mod tests {
     use super::*;
 
+    fn sample_state() -> PlayerState {
+        PlayerState {
+            map_id: 4,
+            matrix_id: 0,
+            avatar_state: 1,
+            x: 12,
+            z: 25,
+            height: 16,
+            direction: 3,
+            gender: 1,
+            sprite_id: 99,
+            move_action: 15,
+            move_seq: 7,
+            is_active: 1,
+            client_ready: 1,
+            save_status: SAVE_STATUS_FRESH,
+            activity: 1,
+            trainer_id: 0xA1B2_C3D4,
+            name: [0x0133, 0x0134, 0xFFFF, 0, 0, 0, 0, 0],
+            follower_species: 155,
+            follower_sprite_id: 400,
+            follower_form: 1,
+            follower_shiny: 1,
+            follower_gender: 0,
+            follower_visible: 1,
+            follower_x: 12,
+            follower_z: 26,
+            follower_height: 16,
+            follower_direction: 3,
+            follower_move_action: 15,
+            follower_move_seq: 6,
+            pad39: [0; 3],
+            avatar_id: 2,
+            pad3d: [0; 3],
+        }
+    }
+
     #[test]
     fn test_client_packet_roundtrip() {
         let pkt = ClientToServerPacket {
@@ -398,31 +445,13 @@ mod tests {
             sequence: 512,
             heartbeat_rom: 1024,
             reserved: 0,
-            local_player: PlayerState {
-                map_id: 4,
-                x: 12,
-                y: 25,
-                prev_x: 12,
-                prev_y: 24,
-                direction: 0,
-                movement_type: 1,
-                sprite_id: 99,
-                animation_frame: 2,
-                is_active: 1,
-                lead_species: 155,
-                lead_form: 0,
-                lead_is_shiny: 1,
-                lead_gender: 0,
-                map_npc_count: 14,
-                client_ready: 1,
-                trainer_id: 0xA1B2_C3D4,
-                pad: [0u8; 4],
-            },
+            local_player: sample_state(),
             cookie: 0x0102_0304_0506_0708,
             player_secret: 0x1122_3344_5566_7788,
         };
 
         let bytes = pkt.encode_le();
+        assert_eq!(bytes.len(), 112);
         let decoded = ClientToServerPacket::decode_le(&bytes).expect("valid decode");
         assert_eq!(pkt, decoded);
     }
@@ -443,26 +472,58 @@ mod tests {
     #[test]
     fn test_player_state_layout_matches_coop_sync_h() {
         // Offsets pinned by _Static_assert in hg-engine/include/coop_sync.h.
-        let st = PlayerState {
-            map_id: 0x0102,
-            sprite_id: 0x0304,
-            lead_species: 0x0506,
-            client_ready: 0x07,
-            trainer_id: 0x0809_0A0B,
-            ..PlayerState::default()
-        };
+        let st = sample_state();
         let mut buf = [0u8; PLAYER_STATE_SIZE];
         st.encode_le(&mut buf);
-        assert_eq!(&buf[0x00..0x02], &[0x02, 0x01]);
-        assert_eq!(&buf[0x0C..0x0E], &[0x04, 0x03]);
-        assert_eq!(&buf[0x10..0x12], &[0x06, 0x05]);
-        assert_eq!(buf[0x17], 0x07);
-        assert_eq!(&buf[0x18..0x1C], &[0x0B, 0x0A, 0x09, 0x08]);
-        // The bridge copies packet[16..320] to mailbox 0x030..0x15F, so the
-        // gates block (mailbox 0x148) must start at packet offset 0x148 - 0x30 + 16.
-        let gates_packet_offset =
-            16 + REMOTE_SLOTS * PLAYER_STATE_SIZE + REMOTE_SLOTS * FOLLOWER_STATE_SIZE;
-        assert_eq!(gates_packet_offset, 0x148 - 0x30 + 16);
+        assert_eq!(&buf[0x00..0x02], &[4, 0]);
+        assert_eq!(buf[0x03], 1); // avatar_state
+        assert_eq!(&buf[0x08..0x0A], &[16, 0]); // height
+        assert_eq!(&buf[0x0C..0x0E], &[99, 0]); // sprite_id
+        assert_eq!(buf[0x0F], 7); // move_seq
+        assert_eq!(buf[0x12], SAVE_STATUS_FRESH);
+        assert_eq!(&buf[0x14..0x18], &[0xD4, 0xC3, 0xB2, 0xA1]);
+        assert_eq!(&buf[0x18..0x1A], &[0x33, 0x01]); // name[0]
+        assert_eq!(&buf[0x28..0x2A], &[155, 0]); // follower_species
+        assert_eq!(&buf[0x30..0x32], &[12, 0]); // follower_x
+        assert_eq!(buf[0x38], 6); // follower_move_seq
+        assert_eq!(buf[0x3C], 2); // avatar_id
+        assert_eq!(PlayerState::decode_le(&buf).unwrap(), st);
+
+        // The bridge copies packet[16..360] to mailbox 0x050..0x1A8, so the
+        // gates block (mailbox 0x190) must start at packet offset 0x190 - 0x50 + 16.
+        let gates_packet_offset = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;
+        assert_eq!(gates_packet_offset, 0x190 - 0x50 + 16);
+        assert_eq!(SERVER_PACKET_SIZE, 360);
+    }
+
+    #[test]
+    fn test_room_uid_lands_in_the_gates_block() {
+        let pkt = ServerToClientPacket {
+            magic: COOP_MAGIC,
+            version: PROTOCOL_VERSION,
+            assigned_player_id: 0,
+            active_players_mask: 1,
+            server_tick: 1,
+            status_code: ROOM_STATUS_OK,
+            reserved_header: [0; 3],
+            remote_players: [PlayerState::default(); REMOTE_SLOTS],
+            badge_mask_local_echo: 0,
+            badge_mask_synced: 0,
+            flag_coop_sync_ready: 0,
+            current_checkpoint: 0,
+            assigned_monolocke: 0,
+            nuzlocke_failed: 0,
+            flag_campaign_started: 1,
+            expected_party_size: 2,
+            online_party_count: 1,
+            ready_party_count: 1,
+            room_uid: 0xCAFE_F00D,
+            gates_pad: [0; 8],
+        };
+        let buf = pkt.encode_le();
+        let gates = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;
+        assert_eq!(buf[gates + 8], 1); // flag_campaign_started (CoopProgressionGates 0x08)
+        assert_eq!(&buf[gates + 12..gates + 16], &[0x0D, 0xF0, 0xFE, 0xCA]); // room_uid (0x0C)
     }
 
     #[test]

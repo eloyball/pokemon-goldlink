@@ -10,6 +10,7 @@ use tokio::time::interval;
 use coop_relay::protocol::{
     AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, PROTOCOL_VERSION, PlayerState,
     ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_SYNC, ROOM_STATUS_CHALLENGE, ROOM_STATUS_OK,
+    SAVE_STATUS_FRESH, SERVER_PACKET_SIZE,
 };
 
 /// Cookie carried by a challenge reply (status 7, bytes 16..24).
@@ -69,22 +70,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         local_player: PlayerState {
             map_id: 4,
             x: 10,
-            y: 20,
-            prev_x: 10,
-            prev_y: 19,
-            direction: 0,
-            movement_type: 1,
+            z: 20,
             sprite_id: 100,
-            animation_frame: 0,
             is_active: 1,
-            lead_species: 155,
-            lead_form: 0,
-            lead_is_shiny: 0,
-            lead_gender: 0,
-            map_npc_count: 8,
             client_ready: 1,
+            save_status: SAVE_STATUS_FRESH,
+            activity: 1,
             trainer_id: 0x1000_0000,
-            pad: [0u8; 4],
+            follower_species: 155,
+            follower_visible: 1,
+            ..PlayerState::default()
         },
         cookie: 0,
         player_secret: player_secret(0),
@@ -149,22 +144,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             local_player: PlayerState {
                                 map_id: 4,
                                 x: 10 + (seq % 16) as i16,
-                                y: 20,
-                                prev_x: 10,
-                                prev_y: 20,
+                                z: 20,
                                 direction: (seq % 4) as u8,
-                                movement_type: 1,
                                 sprite_id: 100 + client_id as u16,
-                                animation_frame: 0,
+                                move_seq: seq as u8,
                                 is_active: 1,
-                                lead_species: 155 + client_id as u16,
-                                lead_form: 0,
-                                lead_is_shiny: 0,
-                                lead_gender: 0,
-                                map_npc_count: 8,
                                 client_ready: 1,
+                                save_status: SAVE_STATUS_FRESH,
+                                activity: 1,
                                 trainer_id: 0x1000_0000 + client_id as u32,
-                                pad: [0u8; 4],
+                                follower_species: 155 + client_id as u16,
+                                follower_visible: 1,
+                                ..PlayerState::default()
                             },
                             cookie,
                             player_secret: player_secret(client_id),
@@ -179,7 +170,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok((len, _)) = socket.recv_from(&mut buf) => {
                         if let Some(issued) = challenge_cookie(&buf[..len]) {
                             cookie = issued;
-                        } else if len >= 320 && buf[12] == ROOM_STATUS_OK {
+                        } else if len >= SERVER_PACKET_SIZE && buf[12] == ROOM_STATUS_OK {
                             current_action = ROOM_ACTION_SYNC;
                             total_recv_clone.fetch_add(1, Ordering::Relaxed);
                             if let Some(&sent_time) = send_timestamps.get(&seq) {

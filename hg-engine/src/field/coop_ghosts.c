@@ -5,6 +5,7 @@
 
 #include "map_events_internal.h"
 #include "pokemon.h"
+#include "save.h"
 #include "task.h"
 #include "coop_sync.h"
 
@@ -23,9 +24,12 @@
 // plus the DEVELOPMENT-ONLY debug tools (docs/DEBUG_TOOLS.md): warp presets
 // and bike / surf / fishing toggles, compiled only with COOP_DEBUG_TOOLS.
 //
+// It also builds and publishes the local player's telemetry every field
+// frame (Coop_PublishLocalPlayerState below).
+//
 // Overlay 131 is loaded without BSS init, so no state lives in statics: the
-// test ghost is looked up in the map object list every frame and the command
-// handshake lives in gCoopCommBlock.
+// test ghost is looked up in the map object list every frame, and the command
+// handshake and movement tracking live in gCoopCommBlock.
 // ---------------------------------------------------------------------------
 
 // pret asm/unk_02062108.s labels (rom.ld).
@@ -476,6 +480,140 @@ static void Coop_ReportTestGhost(MapObjectMan *manager, LocalMapObject *player)
 }
 
 // ---------------------------------------------------------------------------
+// Local player telemetry (mailbox local_player; docs/MILESTONE2_PLAN.md 5.2)
+// ---------------------------------------------------------------------------
+
+struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
+
+#define COOP_MATRIX_ID_OFFSET 2 // pret MapMatrix: width, height, matrix_id
+
+// A new held movement started since the last frame: the action changed, the
+// object moved to another tile (steps update the tile when they begin), or
+// the action's step counter went back (MapObject_SetHeldMovement resets it).
+// A repeat of the same in-place action (walking into a wall) can go unseen;
+// that only costs a cosmetic bump on other screens.
+static u8 Coop_NextMoveSeq(const LocalMapObject *object, BOOL lastValid, s16 lastX, s16 lastZ, u8 lastAction,
+                           u8 lastSeq, volatile u8 *lastStep)
+{
+    u8 step = (u8)object->movementStep;
+    BOOL started = lastValid
+        && ((u8)object->movementCmd != lastAction
+            || (s16)object->xCurr != lastX || (s16)object->yCurr != lastZ
+            || step < *lastStep);
+
+    *lastStep = step;
+    return started ? (u8)(lastSeq + 1) : lastSeq;
+}
+
+static s16 Coop_ObjectHeight(const LocalMapObject *object)
+{
+    return (s16)((s32)object->posVec[1] >> 12); // fx32 -> world units
+}
+
+static void Coop_BuildFollower(FieldSystem *fsys, struct CoopPlayerState *ps, const struct CoopPlayerState *last, BOOL lastValid)
+{
+    const FollowMon *follow = &fsys->followMon;
+    const LocalMapObject *object = follow->mapObject;
+
+    if (!follow->active || object == NULL || !(object->flags & COOP_MOFLAG_ACTIVE))
+        return;
+    ps->follower_species = (u16)follow->species;
+    ps->follower_sprite_id = (u16)object->gfxId;
+    ps->follower_form = (u8)follow->forme;
+    ps->follower_shiny = follow->shiny ? 1 : 0;
+    ps->follower_gender = follow->gender;
+    ps->follower_visible = 1;
+    ps->follower_x = (s16)object->xCurr;
+    ps->follower_z = (s16)object->yCurr;
+    ps->follower_height = Coop_ObjectHeight(object);
+    ps->follower_direction = (u8)object->curFacing;
+    ps->follower_move_action = (u8)object->movementCmd;
+    ps->follower_move_seq = Coop_NextMoveSeq(object, lastValid && last->follower_visible,
+                                             last->follower_x, last->follower_z, last->follower_move_action,
+                                             last->follower_move_seq, &gCoopCommBlock.track_follower_step);
+}
+
+static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player, struct CoopPlayerState *ps, u16 *badgeMask)
+{
+    struct CoopPlayerState last;
+    struct PlayerProfile *profile;
+    struct Party *party;
+    u32 partyCount = 0;
+    BOOL lastValid;
+    u32 i;
+
+    // The previous snapshot drives move_seq; it only counts while we stayed
+    // in the field (a map load or battle starts the tracking over).
+    __builtin_memcpy(&last, (const void *)&gCoopCommBlock.local_player, sizeof(last));
+    lastValid = last.is_active == 1 && last.map_id == (u16)fsys->location->mapId;
+
+    ps->map_id = (u16)fsys->location->mapId;
+    if (fsys->map_matrix != NULL)
+        ps->matrix_id = ((const u8 *)fsys->map_matrix)[COOP_MATRIX_ID_OFFSET];
+    ps->avatar_state = (u8)fsys->playerAvatar->state;
+    ps->x = (s16)player->xCurr;
+    ps->z = (s16)player->yCurr;
+    ps->height = Coop_ObjectHeight(player);
+    ps->direction = (u8)player->curFacing;
+    ps->gender = (u8)fsys->playerAvatar->gender;
+    ps->sprite_id = (u16)player->gfxId;
+    ps->move_action = (u8)player->movementCmd;
+    ps->move_seq = Coop_NextMoveSeq(player, lastValid, last.x, last.z, last.move_action, last.move_seq,
+                                    &gCoopCommBlock.track_player_step);
+    ps->is_active = 1;
+    ps->activity = COOP_ACTIVITY_FIELD;
+
+    profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
+    if (profile != NULL)
+    {
+        ps->trainer_id = profile->id;
+        for (i = 0; i < 8; i++)
+            ps->name[i] = profile->name[i];
+        for (i = 0; i < 16; i++)
+        {
+            if (PlayerProfile_TestBadgeFlag(profile, (s32)i) == TRUE)
+                *badgeMask |= (u16)(1u << i);
+        }
+    }
+
+    party = SaveArray_Party_Get(fsys->savedata);
+    if (party != NULL)
+        partyCount = (u32)party->count;
+
+    // Lobby readiness and save admission live here, next to the game state
+    // they depend on.
+    ps->client_ready = (ps->map_id == COOP_BEDROOM_MAP_ID && ps->trainer_id != 0 && partyCount == 0) ? 1 : 0;
+    ps->save_status = (ps->map_id == COOP_BEDROOM_MAP_ID && partyCount == 0) ? COOP_SAVE_FRESH : COOP_SAVE_IN_PROGRESS;
+
+    Coop_BuildFollower(fsys, ps, &last, lastValid);
+}
+
+// Publishes a complete snapshot under a sequence lock: local_player_seq is
+// odd while the copy is in progress, so the bridge can reject a torn read
+// (possible on lag frames, when a frame boundary lands mid-copy).
+static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *player)
+{
+    volatile u32 *dst = (volatile u32 *)&gCoopCommBlock.local_player;
+    struct CoopPlayerState ps;
+    u32 words[sizeof(ps) / sizeof(u32)];
+    u16 badgeMask = 0;
+    u32 i;
+
+    __builtin_memset(&ps, 0, sizeof(ps));
+    Coop_BuildLocalPlayerState(fsys, player, &ps, &badgeMask);
+
+    // memcpy, not a (const u32 *) cast of ps: reading the struct through an
+    // incompatible pointer type is undefined behaviour (strict aliasing).
+    __builtin_memcpy(words, &ps, sizeof(words));
+
+    gCoopCommBlock.local_player_seq++;
+    for (i = 0; i < sizeof(words) / sizeof(u32); i++)
+        dst[i] = words[i];
+    gCoopCommBlock.badge_mask_local = badgeMask;
+    gCoopCommBlock.local_player_seq++;
+}
+
+// ---------------------------------------------------------------------------
 // Entry (probe 2): called by Coop_MainSysTask (Overlay 129) once per frame
 // while the field map is active and this overlay is loaded.
 // ---------------------------------------------------------------------------
@@ -490,7 +628,9 @@ static void Coop_FieldEntry(FieldSystem *fsys)
         return;
     player = fsys->playerAvatar->mapObject;
 
-    gCoopCommBlock.player_state = (u8)fsys->playerAvatar->state;
+    if (fsys->location == NULL || fsys->savedata == NULL)
+        return;
+    Coop_PublishLocalPlayerState(fsys, player);
     Coop_ProbeRender(manager);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);

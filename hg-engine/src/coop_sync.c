@@ -18,7 +18,6 @@
 
 // Vanilla functions not declared (or declared without LONG_CALL) in any
 // hg-engine header. Addresses live in rom.ld.
-struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 void *LONG_CALL Save_PlayerData_GetOptionsAddr(void *saveData);
 u8 LONG_CALL TextPrinterCheckActive(u8 printerId);
 void LONG_CALL AddWindowParameterized(void *bgConfig, void *window, u8 bgId, u8 x, u8 y, u8 width, u8 height, u8 paletteNum, u16 baseTile);
@@ -467,10 +466,17 @@ struct CoopDisconnectTaskEnv
 {
     struct CoopDialog dialog;
     u8 frameWait;
+    u8 rejection; // relay ROOM_STATUS_ERR_* that turned this save away; 0 = plain disconnect
 };
 
+// Relay status codes the bridge copies into room_rejection
+// (coop-relay/src/protocol.rs).
+#define COOP_REJECT_MIDGAME_SAVE   6
+#define COOP_REJECT_SAVE_OTHER_ROOM 9
+
 // Never returns TRUE: the task ends in OS_ResetSystem, so the field task
-// manager never frees it.
+// manager never frees it. A rejected save (docs/MILESTONE2_PLAN.md 7.1)
+// shows why and resets without saving: it is not this room's save.
 static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
 {
     FieldSystem *fsys = taskman->fieldSystem;
@@ -482,7 +488,12 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
         // Freeze every map object, like the LockAll script command.
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
-        Coop_DialogPrint(&env->dialog, "Disconnected from the Co-op Room.\nSaving your adventure...");
+        if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
+            Coop_DialogPrint(&env->dialog, "This save belongs to another\nCo-op Room.");
+        else if (env->rejection != 0)
+            Coop_DialogPrint(&env->dialog, "This room hasn't started yet,\nso it only takes new saves.");
+        else
+            Coop_DialogPrint(&env->dialog, "Disconnected from the Co-op Room.\nSaving your adventure...");
         taskman->state = COOP_TASK_WAIT_SAVING_TEXT;
         break;
 
@@ -495,6 +506,17 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
         break;
 
     case COOP_TASK_SAVE:
+        if (env->rejection != 0)
+        {
+            if (!Coop_DialogButtonPressed())
+                break;
+            if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
+                Coop_DialogPrint(&env->dialog, "Load that room's save, or\nstart a New Game here.");
+            else
+                Coop_DialogPrint(&env->dialog, "Start a New Game to join.\nReturning to the Title Screen...");
+            taskman->state = COOP_TASK_WAIT_RESULT_TEXT;
+            break;
+        }
         // Let the finished text reach VRAM before the save blocks the CPU.
         if (++env->frameWait < 2)
             break;
@@ -522,8 +544,12 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
 
 static BOOL Coop_BeginDisconnectSaveAndReset(FieldSystem *fsys)
 {
+    struct CoopDisconnectTaskEnv *env;
+
     if (!Coop_StartFieldTask(fsys, Coop_Task_DisconnectSaveAndReset, sizeof(struct CoopDisconnectTaskEnv)))
         return FALSE;
+    env = ((TaskManager *)fsys->taskman)->env;
+    env->rejection = gCoopCommBlock.room_rejection;
     gCoopCommBlock.disconnect_state = COOP_DISCONNECT_RUNNING;
     return TRUE;
 }
@@ -673,110 +699,34 @@ static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
 // Local player telemetry
 // ---------------------------------------------------------------------------
 
-static void Coop_BuildLocalPlayerState(FieldSystem *fsys, struct CoopPlayerState *ps, u16 *badgeMask)
+// What the player is doing while the field map is not running.
+static u8 Coop_GetActivity(FieldSystem *fsys)
 {
-    LocalMapObject *mo = Coop_GetPlayerMapObject(fsys);
-    MapObjectMan *mapObjects = fsys->mapObjectMan;
-    struct PlayerProfile *profile;
-    struct Party *party;
-    u32 partyCount = 0;
-    u32 i;
-
-    ps->map_id = (u16)fsys->location->mapId;
-    if (mo != NULL)
-    {
-        // Tile coordinates (ints in LocalMapObject).
-        ps->x = (s16)mo->xCurr;
-        ps->y = (s16)mo->yCurr;
-        ps->prev_x = (s16)mo->xPrev;
-        ps->prev_y = (s16)mo->yPrev;
-        ps->direction = (u8)mo->curFacing;
-        ps->movement_type = (u8)mo->movement;
-        ps->sprite_id = (u16)mo->gfxId;
-        ps->animation_frame = (u8)mo->movementStep;
-    }
-
-    // Live map objects other than the player (NPCs, follower, props). The
-    // relay hides remote followers above a threshold to protect OBJ VRAM.
-    if (mapObjects != NULL && mapObjects->active_count > 0)
-    {
-        u32 others = mapObjects->active_count - 1;
-        ps->map_npc_count = (u8)(others > 0xFF ? 0xFF : others);
-    }
-
-    profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
-    if (profile != NULL)
-    {
-        ps->trainer_id = profile->id;
-        for (i = 0; i < 16; i++)
-        {
-            if (PlayerProfile_TestBadgeFlag(profile, (s32)i) == TRUE)
-                *badgeMask |= (u16)(1u << i);
-        }
-    }
-
-    party = SaveArray_Party_Get(fsys->savedata);
-    if (party != NULL)
-    {
-        partyCount = (u32)party->count;
-        if (partyCount > 0)
-        {
-            struct PartyPokemon *lead = Party_GetMonByIndex(party, 0);
-            if (lead != NULL)
-            {
-                ps->lead_species = (u16)GetMonData(lead, MON_DATA_SPECIES, NULL);
-                ps->lead_form = (u16)GetMonData(lead, MON_DATA_FORM, NULL);
-                ps->lead_is_shiny = MonIsShiny(lead) ? 1 : 0;
-                ps->lead_gender = (u8)GetMonData(lead, MON_DATA_GENDER, NULL);
-            }
-        }
-    }
-
-    // Lobby readiness lives here, next to the game state it depends on.
-    ps->client_ready = (ps->map_id == COOP_BEDROOM_MAP_ID && ps->trainer_id != 0 && partyCount == 0) ? 1 : 0;
-    ps->is_active = 1;
+    if (IsOverlayLoaded(OVERLAY_BATTLE))
+        return COOP_ACTIVITY_BATTLE;
+    if (fsys != NULL && fsys->processManager != NULL && fsys->processManager->child != NULL)
+        return COOP_ACTIVITY_MENU;
+    return COOP_ACTIVITY_TRANSITION;
 }
 
-// Publishes a complete snapshot under a sequence lock: local_player_seq is
-// odd while the copy is in progress, so the bridge can reject a torn read
-// (possible on lag frames, when a frame boundary lands mid-copy).
-static void Coop_PublishLocalPlayerState(const struct CoopPlayerState *ps, u16 badgeMask)
-{
-    volatile u32 *dst = (volatile u32 *)&gCoopCommBlock.local_player;
-    u32 words[sizeof(*ps) / sizeof(u32)];
-    u32 i;
-
-    // memcpy, not a (const u32 *) cast of ps: reading the struct through an
-    // incompatible pointer type is undefined behaviour, and at -Os with
-    // -fipa-pta GCC deleted the byte stores (is_active, client_ready,
-    // lead_gender) as dead, publishing them as 0.
-    __builtin_memcpy(words, ps, sizeof(words));
-
-    gCoopCommBlock.local_player_seq++;
-    for (i = 0; i < sizeof(words) / sizeof(u32); i++)
-        dst[i] = words[i];
-    gCoopCommBlock.badge_mask_local = badgeMask;
-    gCoopCommBlock.local_player_seq++;
-}
-
+// In the field, Overlay 131 publishes the full state every frame
+// (Coop_PublishLocalPlayerState, src/field/coop_ghosts.c). Outside it, keep
+// the last position and identity (other players' ghosts freeze where we
+// stood) and report what we are doing instead.
 static void Coop_UpdateLocalPlayerState(FieldSystem *fsys, BOOL fieldActive)
 {
-    if (fieldActive)
-    {
-        struct CoopPlayerState ps = { 0 };
-        u16 badgeMask = 0;
+    volatile struct CoopPlayerState *local = &gCoopCommBlock.local_player;
+    u8 activity;
 
-        Coop_BuildLocalPlayerState(fsys, &ps, &badgeMask);
-        Coop_PublishLocalPlayerState(&ps, badgeMask);
-    }
-    else if (gCoopCommBlock.local_player.is_active)
-    {
-        // In a battle / app / transition: keep the last known position and
-        // OTID (other players keep seeing where we stood), but flag inactive.
-        gCoopCommBlock.local_player_seq++;
-        gCoopCommBlock.local_player.is_active = 0;
-        gCoopCommBlock.local_player_seq++;
-    }
+    if (fieldActive || local->trainer_id == 0)
+        return; // published by Overlay 131, or never been in the field
+    activity = Coop_GetActivity(fsys);
+    if (local->is_active == 0 && local->activity == activity)
+        return;
+    gCoopCommBlock.local_player_seq++;
+    local->is_active = 0;
+    local->activity = activity;
+    gCoopCommBlock.local_player_seq++;
 }
 
 // ---------------------------------------------------------------------------
@@ -809,6 +759,15 @@ static void Coop_CopyFromMailbox(void *dst, const volatile void *src, u32 size)
         d[i] = s[i];
 }
 
+#define COOP_MAX_HELD_MOVEMENT 0x71 // MapObject_SetHeldMovement asserts below this
+#define COOP_MOVE_ACTION_NONE  0xFF // no action since the map loaded
+
+static BOOL Coop_IsValidMoveAction(u8 action)
+{
+    return action < COOP_MAX_HELD_MOVEMENT || action == COOP_MOVE_ACTION_NONE;
+}
+#define COOP_MAX_PLAYER_STATE  14   // pret PLAYER_STATE_ROCKET_SAVING
+
 BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out)
 {
     Coop_Zero(out, sizeof(*out));
@@ -816,32 +775,27 @@ BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out
         return FALSE;
 
     Coop_CopyFromMailbox(out, &gCoopCommBlock.remote_players[remoteSlot], sizeof(*out));
-    if (out->is_active != 1
+    if (out->trainer_id == 0 // empty slot, or still at the title screen
         || out->map_id == 0 || out->map_id >= MAP_ID_MAX
         || !Coop_IsValidDirection(out->direction)
-        || out->lead_species > MAX_SPECIES_INCLUDING_FORMS
-        || out->lead_is_shiny > 1 || out->lead_gender > 2 || out->client_ready > 1)
+        || out->avatar_state > COOP_MAX_PLAYER_STATE
+        || !Coop_IsValidMoveAction(out->move_action)
+        || out->is_active > 1 || out->client_ready > 1 || out->gender > 1
+        || out->save_status > COOP_SAVE_IN_PROGRESS
+        || out->activity > COOP_ACTIVITY_TRANSITION)
     {
         Coop_Zero(out, sizeof(*out));
         return FALSE;
     }
-    return TRUE;
-}
-
-BOOL LONG_CALL Coop_ReadRemoteFollower(u32 remoteSlot, struct CoopFollowerState *out)
-{
-    Coop_Zero(out, sizeof(*out));
-    if (remoteSlot >= COOP_REMOTE_SLOTS)
-        return FALSE;
-
-    Coop_CopyFromMailbox(out, &gCoopCommBlock.remote_followers[remoteSlot], sizeof(*out));
-    if (out->is_visible != 1
-        || out->species == 0 || out->species > MAX_SPECIES_INCLUDING_FORMS
-        || !Coop_IsValidDirection(out->direction)
-        || out->is_shiny > 1 || out->gender > 2)
+    if (out->follower_visible > 1 || out->follower_shiny > 1 || out->follower_gender > 2
+        || out->follower_species > MAX_SPECIES_INCLUDING_FORMS
+        || (out->follower_visible && out->follower_species == 0)
+        || !Coop_IsValidDirection(out->follower_direction)
+        || !Coop_IsValidMoveAction(out->follower_move_action))
     {
-        Coop_Zero(out, sizeof(*out));
-        return FALSE;
+        // Show the player without a follower rather than not at all.
+        Coop_Zero(&out->follower_species, __builtin_offsetof(struct CoopPlayerState, avatar_id)
+                                              - __builtin_offsetof(struct CoopPlayerState, follower_species));
     }
     return TRUE;
 }
@@ -896,6 +850,11 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
         Coop_RunFieldEntry(fsys);
     else
         gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_NOT_IN_FIELD;
+
+    // The relay turned this save away (docs/MILESTONE2_PLAN.md 7.1): same
+    // safe-window path as a disconnect, but the task resets without saving.
+    if (gCoopCommBlock.room_rejection != 0 && gCoopCommBlock.disconnect_state == COOP_DISCONNECT_NONE)
+        gCoopCommBlock.disconnect_state = COOP_DISCONNECT_PENDING;
 
     switch (gCoopCommBlock.disconnect_state)
     {
