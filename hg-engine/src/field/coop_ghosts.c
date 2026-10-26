@@ -1224,8 +1224,19 @@ static BOOL Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *gh
 
 // Reconciles one remote slot with its ghost: create, drive, snap or delete.
 // valid: the remote is readable and in the same place.
+// The local player just came back from a menu, battle or app: a ghost more
+// than a tile from its target is moved there at once (deleted now,
+// recreated on the target's tile next tick) while the screen is still
+// fading in, instead of visibly racing there.
+#define COOP_RETURN_SNAP_MIN 2
+
+static BOOL Coop_ShouldSnapOnReturn(BOOL returned, const LocalMapObject *ghost, s32 x, s32 z)
+{
+    return returned && Coop_Abs(x - ghost->xCurr) + Coop_Abs(z - ghost->yCurr) >= COOP_RETURN_SNAP_MIN;
+}
+
 static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
-                             const struct CoopPlayerState *remote, BOOL valid, BOOL allowPoses)
+                             const struct CoopPlayerState *remote, BOOL valid, BOOL allowPoses, BOOL returned)
 {
     LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
     struct CoopGhostTarget target;
@@ -1239,6 +1250,7 @@ static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, stru
             || (u32)COOP_GHOST_TRAINER(ghost) != remote->trainer_id
             || !Coop_IsWithin(remote->x, remote->z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
             || Coop_ShouldSnap(ghost, player, remote->x, remote->z)
+            || Coop_ShouldSnapOnReturn(returned, ghost, remote->x, remote->z)
             || !Coop_UpdateGhostSprite(budget, ghost, remote, allowPoses))
         {
             Coop_RemoveGhost(manager, ghost);
@@ -1327,7 +1339,7 @@ static u32 Coop_FollowerSprite(const struct CoopPlayerState *remote)
 // always get the budget first. Its last handled move_seq lives in the
 // mailbox: follower params belong to the follower draw code.
 static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
-                                const struct CoopPlayerState *remote, BOOL valid)
+                                const struct CoopPlayerState *remote, BOOL valid, BOOL returned)
 {
     LocalMapObject *follower = Coop_FindObjectById(manager, COOP_FOLLOWER_ID_FIRST + slot);
     BOOL hasGhost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot) != NULL;
@@ -1340,7 +1352,8 @@ static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, s
             || (u32)follower->gfxId != sprite
             || (u32)(follower->param[2] & 1) != remote->follower_shiny
             || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
-            || Coop_ShouldSnap(follower, player, remote->follower_x, remote->follower_z))
+            || Coop_ShouldSnap(follower, player, remote->follower_x, remote->follower_z)
+            || Coop_ShouldSnapOnReturn(returned, follower, remote->follower_x, remote->follower_z))
         {
             Coop_RemoveGhost(manager, follower);
             return;
@@ -1523,8 +1536,10 @@ static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMap
     BOOL valid[COOP_REMOTE_SLOTS];
     u8 order[COOP_REMOTE_SLOTS];
     struct CoopBudget budget;
+    BOOL returned = gCoopCommBlock.track_field_hidden == 1;
     u32 i;
 
+    gCoopCommBlock.track_field_hidden = 0;
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
         valid[i] = Coop_ReadRemotePlayer(i, &remotes[i]) && Coop_IsSamePlace(fsys, &remotes[i]);
     Coop_SortByDistance(order, remotes, valid, player);
@@ -1543,9 +1558,9 @@ static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMap
             Coop_BudgetInit(&budget, manager); // slots were freed
     }
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
-        Coop_UpdateGhost(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]], fsys->taskman == NULL);
+        Coop_UpdateGhost(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]], fsys->taskman == NULL, returned);
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
-        Coop_UpdateFollower(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]]);
+        Coop_UpdateFollower(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]], returned);
 }
 
 // ---------------------------------------------------------------------------

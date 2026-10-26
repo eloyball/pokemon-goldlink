@@ -1106,6 +1106,7 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
     {
         gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_NOT_IN_FIELD;
         gCoopCommBlock.track_field_idle = 0; // the first field frame cannot start a ghost talk
+        gCoopCommBlock.track_field_hidden = 1; // ghosts catch up by teleporting when the field returns
     }
 
     // The relay turned this save away (docs/MILESTONE2_PLAN.md 7.1): same
