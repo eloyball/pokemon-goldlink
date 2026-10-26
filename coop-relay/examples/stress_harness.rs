@@ -84,6 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cookie: 0,
         player_secret: player_secret(0),
         session: Default::default(),
+        trade: None,
     };
     // Cookie handshake: the first send is challenged, the echo creates the room.
     let mut reply = [0u8; 512];
@@ -161,6 +162,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             cookie,
                             player_secret: player_secret(client_id),
                             session: Default::default(),
+                            trade: None,
                         };
 
                         let bytes = pkt.encode_le();

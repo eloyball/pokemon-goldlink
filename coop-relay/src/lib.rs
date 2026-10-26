@@ -9,3 +9,7 @@ mod lobby_tests;
 #[cfg(test)]
 #[path = "tests/session_tests.rs"]
 mod session_tests;
+
+#[cfg(test)]
+#[path = "tests/trade_tests.rs"]
+mod trade_tests;

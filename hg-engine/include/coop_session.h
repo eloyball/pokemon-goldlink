@@ -19,4 +19,9 @@ BOOL Coop_StartSessionMenu(struct FieldSystem *fsys, u32 remoteSlot, const struc
 // request once the player is free (no task, message or step in progress).
 void Coop_UpdateSessionPrompt(struct FieldSystem *fsys);
 
+// Every field frame (src/field/coop_trade.c): starts the trade task whenever
+// the relay holds a trade for this player (gates.trade_pending) and the
+// player is free, and reloads the map in place after the lead was traded.
+void Coop_UpdateTrade(struct FieldSystem *fsys);
+
 #endif // COOP_SESSION_H

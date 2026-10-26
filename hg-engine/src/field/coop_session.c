@@ -13,6 +13,7 @@
 #include "coop_sync.h"
 #include "coop_dialog.h"
 #include "coop_session.h"
+#include "coop_choice.h"
 
 // ---------------------------------------------------------------------------
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1), Overlay 131.
@@ -29,57 +30,19 @@
 // task env holds the flow, and gCoopCommBlock the latched seqs.
 // ---------------------------------------------------------------------------
 
-// pret ClearFrameAndWindow1 (asm label ClearWindowPixelBuffer).
-void LONG_CALL sub_0200E5D4(void *window, BOOL dontCopyToVram);
-// Declared in sprite.h (rom.ld), which this file does not otherwise need.
-void LONG_CALL AddWindowParameterized(void *bgConfig, void *window, u8 bgId, u8 x, u8 y, u8 width, u8 height, u8 paletteNum, u16 baseTile);
-
-#define COOP_HEAP_ID_FIELD1 4  // pret constants/heap.h
-#define COOP_HEAP_ID_FIELD3 32 // field task heap
-#define COOP_SE_SELECT      1500 // pret SEQ_SE_DP_SELECT
-
-// Vanilla script multichoice / yes-no (ccd src/field/script_menu.c,
-// scrcmd_c.c): BG3, system font, palette 13, menu frame at 0x3D9 with
-// palette 11, anchored bottom-right just above the message box.
-#define COOP_CHOICE_BG         3
-#define COOP_CHOICE_FONT       0
-#define COOP_CHOICE_PLTT       13
-#define COOP_CHOICE_BASE_TILE  0x3D
-#define COOP_CHOICE_FRAME_TILE 0x3D9
-#define COOP_CHOICE_FRAME_PLTT 11
-#define COOP_CHOICE_RIGHT      31 // frame column; the window ends one tile before
-#define COOP_CHOICE_BOTTOM     17 // frame row; the message frame starts at row 18
-#define COOP_CHOICE_FILL       15
-#define COOP_CHOICE_TEXT_X     12 // pixels: the cursor glyph sits left of the text
-#define COOP_CHOICE_MAX        4
-#define COOP_CURSOR_GLYPH      0x011F // '‣', vanilla ListMenuCursor (pret _020F60DC)
-#define COOP_TEXT_NO_COPY      0xFF   // pret TEXT_SPEED_NOTRANSFER
+#define COOP_SE_SELECT 1500 // pret SEQ_SE_DP_SELECT
 
 #define COOP_FRAMES_PER_SECOND   60
 #define COOP_ANSWER_FAILSAFE     (25 * COOP_FRAMES_PER_SECOND) // the relay times out at 20 s
 #define COOP_CANCEL_FAILSAFE     (3 * COOP_FRAMES_PER_SECOND)
 #define COOP_RESULT_FAILSAFE     (5 * COOP_FRAMES_PER_SECOND)
 
-enum CoopChoiceValue
+enum CoopMenuValue // ghost menu rows (Yes / No: coop_choice.h)
 {
-    COOP_CHOICE_NONE = 0,
     COOP_CHOICE_TRADE = COOP_SESSION_KIND_TRADE,
     COOP_CHOICE_BATTLE = COOP_SESSION_KIND_BATTLE,
     COOP_CHOICE_TEAM_UP = COOP_SESSION_KIND_TEAM_UP,
     COOP_CHOICE_CANCEL,
-    COOP_CHOICE_YES,
-    COOP_CHOICE_NO,
-};
-
-// A vertical choice list in its own framed window. B picks the last item.
-struct CoopChoice
-{
-    GF_BGL_BMPWIN window;
-    String *text;
-    u8 values[COOP_CHOICE_MAX];
-    u8 count;
-    u8 cursor;
-    u8 open;
 };
 
 enum CoopSessionTaskState
@@ -102,7 +65,7 @@ struct CoopSessionTaskEnv
 {
     struct CoopDialog dialog;
     struct CoopChoice choice;
-    u16 name[8];       // the other player's name (HG-encoded)
+    u16 name[9];       // the other player's name (HG-encoded), always 0xFFFF-terminated
     u32 peerTrainer;   // their trainer ID
     u16 frames;        // frames spent in the current wait
     u8 peerSlot;       // their remote slot
@@ -111,96 +74,6 @@ struct CoopSessionTaskEnv
     u8 incoming;       // TRUE: answering someone else's request
     u8 cancelSent;
 };
-
-// ---------------------------------------------------------------------------
-// Choice window
-// ---------------------------------------------------------------------------
-
-static void Coop_ChoiceDrawCursor(struct CoopChoice *choice)
-{
-    static const u16 cursor[] = { COOP_CURSOR_GLYPH, 0xFFFF };
-
-    FillWindowPixelRect(&choice->window, COOP_CHOICE_FILL, 0, 0, COOP_CHOICE_TEXT_X, choice->count * 16);
-    CopyU16ArrayToString(choice->text, cursor);
-    AddTextPrinterParameterized(&choice->window, COOP_CHOICE_FONT, choice->text, 0, choice->cursor * 16,
-                                COOP_TEXT_NO_COPY, NULL);
-    CopyWindowToVram(&choice->window);
-}
-
-static void Coop_ChoiceOpen(FieldSystem *fsys, struct CoopChoice *choice, const char *const *labels,
-                            const u8 *values, u32 count, u32 widthTiles)
-{
-    u32 i;
-
-    choice->count = (u8)count;
-    choice->cursor = 0;
-    for (i = 0; i < count; i++)
-        choice->values[i] = values[i];
-
-    AddWindowParameterized(fsys->bg_config, &choice->window, COOP_CHOICE_BG,
-                           (u8)(COOP_CHOICE_RIGHT - widthTiles), (u8)(COOP_CHOICE_BOTTOM - count * 2),
-                           (u8)widthTiles, (u8)(count * 2), COOP_CHOICE_PLTT, COOP_CHOICE_BASE_TILE);
-    LoadUserFrameGfx1(fsys->bg_config, COOP_CHOICE_BG, COOP_CHOICE_FRAME_TILE, COOP_CHOICE_FRAME_PLTT, 0,
-                      COOP_HEAP_ID_FIELD1);
-    DrawFrameAndWindow1(&choice->window, TRUE, COOP_CHOICE_FRAME_TILE, COOP_CHOICE_FRAME_PLTT);
-    FillWindowPixelBuffer(&choice->window, COOP_CHOICE_FILL);
-
-    choice->text = String_New(32, COOP_HEAP_ID_FIELD3);
-    for (i = 0; i < count; i++)
-    {
-        Coop_SetStringFromAscii(choice->text, labels[i], NULL);
-        AddTextPrinterParameterized(&choice->window, COOP_CHOICE_FONT, choice->text, COOP_CHOICE_TEXT_X, i * 16,
-                                    COOP_TEXT_NO_COPY, NULL);
-    }
-    Coop_ChoiceDrawCursor(choice); // copies the whole window
-    choice->open = TRUE;
-}
-
-static void Coop_ChoiceClose(struct CoopChoice *choice)
-{
-    if (!choice->open)
-        return;
-    sub_0200E5D4(&choice->window, FALSE);
-    RemoveWindow(&choice->window);
-    String_Delete(choice->text);
-    choice->text = NULL;
-    choice->open = FALSE;
-}
-
-// The chosen value, or COOP_CHOICE_NONE while the player is still choosing.
-static u32 Coop_ChoiceInput(struct CoopChoice *choice)
-{
-    u32 keys = (u32)gSystem.newKeys;
-
-    if (keys & PAD_BUTTON_A)
-    {
-        PlaySE(COOP_SE_SELECT);
-        return choice->values[choice->cursor];
-    }
-    if (keys & PAD_BUTTON_B)
-    {
-        PlaySE(COOP_SE_SELECT);
-        return choice->values[choice->count - 1];
-    }
-    if (keys & (PAD_KEY_UP | PAD_KEY_DOWN))
-    {
-        if (keys & PAD_KEY_UP)
-            choice->cursor = choice->cursor == 0 ? choice->count - 1 : choice->cursor - 1;
-        else
-            choice->cursor = choice->cursor + 1 == choice->count ? 0 : choice->cursor + 1;
-        PlaySE(COOP_SE_SELECT);
-        Coop_ChoiceDrawCursor(choice);
-    }
-    return COOP_CHOICE_NONE;
-}
-
-static void Coop_ChoiceOpenYesNo(FieldSystem *fsys, struct CoopChoice *choice)
-{
-    static const char *const labels[] = { "YES", "NO" };
-    static const u8 values[] = { COOP_CHOICE_YES, COOP_CHOICE_NO };
-
-    Coop_ChoiceOpen(fsys, choice, labels, values, 2, 6);
-}
 
 // ---------------------------------------------------------------------------
 // Session requests (latched in the mailbox, applied once by the relay)
@@ -248,8 +121,8 @@ static const char *Coop_AcceptedText(u32 kind)
     if (kind == COOP_SESSION_KIND_TEAM_UP)
         return "You and @ are now a team!";
     if (kind == COOP_SESSION_KIND_BATTLE)
-        return "@ is up for a battle! Battles\nare coming in a later update.";
-    return "@ is up for a trade! Trading\nis coming in a later update.";
+        return "@ is up for a battle!\nBattles are coming later.";
+    return "Let's trade with @!";
 }
 
 // What either side reads once the request is over (state != OUTGOING/INCOMING).
@@ -315,8 +188,8 @@ static void Coop_SessionRequest(TaskManager *taskman, struct CoopSessionTaskEnv 
 
 static void Coop_SessionOpenMainMenu(FieldSystem *fsys, struct CoopSessionTaskEnv *env)
 {
-    const char *labels[COOP_CHOICE_MAX];
-    u8 values[COOP_CHOICE_MAX];
+    const char *labels[4];
+    u8 values[4];
     u32 n = 0;
 
     labels[n] = "TRADE";
@@ -366,7 +239,7 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
     case COOP_SESSION_OPEN:
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
-        env->dialog.name = env->name;
+        env->dialog.args[0] = env->name;
         if (!env->incoming)
         {
             Coop_DialogPrint(&env->dialog, "It's @!\nWhat would you like to do?");
@@ -439,9 +312,17 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         env->frames++;
         if (Coop_SessionIsOver(env, &state, &reason))
         {
+            // An accepted trade continues in its own task (coop_trade.c),
+            // which starts as soon as this one is gone.
             msg = Coop_ResultText(env, state, reason);
-            if (msg == NULL)
-                return Coop_SessionEnd(fsys, env); // I said no: nothing more to say
+            if (msg == NULL || (state == COOP_SESSION_ACCEPTED && env->kind == COOP_SESSION_KIND_TRADE))
+            {
+                // Nothing more to say ("no" was mine, or a trade opens next);
+                // the window can only go once its text is done.
+                if (!Coop_DialogIsPrinting(&env->dialog))
+                    return Coop_SessionEnd(fsys, env);
+                break;
+            }
             Coop_SessionFinal(taskman, env, msg);
             break;
         }
@@ -536,6 +417,7 @@ static BOOL Coop_StartSessionTask(FieldSystem *fsys, u32 remoteSlot, const struc
     env = ((TaskManager *)fsys->taskman)->env;
     for (i = 0; i < 8; i++)
         env->name[i] = remote->name[i];
+    env->name[8] = 0xFFFF;
     env->peerTrainer = remote->trainer_id;
     env->peerSlot = (u8)remoteSlot;
     env->incoming = incoming ? TRUE : FALSE;

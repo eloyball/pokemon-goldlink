@@ -90,6 +90,7 @@ pub(crate) fn make_packet(
         cookie: 0,
         player_secret: secret_for(trainer_id),
         session: SessionOut::default(),
+        trade: None,
     }
 }
 
@@ -1212,7 +1213,7 @@ fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
     let p0: SocketAddr = "127.0.0.1:54001".parse().unwrap();
     let p1: SocketAddr = "127.0.0.1:54002".parse().unwrap();
     let gate = 16 + 5 * PLAYER_STATE_SIZE + 4; // flag_coop_sync_ready
-    let gate_for = |batch: &Vec<(SocketAddr, [u8; 360])>, addr: SocketAddr| {
+    let gate_for = |batch: &Vec<(SocketAddr, Vec<u8>)>, addr: SocketAddr| {
         batch.iter().find(|(a, _)| *a == addr).unwrap().1[gate]
     };
 

@@ -1731,6 +1731,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_ProbeRender(manager);
     Coop_UpdateGhosts(fsys, manager, player);
     Coop_CheckGhostTalk(fsys, manager, player);
+    Coop_UpdateTrade(fsys);
     Coop_UpdateSessionPrompt(fsys);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);

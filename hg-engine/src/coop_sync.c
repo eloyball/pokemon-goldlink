@@ -77,7 +77,9 @@ struct CoopDebugMonBuffer gCoopDebugMonBuffer = { .party_count = 0xFF };
 // ellipsis glyph. Anything else is rendered as '?'. '@' inserts name (an
 // HG-encoded player name from the relay, or NULL): up to 8 chars, ending at
 // 0xFFFF; control and format codes (0x200 and up) become '?'.
-void LONG_CALL Coop_SetStringFromAscii(String *dst, const char *src, const u16 *name)
+#define COOP_ARG_CHARS 11 // Pokemon nicknames and species names: 10 + terminator
+
+void LONG_CALL Coop_SetStringFromAscii(String *dst, const char *src, const u16 *const *args)
 {
     u16 buf[COOP_TEXT_MAX + 1];
     u32 n = 0;
@@ -87,11 +89,19 @@ void LONG_CALL Coop_SetStringFromAscii(String *dst, const char *src, const u16 *
     {
         char c = *src++;
         u16 out;
+        const u16 *arg;
+        int argIdx = c == '@' ? 0 : c == '$' ? 1 : c == '&' ? 2 : c == '^' ? 3 : -1;
 
-        if (c == '@' && name != NULL)
+        if (argIdx >= 0 && args != NULL && (arg = args[argIdx]) != NULL)
         {
-            for (i = 0; i < COOP_NAME_CHARS && name[i] != 0xFFFF && n < COOP_TEXT_MAX; i++)
-                buf[n++] = (name[i] != 0 && name[i] < 0x200) ? name[i] : 0x01AC;
+            for (i = 0; i < COOP_ARG_CHARS && arg[i] != 0xFFFF && n < COOP_TEXT_MAX; i++)
+                buf[n++] = (arg[i] != 0 && arg[i] < 0x200) ? arg[i] : 0x01AC;
+            continue;
+        }
+        if ((u8)c == 0xC3 && (u8)*src == 0xA9) // UTF-8 é
+        {
+            src++;
+            buf[n++] = 0x0188;
             continue;
         }
         if (c >= 'A' && c <= 'Z')
@@ -115,6 +125,9 @@ void LONG_CALL Coop_SetStringFromAscii(String *dst, const char *src, const u16 *
             case '.':  out = 0x01AE; break;
             case '-':  out = 0x01BE; break;
             case '\'': out = 0x01B3; break;
+            case '(':  out = 0x01B9; break;
+            case ':':  out = 0x01C4; break;
+            case ')':  out = 0x01BA; break;
             case '\n': out = 0xE000; break;
             default:   out = 0x01AC; break; // ?
             }
@@ -415,6 +428,8 @@ void LONG_CALL Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
 
     dialog->text = String_New(COOP_TEXT_MAX * 2, HEAP_ID_FIELD3);
     dialog->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
+    dialog->printerId = 0xFF;
+    dialog->pending = NULL;
 }
 
 // pret TextPrinter (include/font_types_def.h): the template the callback
@@ -436,17 +451,36 @@ static BOOL Coop_DialogSpeedUp(void *printerTemplate, u16 glyph)
 }
 
 // Prints one page (two lines max: the box is 4 tiles tall).
+static BOOL Coop_DialogPrinterActive(const struct CoopDialog *dialog)
+{
+    return dialog->printerId != 0xFF && TextPrinterCheckActive(dialog->printerId);
+}
+
 void LONG_CALL Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
 {
+    if (Coop_DialogPrinterActive(dialog))
+    {
+        dialog->pending = msg;
+        return;
+    }
     FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
-    Coop_SetStringFromAscii(dialog->text, msg, dialog->name);
+    Coop_SetStringFromAscii(dialog->text, msg, dialog->args);
     dialog->printerId = AddTextPrinterParameterized(&dialog->window, DIALOG_FONT, dialog->text, 0, 0, dialog->textDelay,
                                                     Coop_DialogSpeedUp);
 }
 
-BOOL LONG_CALL Coop_DialogIsPrinting(const struct CoopDialog *dialog)
+BOOL LONG_CALL Coop_DialogIsPrinting(struct CoopDialog *dialog)
 {
-    return TextPrinterCheckActive(dialog->printerId);
+    const char *next;
+
+    if (Coop_DialogPrinterActive(dialog))
+        return TRUE;
+    if (dialog->pending == NULL)
+        return FALSE;
+    next = dialog->pending;
+    dialog->pending = NULL;
+    Coop_DialogPrint(dialog, next);
+    return TRUE;
 }
 
 // pret ScrCmd_CloseMsg.
@@ -664,7 +698,7 @@ struct CoopFieldBlockEnv
     const char *page1;
     const char *page2; // NULL: one page
     struct CoopMovementCommand moves[2]; // read by the movement engine until it finishes
-    u16 name[COOP_NAME_CHARS];
+    u16 name[COOP_NAME_CHARS + 1]; // always 0xFFFF-terminated (Coop_SetStringFromAscii reads up to 11)
 };
 
 BOOL LONG_CALL Coop_IsAdventureStarted(void)
@@ -729,7 +763,7 @@ static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
     case COOP_BLOCK_OPEN_DIALOG:
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
-        env->dialog.name = env->name;
+        env->dialog.args[0] = env->name;
         Coop_DialogPrint(&env->dialog, env->page1);
         taskman->state = COOP_BLOCK_WAIT_PAGE1_TEXT;
         break;
@@ -804,6 +838,7 @@ BOOL LONG_CALL Coop_StartTalkDialog(FieldSystem *fsys, const u16 *name, u32 acti
     env = ((TaskManager *)fsys->taskman)->env;
     for (i = 0; i < COOP_NAME_CHARS; i++)
         env->name[i] = name[i];
+    env->name[COOP_NAME_CHARS] = 0xFFFF;
     return TRUE;
 }
 

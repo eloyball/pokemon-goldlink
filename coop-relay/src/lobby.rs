@@ -15,15 +15,17 @@ use crate::protocol::{
     PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
     ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
     ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
-    ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SERVER_PACKET_SIZE,
-    SESSION_KIND_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
-    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
-    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
-    SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
-    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED,
-    SESSION_STATE_TIMEOUT, ServerToClientPacket, SessionOut, TEAMED_SELF_BIT, room_code_to_string,
-    validate_room_code,
+    ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE,
+    SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL,
+    SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY,
+    SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE,
+    SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED,
+    SESSION_STATE_INCOMING, SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT,
+    ServerToClientPacket, SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
 };
+
+mod trade;
+pub use trade::{PendingTrade, TRADE_IDLE_TIMEOUT, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 
 /// A request nobody answers expires after this long.
 pub const SESSION_TIMEOUT: Duration = Duration::from_secs(20);
@@ -67,6 +69,9 @@ pub struct CampaignSaveFile {
     /// Permanent pairs of trainer IDs (Milestone 3 "team up"); never undone.
     #[serde(default)]
     pub teams: Vec<[u32; 2]>,
+    /// Committed trades not yet saved by both games (Milestone 3 Phase 2).
+    #[serde(default)]
+    pub pending_trades: Vec<PendingTrade>,
 }
 
 /// What one player currently sees of their session, latched until the next
@@ -123,6 +128,9 @@ pub struct LobbyState {
     last_activity: Instant,
     teams: Vec<[u32; 2]>,
     sessions: Vec<Session>,
+    trades: Vec<trade::ActiveTrade>,
+    pending_trades: Vec<PendingTrade>,
+    trade_notices: Vec<trade::TradeNotice>,
 }
 
 impl LobbyState {
@@ -168,6 +176,9 @@ impl LobbyState {
             last_activity: Instant::now(),
             teams: Vec::new(),
             sessions: Vec::new(),
+            trades: Vec::new(),
+            pending_trades: Vec::new(),
+            trade_notices: Vec::new(),
         };
         lobby.load_campaign_from_disk()?;
         Ok(lobby)
@@ -337,6 +348,7 @@ impl LobbyState {
             if fresh_op {
                 self.apply_session_op(slot_idx, session_out, now);
             }
+            self.apply_trade_out(slot_idx, pkt.trade, now);
 
             if (badge_changed || allow_changed)
                 && self.campaign_started
@@ -580,9 +592,11 @@ impl LobbyState {
         self.drop_sessions_of_missing_players();
     }
 
-    pub fn build_broadcast_batch(&mut self) -> Vec<(SocketAddr, [u8; SERVER_PACKET_SIZE])> {
+    pub fn build_broadcast_batch(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
         self.server_tick = self.server_tick.wrapping_add(1);
-        self.expire_sessions(Instant::now());
+        let now = Instant::now();
+        self.expire_sessions(now);
+        self.expire_trades(now);
 
         let active_mask = self.compute_active_bitmask();
         let online_count = active_mask.count_ones() as u8;
@@ -619,6 +633,7 @@ impl LobbyState {
                 remote_cursor += 1;
             }
 
+            let trade = self.trade_in_for(recipient_idx);
             let pkt = ServerToClientPacket {
                 magic: COOP_MAGIC,
                 version: PROTOCOL_VERSION,
@@ -650,10 +665,10 @@ impl LobbyState {
                     .map_or(NO_SLOT, |p| remote_slot_of(recipient_idx, p)),
                 session_seq: recipient.session_view.seq,
                 session_reason: recipient.session_view.reason,
-                gates_pad: 0,
+                trade_pending: u8::from(trade.is_some()),
             };
 
-            batch.push((recipient.addr, pkt.encode_le()));
+            batch.push((recipient.addr, pkt.encode_with_trade(trade.as_ref())));
         }
 
         batch
@@ -778,8 +793,9 @@ impl LobbyState {
             .is_some_and(|t| t != 0 && self.team_partner_of(t).is_some())
     }
 
+    /// In a pending request, an open trade, or a trade still to finish.
     fn in_session(&self, slot: usize) -> bool {
-        self.sessions.iter().any(|s| s.from == slot || s.to == slot)
+        self.sessions.iter().any(|s| s.from == slot || s.to == slot) || self.trade_busy(slot)
     }
 
     fn set_view(&mut self, slot: usize, state: u8, kind: u8, peer: Option<usize>, reason: u8) {
@@ -879,6 +895,9 @@ impl LobbyState {
                     session.from,
                     session.kind
                 );
+                if accepted && session.kind == SESSION_KIND_TRADE {
+                    self.start_trade(session.from, session.to, now);
+                }
                 if accepted
                     && session.kind == SESSION_KIND_TEAM_UP
                     && let (Some(a), Some(b)) =
@@ -954,8 +973,9 @@ impl LobbyState {
         }
     }
 
-    /// A side went offline: the other side's request is cancelled.
+    /// A side went offline: the other side's request (or open trade) is cancelled.
     fn drop_sessions_of_missing_players(&mut self) {
+        self.abort_trades_of_missing_players();
         let (gone, kept): (Vec<Session>, Vec<Session>) = self
             .sessions
             .drain(..)
@@ -1013,9 +1033,10 @@ impl LobbyState {
 
     /// Persists the campaign atomically (write to a temp file, then rename),
     /// so a crash mid-write can never leave a truncated roster behind.
-    fn save_campaign_to_disk(&self) {
+    /// FALSE when a save directory is configured and the write failed.
+    fn save_campaign_to_disk(&self) -> bool {
         let Some(path) = self.save_file_path() else {
-            return;
+            return true;
         };
         if let Some(parent) = path.parent()
             && let Err(err) = fs::create_dir_all(parent)
@@ -1024,7 +1045,7 @@ impl LobbyState {
                 "[Room {}] Cannot create save dir {parent:?}: {err}",
                 room_code_to_string(&self.room_code)
             );
-            return;
+            return false;
         }
         let payload = CampaignSaveFile {
             room_code: room_code_to_string(&self.room_code),
@@ -1034,6 +1055,7 @@ impl LobbyState {
             expected_party_size: self.roster.len() as u8,
             roster: self.roster.clone(),
             teams: self.teams.clone(),
+            pending_trades: self.pending_trades.clone(),
         };
         let json = match serde_json::to_string_pretty(&payload) {
             Ok(json) => json,
@@ -1042,7 +1064,7 @@ impl LobbyState {
                     "[Room {}] Cannot serialize campaign: {err}",
                     payload.room_code
                 );
-                return;
+                return false;
             }
         };
         let tmp_path = path.with_extension("json.tmp");
@@ -1053,7 +1075,9 @@ impl LobbyState {
                 "[Room {}] Failed to save campaign to {path:?}: {err}",
                 payload.room_code
             );
+            return false;
         }
+        true
     }
 
     fn load_campaign_from_disk(&mut self) -> Result<(), CampaignLoadError> {
@@ -1072,6 +1096,7 @@ impl LobbyState {
         self.campaign_started = saved.campaign_started;
         self.roster = saved.roster;
         self.teams = saved.teams;
+        self.pending_trades = saved.pending_trades;
         self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
         info!(
             "[Room {}] Restored locked campaign from disk ({} registered trainers)",
@@ -1090,7 +1115,7 @@ impl LobbyState {
 
 /// Where absolute slot `other` appears in `recipient`'s remote_players
 /// (the broadcast lists every other slot in order, skipping the recipient).
-fn remote_slot_of(recipient: usize, other: usize) -> u8 {
+pub(crate) fn remote_slot_of(recipient: usize, other: usize) -> u8 {
     if other < recipient {
         other as u8
     } else {
@@ -1101,7 +1126,7 @@ fn remote_slot_of(recipient: usize, other: usize) -> u8 {
 /// A random, non-zero room identity. It only has to differ between rooms
 /// that reuse a code (the per-room save files are keyed by it), not resist
 /// guessing, so a per-process random hasher over the code and time is enough.
-fn new_room_uid(room_code: [u8; 6]) -> u32 {
+pub(crate) fn new_room_uid(room_code: [u8; 6]) -> u32 {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
@@ -1392,7 +1417,7 @@ impl RoomManager {
         Ok(self.rooms.get_mut(&code).expect("room inserted above"))
     }
 
-    pub fn tick_all_rooms(&mut self) -> Vec<(SocketAddr, [u8; SERVER_PACKET_SIZE])> {
+    pub fn tick_all_rooms(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
         let now = Instant::now();
         let idle_timeout = self.room_idle_timeout;
         let mut all_packets = Vec::new();

@@ -825,10 +825,12 @@ MapObjectRender_ReleaseUnused = 0x021F9FB0 | 1;
 BillboardObject_SetResource = 0x02023EC8 | 1;
 BillboardObject_SetSequence = 0x02023EE0 | 1;
 BillboardObject_SetSequenceFrame = 0x02023F40 | 1;
-/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them.
-   Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
-   the name is the address): fade, load the map, set the player walking. */
+/* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
+   the name is the address): fade, load the map, set the player walking.
+   Trades reload the map in place after the lead Pokemon changed (Milestone 3
+   Phase 2); also used by the debug warps. */
 sub_020538C0 = 0x020538C0 | 1;
+/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
 /* Overlay 01 (field). Source: pret asm/overlay_01_021F1AFC.s and
    asm/overlay_01_021FC66C.s labels. */
 Field_PlayerAvatar_OrrTransitionFlags = 0x021F1AFC | 1;

@@ -57,6 +57,22 @@ namespace CoopBridge
         public const uint ResetRequest = 0x1E5;      // u8   bridge: restart at the title to load SRAM
         public const uint SessionOut = 0x1F0;        // 8 B  rom: latched session op (seq, op, kind, pad, u32 target)
         public const int SessionOutSize = 8;
+        public const uint ExchangePtr = 0x1FC;       // u32  rom: address of the open CoopTradeExchange, 0 when none
+
+        // CoopTradeExchange (hg-engine coop_sync.h): header, then the ROM's
+        // `out` (forwarded to the relay) and `in` (written from the relay).
+        public const uint ExchangeMagic = 0x31585443; // "CTX1"
+        public const ushort ExchangeVersion = 1;
+        public const int ExchangeSize = 0x1F8;
+        public const int ExchangeOut = 0x008;
+        public const int TradeOutSize = 244;
+        public const int ExchangeIn = 0x0FC;
+        public const int TradeInSize = 252;
+        public const int TradeInStateMax = 4;
+        public const int TradeInReasonMax = 3;
+        public const int TradeInPeerSlot = 5;
+        public const uint MainRamBase = 0x02000000;  // ARM9 address of Main RAM offset 0
+        public const uint MainRamSize = 0x00400000;
 
         // CoopDiagnostics field offsets (relative to Diag)
         public const int DgFieldEntryCalls = 0x00;   // u32
@@ -153,6 +169,7 @@ namespace CoopBridge
         public const int GateSessionSeq = 0x15;
         public const int GateSessionReason = 0x16;
         public const int GateSessionSize = 7;
+        public const int GateTradePending = 0x17;
         public const int MaxSessionState = 7;
         public const int MaxSessionKind = 3;
         public const int MaxSessionReason = 5;
@@ -169,7 +186,7 @@ namespace CoopBridge
     internal static class Wire
     {
         public const ushort ProtocolVersion = 5;
-        public const int ClientPacketSize = 120;
+        public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
         public const int ChallengePacketSize = 24; // header + cookie (u64 @16)
@@ -399,6 +416,11 @@ namespace CoopBridge
         private readonly byte[] _localPlayer = new byte[Mailbox.PlayerStateSize];
         // The ROM's latched session request (trade / battle / team up), forwarded as is.
         private readonly byte[] _sessionOut = new byte[Mailbox.SessionOutSize];
+        // The ROM's side of an open trade (CoopTradeOut), forwarded while
+        // _tradeOutValid; read on the emulator thread, sent from either thread.
+        private readonly object _tradeLock = new object();
+        private readonly byte[] _tradeOut = new byte[Mailbox.TradeOutSize];
+        private bool _tradeOutValid;
         private ushort _badgeMaskLocal;
         private uint _heartbeatRom;
         // Bounds published by the ROM (mailbox v3), used to sanitize relay data.
@@ -1121,7 +1143,14 @@ namespace CoopBridge
             Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
             Buffer.BlockCopy(_sessionOut, 0, tx, 112, Mailbox.SessionOutSize);
 
-            return tx;
+            lock (_tradeLock)
+            {
+                if (!_tradeOutValid) return tx;
+                byte[] full = new byte[Wire.ClientPacketSize + Mailbox.TradeOutSize];
+                Buffer.BlockCopy(tx, 0, full, 0, Wire.ClientPacketSize);
+                Buffer.BlockCopy(_tradeOut, 0, full, Wire.ClientPacketSize, Mailbox.TradeOutSize);
+                return full;
+            }
         }
 
         private static string MapServerStatusToError(byte code, string room)
@@ -1259,6 +1288,55 @@ namespace CoopBridge
             var session = _memoryApi.ReadByteRange(mb + Mailbox.SessionOut, Mailbox.SessionOutSize, MemoryDomain);
             if (session.Count == Mailbox.SessionOutSize)
                 for (int i = 0; i < Mailbox.SessionOutSize; i++) _sessionOut[i] = session[i];
+
+            uint? exchange = FindExchange(mb);
+            var tradeOut = exchange is uint ex
+                ? _memoryApi.ReadByteRange(ex + Mailbox.ExchangeOut, Mailbox.TradeOutSize, MemoryDomain)
+                : null;
+            lock (_tradeLock)
+            {
+                _tradeOutValid = tradeOut != null && tradeOut.Count == Mailbox.TradeOutSize;
+                if (_tradeOutValid)
+                    for (int i = 0; i < Mailbox.TradeOutSize; i++) _tradeOut[i] = tradeOut![i];
+            }
+        }
+
+        /// <summary>
+        /// Main RAM offset of the ROM's open CoopTradeExchange, or null. The
+        /// pointer comes from the game, so it is range-checked and the block's
+        /// header verified before anything is read from or written to it.
+        /// </summary>
+        private uint? FindExchange(uint mb)
+        {
+            uint ptr = _memoryApi!.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain);
+            if (ptr < Mailbox.MainRamBase || ptr >= Mailbox.MainRamBase + Mailbox.MainRamSize - Mailbox.ExchangeSize || (ptr & 3) != 0)
+                return null;
+            uint offset = ptr - Mailbox.MainRamBase;
+            if (_memoryApi.ReadU32(offset, MemoryDomain) != Mailbox.ExchangeMagic
+                || _memoryApi.ReadU16(offset + 4, MemoryDomain) != Mailbox.ExchangeVersion
+                || _memoryApi.ReadU16(offset + 6, MemoryDomain) != Mailbox.ExchangeSize)
+                return null;
+            return offset;
+        }
+
+        /// <summary>
+        /// Copies the relay's trade trailer (or "nothing": all zeros) into the
+        /// ROM's open exchange block. Out-of-range header values drop the
+        /// trailer; the Pokemon bytes are validated by the ROM itself.
+        /// </summary>
+        private void WriteTradeIn(uint mb, byte[] pkt)
+        {
+            if (FindExchange(mb) is not uint ex) return;
+            byte[] tradeIn = new byte[Mailbox.TradeInSize];
+            if (pkt.Length >= Wire.ServerPacketSize + Mailbox.TradeInSize)
+            {
+                Buffer.BlockCopy(pkt, Wire.ServerPacketSize, tradeIn, 0, Mailbox.TradeInSize);
+                byte peer = tradeIn[Mailbox.TradeInPeerSlot];
+                bool ok = tradeIn[0] <= Mailbox.TradeInStateMax && tradeIn[1] <= Mailbox.TradeInReasonMax
+                    && (peer < Mailbox.RemoteSlots || peer == Mailbox.PlayerIdNone);
+                if (!ok) Array.Clear(tradeIn, 0, tradeIn.Length);
+            }
+            _memoryApi!.WriteByteRange(ex + Mailbox.ExchangeIn, tradeIn, MemoryDomain);
         }
 
         private void ProcessLatestServerPacket(uint mb)
@@ -1308,6 +1386,7 @@ namespace CoopBridge
             _memoryApi.WriteU8(mb + Mailbox.ActivePlayersMask, (byte)(pkt[7] & 0x3F), MemoryDomain);
             _memoryApi.WriteU32(mb + Mailbox.ServerTick, BitConverter.ToUInt32(pkt, 8), MemoryDomain);
             _memoryApi.WriteU8(mb + Mailbox.IsConnectedToRoom, 1, MemoryDomain);
+            WriteTradeIn(mb, pkt);
             _clearPayloadPending = true; // clear remote state once we disconnect
         }
 
@@ -1374,6 +1453,7 @@ namespace CoopBridge
                 && p[g + Mailbox.GateSessionKind] <= Mailbox.MaxSessionKind
                 && SlotOk(p[g + Mailbox.GateSessionPeer])
                 && p[g + Mailbox.GateSessionReason] <= Mailbox.MaxSessionReason;
+            if (p[g + Mailbox.GateTradePending] > 1) p[g + Mailbox.GateTradePending] = 1;
             if (!sessionOk)
             {
                 Array.Clear(p, g + Mailbox.GateTeamPartner, Mailbox.GateSessionSize);

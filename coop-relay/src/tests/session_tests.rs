@@ -18,14 +18,14 @@ use crate::protocol::{
     TEAMED_SELF_BIT,
 };
 
-const TRAINERS: [u32; 3] = [0x1111, 0x2222, 0x3333];
+pub(crate) const TRAINERS: [u32; 3] = [0x1111, 0x2222, 0x3333];
 
-fn addr(i: usize) -> SocketAddr {
+pub(crate) fn addr(i: usize) -> SocketAddr {
     format!("127.0.0.1:{}", 53000 + i).parse().unwrap()
 }
 
 /// One player's packet in the field, carrying a session operation.
-fn packet(i: usize, session: SessionOut, started: bool) -> ClientToServerPacket {
+pub(crate) fn packet(i: usize, session: SessionOut, started: bool) -> ClientToServerPacket {
     let mut pkt = make_packet(
         *b"TEST01",
         ROOM_ACTION_SYNC,
@@ -48,11 +48,11 @@ fn packet(i: usize, session: SessionOut, started: bool) -> ClientToServerPacket 
 }
 
 /// A room of `n` players; `start` locks the roster first (all ready in the bedroom).
-fn room(n: usize, start: bool) -> LobbyState {
+pub(crate) fn room(n: usize, start: bool) -> LobbyState {
     room_in(n, start, None)
 }
 
-fn room_in(n: usize, start: bool, save_dir: Option<PathBuf>) -> LobbyState {
+pub(crate) fn room_in(n: usize, start: bool, save_dir: Option<PathBuf>) -> LobbyState {
     let mut lobby = LobbyState::with_room(
         *b"TEST01",
         0,
@@ -74,7 +74,7 @@ fn room_in(n: usize, start: bool, save_dir: Option<PathBuf>) -> LobbyState {
     lobby
 }
 
-fn op(lobby: &mut LobbyState, i: usize, seq: u8, op: u8, kind: u8, target: usize) {
+pub(crate) fn op(lobby: &mut LobbyState, i: usize, seq: u8, op: u8, kind: u8, target: usize) {
     let session = SessionOut {
         seq,
         op,
@@ -88,7 +88,7 @@ fn op(lobby: &mut LobbyState, i: usize, seq: u8, op: u8, kind: u8, target: usize
 
 /// Gates bytes 16..24 for player i: partner slot, teamed mask, state, kind,
 /// peer slot, seq, reason, pad.
-fn gates(lobby: &mut LobbyState, i: usize) -> [u8; 8] {
+pub(crate) fn gates(lobby: &mut LobbyState, i: usize) -> [u8; 8] {
     let batch = lobby.build_broadcast_batch();
     let (_, buf) = batch
         .iter()
@@ -121,11 +121,18 @@ fn test_trade_request_accept_and_decline() {
     op(&mut lobby, 1, 1, SESSION_OP_ACCEPT, 0, 0);
     assert_eq!(gates(&mut lobby, 0)[2], SESSION_STATE_ACCEPTED);
     assert_eq!(gates(&mut lobby, 1)[2], SESSION_STATE_ACCEPTED);
+    // The accepted trade is open (gates.trade_pending), so both are busy.
+    assert_eq!(gates(&mut lobby, 0)[7], 1);
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 1);
+    assert_eq!(gates(&mut lobby, 0)[6], SESSION_REASON_BUSY);
 
-    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
-    op(&mut lobby, 1, 2, SESSION_OP_DECLINE, 0, 0);
+    // Declining, in a room without an open trade.
+    let mut lobby = room(2, true);
+    op(&mut lobby, 0, 1, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 1);
+    op(&mut lobby, 1, 1, SESSION_OP_DECLINE, 0, 0);
     assert_eq!(gates(&mut lobby, 0)[2], SESSION_STATE_DECLINED);
     assert_eq!(gates(&mut lobby, 1)[2], SESSION_STATE_DECLINED);
+    assert_eq!(gates(&mut lobby, 0)[7], 0, "no trade for a battle request");
 }
 
 #[test]

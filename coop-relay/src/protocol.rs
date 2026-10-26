@@ -61,6 +61,129 @@ pub const SESSION_REASON_ALREADY_TEAMED: u8 = 4;
 pub const SESSION_REASON_INVALID: u8 = 5; // unknown kind, or a request to oneself
 
 pub const NO_SLOT: u8 = 0xFF;
+
+// Trading (docs/MILESTONE3_PLAN.md, Phase 2). While the ROM has a trade open,
+// the client packet carries a trailer (its CoopTradeOut, bytes 120..364);
+// while the relay holds a trade for a recipient, the server packet carries
+// one (its CoopTradeIn, bytes 360..612) and gates.trade_pending is 1. Layouts:
+// hg-engine/include/coop_sync.h.
+pub const TRADE_MON_SIZE: usize = 0xEC;
+pub const TRADE_OUT_SIZE: usize = 8 + TRADE_MON_SIZE; // 244
+pub const TRADE_IN_SIZE: usize = 16 + TRADE_MON_SIZE; // 252
+
+pub const TRADE_OUT_NONE: u8 = 0;
+pub const TRADE_OUT_PICKING: u8 = 1;
+pub const TRADE_OUT_OFFERED: u8 = 2;
+pub const TRADE_OUT_CONFIRMED: u8 = 3;
+pub const TRADE_OUT_CANCEL: u8 = 4;
+pub const TRADE_OUT_DONE: u8 = 5;
+
+pub const TRADE_IN_WAITING: u8 = 1;
+pub const TRADE_IN_OFFERED: u8 = 2;
+pub const TRADE_IN_COMMIT: u8 = 3;
+pub const TRADE_IN_ABORTED: u8 = 4;
+
+pub const TRADE_ABORT_CANCELLED: u8 = 1;
+pub const TRADE_ABORT_LEFT: u8 = 2;
+pub const TRADE_ABORT_TIMEOUT: u8 = 3;
+
+/// The ROM's side of an open trade (client trailer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TradeOut {
+    pub state: u8,
+    pub offer_id: u8,
+    pub confirm_id: u8,
+    pub trade_id: u32,
+    pub mon: [u8; TRADE_MON_SIZE],
+}
+
+impl TradeOut {
+    pub fn encode_le(&self, out: &mut [u8]) {
+        out[0] = self.state;
+        out[1] = self.offer_id;
+        out[2] = self.confirm_id;
+        out[3] = 0;
+        out[4..8].copy_from_slice(&self.trade_id.to_le_bytes());
+        out[8..8 + TRADE_MON_SIZE].copy_from_slice(&self.mon);
+    }
+
+    pub fn decode_le(buf: &[u8]) -> Self {
+        let mut mon = [0u8; TRADE_MON_SIZE];
+        mon.copy_from_slice(&buf[8..8 + TRADE_MON_SIZE]);
+        Self {
+            state: buf[0],
+            offer_id: buf[1],
+            confirm_id: buf[2],
+            trade_id: u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]),
+            mon,
+        }
+    }
+}
+
+/// The relay's view of a recipient's trade (server trailer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TradeIn {
+    pub state: u8,
+    pub reason: u8,
+    pub partner_offer_id: u8,
+    pub my_offer_id: u8,
+    pub partner_confirmed: u8,
+    pub peer_slot: u8,
+    pub trade_id: u32,
+    pub give_pid: u32,
+    pub mon: [u8; TRADE_MON_SIZE],
+}
+
+impl TradeIn {
+    pub fn empty(state: u8) -> Self {
+        Self {
+            state,
+            reason: 0,
+            partner_offer_id: 0,
+            my_offer_id: 0,
+            partner_confirmed: 0,
+            peer_slot: NO_SLOT,
+            trade_id: 0,
+            give_pid: 0,
+            mon: [0; TRADE_MON_SIZE],
+        }
+    }
+
+    pub fn encode_le(&self, out: &mut [u8]) {
+        out[0] = self.state;
+        out[1] = self.reason;
+        out[2] = self.partner_offer_id;
+        out[3] = self.my_offer_id;
+        out[4] = self.partner_confirmed;
+        out[5] = self.peer_slot;
+        out[6] = 0;
+        out[7] = 0;
+        out[8..12].copy_from_slice(&self.trade_id.to_le_bytes());
+        out[12..16].copy_from_slice(&self.give_pid.to_le_bytes());
+        out[16..16 + TRADE_MON_SIZE].copy_from_slice(&self.mon);
+    }
+
+    pub fn decode_le(buf: &[u8]) -> Self {
+        let mut mon = [0u8; TRADE_MON_SIZE];
+        mon.copy_from_slice(&buf[16..16 + TRADE_MON_SIZE]);
+        Self {
+            state: buf[0],
+            reason: buf[1],
+            partner_offer_id: buf[2],
+            my_offer_id: buf[3],
+            partner_confirmed: buf[4],
+            peer_slot: buf[5],
+            trade_id: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
+            give_pid: u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
+            mon,
+        }
+    }
+}
+
+/// Personality value of an encrypted party Pokemon (stored in the clear at 0).
+pub fn mon_pid(mon: &[u8; TRADE_MON_SIZE]) -> u32 {
+    u32::from_le_bytes([mon[0], mon[1], mon[2], mon[3]])
+}
 /// `teamed_mask` bit for "the recipient is in a team" (bits 0..4: remote slots).
 pub const TEAMED_SELF_BIT: u8 = 0x80;
 
@@ -296,6 +419,7 @@ pub struct ClientToServerPacket {
     pub cookie: u64,               // 96..104 (0 until the relay issues one)
     pub player_secret: u64,        // 104..112 (random per bridge install, never 0)
     pub session: SessionOut,       // 112..120 (seq, op, kind, pad, u32 target trainer ID)
+    pub trade: Option<TradeOut>,   // 120..364 while the ROM has a trade open
 }
 
 impl ClientToServerPacket {
@@ -320,6 +444,17 @@ impl ClientToServerPacket {
         buf[113] = self.session.op;
         buf[114] = self.session.kind;
         buf[116..120].copy_from_slice(&self.session.target_trainer.to_le_bytes());
+        buf
+    }
+
+    /// The fixed packet plus the trade trailer when there is one.
+    pub fn encode_full(&self) -> Vec<u8> {
+        let mut buf = self.encode_le().to_vec();
+        if let Some(trade) = &self.trade {
+            let mut trailer = [0u8; TRADE_OUT_SIZE];
+            trade.encode_le(&mut trailer);
+            buf.extend_from_slice(&trailer);
+        }
         buf
     }
 
@@ -366,6 +501,8 @@ impl ClientToServerPacket {
                 kind: buf[114],
                 target_trainer: u32::from_le_bytes([buf[116], buf[117], buf[118], buf[119]]),
             },
+            trade: (buf.len() >= CLIENT_PACKET_SIZE + TRADE_OUT_SIZE)
+                .then(|| TradeOut::decode_le(&buf[CLIENT_PACKET_SIZE..])),
         })
     }
 }
@@ -400,7 +537,7 @@ pub struct ServerToClientPacket {
     pub session_peer_slot: u8, // +20: the other side's remote slot (NO_SLOT: gone)
     pub session_seq: u8,       // +21: bumped on every change of the four fields above
     pub session_reason: u8,    // +22: SESSION_REASON_* when refused
-    pub gates_pad: u8,         // +23
+    pub trade_pending: u8,     // +23: 1 while the relay holds a trade for the recipient
 }
 
 impl ServerToClientPacket {
@@ -438,8 +575,19 @@ impl ServerToClientPacket {
         buf[gates_base + 20] = self.session_peer_slot;
         buf[gates_base + 21] = self.session_seq;
         buf[gates_base + 22] = self.session_reason;
-        buf[gates_base + 23] = self.gates_pad;
+        buf[gates_base + 23] = self.trade_pending;
 
+        buf
+    }
+
+    /// The fixed packet plus the recipient's trade trailer when there is one.
+    pub fn encode_with_trade(&self, trade: Option<&TradeIn>) -> Vec<u8> {
+        let mut buf = self.encode_le().to_vec();
+        if let Some(trade) = trade {
+            let mut trailer = [0u8; TRADE_IN_SIZE];
+            trade.encode_le(&mut trailer);
+            buf.extend_from_slice(&trailer);
+        }
         buf
     }
 
@@ -531,6 +679,7 @@ mod tests {
                 kind: SESSION_KIND_TEAM_UP,
                 target_trainer: 0xA1B2_C3D4,
             },
+            trade: None,
         };
 
         let bytes = pkt.encode_le();
@@ -542,6 +691,52 @@ mod tests {
         assert_eq!(&bytes[116..120], &[0xD4, 0xC3, 0xB2, 0xA1]);
         let decoded = ClientToServerPacket::decode_le(&bytes).expect("valid decode");
         assert_eq!(pkt, decoded);
+
+        // With a trade open, the CoopTradeOut trailer follows (coop_sync.h).
+        let mut mon = [0u8; TRADE_MON_SIZE];
+        mon[0..4].copy_from_slice(&0x1234_5678u32.to_le_bytes());
+        mon[TRADE_MON_SIZE - 1] = 0xEE;
+        let with_trade = ClientToServerPacket {
+            trade: Some(TradeOut {
+                state: TRADE_OUT_CONFIRMED,
+                offer_id: 2,
+                confirm_id: 3,
+                trade_id: 0xAABB_CCDD,
+                mon,
+            }),
+            ..pkt
+        };
+        let full = with_trade.encode_full();
+        assert_eq!(full.len(), CLIENT_PACKET_SIZE + TRADE_OUT_SIZE);
+        assert_eq!(
+            &full[120..128],
+            &[TRADE_OUT_CONFIRMED, 2, 3, 0, 0xDD, 0xCC, 0xBB, 0xAA]
+        );
+        assert_eq!(full[128..132], 0x1234_5678u32.to_le_bytes());
+        let decoded = ClientToServerPacket::decode_le(&full).expect("valid decode");
+        assert_eq!(decoded, with_trade);
+        assert_eq!(mon_pid(&decoded.trade.unwrap().mon), 0x1234_5678);
+    }
+
+    #[test]
+    fn test_trade_in_trailer_layout() {
+        let mut t = TradeIn::empty(TRADE_IN_COMMIT);
+        t.reason = 0;
+        t.partner_offer_id = 4;
+        t.my_offer_id = 5;
+        t.partner_confirmed = 1;
+        t.peer_slot = 2;
+        t.trade_id = 0x0102_0304;
+        t.give_pid = 0xA0B0_C0D0;
+        t.mon[0] = 0x77;
+        let mut buf = [0u8; TRADE_IN_SIZE];
+        t.encode_le(&mut buf);
+        // CoopTradeIn: state, reason, partner_offer_id, my_offer_id,
+        // partner_confirmed, peer_slot, pad[2], trade_id @8, give_pid @12, mon @16.
+        assert_eq!(&buf[0..8], &[TRADE_IN_COMMIT, 0, 4, 5, 1, 2, 0, 0]);
+        assert_eq!(&buf[8..16], &[4, 3, 2, 1, 0xD0, 0xC0, 0xB0, 0xA0]);
+        assert_eq!(buf[16], 0x77);
+        assert_eq!(TradeIn::decode_le(&buf), t);
     }
 
     #[test]
@@ -615,7 +810,7 @@ mod tests {
             session_peer_slot: 3,
             session_seq: 7,
             session_reason: SESSION_REASON_NONE,
-            gates_pad: 0,
+            trade_pending: 0,
         };
         let buf = pkt.encode_le();
         let gates = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;

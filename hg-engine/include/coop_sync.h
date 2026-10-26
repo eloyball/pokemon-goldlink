@@ -105,12 +105,15 @@ enum CoopDebugResult
     COOP_DEBUG_RESULT_REJECTED = 8,   // Pokemon import: failed validation (checksum, species, level, egg)
 };
 
+// The game's PartyPokemon size. hg-engine's struct is 0xF0 (a u64 aligns it):
+// copy this many bytes, never sizeof, and use Party_GetMonByIndex.
+#define COOP_PARTY_MON_SIZE 0xEC
+
 #if COOP_DEBUG_TOOLS
 // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md; Milestone 3 Phase 0 probe A): one
 // Pokemon in transit, exactly as the party stores it (encrypted, 236 bytes),
 // plus what the ROM read from it (decrypted reads). Resident (Overlay 129
 // .data); probes find it through build/rom_gen.ld.
-#define COOP_PARTY_MON_SIZE 0xEC // struct PartyPokemon (hg-engine include/pokemon.h)
 struct CoopDebugMonBuffer
 {
     u8  mon[COOP_PARTY_MON_SIZE];
@@ -328,6 +331,76 @@ struct CoopSessionOut
     u32 target_trainer; // 0x04 trainer ID of the player asked (REQUEST only)
 };
 
+// Trading (docs/MILESTONE3_PLAN.md, Phase 2). While a trade task runs, the
+// ROM owns a CoopTradeExchange on the field heap and publishes its address in
+// CoopCommBlock.exchange_ptr. The bridge appends `out` to every client packet
+// (bytes 120..364) and copies the relay's per-recipient trailer (server packet
+// bytes 360..612) into `in`, or clears `in` when the relay sent none. Must
+// match coop-relay/src/protocol.rs TRADE_*.
+#define COOP_EXCHANGE_MAGIC   0x31585443 // "CTX1"
+#define COOP_EXCHANGE_VERSION 1
+
+enum CoopTradeOutState
+{
+    COOP_TRADE_OUT_NONE = 0,      // block open, nothing chosen yet
+    COOP_TRADE_OUT_PICKING = 1,
+    COOP_TRADE_OUT_OFFERED = 2,   // mon holds my offer (offer_id)
+    COOP_TRADE_OUT_CONFIRMED = 3, // I accept the partner's offer confirm_id
+    COOP_TRADE_OUT_CANCEL = 4,    // withdraw, or acknowledge an abort
+    COOP_TRADE_OUT_DONE = 5,      // trade_id applied and saved
+};
+
+enum CoopTradeInState
+{
+    COOP_TRADE_IN_NONE = 0,       // the relay holds no trade for me
+    COOP_TRADE_IN_WAITING = 1,    // trade open, the partner has not offered
+    COOP_TRADE_IN_OFFERED = 2,    // mon holds the partner's offer (partner_offer_id)
+    COOP_TRADE_IN_COMMIT = 3,     // swap now: give give_pid, receive mon (also after a crash)
+    COOP_TRADE_IN_ABORTED = 4,    // reason
+    COOP_TRADE_IN_STATE_MAX = 4,
+};
+
+enum CoopTradeAbortReason
+{
+    COOP_TRADE_ABORT_NONE = 0,
+    COOP_TRADE_ABORT_CANCELLED = 1, // the partner cancelled (or rejected my Pokemon)
+    COOP_TRADE_ABORT_LEFT = 2,      // the partner disconnected
+    COOP_TRADE_ABORT_TIMEOUT = 3,
+};
+
+struct CoopTradeOut // ROM -> relay, 244 bytes
+{
+    u8  state;      // 0x00 enum CoopTradeOutState
+    u8  offer_id;   // 0x01 bumped for every new offer
+    u8  confirm_id; // 0x02 CONFIRMED: the partner_offer_id I accept
+    u8  pad;        // 0x03
+    u32 trade_id;   // 0x04 DONE: the commit applied
+    u8  mon[COOP_PARTY_MON_SIZE]; // 0x08 my offer, encrypted as in the party
+};
+
+struct CoopTradeIn // relay -> ROM, 252 bytes
+{
+    u8  state;            // 0x00 enum CoopTradeInState
+    u8  reason;           // 0x01 enum CoopTradeAbortReason
+    u8  partner_offer_id; // 0x02
+    u8  my_offer_id;      // 0x03 the offer of mine the relay holds
+    u8  partner_confirmed;// 0x04 the partner accepted my current offer
+    u8  peer_slot;        // 0x05 the partner's remote slot (COOP_SLOT_NONE: offline)
+    u8  pad[2];           // 0x06
+    u32 trade_id;         // 0x08 COMMIT
+    u32 give_pid;         // 0x0C COMMIT: personality of the Pokemon I give
+    u8  mon[COOP_PARTY_MON_SIZE]; // 0x10 OFFERED: the partner's offer; COMMIT: what I receive
+};
+
+struct CoopTradeExchange
+{
+    u32 magic;               // 0x000 COOP_EXCHANGE_MAGIC
+    u16 version;             // 0x004 COOP_EXCHANGE_VERSION
+    u16 size;                // 0x006 sizeof(struct CoopTradeExchange)
+    struct CoopTradeOut out; // 0x008 written by the ROM
+    struct CoopTradeIn in;   // 0x0FC written by the bridge
+};
+
 // 24-byte progression gates block (relay -> ROM).
 struct CoopProgressionGates
 {
@@ -349,7 +422,7 @@ struct CoopProgressionGates
     u8  session_peer_slot;     // 0x14 the other side's remote slot; COOP_SLOT_NONE: gone
     u8  session_seq;           // 0x15 bumped on every change of the session fields
     u8  session_reason;        // 0x16 enum CoopSessionReason (REFUSED)
-    u8  pad17;                 // 0x17
+    u8  trade_pending;         // 0x17 1: the relay holds a trade for me (open, to apply, or an abort to read)
 };
 
 // 512-byte mailbox. Offsets are frozen; never reorder fields.
@@ -397,7 +470,9 @@ struct CoopCommBlock
     u8  track_field_hidden;                                     // 0x1EF ROM private: the field was covered (menu, battle, app) since the last field tick
     struct CoopSessionOut session_out;                          // 0x1F0 ROM: latched session operation (Milestone 3)
     u8  track_session_answered;                                 // 0x1F8 ROM private: session_seq of the pending request already prompted (0: none pending)
-    u8  reserved[0x200 - 0x1F9];                                // 0x1F9..0x1FF
+    u8  track_trade_reload;                                     // 0x1F9 ROM private: reload the map once free (the lead Pokemon was traded)
+    u8  reserved[2];                                            // 0x1FA
+    u32 exchange_ptr;                                           // 0x1FC ROM: address of the open CoopTradeExchange, 0 when none
 };
 
 #define COOP_ASSERT_OFFSET(type, field, off) \
@@ -408,6 +483,9 @@ _Static_assert(sizeof(struct CoopProgressionGates) == 24, "CoopProgressionGates 
 _Static_assert(sizeof(struct CoopCommBlock) == 512, "CoopCommBlock must be 512 bytes");
 _Static_assert(sizeof(struct CoopDiagnostics) == 24, "CoopDiagnostics must be 24 bytes");
 _Static_assert(sizeof(struct CoopSessionOut) == 8, "CoopSessionOut must be 8 bytes");
+_Static_assert(sizeof(struct CoopTradeOut) == 244, "CoopTradeOut must be 244 bytes");
+_Static_assert(sizeof(struct CoopTradeIn) == 252, "CoopTradeIn must be 252 bytes");
+_Static_assert(sizeof(struct CoopTradeExchange) == 0x1F8, "CoopTradeExchange must be 504 bytes");
 
 COOP_ASSERT_OFFSET(CoopPlayerState, matrix_id, 0x02);
 COOP_ASSERT_OFFSET(CoopPlayerState, height, 0x08);
@@ -429,6 +507,12 @@ COOP_ASSERT_OFFSET(CoopProgressionGates, session_state, 0x12);
 COOP_ASSERT_OFFSET(CoopProgressionGates, session_seq, 0x15);
 COOP_ASSERT_OFFSET(CoopProgressionGates, session_reason, 0x16);
 COOP_ASSERT_OFFSET(CoopSessionOut, target_trainer, 0x04);
+COOP_ASSERT_OFFSET(CoopProgressionGates, trade_pending, 0x17);
+COOP_ASSERT_OFFSET(CoopTradeOut, mon, 0x08);
+COOP_ASSERT_OFFSET(CoopTradeIn, trade_id, 0x08);
+COOP_ASSERT_OFFSET(CoopTradeIn, mon, 0x10);
+COOP_ASSERT_OFFSET(CoopTradeExchange, out, 0x008);
+COOP_ASSERT_OFFSET(CoopTradeExchange, in, 0x0FC);
 COOP_ASSERT_OFFSET(CoopCommBlock, assigned_player_id, 0x006);
 COOP_ASSERT_OFFSET(CoopCommBlock, heartbeat_rom, 0x008);
 COOP_ASSERT_OFFSET(CoopCommBlock, server_tick, 0x00C);
@@ -459,7 +543,8 @@ COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_shiny, 0x1EE);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_field_hidden, 0x1EF);
 COOP_ASSERT_OFFSET(CoopCommBlock, session_out, 0x1F0);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_session_answered, 0x1F8);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1F9);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_trade_reload, 0x1F9);
+COOP_ASSERT_OFFSET(CoopCommBlock, exchange_ptr, 0x1FC);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
 
