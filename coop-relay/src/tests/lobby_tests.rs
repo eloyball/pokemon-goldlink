@@ -91,6 +91,7 @@ pub(crate) fn make_packet(
         player_secret: secret_for(trainer_id),
         session: SessionOut::default(),
         trade: None,
+        link: None,
     }
 }
 
@@ -212,7 +213,7 @@ fn test_safeguards_room_code_create_join_and_open_admission() {
     midgame_join.local_player.save_status = SAVE_STATUS_IN_PROGRESS;
     midgame_join.local_player.client_ready = 0;
     assert_eq!(
-        send(&mut manager, second_addr, midgame_join),
+        send(&mut manager, second_addr, midgame_join.clone()),
         Err(ROOM_STATUS_ERR_MIDGAME_SAVE)
     );
 
@@ -492,8 +493,8 @@ fn test_inactive_player_is_forwarded_frozen() {
 
     let a = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 0, 0x1, 2, 28, 5, 5, 155, 0);
     let mut b = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 1, 0x2, 2, 28, 6, 5, 158, 0);
-    assert_eq!(lobby.handle_client_packet(p0, a), Ok(0));
-    assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
+    assert_eq!(lobby.handle_client_packet(p0, a.clone()), Ok(0));
+    assert_eq!(lobby.handle_client_packet(p1, b.clone()), Ok(1));
 
     // Both in the field: P0 receives P1's state verbatim (remote slot 0 = player 1).
     let is_active = 16 + 0x10;
@@ -508,7 +509,7 @@ fn test_inactive_player_is_forwarded_frozen() {
     b.local_player.is_active = 0;
     b.local_player.activity = 2;
     b.sequence = 2;
-    assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
+    assert_eq!(lobby.handle_client_packet(p1, b.clone()), Ok(1));
     let batch = lobby.build_broadcast_batch();
     let p0_pkt = &batch.iter().find(|(addr, _)| *addr == p0).unwrap().1;
     assert_eq!(p0_pkt[is_active], 0);
@@ -743,13 +744,14 @@ fn test_cookie_handshake_is_required_and_bound_to_address() {
         0,
         0,
     );
-    let Err(Rejection::Challenge(cookie)) = manager.handle_client_packet(real, create) else {
+    let Err(Rejection::Challenge(cookie)) = manager.handle_client_packet(real, create.clone())
+    else {
         panic!("expected a challenge");
     };
     assert_eq!(manager.room_count(), 0);
 
     // A cookie issued to one address is useless from another (spoofed) one.
-    let mut forged = create;
+    let mut forged = create.clone();
     forged.cookie = cookie;
     assert!(matches!(
         manager.handle_client_packet(spoofed, forged),
@@ -832,7 +834,7 @@ fn test_failed_admissions_are_rate_limited_per_ip() {
         0,
     );
     assert_eq!(
-        send(&mut manager, guesser, join),
+        send(&mut manager, guesser, join.clone()),
         Err(ROOM_STATUS_ERR_RATE_LIMITED)
     );
     // Other IPs are unaffected.
@@ -968,7 +970,7 @@ fn test_title_screen_guest_is_displaced_by_slot_owner() {
         0,
     );
     title.player_secret = 0x6E57;
-    assert_eq!(send(&mut manager, guest, title), Ok(1));
+    assert_eq!(send(&mut manager, guest, title.clone()), Ok(1));
 
     // The owner of slot 1 arrives at the title screen (secret only) and gets it back.
     let p1_new: SocketAddr = "127.0.0.1:52888".parse().unwrap();
@@ -1026,7 +1028,7 @@ fn test_legacy_roster_without_secret_binds_first_claimant() {
         0,
         0,
     );
-    assert_eq!(send(&mut manager, first, claim), Ok(0));
+    assert_eq!(send(&mut manager, first, claim.clone()), Ok(0));
     let saved = fs::read_to_string(format!("{test_dir}/OLDIE1.json")).unwrap();
     assert!(saved.contains(&format!("\"player_secret\": {}", secret_for(0x1111))));
 
@@ -1062,7 +1064,7 @@ fn test_trainer_of_a_locked_campaign_cannot_join_another_room() {
         0,
         0,
     );
-    assert_eq!(send(&mut manager, a, host), Ok(0));
+    assert_eq!(send(&mut manager, a, host.clone()), Ok(0));
     let guest = make_packet(
         *b"ROOMA1",
         ROOM_ACTION_JOIN,
@@ -1220,8 +1222,8 @@ fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
     // Both fresh in the bedroom: the roster locks.
     let a = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 0, 0x10, 2, 4, 1, 1, 0, 0);
     let b = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 1, 0x20, 2, 4, 2, 1, 0, 0);
-    assert_eq!(lobby.handle_client_packet(p0, a), Ok(0));
-    assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
+    assert_eq!(lobby.handle_client_packet(p0, a.clone()), Ok(0));
+    assert_eq!(lobby.handle_client_packet(p1, b.clone()), Ok(1));
     assert!(lobby.is_campaign_started());
 
     // Equal badges, different maps: both may challenge.
@@ -1255,22 +1257,22 @@ fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
     b.local_player.save_status = SAVE_STATUS_IN_PROGRESS;
     a.sequence = 2;
     b.sequence = 2;
-    lobby.handle_client_packet(p0, a).unwrap();
-    lobby.handle_client_packet(p1, b).unwrap();
+    lobby.handle_client_packet(p0, a.clone()).unwrap();
+    lobby.handle_client_packet(p1, b.clone()).unwrap();
     let batch = lobby.build_broadcast_batch();
     assert_eq!((gate_for(&batch, p0), gate_for(&batch, p1)), (1, 1));
 
     // P0 wins the next badge: P0 now waits for P1, while P1 may still challenge.
     a.badge_mask_local = 0b11;
     a.sequence = 3;
-    lobby.handle_client_packet(p0, a).unwrap();
+    lobby.handle_client_packet(p0, a.clone()).unwrap();
     let batch = lobby.build_broadcast_batch();
     assert_eq!((gate_for(&batch, p0), gate_for(&batch, p1)), (0, 1));
 
     // P1 lets the others go ahead: P0's gate opens.
     b.allow_ahead = 1;
     b.sequence = 3;
-    lobby.handle_client_packet(p1, b).unwrap();
+    lobby.handle_client_packet(p1, b.clone()).unwrap();
     let batch = lobby.build_broadcast_batch();
     assert_eq!(gate_for(&batch, p0), 1);
 
@@ -1278,7 +1280,7 @@ fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
     b.allow_ahead = 0;
     b.local_player.map_id = 135;
     b.sequence = 4;
-    lobby.handle_client_packet(p1, b).unwrap();
+    lobby.handle_client_packet(p1, b.clone()).unwrap();
     let batch = lobby.build_broadcast_batch();
     assert_eq!(gate_for(&batch, p0), 1);
 }

@@ -185,8 +185,8 @@ namespace CoopBridge
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 5;
-        public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open
+        public const ushort ProtocolVersion = 6;
+        public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open, + a link trailer (CoopLink)
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
         public const int ChallengePacketSize = 24; // header + cookie (u64 @16)
@@ -421,6 +421,8 @@ namespace CoopBridge
         private readonly object _tradeLock = new object();
         private readonly byte[] _tradeOut = new byte[Mailbox.TradeOutSize];
         private bool _tradeOutValid;
+        // Virtual link (Milestone 3 Phase 3): carries the ROM's link block.
+        private readonly CoopLink _linkCarrier = new CoopLink();
         private ushort _badgeMaskLocal;
         private uint _heartbeatRom;
         // Bounds published by the ROM (mailbox v3), used to sanitize relay data.
@@ -861,6 +863,27 @@ namespace CoopBridge
 
             if (_mailboxOffset == null) SetStatus(_offsetsError, isError: true);
             UpdateControls();
+            StartDevAutoJoin();
+        }
+
+        // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_AUTOJOIN="host:port|ROOM"
+        // joins that room as soon as the tool is open, and again after a failed
+        // attempt, until connected (scripts/run_link_e2e.sh). Never set by users.
+        private void StartDevAutoJoin()
+        {
+            string? autoJoin = Environment.GetEnvironmentVariable("COOP_BRIDGE_AUTOJOIN");
+            string[] parts = (autoJoin ?? string.Empty).Split('|');
+            if (parts.Length != 2) return;
+            var timer = new System.Windows.Forms.Timer { Interval = 1000 };
+            timer.Tick += (_, _) =>
+            {
+                if (_link == LinkState.Connected) { timer.Stop(); return; }
+                if (_link != LinkState.Offline) return;
+                _serverInput.Text = parts[0];
+                _roomInput.Text = parts[1];
+                StartConnection(Wire.ActionJoin);
+            };
+            timer.Start();
         }
 
         // ------------------------------------------------------------------
@@ -1092,6 +1115,8 @@ namespace CoopBridge
                         _latestServerPacket = data;
                         _latestServerPacketSession = Volatile.Read(ref _sessionId);
                     }
+                    // Every link trailer counts (the latest packet alone could skip one).
+                    if (status == Wire.StatusOk) _linkCarrier.OnServerPacket(data, Wire.ServerPacketSize, Mailbox.TradeInSize);
                 }
                 catch (SocketException)
                 {
@@ -1143,12 +1168,17 @@ namespace CoopBridge
             Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
             Buffer.BlockCopy(_sessionOut, 0, tx, 112, Mailbox.SessionOutSize);
 
+            byte[]? link = _linkCarrier.BuildTrailer();
             lock (_tradeLock)
             {
-                if (!_tradeOutValid) return tx;
-                byte[] full = new byte[Wire.ClientPacketSize + Mailbox.TradeOutSize];
+                if (!_tradeOutValid && link == null) return tx;
+                int tradeSize = _tradeOutValid ? Mailbox.TradeOutSize : 0;
+                byte[] full = new byte[Wire.ClientPacketSize + tradeSize + (link?.Length ?? 0)];
                 Buffer.BlockCopy(tx, 0, full, 0, Wire.ClientPacketSize);
-                Buffer.BlockCopy(_tradeOut, 0, full, Wire.ClientPacketSize, Mailbox.TradeOutSize);
+                if (_tradeOutValid)
+                    Buffer.BlockCopy(_tradeOut, 0, full, Wire.ClientPacketSize, Mailbox.TradeOutSize);
+                if (link != null)
+                    Buffer.BlockCopy(link, 0, full, Wire.ClientPacketSize + tradeSize, link.Length);
                 return full;
             }
         }
@@ -1197,6 +1227,7 @@ namespace CoopBridge
 
                 if (_link != LinkState.Connecting && _link != LinkState.Connected)
                 {
+                    _linkCarrier.Pump(_memoryApi, MemoryDomain, null, Mailbox.PlayerIdNone);
                     ClearRomConnectionState(mb, _clearPayloadPending);
                     RefreshSession(null, mb);
                     return;
@@ -1204,6 +1235,8 @@ namespace CoopBridge
 
                 ProcessLatestServerPacket(mb);
                 if (_link == LinkState.Offline) return; // server rejected us
+                uint? linkBlock = CoopLink.Find(_memoryApi, MemoryDomain, _memoryApi.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain));
+                _linkCarrier.Pump(_memoryApi, MemoryDomain, linkBlock, _assignedSlot);
 
                 DateTime now = DateTime.UtcNow;
                 DateTime lastChallenge = new DateTime(Interlocked.Read(ref _lastChallengeUtcTicks), DateTimeKind.Utc);
@@ -1328,7 +1361,7 @@ namespace CoopBridge
         {
             if (FindExchange(mb) is not uint ex) return;
             byte[] tradeIn = new byte[Mailbox.TradeInSize];
-            if (pkt.Length >= Wire.ServerPacketSize + Mailbox.TradeInSize)
+            if (pkt.Length >= Wire.ServerPacketSize + Mailbox.TradeInSize && !CoopLink.HasMagic(pkt, Wire.ServerPacketSize))
             {
                 Buffer.BlockCopy(pkt, Wire.ServerPacketSize, tradeIn, 0, Mailbox.TradeInSize);
                 byte peer = tradeIn[Mailbox.TradeInPeerSlot];

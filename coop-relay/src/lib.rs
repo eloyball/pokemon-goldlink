@@ -13,3 +13,7 @@ mod session_tests;
 #[cfg(test)]
 #[path = "tests/trade_tests.rs"]
 mod trade_tests;
+
+#[cfg(test)]
+#[path = "tests/link_tests.rs"]
+mod link_tests;

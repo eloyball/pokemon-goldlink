@@ -854,7 +854,41 @@ Heap_Destroy = 0x0201A9C4 | 1;
 PartyMenuApp_Init = 0x02078E30 | 1;
 PartyMenuApp_Main = 0x02079034 | 1;
 Save_Mailbox_Get = 0x0202B50C | 1;
+/* Virtual link (Milestone 3 Phase 3, src/coop_link.c; docs/LINK_SYMBOLS.md).
+   The local-wireless manager's WM callbacks (pret asm/unk_02032844.s labels,
+   named by ccd's matching wireless_manager.c), CommState_GetLinkMode (pret
+   f90c3a7c0:asm/unk_02037C94.s sub_0203993C) and the two state structs. The
+   functions the shim replaces are in `hooks`. */
+Wireless_OnParentParameterSet = 0x020328A4 | 1;
+Wireless_OnParentEvent = 0x02032934 | 1;
+Wireless_OnParentMPEvent = 0x02032AB0 | 1;
+Wireless_OnParentMPEnded = 0x02032B30 | 1;
+Wireless_OnParentEnded = 0x02032B6C | 1;
+Wireless_OnScanEvent = 0x02032D4C | 1;
+Wireless_OnScanEnded = 0x02032E64 | 1;
+Wireless_OnConnectEvent = 0x02032F0C | 1;
+Wireless_OnChildMPEvent = 0x0203301C | 1;
+Wireless_OnChildMPEnded = 0x020330A4 | 1;
+Wireless_OnDisconnected = 0x020330F0 | 1;
+Wireless_OnReset = 0x0203312C | 1;
+Wireless_OnDataSent = 0x020331A4 | 1;
+Wireless_OnPortEvent = 0x020331CC | 1;
+Wireless_OnEntrySet = 0x020339F0 | 1;
+CommState_GetLinkMode = 0x0203993C | 1;
+sWirelessManager = 0x021D4124;
+sCommWireless = 0x021D4134;
 /* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
+/* Link test commands (Milestone 3 Phase 3): CommState from pret
+   f90c3a7c0:asm/unk_02037C94.s, LinkSync from asm/unk_020379A0.s, named by
+   ccd comm_state.c / link_synchronization.c (docs/LINK_SYMBOLS.md). */
+CommState_Exists = 0x02037D78 | 1;
+CommState_StartParentSession = 0x02037D8C | 1;
+CommState_StartChildSession = 0x02037DD4 | 1;
+CommState_ConnectToSlot = 0x02037E1C | 1;
+CommState_RequestShutdown = 0x02037E9C | 1;
+CommState_IsLinked = 0x02037EC8 | 1;
+LinkSync_StartSync = 0x02037AC0 | 1;
+LinkSync_IsSynced = 0x02037B38 | 1;
 /* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking. */
 sub_020538C0 = 0x020538C0 | 1;

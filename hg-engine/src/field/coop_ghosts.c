@@ -545,6 +545,48 @@ static u8 Coop_DebugTestGhost(MapObjectMan *manager, LocalMapObject *player, u8 
         DeleteMapObject(ghost);
     return COOP_DEBUG_RESULT_OK;
 }
+
+// Vanilla link sessions over the virtual link (docs/MILESTONE3_PLAN.md §15):
+// what the Colosseum does, without its rooms. pret comm_state.c (asm labels
+// in pret f90c3a7c0) and link_synchronization.c; docs/LINK_SYMBOLS.md.
+#define COOP_COMM_TYPE_SINGLE_BATTLE 1 // ccd constants/comm_type.h
+
+void LONG_CALL CommState_StartParentSession(void *saveData, s8 linkMode, s8 beaconId, void *rules, u32 unused);
+void LONG_CALL CommState_StartChildSession(void *saveData, s8 linkMode, s8 beaconId, void *rules, u32 unused);
+void LONG_CALL CommState_ConnectToSlot(s8 slot);
+void LONG_CALL CommState_RequestShutdown(void);
+BOOL LONG_CALL CommState_Exists(void);
+BOOL LONG_CALL CommState_IsLinked(void);
+void LONG_CALL LinkSync_StartSync(u8 state);
+BOOL LONG_CALL LinkSync_IsSynced(u8 state);
+
+static u8 Coop_DebugLink(FieldSystem *fsys, u32 op)
+{
+    switch (op)
+    {
+    case COOP_DEBUG_LINK_PARENT:
+        CommState_StartParentSession(fsys->savedata, COOP_COMM_TYPE_SINGLE_BATTLE, 0, NULL, 0);
+        break;
+    case COOP_DEBUG_LINK_CHILD:
+        CommState_StartChildSession(fsys->savedata, COOP_COMM_TYPE_SINGLE_BATTLE, 0, NULL, 0);
+        break;
+    case COOP_DEBUG_LINK_CONNECT:
+    case COOP_DEBUG_LINK_SYNC:
+    case COOP_DEBUG_LINK_SHUTDOWN:
+        if (!CommState_Exists())
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        if (op == COOP_DEBUG_LINK_CONNECT)
+            CommState_ConnectToSlot(0);
+        else if (op == COOP_DEBUG_LINK_SYNC)
+            LinkSync_StartSync(COOP_DEBUG_LINK_SYNC_VALUE);
+        else
+            CommState_RequestShutdown();
+        break;
+    default:
+        return COOP_DEBUG_RESULT_BAD_ARG;
+    }
+    return COOP_DEBUG_RESULT_OK;
+}
 #endif // COOP_DEBUG_TOOLS
 
 // A command that cannot run yet (busy ghost, event in progress, player
@@ -571,6 +613,20 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
         case COOP_DEBUG_EMOTE_TEST_GHOST:
         case COOP_DEBUG_REMOVE_TEST_GHOST:
             result = Coop_DebugTestGhost(manager, player, cmd, &wait);
+            break;
+        case COOP_DEBUG_LINK:
+            result = Coop_DebugLink(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_LINK_STATUS:
+            result = COOP_DEBUG_LINK_STATUS_BASE;
+            if (CommState_Exists())
+            {
+                result |= COOP_DEBUG_LINK_EXISTS;
+                if (CommState_IsLinked())
+                    result |= COOP_DEBUG_LINK_LINKED;
+                if (LinkSync_IsSynced(mb->debug_arg))
+                    result |= COOP_DEBUG_LINK_SYNCED;
+            }
             break;
         case COOP_DEBUG_ARM_TEAM_BATTLE:
             gCoopDebugMonBuffer.team_battle_armed = 1;
@@ -1735,4 +1791,5 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_UpdateSessionPrompt(fsys);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
+    Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry
 }

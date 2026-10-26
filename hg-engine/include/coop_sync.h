@@ -90,7 +90,24 @@ enum CoopDebugCommand
     COOP_DEBUG_MON_EXPORT = 9,       // Milestone 3 probe A: party slot debug_arg -> gCoopDebugMonBuffer
     COOP_DEBUG_MON_IMPORT = 10,      // Milestone 3 probe A: validate gCoopDebugMonBuffer, add it to the party
     COOP_DEBUG_ARM_TEAM_BATTLE = 11, // Milestone 3 probe E: next trainer battle becomes player + AI partner vs the trainer twice
+    COOP_DEBUG_LINK = 12,            // Milestone 3 Phase 3: debug_arg = enum CoopDebugLinkOp (vanilla CommState sessions)
+    COOP_DEBUG_LINK_STATUS = 13,     // result COOP_DEBUG_LINK_STATUS_BASE | COOP_DEBUG_LINK_* flags; debug_arg: LinkSync value
 };
+
+enum CoopDebugLinkOp
+{
+    COOP_DEBUG_LINK_PARENT = 1,   // CommState_StartParentSession (single battle)
+    COOP_DEBUG_LINK_CHILD = 2,    // CommState_StartChildSession (single battle)
+    COOP_DEBUG_LINK_CONNECT = 3,  // CommState_ConnectToSlot(0): the first parent the scan listed
+    COOP_DEBUG_LINK_SYNC = 4,     // LinkSync_StartSync(0x42)
+    COOP_DEBUG_LINK_SHUTDOWN = 5, // CommState_RequestShutdown
+};
+
+#define COOP_DEBUG_LINK_STATUS_BASE 0x40
+#define COOP_DEBUG_LINK_EXISTS      0x01 // CommState_Exists
+#define COOP_DEBUG_LINK_LINKED      0x02 // CommState_IsLinked
+#define COOP_DEBUG_LINK_SYNCED      0x04 // LinkSync_IsSynced(debug_arg)
+#define COOP_DEBUG_LINK_SYNC_VALUE  0x42
 
 enum CoopDebugResult
 {
@@ -403,6 +420,86 @@ struct CoopTradeExchange
     struct CoopTradeIn in;   // 0x0FC written by the bridge
 };
 
+// Virtual link (docs/MILESTONE3_PLAN.md §15). While a local-wireless comm
+// session exists, src/coop_link.c runs it over the network: the block below
+// sits in the wireless manager's work buffer (the WM system buffer, unused)
+// and is published in CoopCommBlock.exchange_ptr (trades use it too, never
+// at the same time; the magic tells them apart). Single writer per field;
+// the bridge writes between frames only.
+//
+//   out ring  ROM -> bridge: my messages (head: ROM, tail: bridge)
+//   in ring   bridge -> ROM: the others' messages (head: bridge, tail: ROM)
+//   mine      ROM: my beacon while I am a parent
+//   seen      bridge: the beacons of the other players in the room
+#define COOP_LINK_MAGIC       0x314B4C43 // "CLK1"
+#define COOP_LINK_VERSION     1
+#define COOP_LINK_DATA_MAX    0xC0 // a parent frame (192 bytes, port 14)
+#define COOP_LINK_BEACON_MAX  0x70 // WMGameInfo user data (112 bytes)
+#define COOP_LINK_OUT_SLOTS   4
+#define COOP_LINK_IN_SLOTS    10
+#define COOP_LINK_SEEN_SLOTS  COOP_REMOTE_SLOTS
+
+enum CoopLinkMsgType
+{
+    COOP_LINK_MSG_NONE = 0,
+    COOP_LINK_MSG_DATA = 1,    // a comm frame; out: to the parent (child) or every child (parent); in: aid = sender
+    COOP_LINK_MSG_CONNECT = 2, // out (child): data[0] = the parent's player id, data[1..4] = connect data;
+                               // in (parent): aid = the child's aid, data[0..3] = connect data
+    COOP_LINK_MSG_ACCEPT = 3,  // out (parent): aid = the child; in (child): aid = mine
+    COOP_LINK_MSG_REFUSE = 4,  // out (parent): aid = the child; in (child)
+    COOP_LINK_MSG_BYE = 5,     // out: I left; in: aid = who left
+};
+
+enum CoopLinkRole
+{
+    COOP_LINK_ROLE_NONE = 0,
+    COOP_LINK_ROLE_PARENT = 1,
+    COOP_LINK_ROLE_CHILD = 2,
+};
+
+struct CoopLinkMsg
+{
+    u8  type;                     // 0x00 enum CoopLinkMsgType
+    u8  aid;                      // 0x01
+    u16 length;                   // 0x02 bytes of data used
+    u8  data[COOP_LINK_DATA_MAX]; // 0x04
+};
+
+struct CoopLinkBeacon
+{
+    u32 ggid;                       // 0x00
+    u8  length;                     // 0x04 bytes of data (0: none)
+    u8  entry;                      // 0x05 the parent accepts children
+    u8  player;                     // 0x06 seen: the parent's player id
+    u8  seq;                        // 0x07 bumped on every change
+    u8  data[COOP_LINK_BEACON_MAX]; // 0x08 the game's beacon (CommBeacon)
+};
+
+struct CoopLinkBlock
+{
+    u32 magic;                                  // 0x000 COOP_LINK_MAGIC
+    u16 version;                                // 0x004 COOP_LINK_VERSION
+    u16 size;                                   // 0x006 sizeof(struct CoopLinkBlock)
+    u8  role;                                   // 0x008 ROM: enum CoopLinkRole
+    u8  aid;                                    // 0x009 ROM: my aid (0: parent)
+    u8  target;                                 // 0x00A ROM: child: the parent's player id (0xFF none)
+    u8  linked;                                 // 0x00B ROM: 1 while connected (parent: a child joined)
+    u8  out_head;                               // 0x00C ROM
+    u8  out_tail;                               // 0x00D bridge
+    u8  in_head;                                // 0x00E bridge
+    u8  in_tail;                                // 0x00F ROM
+    struct CoopLinkBeacon mine;                 // 0x010 ROM
+    struct CoopLinkBeacon seen[COOP_LINK_SEEN_SLOTS]; // 0x088 bridge
+    struct CoopLinkMsg out[COOP_LINK_OUT_SLOTS];      // 0x2E0 ROM
+    struct CoopLinkMsg in[COOP_LINK_IN_SLOTS];        // 0x5F0 bridge
+    // 0xD98: ROM private (src/coop_link.c)
+    u32 pending;                                // 0xD98 callbacks due next frame
+    void *sent[4];                              // 0xD9C send callbacks due next frame
+    u8  sent_count;                             // 0xDAC
+    u8  scan_next;                              // 0xDAD next seen slot the fake scan reports
+    u16 timer;                                  // 0xDAE child: frames waiting for an answer; parent: beacon events
+};
+
 // 24-byte progression gates block (relay -> ROM).
 struct CoopProgressionGates
 {
@@ -514,6 +611,14 @@ COOP_ASSERT_OFFSET(CoopTradeIn, trade_id, 0x08);
 COOP_ASSERT_OFFSET(CoopTradeIn, mon, 0x10);
 COOP_ASSERT_OFFSET(CoopTradeExchange, out, 0x008);
 COOP_ASSERT_OFFSET(CoopTradeExchange, in, 0x0FC);
+_Static_assert(sizeof(struct CoopLinkMsg) == 0xC4, "CoopLinkMsg must be 196 bytes");
+_Static_assert(sizeof(struct CoopLinkBeacon) == 0x78, "CoopLinkBeacon must be 120 bytes");
+_Static_assert(sizeof(struct CoopLinkBlock) == 0xDB0, "CoopLinkBlock must be 0xDB0 bytes");
+COOP_ASSERT_OFFSET(CoopLinkBlock, mine, 0x010);
+COOP_ASSERT_OFFSET(CoopLinkBlock, seen, 0x088);
+COOP_ASSERT_OFFSET(CoopLinkBlock, out, 0x2E0);
+COOP_ASSERT_OFFSET(CoopLinkBlock, in, 0x5F0);
+COOP_ASSERT_OFFSET(CoopLinkBlock, pending, 0xD98);
 COOP_ASSERT_OFFSET(CoopCommBlock, assigned_player_id, 0x006);
 COOP_ASSERT_OFFSET(CoopCommBlock, heartbeat_rom, 0x008);
 COOP_ASSERT_OFFSET(CoopCommBlock, server_tick, 0x00C);
@@ -554,7 +659,7 @@ extern volatile struct CoopCommBlock gCoopCommBlock;
 struct SysTask;
 struct TaskManager;
 
-// Field tasks (Overlay 129, also called from Overlay 131). While one runs,
+// Field tasks (Overlay 131, src/field/coop_field_tasks.c). While one runs,
 // vanilla blocks player input like an NPC script; only one can exist
 // (fsys->taskman must be NULL). Coop_FieldSystem_CreateTask takes an env
 // owned by the task; Coop_StartFieldTask allocates a zeroed one the task
@@ -575,6 +680,10 @@ BOOL LONG_CALL Coop_StartTalkDialog(struct FieldSystem *fsys, const u16 *name, u
 
 // TRUE while the location banner is showing; co-op field tasks wait for it.
 BOOL LONG_CALL Coop_IsMapNameBannerShowing(struct FieldSystem *fsys);
+
+// End of every field frame (Overlay 131): starts the lobby and boss blocks,
+// the adventure-start save and the disconnect save as the connection asks.
+void LONG_CALL Coop_UpdateFieldConnection(struct FieldSystem *fsys);
 
 // Validated copy of relay-provided data for ROM consumers (ghosts and their
 // followers). Returns FALSE, leaving *out zeroed, when the slot is out of

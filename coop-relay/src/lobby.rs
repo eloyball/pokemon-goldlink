@@ -11,21 +11,23 @@ use tracing::{error, info, warn};
 
 use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, NO_SLOT, PROTOCOL_VERSION,
-    PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
-    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
-    ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
-    ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE,
-    SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
-    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
-    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
-    SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
-    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE, SESSION_STATE_OUTGOING,
-    SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket, SessionOut,
-    TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, LinkDown, MAX_PLAYERS, NO_SLOT,
+    PROTOCOL_VERSION, PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
+    ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
+    ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND,
+    ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK,
+    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP,
+    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE,
+    SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
+    SESSION_REASON_NONE, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED,
+    SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE,
+    SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket,
+    SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
 };
 
+mod link;
 mod trade;
+pub use link::{LINK_RESEND, LINK_SILENCE};
 pub use trade::{PendingTrade, TRADE_IDLE_TIMEOUT, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 
 /// A request nobody answers expires after this long.
@@ -132,6 +134,8 @@ pub struct LobbyState {
     trades: Vec<trade::ActiveTrade>,
     pending_trades: Vec<PendingTrade>,
     trade_notices: Vec<trade::TradeNotice>,
+    /// Virtual link state per slot (Milestone 3 Phase 3).
+    links: [link::LinkPeer; MAX_PLAYERS],
 }
 
 impl LobbyState {
@@ -180,6 +184,7 @@ impl LobbyState {
             trades: Vec::new(),
             pending_trades: Vec::new(),
             trade_notices: Vec::new(),
+            links: Default::default(),
         };
         lobby.load_campaign_from_disk()?;
         Ok(lobby)
@@ -350,6 +355,7 @@ impl LobbyState {
                 self.apply_session_op(slot_idx, session_out, now);
             }
             self.apply_trade_out(slot_idx, pkt.trade, now);
+            self.apply_link_up(slot_idx, pkt.link, now);
 
             if (badge_changed || allow_changed)
                 && self.campaign_started
@@ -598,6 +604,10 @@ impl LobbyState {
         let now = Instant::now();
         self.expire_sessions(now);
         self.expire_trades(now);
+        self.expire_links(now);
+        let links: Vec<Option<LinkDown>> = (0..MAX_PLAYERS)
+            .map(|i| self.link_down_for(i, now))
+            .collect();
 
         let active_mask = self.compute_active_bitmask();
         let online_count = active_mask.count_ones() as u8;
@@ -669,7 +679,13 @@ impl LobbyState {
                 trade_pending: u8::from(trade.is_some()),
             };
 
-            batch.push((recipient.addr, pkt.encode_with_trade(trade.as_ref())));
+            batch.push((
+                recipient.addr,
+                pkt.encode_full(
+                    trade.as_ref(),
+                    links.get(recipient_idx).and_then(Option::as_ref),
+                ),
+            ));
         }
 
         batch
@@ -1030,6 +1046,7 @@ impl LobbyState {
     /// A side went offline: the other side's request (or open trade) is cancelled.
     fn drop_sessions_of_missing_players(&mut self) {
         self.abort_trades_of_missing_players();
+        self.drop_links_of_missing_players();
         let (gone, kept): (Vec<Session>, Vec<Session>) = self
             .sessions
             .drain(..)

@@ -11,9 +11,9 @@ struct FieldSystem;
 #define COOP_TEXT_ARGS 4
 
 // Vanilla overworld dialog box (pret ScrCmd_OpenMsg / DialogBox_LoadFrame) on
-// BG3, implemented in Overlay 129 (src/coop_sync.c) and shared with the field
-// code in Overlay 131. Kept out of coop_sync.h so that header stays free of
-// window and string types.
+// BG3, implemented in Overlay 131 (src/field/coop_field_tasks.c) with the
+// rest of the field code; Coop_SetStringFromAscii stays in Overlay 129. Kept
+// out of coop_sync.h so that header stays free of window and string types.
 struct CoopDialog
 {
     GF_BGL_BMPWIN window;

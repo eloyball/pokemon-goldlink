@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
@@ -393,6 +393,247 @@ impl PlayerState {
     }
 }
 
+// Virtual link (docs/MILESTONE3_PLAN.md §15). While the ROM runs a
+// local-wireless session, its link block (hg-engine coop_sync.h
+// CoopLinkBlock) is carried by a trailer after any trade trailer, starting
+// with LINK_MAGIC: the client's messages and beacon up, the routed messages
+// and the room's beacons down. Each direction of each hop is a reliable,
+// ordered stream: consecutive u16 sequence numbers, a cumulative ack (the
+// next sequence number expected), resend until acked.
+pub const LINK_MAGIC: u32 = 0x314B_4E4C; // "LNK1"
+pub const LINK_DATA_MAX: usize = 0xC0;
+pub const LINK_BEACON_MAX: usize = 0x70;
+pub const LINK_MAX_MSGS: usize = 16; // per trailer
+
+pub const LINK_MSG_DATA: u8 = 1;
+pub const LINK_MSG_CONNECT: u8 = 2;
+pub const LINK_MSG_ACCEPT: u8 = 3;
+pub const LINK_MSG_REFUSE: u8 = 4;
+pub const LINK_MSG_BYE: u8 = 5;
+
+pub const LINK_ROLE_NONE: u8 = 0;
+pub const LINK_ROLE_PARENT: u8 = 1;
+pub const LINK_ROLE_CHILD: u8 = 2;
+
+/// One message of the link block's rings (CoopLinkMsg).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LinkMsg {
+    pub kind: u8,
+    pub aid: u8,
+    pub data: Vec<u8>,
+}
+
+/// A parent's beacon (CoopLinkBeacon): the game's CommBeacon bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LinkBeacon {
+    pub ggid: u32,
+    pub entry: u8,
+    pub seq: u8,
+    pub data: Vec<u8>,
+}
+
+/// Client -> relay link trailer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LinkUp {
+    pub epoch: u8,      // bumped by the bridge for every new link block
+    pub role: u8,       // LINK_ROLE_*
+    pub ack: u16,       // next relay->client sequence number expected
+    pub first_seq: u16, // sequence number of msgs[0]
+    pub beacon: Option<LinkBeacon>,
+    pub msgs: Vec<LinkMsg>,
+}
+
+/// Relay -> client link trailer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LinkDown {
+    pub ack: u16,                       // next client->relay sequence number expected
+    pub first_seq: u16,                 // sequence number of msgs[0]
+    pub beacons: Vec<(u8, LinkBeacon)>, // (absolute player id, beacon) of the room's parents
+    pub msgs: Vec<LinkMsg>,
+}
+
+fn put_msgs(buf: &mut Vec<u8>, msgs: &[LinkMsg]) {
+    for m in msgs {
+        buf.push(m.kind);
+        buf.push(m.aid);
+        buf.extend_from_slice(&(m.data.len() as u16).to_le_bytes());
+        buf.extend_from_slice(&m.data);
+    }
+}
+
+/// Bounds-checked reader for the trailers (untrusted input).
+struct Reader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let end = self.pos.checked_add(n)?;
+        let s = self.buf.get(self.pos..end)?;
+        self.pos = end;
+        Some(s)
+    }
+    fn u8(&mut self) -> Option<u8> {
+        self.take(1).map(|s| s[0])
+    }
+    fn u16(&mut self) -> Option<u16> {
+        self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]))
+    }
+    fn u32(&mut self) -> Option<u32> {
+        self.take(4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    }
+    fn msgs(&mut self, count: usize) -> Option<Vec<LinkMsg>> {
+        if count > LINK_MAX_MSGS {
+            return None;
+        }
+        (0..count)
+            .map(|_| {
+                let kind = self.u8()?;
+                let aid = self.u8()?;
+                let len = self.u16()? as usize;
+                if len > LINK_DATA_MAX {
+                    return None;
+                }
+                Some(LinkMsg {
+                    kind,
+                    aid,
+                    data: self.take(len)?.to_vec(),
+                })
+            })
+            .collect()
+    }
+}
+
+impl LinkUp {
+    pub fn encode(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&LINK_MAGIC.to_le_bytes());
+        buf.push(self.epoch);
+        buf.push(self.role);
+        buf.push(u8::from(self.beacon.is_some()));
+        buf.push(self.msgs.len() as u8);
+        buf.extend_from_slice(&self.ack.to_le_bytes());
+        buf.extend_from_slice(&self.first_seq.to_le_bytes());
+        if let Some(b) = &self.beacon {
+            buf.extend_from_slice(&b.ggid.to_le_bytes());
+            buf.push(b.data.len() as u8);
+            buf.push(b.entry);
+            buf.push(b.seq);
+            buf.push(0);
+            buf.extend_from_slice(&b.data);
+        }
+        put_msgs(buf, &self.msgs);
+    }
+
+    /// None when the trailer is missing or malformed (it is then ignored).
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let mut r = Reader { buf, pos: 0 };
+        if r.u32()? != LINK_MAGIC {
+            return None;
+        }
+        let epoch = r.u8()?;
+        let role = r.u8()?;
+        let flags = r.u8()?;
+        let count = r.u8()? as usize;
+        let ack = r.u16()?;
+        let first_seq = r.u16()?;
+        let beacon = if flags & 1 != 0 {
+            let ggid = r.u32()?;
+            let len = r.u8()? as usize;
+            let entry = r.u8()?;
+            let seq = r.u8()?;
+            r.u8()?;
+            if len > LINK_BEACON_MAX {
+                return None;
+            }
+            Some(LinkBeacon {
+                ggid,
+                entry,
+                seq,
+                data: r.take(len)?.to_vec(),
+            })
+        } else {
+            None
+        };
+        let msgs = r.msgs(count)?;
+        Some(Self {
+            epoch,
+            role,
+            ack,
+            first_seq,
+            beacon,
+            msgs,
+        })
+    }
+}
+
+impl LinkDown {
+    pub fn encode(&self, buf: &mut Vec<u8>) {
+        buf.extend_from_slice(&LINK_MAGIC.to_le_bytes());
+        buf.push(self.beacons.len() as u8);
+        buf.push(self.msgs.len() as u8);
+        buf.extend_from_slice(&self.ack.to_le_bytes());
+        buf.extend_from_slice(&self.first_seq.to_le_bytes());
+        buf.extend_from_slice(&[0, 0]);
+        for (player, b) in &self.beacons {
+            buf.push(*player);
+            buf.push(b.data.len() as u8);
+            buf.push(b.entry);
+            buf.push(b.seq);
+            buf.extend_from_slice(&b.ggid.to_le_bytes());
+            buf.extend_from_slice(&b.data);
+        }
+        put_msgs(buf, &self.msgs);
+    }
+
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let mut r = Reader { buf, pos: 0 };
+        if r.u32()? != LINK_MAGIC {
+            return None;
+        }
+        let beacon_count = r.u8()? as usize;
+        let count = r.u8()? as usize;
+        let ack = r.u16()?;
+        let first_seq = r.u16()?;
+        r.u16()?;
+        if beacon_count > MAX_PLAYERS {
+            return None;
+        }
+        let mut beacons = Vec::with_capacity(beacon_count);
+        for _ in 0..beacon_count {
+            let player = r.u8()?;
+            let len = r.u8()? as usize;
+            let entry = r.u8()?;
+            let seq = r.u8()?;
+            let ggid = r.u32()?;
+            if len > LINK_BEACON_MAX {
+                return None;
+            }
+            beacons.push((
+                player,
+                LinkBeacon {
+                    ggid,
+                    entry,
+                    seq,
+                    data: r.take(len)?.to_vec(),
+                },
+            ));
+        }
+        let msgs = r.msgs(count)?;
+        Some(Self {
+            ack,
+            first_seq,
+            beacons,
+            msgs,
+        })
+    }
+}
+
+fn starts_with_link_magic(buf: &[u8]) -> bool {
+    buf.len() >= 4 && u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) == LINK_MAGIC
+}
+
 /// The client's latched session operation (bytes 112..120 of its packet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SessionOut {
@@ -402,8 +643,8 @@ pub struct SessionOut {
     pub target_trainer: u32,
 }
 
-/// Sent by BizHawk C# Plugin -> Rust Relay Server (120 bytes)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Sent by BizHawk C# Plugin -> Rust Relay Server (120 bytes, plus trailers)
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientToServerPacket {
     pub magic: u32,                // 0..4
     pub version: u16,              // 4..6
@@ -422,6 +663,7 @@ pub struct ClientToServerPacket {
     pub player_secret: u64,        // 104..112 (random per bridge install, never 0)
     pub session: SessionOut,       // 112..120 (seq, op, kind, pad, u32 target trainer ID)
     pub trade: Option<TradeOut>,   // 120..364 while the ROM has a trade open
+    pub link: Option<LinkUp>,      // after the trade trailer (or at 120) while a link block exists
 }
 
 impl ClientToServerPacket {
@@ -449,13 +691,16 @@ impl ClientToServerPacket {
         buf
     }
 
-    /// The fixed packet plus the trade trailer when there is one.
+    /// The fixed packet plus the trade and link trailers when there are some.
     pub fn encode_full(&self) -> Vec<u8> {
         let mut buf = self.encode_le().to_vec();
         if let Some(trade) = &self.trade {
             let mut trailer = [0u8; TRADE_OUT_SIZE];
             trade.encode_le(&mut trailer);
             buf.extend_from_slice(&trailer);
+        }
+        if let Some(link) = &self.link {
+            link.encode(&mut buf);
         }
         buf
     }
@@ -481,6 +726,14 @@ impl ClientToServerPacket {
 
         let local_player = PlayerState::decode_le(&buf[32..96])?;
 
+        // Trailers: the trade's (fixed size) unless a link trailer starts
+        // right away, then the link's (starts with LINK_MAGIC).
+        let rest = &buf[CLIENT_PACKET_SIZE..];
+        let trade = (rest.len() >= TRADE_OUT_SIZE && !starts_with_link_magic(rest))
+            .then(|| TradeOut::decode_le(rest));
+        let link_at = if trade.is_some() { TRADE_OUT_SIZE } else { 0 };
+        let link = rest.get(link_at..).and_then(LinkUp::decode);
+
         Ok(Self {
             magic,
             version,
@@ -503,8 +756,8 @@ impl ClientToServerPacket {
                 kind: buf[114],
                 target_trainer: u32::from_le_bytes([buf[116], buf[117], buf[118], buf[119]]),
             },
-            trade: (buf.len() >= CLIENT_PACKET_SIZE + TRADE_OUT_SIZE)
-                .then(|| TradeOut::decode_le(&buf[CLIENT_PACKET_SIZE..])),
+            trade,
+            link,
         })
     }
 }
@@ -584,11 +837,19 @@ impl ServerToClientPacket {
 
     /// The fixed packet plus the recipient's trade trailer when there is one.
     pub fn encode_with_trade(&self, trade: Option<&TradeIn>) -> Vec<u8> {
+        self.encode_full(trade, None)
+    }
+
+    /// The fixed packet plus the recipient's trade and link trailers.
+    pub fn encode_full(&self, trade: Option<&TradeIn>, link: Option<&LinkDown>) -> Vec<u8> {
         let mut buf = self.encode_le().to_vec();
         if let Some(trade) = trade {
             let mut trailer = [0u8; TRADE_IN_SIZE];
             trade.encode_le(&mut trailer);
             buf.extend_from_slice(&trailer);
+        }
+        if let Some(link) = link {
+            link.encode(&mut buf);
         }
         buf
     }
@@ -682,6 +943,7 @@ mod tests {
                 target_trainer: 0xA1B2_C3D4,
             },
             trade: None,
+            link: None,
         };
 
         let bytes = pkt.encode_le();

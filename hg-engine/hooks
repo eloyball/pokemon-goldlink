@@ -666,3 +666,29 @@ arm9 EncounterSlot_WildMonSlotRoll_Headbutt 022477C0 0
 0012 PlayerTrainerVictoryBGM_hook 0224DA9E 3
 
 arm9 FieldSystem_RestoreMapObjectsFromSave 0203B9F4 1
+
+# Virtual link (Milestone 3 Phase 3, src/coop_link.c): the local-wireless
+# manager's functions that would call NitroSDK WM_* (ccd wireless_manager.c),
+# and CommWireless's WVR start-up / shutdown. r3 tail jumps for 0-3 arguments;
+# the 4-argument ones use the saved-lr stub.
+arm9 Coop_Link_SendParentParameter 02032874 3
+arm9 Coop_Link_StartParentRun 020328C8 3
+arm9 Coop_Link_StartParentMP 02032A40 3
+arm9 Coop_Link_EndParent 02032B0C 3
+arm9 Coop_Link_EndParentRun 02032B50 3
+arm9 Coop_Link_ScanNextChannel 02032C84 3
+arm9 Coop_Link_EndScan 02032E48 3
+arm9 Coop_Link_StartConnect 02032E9C 3
+arm9 Coop_Link_StartChildMP 02032FCC 3
+arm9 Coop_Link_EndChild 02033080 3
+arm9 Coop_Link_Disconnect 020330C8 3
+arm9 Coop_Link_Reset 02033108 3
+arm9 Coop_Link_SetSendData 0203314C
+arm9 Coop_Link_StartMeasureChannels 020332C0 3
+arm9 Coop_Link_Initialize 020335D4 3
+arm9 Coop_Link_SetReceiveCallback 020337D0 3
+arm9 Coop_Link_End 020338D0 3
+arm9 Coop_Link_UpdateGameInfo 020339B4
+arm9 Coop_Link_SetEntry 02033A0C 3
+arm9 Coop_Link_CommStartUp 02034D8C 3
+arm9 Coop_Link_CommTerminate 02034DE0 3
