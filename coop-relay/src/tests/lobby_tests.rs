@@ -10,7 +10,7 @@ use crate::protocol::{
     ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
     ROOM_STATUS_ERR_INVALID_CODE, ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE,
     ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM,
-    SAVE_STATUS_FRESH, SAVE_STATUS_IN_PROGRESS, SAVE_STATUS_UNKNOWN,
+    SAVE_STATUS_FRESH, SAVE_STATUS_IN_PROGRESS, SAVE_STATUS_UNKNOWN, SessionOut,
 };
 
 /// Sends like a real client that already completed the cookie handshake.
@@ -41,7 +41,7 @@ fn secret_for(trainer_id: u32) -> u64 {
 /// A forming-room-friendly packet: a loaded save (trainer_id != 0) reports
 /// a fresh save in the field, like a new game standing in the bedroom.
 #[allow(clippy::too_many_arguments)]
-fn make_packet(
+pub(crate) fn make_packet(
     room_code: [u8; 6],
     room_action: u8,
     host_token: u32,
@@ -89,6 +89,7 @@ fn make_packet(
         },
         cookie: 0,
         player_secret: secret_for(trainer_id),
+        session: SessionOut::default(),
     }
 }
 

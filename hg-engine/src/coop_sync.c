@@ -15,6 +15,7 @@
 #include "task.h"
 #include "window.h"
 #include "coop_sync.h"
+#include "coop_dialog.h"
 
 // Vanilla functions not declared (or declared without LONG_CALL) in any
 // hg-engine header. Addresses live in rom.ld.
@@ -43,7 +44,6 @@ BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 #define DIALOG_FONT         1
 #define DIALOG_BG_FILL      15
 
-#define COOP_TEXT_MAX 96
 
 // 512-byte shared mailbox. Its own initialized section, placed first in
 // Overlay 129 by src/linker.ld, so it carries its initial values (Overlay
@@ -77,7 +77,7 @@ struct CoopDebugMonBuffer gCoopDebugMonBuffer = { .party_count = 0xFF };
 // ellipsis glyph. Anything else is rendered as '?'. '@' inserts name (an
 // HG-encoded player name from the relay, or NULL): up to 8 chars, ending at
 // 0xFFFF; control and format codes (0x200 and up) become '?'.
-static void Coop_SetStringFromAscii(String *dst, const char *src, const u16 *name)
+void LONG_CALL Coop_SetStringFromAscii(String *dst, const char *src, const u16 *name)
 {
     u16 buf[COOP_TEXT_MAX + 1];
     u32 n = 0;
@@ -384,15 +384,7 @@ static BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
 // Native overworld dialog box + field task helpers
 // ---------------------------------------------------------------------------
 
-// Vanilla dialog box (pret ScrCmd_OpenMsg / DialogBox_LoadFrame) on BG3.
-struct CoopDialog
-{
-    GF_BGL_BMPWIN window;
-    String *text;
-    const u16 *name; // what '@' prints (Coop_SetStringFromAscii), or NULL
-    u8 printerId;
-    u8 textDelay;
-};
+// struct CoopDialog: include/coop_dialog.h (shared with Overlay 131).
 
 static u8 Coop_GetTextFrameDelay(void *saveData)
 {
@@ -408,7 +400,7 @@ static u8 Coop_GetTextFrameDelay(void *saveData)
     return 1;
 }
 
-static void Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
+void LONG_CALL Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
 {
     void *options = Save_PlayerData_GetOptionsAddr(fsys->savedata);
 
@@ -444,7 +436,7 @@ static BOOL Coop_DialogSpeedUp(void *printerTemplate, u16 glyph)
 }
 
 // Prints one page (two lines max: the box is 4 tiles tall).
-static void Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
+void LONG_CALL Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
 {
     FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
     Coop_SetStringFromAscii(dialog->text, msg, dialog->name);
@@ -452,13 +444,13 @@ static void Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
                                                     Coop_DialogSpeedUp);
 }
 
-static BOOL Coop_DialogIsPrinting(const struct CoopDialog *dialog)
+BOOL LONG_CALL Coop_DialogIsPrinting(const struct CoopDialog *dialog)
 {
     return TextPrinterCheckActive(dialog->printerId);
 }
 
 // pret ScrCmd_CloseMsg.
-static void Coop_DialogClose(FieldSystem *fsys, struct CoopDialog *dialog)
+void LONG_CALL Coop_DialogClose(FieldSystem *fsys, struct CoopDialog *dialog)
 {
     ClearFrameAndWindow2(&dialog->window, FALSE);
     RemoveWindow(&dialog->window);
@@ -1069,6 +1061,8 @@ BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out
     }
     if (out->anim > COOP_MAX_ANIMATION)
         out->anim = 0; // cosmetic: show the pose's first animation instead of dropping the player
+    if (out->field_busy > 1)
+        out->field_busy = 1;
     if (out->follower_visible > 1 || out->follower_shiny > 1 || out->follower_gender > 2
         || out->follower_species > MAX_SPECIES_INCLUDING_FORMS
         || (out->follower_visible && out->follower_species == 0)

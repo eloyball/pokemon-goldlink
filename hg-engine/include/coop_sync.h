@@ -27,7 +27,7 @@
 #define COOP_MAGIC           0x434F4F50 // bytes in RAM: "POOC"
 // Version of this mailbox layout (independent of the UDP wire version).
 // Must match coop_offsets.json "mailbox_version" and the bridge.
-#define COOP_MAILBOX_VERSION 6
+#define COOP_MAILBOX_VERSION 7
 #define COOP_MAX_PLAYERS      6
 #define COOP_REMOTE_SLOTS     (COOP_MAX_PLAYERS - 1)
 #define COOP_PLAYER_ID_NONE   0xFF
@@ -267,7 +267,65 @@ struct CoopPlayerState
     u8  pad39[3];            // 0x39
     u8  avatar_id;           // 0x3C custom player sprite set (later milestone; 0 = vanilla)
     u8  anim;                // 0x3D map object animation (pret MapObject_SetAnimation): pose frames (fishing cast / bite / reel...)
-    u8  pad3E[2];            // 0x3E
+    u8  field_busy;          // 0x3E 1 while a field task or message runs (NPC talk, start menu, co-op menus)
+    u8  pad3F;               // 0x3F
+};
+
+// Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1). Must match
+// coop-relay/src/protocol.rs SESSION_*. The ROM latches one operation in
+// CoopCommBlock.session_out (bumping its seq last); the relay applies each
+// seq once and reports the outcome in the gates, bumping session_seq.
+enum CoopSessionOp
+{
+    COOP_SESSION_OP_NONE = 0,
+    COOP_SESSION_OP_REQUEST = 1,
+    COOP_SESSION_OP_ACCEPT = 2,
+    COOP_SESSION_OP_DECLINE = 3,
+    COOP_SESSION_OP_CANCEL = 4, // withdraw my own request
+};
+
+enum CoopSessionKind
+{
+    COOP_SESSION_KIND_NONE = 0,
+    COOP_SESSION_KIND_TRADE = 1,
+    COOP_SESSION_KIND_BATTLE = 2,
+    COOP_SESSION_KIND_TEAM_UP = 3,
+};
+
+enum CoopSessionState
+{
+    COOP_SESSION_NONE = 0,
+    COOP_SESSION_OUTGOING = 1, // my request, waiting for the answer
+    COOP_SESSION_INCOMING = 2, // someone asks me
+    COOP_SESSION_ACCEPTED = 3,
+    COOP_SESSION_DECLINED = 4,
+    COOP_SESSION_CANCELLED = 5, // withdrawn, or the other side left
+    COOP_SESSION_TIMEOUT = 6,
+    COOP_SESSION_REFUSED = 7,   // turned down by the relay (session_reason)
+    COOP_SESSION_STATE_MAX = 7,
+};
+
+enum CoopSessionReason
+{
+    COOP_SESSION_REASON_NONE = 0,
+    COOP_SESSION_REASON_NOT_HERE = 1,
+    COOP_SESSION_REASON_BUSY = 2,
+    COOP_SESSION_REASON_TEAM_RULE = 3,      // a team only battles a team, never its own teammate
+    COOP_SESSION_REASON_ALREADY_TEAMED = 4,
+    COOP_SESSION_REASON_INVALID = 5,
+};
+
+#define COOP_SLOT_NONE        0xFF // team_partner_slot / session_peer_slot: nobody
+#define COOP_TEAMED_SELF_BIT  0x80 // teamed_mask: this player is in a team (bits 0-4: remote slots)
+
+// 8-byte latched session operation (ROM -> bridge -> relay, client packet 112..120).
+struct CoopSessionOut
+{
+    u8  seq;            // 0x00 bumped last, once the rest is written
+    u8  op;             // 0x01 enum CoopSessionOp
+    u8  kind;           // 0x02 enum CoopSessionKind (REQUEST only)
+    u8  pad;            // 0x03
+    u32 target_trainer; // 0x04 trainer ID of the player asked (REQUEST only)
 };
 
 // 24-byte progression gates block (relay -> ROM).
@@ -284,7 +342,14 @@ struct CoopProgressionGates
     u8  online_party_count;    // 0x0A
     u8  ready_party_count;     // 0x0B
     u32 room_uid;              // 0x0C random per room, never reused (keys per-room saves)
-    u8  pad[8];                // 0x10
+    u8  team_partner_slot;     // 0x10 my teammate's remote slot; COOP_SLOT_NONE: none or offline
+    u8  teamed_mask;           // 0x11 bit per remote slot in a team; COOP_TEAMED_SELF_BIT: me
+    u8  session_state;         // 0x12 enum CoopSessionState
+    u8  session_kind;          // 0x13 enum CoopSessionKind
+    u8  session_peer_slot;     // 0x14 the other side's remote slot; COOP_SLOT_NONE: gone
+    u8  session_seq;           // 0x15 bumped on every change of the session fields
+    u8  session_reason;        // 0x16 enum CoopSessionReason (REFUSED)
+    u8  pad17;                 // 0x17
 };
 
 // 512-byte mailbox. Offsets are frozen; never reorder fields.
@@ -330,7 +395,9 @@ struct CoopCommBlock
     u8  track_follower_seq[COOP_REMOTE_SLOTS];                  // 0x1E9 ROM private: last follower move_seq each follower ghost handled
     u8  track_follower_shiny;                                   // 0x1EE ROM private: bit per slot, shiny sequence applied to its follower ghost
     u8  track_field_hidden;                                     // 0x1EF ROM private: the field was covered (menu, battle, app) since the last field tick
-    u8  reserved[0x200 - 0x1F0];                                // 0x1F0..0x1FF
+    struct CoopSessionOut session_out;                          // 0x1F0 ROM: latched session operation (Milestone 3)
+    u8  track_session_answered;                                 // 0x1F8 ROM private: session_seq of the pending request already prompted (0: none pending)
+    u8  reserved[0x200 - 0x1F9];                                // 0x1F9..0x1FF
 };
 
 #define COOP_ASSERT_OFFSET(type, field, off) \
@@ -340,6 +407,7 @@ _Static_assert(sizeof(struct CoopPlayerState) == 64, "CoopPlayerState must be 64
 _Static_assert(sizeof(struct CoopProgressionGates) == 24, "CoopProgressionGates must be 24 bytes");
 _Static_assert(sizeof(struct CoopCommBlock) == 512, "CoopCommBlock must be 512 bytes");
 _Static_assert(sizeof(struct CoopDiagnostics) == 24, "CoopDiagnostics must be 24 bytes");
+_Static_assert(sizeof(struct CoopSessionOut) == 8, "CoopSessionOut must be 8 bytes");
 
 COOP_ASSERT_OFFSET(CoopPlayerState, matrix_id, 0x02);
 COOP_ASSERT_OFFSET(CoopPlayerState, height, 0x08);
@@ -353,8 +421,14 @@ COOP_ASSERT_OFFSET(CoopPlayerState, follower_x, 0x30);
 COOP_ASSERT_OFFSET(CoopPlayerState, follower_move_seq, 0x38);
 COOP_ASSERT_OFFSET(CoopPlayerState, avatar_id, 0x3C);
 COOP_ASSERT_OFFSET(CoopPlayerState, anim, 0x3D);
+COOP_ASSERT_OFFSET(CoopPlayerState, field_busy, 0x3E);
 COOP_ASSERT_OFFSET(CoopProgressionGates, flag_campaign_started, 0x08);
 COOP_ASSERT_OFFSET(CoopProgressionGates, room_uid, 0x0C);
+COOP_ASSERT_OFFSET(CoopProgressionGates, team_partner_slot, 0x10);
+COOP_ASSERT_OFFSET(CoopProgressionGates, session_state, 0x12);
+COOP_ASSERT_OFFSET(CoopProgressionGates, session_seq, 0x15);
+COOP_ASSERT_OFFSET(CoopProgressionGates, session_reason, 0x16);
+COOP_ASSERT_OFFSET(CoopSessionOut, target_trainer, 0x04);
 COOP_ASSERT_OFFSET(CoopCommBlock, assigned_player_id, 0x006);
 COOP_ASSERT_OFFSET(CoopCommBlock, heartbeat_rom, 0x008);
 COOP_ASSERT_OFFSET(CoopCommBlock, server_tick, 0x00C);
@@ -383,7 +457,9 @@ COOP_ASSERT_OFFSET(CoopCommBlock, track_field_idle, 0x1E8);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_seq, 0x1E9);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_shiny, 0x1EE);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_field_hidden, 0x1EF);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1F0);
+COOP_ASSERT_OFFSET(CoopCommBlock, session_out, 0x1F0);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_session_answered, 0x1F8);
+COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1F9);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
 

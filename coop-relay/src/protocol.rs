@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
@@ -30,6 +30,40 @@ pub const ROOM_STATUS_ERR_RATE_LIMITED: u8 = 8;
 pub const ROOM_STATUS_ERR_SAVE_OTHER_ROOM: u8 = 9;
 
 // PlayerState.save_status, computed by the ROM (the relay never inspects maps).
+// Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1). The client
+// latches its last operation (repeated every packet under one sequence
+// number); the relay applies it once and reports the outcome per recipient
+// in the gates block, again latched under a sequence number.
+pub const SESSION_OP_NONE: u8 = 0;
+pub const SESSION_OP_REQUEST: u8 = 1;
+pub const SESSION_OP_ACCEPT: u8 = 2;
+pub const SESSION_OP_DECLINE: u8 = 3;
+pub const SESSION_OP_CANCEL: u8 = 4;
+
+pub const SESSION_KIND_TRADE: u8 = 1;
+pub const SESSION_KIND_BATTLE: u8 = 2;
+pub const SESSION_KIND_TEAM_UP: u8 = 3;
+
+pub const SESSION_STATE_NONE: u8 = 0;
+pub const SESSION_STATE_OUTGOING: u8 = 1; // my request, waiting for the answer
+pub const SESSION_STATE_INCOMING: u8 = 2; // someone asks me
+pub const SESSION_STATE_ACCEPTED: u8 = 3;
+pub const SESSION_STATE_DECLINED: u8 = 4;
+pub const SESSION_STATE_CANCELLED: u8 = 5; // withdrawn, or the other side left
+pub const SESSION_STATE_TIMEOUT: u8 = 6;
+pub const SESSION_STATE_REFUSED: u8 = 7; // the relay turned the request down (reason)
+
+pub const SESSION_REASON_NONE: u8 = 0;
+pub const SESSION_REASON_NOT_HERE: u8 = 1; // target not connected
+pub const SESSION_REASON_BUSY: u8 = 2; // either side already in a session
+pub const SESSION_REASON_TEAM_RULE: u8 = 3; // a team cannot battle a solo player or its own teammate
+pub const SESSION_REASON_ALREADY_TEAMED: u8 = 4;
+pub const SESSION_REASON_INVALID: u8 = 5; // unknown kind, or a request to oneself
+
+pub const NO_SLOT: u8 = 0xFF;
+/// `teamed_mask` bit for "the recipient is in a team" (bits 0..4: remote slots).
+pub const TEAMED_SELF_BIT: u8 = 0x80;
+
 pub const SAVE_STATUS_UNKNOWN: u8 = 0; // not in the overworld yet
 pub const SAVE_STATUS_FRESH: u8 = 1; // in the bedroom with an empty party
 pub const SAVE_STATUS_IN_PROGRESS: u8 = 2;
@@ -37,7 +71,8 @@ pub const SAVE_STATUS_IN_PROGRESS: u8 = 2;
 // Wire Payload Sizes (in bytes)
 pub const PLAYER_STATE_SIZE: usize = 64;
 pub const GATES_SIZE: usize = 24;
-pub const CLIENT_PACKET_SIZE: usize = 32 + PLAYER_STATE_SIZE + 16; // 112 bytes
+pub const SESSION_BLOCK_SIZE: usize = 8;
+pub const CLIENT_PACKET_SIZE: usize = 32 + PLAYER_STATE_SIZE + 16 + SESSION_BLOCK_SIZE; // 120 bytes
 pub const SERVER_PACKET_SIZE: usize = 16 + (REMOTE_SLOTS * PLAYER_STATE_SIZE) + GATES_SIZE; // 360 bytes
 /// Error replies carry only the 16-byte header, so a rejected request never
 /// produces a reply larger than the 64-byte request (no UDP amplification).
@@ -126,7 +161,8 @@ pub struct PlayerState {
     pub pad39: [u8; 3],           // 0x39
     pub avatar_id: u8,            // 0x3C
     pub anim: u8,                 // 0x3D pose animation index (forwarded untouched)
-    pub pad3e: [u8; 2],           // 0x3E
+    pub field_busy: u8,           // 0x3E (a field task or message is running; forwarded as is)
+    pub pad3f: u8,                // 0x3F
 }
 
 fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {
@@ -178,7 +214,8 @@ impl PlayerState {
         out[0x39..0x3C].copy_from_slice(&self.pad39);
         out[0x3C] = self.avatar_id;
         out[0x3D] = self.anim;
-        out[0x3E..0x40].copy_from_slice(&self.pad3e);
+        out[0x3E] = self.field_busy;
+        out[0x3F] = self.pad3f;
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
@@ -225,12 +262,22 @@ impl PlayerState {
             pad39: [buf[0x39], buf[0x3A], buf[0x3B]],
             avatar_id: buf[0x3C],
             anim: buf[0x3D],
-            pad3e: [buf[0x3E], buf[0x3F]],
+            field_busy: buf[0x3E],
+            pad3f: buf[0x3F],
         })
     }
 }
 
-/// Sent by BizHawk C# Plugin -> Rust Relay Server (112 bytes)
+/// The client's latched session operation (bytes 112..120 of its packet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SessionOut {
+    pub seq: u8,
+    pub op: u8,
+    pub kind: u8,
+    pub target_trainer: u32,
+}
+
+/// Sent by BizHawk C# Plugin -> Rust Relay Server (120 bytes)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientToServerPacket {
     pub magic: u32,                // 0..4
@@ -248,6 +295,7 @@ pub struct ClientToServerPacket {
     pub local_player: PlayerState, // 32..96 (64 bytes)
     pub cookie: u64,               // 96..104 (0 until the relay issues one)
     pub player_secret: u64,        // 104..112 (random per bridge install, never 0)
+    pub session: SessionOut,       // 112..120 (seq, op, kind, pad, u32 target trainer ID)
 }
 
 impl ClientToServerPacket {
@@ -268,6 +316,10 @@ impl ClientToServerPacket {
         self.local_player.encode_le(&mut buf[32..96]);
         buf[96..104].copy_from_slice(&self.cookie.to_le_bytes());
         buf[104..112].copy_from_slice(&self.player_secret.to_le_bytes());
+        buf[112] = self.session.seq;
+        buf[113] = self.session.op;
+        buf[114] = self.session.kind;
+        buf[116..120].copy_from_slice(&self.session.target_trainer.to_le_bytes());
         buf
     }
 
@@ -308,6 +360,12 @@ impl ClientToServerPacket {
             local_player,
             cookie: u64::from_le_bytes(buf[96..104].try_into().expect("8 bytes")),
             player_secret: u64::from_le_bytes(buf[104..112].try_into().expect("8 bytes")),
+            session: SessionOut {
+                seq: buf[112],
+                op: buf[113],
+                kind: buf[114],
+                target_trainer: u32::from_le_bytes([buf[116], buf[117], buf[118], buf[119]]),
+            },
         })
     }
 }
@@ -335,7 +393,14 @@ pub struct ServerToClientPacket {
     pub online_party_count: u8,
     pub ready_party_count: u8,
     pub room_uid: u32,
-    pub gates_pad: [u8; 8],
+    pub team_partner_slot: u8, // gates +16: my teammate's remote slot (NO_SLOT: none or offline)
+    pub teamed_mask: u8,       // +17: bit per remote slot in a team; TEAMED_SELF_BIT = me
+    pub session_state: u8,     // +18: SESSION_STATE_*
+    pub session_kind: u8,      // +19
+    pub session_peer_slot: u8, // +20: the other side's remote slot (NO_SLOT: gone)
+    pub session_seq: u8,       // +21: bumped on every change of the four fields above
+    pub session_reason: u8,    // +22: SESSION_REASON_* when refused
+    pub gates_pad: u8,         // +23
 }
 
 impl ServerToClientPacket {
@@ -366,7 +431,14 @@ impl ServerToClientPacket {
         buf[gates_base + 10] = self.online_party_count;
         buf[gates_base + 11] = self.ready_party_count;
         buf[gates_base + 12..gates_base + 16].copy_from_slice(&self.room_uid.to_le_bytes());
-        buf[gates_base + 16..gates_base + 24].copy_from_slice(&self.gates_pad);
+        buf[gates_base + 16] = self.team_partner_slot;
+        buf[gates_base + 17] = self.teamed_mask;
+        buf[gates_base + 18] = self.session_state;
+        buf[gates_base + 19] = self.session_kind;
+        buf[gates_base + 20] = self.session_peer_slot;
+        buf[gates_base + 21] = self.session_seq;
+        buf[gates_base + 22] = self.session_reason;
+        buf[gates_base + 23] = self.gates_pad;
 
         buf
     }
@@ -430,7 +502,8 @@ mod tests {
             pad39: [0; 3],
             avatar_id: 2,
             anim: 3,
-            pad3e: [0; 2],
+            field_busy: 1,
+            pad3f: 0,
         }
     }
 
@@ -452,10 +525,21 @@ mod tests {
             local_player: sample_state(),
             cookie: 0x0102_0304_0506_0708,
             player_secret: 0x1122_3344_5566_7788,
+            session: SessionOut {
+                seq: 9,
+                op: SESSION_OP_REQUEST,
+                kind: SESSION_KIND_TEAM_UP,
+                target_trainer: 0xA1B2_C3D4,
+            },
         };
 
         let bytes = pkt.encode_le();
-        assert_eq!(bytes.len(), 112);
+        assert_eq!(bytes.len(), 120);
+        assert_eq!(
+            &bytes[112..116],
+            &[9, SESSION_OP_REQUEST, SESSION_KIND_TEAM_UP, 0]
+        );
+        assert_eq!(&bytes[116..120], &[0xD4, 0xC3, 0xB2, 0xA1]);
         let decoded = ClientToServerPacket::decode_le(&bytes).expect("valid decode");
         assert_eq!(pkt, decoded);
     }
@@ -492,6 +576,7 @@ mod tests {
         assert_eq!(buf[0x38], 6); // follower_move_seq
         assert_eq!(buf[0x3C], 2); // avatar_id
         assert_eq!(buf[0x3D], 3); // anim
+        assert_eq!(buf[0x3E], 1); // field_busy
         assert_eq!(PlayerState::decode_le(&buf).unwrap(), st);
 
         // The bridge copies packet[16..360] to mailbox 0x050..0x1A8, so the
@@ -523,12 +608,33 @@ mod tests {
             online_party_count: 1,
             ready_party_count: 1,
             room_uid: 0xCAFE_F00D,
-            gates_pad: [0; 8],
+            team_partner_slot: 2,
+            teamed_mask: TEAMED_SELF_BIT | 0b100,
+            session_state: SESSION_STATE_INCOMING,
+            session_kind: SESSION_KIND_TRADE,
+            session_peer_slot: 3,
+            session_seq: 7,
+            session_reason: SESSION_REASON_NONE,
+            gates_pad: 0,
         };
         let buf = pkt.encode_le();
         let gates = 16 + REMOTE_SLOTS * PLAYER_STATE_SIZE;
         assert_eq!(buf[gates + 8], 1); // flag_campaign_started (CoopProgressionGates 0x08)
         assert_eq!(&buf[gates + 12..gates + 16], &[0x0D, 0xF0, 0xFE, 0xCA]); // room_uid (0x0C)
+        // Session and team fields: CoopProgressionGates 0x10..0x17 (coop_sync.h).
+        assert_eq!(
+            &buf[gates + 16..gates + 24],
+            &[
+                2,
+                0x84,
+                SESSION_STATE_INCOMING,
+                SESSION_KIND_TRADE,
+                3,
+                7,
+                0,
+                0
+            ]
+        );
     }
 
     #[test]

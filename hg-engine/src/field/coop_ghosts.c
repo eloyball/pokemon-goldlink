@@ -14,6 +14,7 @@
 #include "system.h"
 #include "task.h"
 #include "coop_sync.h"
+#include "coop_session.h"
 
 // ---------------------------------------------------------------------------
 // Overlay 131 (OVERLAY_FIELD_EXTENSION): co-op field code.
@@ -717,6 +718,8 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
                                     &gCoopCommBlock.track_player_step);
     ps->is_active = 1;
     ps->activity = COOP_ACTIVITY_FIELD;
+    // Others see "busy" instead of the session menu when they talk to us.
+    ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) ? 1 : 0;
 
     profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
     if (profile != NULL)
@@ -1694,7 +1697,15 @@ static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalM
             continue;
         if (!Coop_ReadRemotePlayer(slot, &remote) || remote.trainer_id != (u32)COOP_GHOST_TRAINER(ghost))
             continue;
-        (void)Coop_StartTalkDialog(fsys, remote.name, remote.is_active ? COOP_ACTIVITY_FIELD : remote.activity);
+        // Free in the field after the adventure started: Trade / Battle /
+        // Team up. Otherwise just their name, and why they are busy (a
+        // battle, an app, or a message / menu in the field).
+        if (remote.is_active && !remote.field_busy && Coop_IsAdventureStarted() && Coop_IsConnectedToRoom())
+            (void)Coop_StartSessionMenu(fsys, slot, &remote);
+        else if (remote.is_active)
+            (void)Coop_StartTalkDialog(fsys, remote.name, remote.field_busy ? COOP_ACTIVITY_MENU : COOP_ACTIVITY_FIELD);
+        else
+            (void)Coop_StartTalkDialog(fsys, remote.name, remote.activity);
         return;
     }
 }
@@ -1720,6 +1731,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_ProbeRender(manager);
     Coop_UpdateGhosts(fsys, manager, player);
     Coop_CheckGhostTalk(fsys, manager, player);
+    Coop_UpdateSessionPrompt(fsys);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
 }

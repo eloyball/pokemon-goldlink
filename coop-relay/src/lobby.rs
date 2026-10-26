@@ -11,13 +11,22 @@ use tracing::{error, info, warn};
 
 use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, PROTOCOL_VERSION, PlayerState,
-    REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC,
-    ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
+    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, NO_SLOT, PROTOCOL_VERSION,
+    PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
+    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
     ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
     ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SERVER_PACKET_SIZE,
-    ServerToClientPacket, room_code_to_string, validate_room_code,
+    SESSION_KIND_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
+    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
+    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
+    SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
+    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED,
+    SESSION_STATE_TIMEOUT, ServerToClientPacket, SessionOut, TEAMED_SELF_BIT, room_code_to_string,
+    validate_room_code,
 };
+
+/// A request nobody answers expires after this long.
+pub const SESSION_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A campaign file exists on disk but could not be read or parsed. The room
 /// is refused rather than silently reset, so a corrupt file can never unlock
@@ -55,6 +64,29 @@ pub struct CampaignSaveFile {
     pub campaign_started: bool,
     pub expected_party_size: u8,
     pub roster: Vec<RegisteredTrainer>,
+    /// Permanent pairs of trainer IDs (Milestone 3 "team up"); never undone.
+    #[serde(default)]
+    pub teams: Vec<[u32; 2]>,
+}
+
+/// What one player currently sees of their session, latched until the next
+/// change. `seq` moves on every change so the ROM reacts once.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SessionView {
+    pub state: u8,
+    pub kind: u8,
+    pub peer: Option<usize>, // absolute slot of the other side
+    pub reason: u8,
+    pub seq: u8,
+}
+
+/// A pending request: `from` asked `to` (absolute slots).
+#[derive(Debug, Clone)]
+struct Session {
+    kind: u8,
+    from: usize,
+    to: usize,
+    created: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -70,6 +102,9 @@ pub struct ConnectedPlayer {
     pub assigned_monolocke: u8,
     pub player_secret: u64,
     pub allow_ahead: bool,
+    /// Last session operation sequence applied (the client repeats it).
+    pub last_session_seq: u8,
+    pub session_view: SessionView,
 }
 
 pub struct LobbyState {
@@ -86,6 +121,8 @@ pub struct LobbyState {
     server_tick: u32,
     inspect_all_packets: bool,
     last_activity: Instant,
+    teams: Vec<[u32; 2]>,
+    sessions: Vec<Session>,
 }
 
 impl LobbyState {
@@ -129,6 +166,8 @@ impl LobbyState {
             server_tick: 0,
             inspect_all_packets,
             last_activity: Instant::now(),
+            teams: Vec::new(),
+            sessions: Vec::new(),
         };
         lobby.load_campaign_from_disk()?;
         Ok(lobby)
@@ -179,6 +218,7 @@ impl LobbyState {
                 *slot = None;
             }
         }
+        self.drop_sessions_of_missing_players();
     }
 
     pub fn handle_client_packet(
@@ -291,6 +331,12 @@ impl LobbyState {
             existing.in_bedroom_ready = in_bedroom_ready;
             existing.state = pkt.local_player;
             existing.badge_mask = pkt.badge_mask_local;
+            let session_out = pkt.session;
+            let fresh_op = session_out.seq != existing.last_session_seq;
+            existing.last_session_seq = session_out.seq;
+            if fresh_op {
+                self.apply_session_op(slot_idx, session_out, now);
+            }
 
             if (badge_changed || allow_changed)
                 && self.campaign_started
@@ -323,6 +369,9 @@ impl LobbyState {
                 assigned_monolocke,
                 player_secret: pkt.player_secret,
                 allow_ahead: pkt.allow_ahead == 1,
+                // An operation latched before (re)joining is stale: ignore it.
+                last_session_seq: pkt.session.seq,
+                session_view: SessionView::default(),
             });
         }
 
@@ -528,10 +577,12 @@ impl LobbyState {
                 *slot = None;
             }
         }
+        self.drop_sessions_of_missing_players();
     }
 
     pub fn build_broadcast_batch(&mut self) -> Vec<(SocketAddr, [u8; SERVER_PACKET_SIZE])> {
         self.server_tick = self.server_tick.wrapping_add(1);
+        self.expire_sessions(Instant::now());
 
         let active_mask = self.compute_active_bitmask();
         let online_count = active_mask.count_ones() as u8;
@@ -588,7 +639,18 @@ impl LobbyState {
                 online_party_count: online_count,
                 ready_party_count: ready_count,
                 room_uid: self.room_uid,
-                gates_pad: [0u8; 8],
+                team_partner_slot: self.team_partner_remote_slot(recipient_idx),
+                teamed_mask: self.teamed_mask_for(recipient_idx),
+                session_state: recipient.session_view.state,
+                session_kind: recipient.session_view.kind,
+                session_peer_slot: recipient
+                    .session_view
+                    .peer
+                    .filter(|&p| self.slots[p].is_some())
+                    .map_or(NO_SLOT, |p| remote_slot_of(recipient_idx, p)),
+                session_seq: recipient.session_view.seq,
+                session_reason: recipient.session_view.reason,
+                gates_pad: 0,
             };
 
             batch.push((recipient.addr, pkt.encode_le()));
@@ -686,6 +748,263 @@ impl LobbyState {
         }
     }
 
+    // -----------------------------------------------------------------
+    // Player-to-player sessions and teams (docs/MILESTONE3_PLAN.md, Phase 1)
+    // -----------------------------------------------------------------
+
+    /// The teammate's trainer ID, if this trainer is in a team.
+    pub fn team_partner_of(&self, trainer_id: u32) -> Option<u32> {
+        self.teams.iter().find_map(|t| {
+            if t[0] == trainer_id {
+                Some(t[1])
+            } else if t[1] == trainer_id {
+                Some(t[0])
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn teams(&self) -> &[[u32; 2]] {
+        &self.teams
+    }
+
+    fn trainer_at(&self, slot: usize) -> Option<u32> {
+        self.slots[slot].as_ref().map(|p| p.state.trainer_id)
+    }
+
+    fn is_teamed(&self, slot: usize) -> bool {
+        self.trainer_at(slot)
+            .is_some_and(|t| t != 0 && self.team_partner_of(t).is_some())
+    }
+
+    fn in_session(&self, slot: usize) -> bool {
+        self.sessions.iter().any(|s| s.from == slot || s.to == slot)
+    }
+
+    fn set_view(&mut self, slot: usize, state: u8, kind: u8, peer: Option<usize>, reason: u8) {
+        if let Some(p) = self.slots[slot].as_mut() {
+            let seq = p.session_view.seq.wrapping_add(1).max(1);
+            p.session_view = SessionView {
+                state,
+                kind,
+                peer,
+                reason,
+                seq,
+            };
+        }
+    }
+
+    /// Applies one new session operation from `slot` (already deduplicated).
+    fn apply_session_op(&mut self, slot: usize, out: SessionOut, now: Instant) {
+        let room_str = room_code_to_string(&self.room_code);
+        match out.op {
+            SESSION_OP_REQUEST => {
+                let kind = out.kind;
+                let target = (0..MAX_PLAYERS).find(|&j| {
+                    j != slot
+                        && out.target_trainer != 0
+                        && self.trainer_at(j) == Some(out.target_trainer)
+                });
+                let refuse = |lobby: &mut Self, reason: u8| {
+                    lobby.set_view(slot, SESSION_STATE_REFUSED, kind, target, reason);
+                };
+                if !matches!(
+                    kind,
+                    SESSION_KIND_TRADE | SESSION_KIND_BATTLE | SESSION_KIND_TEAM_UP
+                ) || self.trainer_at(slot) == Some(out.target_trainer)
+                {
+                    return refuse(self, SESSION_REASON_INVALID);
+                }
+                let Some(target) = target else {
+                    return refuse(self, SESSION_REASON_NOT_HERE);
+                };
+                if self.in_session(slot) || self.in_session(target) {
+                    return refuse(self, SESSION_REASON_BUSY);
+                }
+                if kind == SESSION_KIND_TEAM_UP {
+                    if !self.campaign_started {
+                        return refuse(self, SESSION_REASON_INVALID);
+                    }
+                    if self.is_teamed(slot) || self.is_teamed(target) {
+                        return refuse(self, SESSION_REASON_ALREADY_TEAMED);
+                    }
+                }
+                if kind == SESSION_KIND_BATTLE {
+                    // Teams only battle teams (team vs solo is in the backlog),
+                    // and never their own teammate.
+                    let me = self.trainer_at(slot).unwrap_or(0);
+                    let same_team = self.team_partner_of(me) == self.trainer_at(target);
+                    if self.is_teamed(slot) != self.is_teamed(target) || same_team {
+                        return refuse(self, SESSION_REASON_TEAM_RULE);
+                    }
+                }
+                info!("[Room {room_str} | SESSION] P{slot} asks P{target} (kind {kind})");
+                self.sessions.push(Session {
+                    kind,
+                    from: slot,
+                    to: target,
+                    created: now,
+                });
+                self.set_view(
+                    slot,
+                    SESSION_STATE_OUTGOING,
+                    kind,
+                    Some(target),
+                    SESSION_REASON_NONE,
+                );
+                self.set_view(
+                    target,
+                    SESSION_STATE_INCOMING,
+                    kind,
+                    Some(slot),
+                    SESSION_REASON_NONE,
+                );
+            }
+            SESSION_OP_ACCEPT | SESSION_OP_DECLINE => {
+                let Some(i) = self.sessions.iter().position(|s| s.to == slot) else {
+                    return;
+                };
+                let session = self.sessions.remove(i);
+                let accepted = out.op == SESSION_OP_ACCEPT;
+                let state = if accepted {
+                    SESSION_STATE_ACCEPTED
+                } else {
+                    SESSION_STATE_DECLINED
+                };
+                info!(
+                    "[Room {room_str} | SESSION] P{} {} P{}'s request (kind {})",
+                    session.to,
+                    if accepted { "accepted" } else { "declined" },
+                    session.from,
+                    session.kind
+                );
+                if accepted
+                    && session.kind == SESSION_KIND_TEAM_UP
+                    && let (Some(a), Some(b)) =
+                        (self.trainer_at(session.from), self.trainer_at(session.to))
+                    && self.team_partner_of(a).is_none()
+                    && self.team_partner_of(b).is_none()
+                {
+                    self.teams.push([a, b]);
+                    info!("[Room {room_str} | TEAM] 0x{a:08X} and 0x{b:08X} teamed up");
+                    self.save_campaign_to_disk();
+                }
+                self.set_view(
+                    session.from,
+                    state,
+                    session.kind,
+                    Some(session.to),
+                    SESSION_REASON_NONE,
+                );
+                self.set_view(
+                    session.to,
+                    state,
+                    session.kind,
+                    Some(session.from),
+                    SESSION_REASON_NONE,
+                );
+            }
+            SESSION_OP_CANCEL => {
+                let Some(i) = self.sessions.iter().position(|s| s.from == slot) else {
+                    return;
+                };
+                let session = self.sessions.remove(i);
+                self.set_view(
+                    session.from,
+                    SESSION_STATE_CANCELLED,
+                    session.kind,
+                    Some(session.to),
+                    SESSION_REASON_NONE,
+                );
+                self.set_view(
+                    session.to,
+                    SESSION_STATE_CANCELLED,
+                    session.kind,
+                    Some(session.from),
+                    SESSION_REASON_NONE,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    /// Requests nobody answered in time.
+    pub fn expire_sessions(&mut self, now: Instant) {
+        let (expired, kept): (Vec<Session>, Vec<Session>) = self
+            .sessions
+            .drain(..)
+            .partition(|s| now.duration_since(s.created) >= SESSION_TIMEOUT);
+        self.sessions = kept;
+        for s in expired {
+            self.set_view(
+                s.from,
+                SESSION_STATE_TIMEOUT,
+                s.kind,
+                Some(s.to),
+                SESSION_REASON_NONE,
+            );
+            self.set_view(
+                s.to,
+                SESSION_STATE_TIMEOUT,
+                s.kind,
+                Some(s.from),
+                SESSION_REASON_NONE,
+            );
+        }
+    }
+
+    /// A side went offline: the other side's request is cancelled.
+    fn drop_sessions_of_missing_players(&mut self) {
+        let (gone, kept): (Vec<Session>, Vec<Session>) = self
+            .sessions
+            .drain(..)
+            .partition(|s| self.slots[s.from].is_none() || self.slots[s.to].is_none());
+        self.sessions = kept;
+        for s in gone {
+            self.set_view(
+                s.from,
+                SESSION_STATE_CANCELLED,
+                s.kind,
+                Some(s.to),
+                SESSION_REASON_NONE,
+            );
+            self.set_view(
+                s.to,
+                SESSION_STATE_CANCELLED,
+                s.kind,
+                Some(s.from),
+                SESSION_REASON_NONE,
+            );
+        }
+    }
+
+    fn team_partner_remote_slot(&self, recipient: usize) -> u8 {
+        let Some(partner) = self
+            .trainer_at(recipient)
+            .and_then(|t| self.team_partner_of(t))
+        else {
+            return NO_SLOT;
+        };
+        (0..MAX_PLAYERS)
+            .find(|&j| j != recipient && self.trainer_at(j) == Some(partner))
+            .map_or(NO_SLOT, |j| remote_slot_of(recipient, j))
+    }
+
+    fn teamed_mask_for(&self, recipient: usize) -> u8 {
+        let mut mask = if self.is_teamed(recipient) {
+            TEAMED_SELF_BIT
+        } else {
+            0
+        };
+        for j in (0..MAX_PLAYERS).filter(|&j| j != recipient) {
+            if self.is_teamed(j) {
+                mask |= 1 << remote_slot_of(recipient, j);
+            }
+        }
+        mask
+    }
+
     fn save_file_path(&self) -> Option<PathBuf> {
         let dir = self.save_dir.as_ref()?;
         let room_str = room_code_to_string(&self.room_code);
@@ -714,6 +1033,7 @@ impl LobbyState {
             campaign_started: self.campaign_started,
             expected_party_size: self.roster.len() as u8,
             roster: self.roster.clone(),
+            teams: self.teams.clone(),
         };
         let json = match serde_json::to_string_pretty(&payload) {
             Ok(json) => json,
@@ -751,6 +1071,7 @@ impl LobbyState {
         self.host_token = saved.host_token;
         self.campaign_started = saved.campaign_started;
         self.roster = saved.roster;
+        self.teams = saved.teams;
         self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
         info!(
             "[Room {}] Restored locked campaign from disk ({} registered trainers)",
@@ -764,6 +1085,16 @@ impl LobbyState {
             self.save_campaign_to_disk();
         }
         Ok(())
+    }
+}
+
+/// Where absolute slot `other` appears in `recipient`'s remote_players
+/// (the broadcast lists every other slot in order, skipping the recipient).
+fn remote_slot_of(recipient: usize, other: usize) -> u8 {
+    if other < recipient {
+        other as u8
+    } else {
+        (other - 1) as u8
     }
 }
 

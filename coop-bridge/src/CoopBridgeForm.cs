@@ -25,7 +25,7 @@ namespace CoopBridge
     {
         public const int Size = 512;
         public const uint Magic = 0x434F4F50;
-        public const ushort Version = 6; // COOP_MAILBOX_VERSION
+        public const ushort Version = 7; // COOP_MAILBOX_VERSION
 
         public const uint MagicOff = 0x000;          // u32
         public const uint VersionOff = 0x004;        // u16
@@ -55,6 +55,8 @@ namespace CoopBridge
         public const uint SaveCounter = 0x1E0;       // u32  rom: bumped after every completed save write
         public const uint SaveSlotReady = 0x1E4;     // u8   bridge: this room's save is in SRAM
         public const uint ResetRequest = 0x1E5;      // u8   bridge: restart at the title to load SRAM
+        public const uint SessionOut = 0x1F0;        // 8 B  rom: latched session op (seq, op, kind, pad, u32 target)
+        public const int SessionOutSize = 8;
 
         // CoopDiagnostics field offsets (relative to Diag)
         public const int DgFieldEntryCalls = 0x00;   // u32
@@ -125,6 +127,7 @@ namespace CoopBridge
         public const int PsFollowerMoveAction = 0x37;
         public const int PsAvatarId = 0x3C;          // follower block ends here
         public const int PsAnim = 0x3D;              // pose animation index
+        public const int PsFieldBusy = 0x3E;         // field task or message running (0/1)
         public const int MaxAnim = 15;
         public const int MaxHeldMovement = 0x71;     // MapObject_SetHeldMovement limit
         public const byte MoveActionNone = 0xFF;     // no action since the map loaded
@@ -142,6 +145,17 @@ namespace CoopBridge
         public const int GateOnlineParty = 0x0A;
         public const int GateReadyParty = 0x0B;
         public const int GateRoomUid = 0x0C;         // u32
+        public const int GateTeamPartner = 0x10;     // remote slot or 0xFF
+        public const int GateTeamedMask = 0x11;
+        public const int GateSessionState = 0x12;
+        public const int GateSessionKind = 0x13;
+        public const int GateSessionPeer = 0x14;     // remote slot or 0xFF
+        public const int GateSessionSeq = 0x15;
+        public const int GateSessionReason = 0x16;
+        public const int GateSessionSize = 7;
+        public const int MaxSessionState = 7;
+        public const int MaxSessionKind = 3;
+        public const int MaxSessionReason = 5;
 
         // Layout of the 344-byte server payload (relative to ServerPayload)
         public const int RemoteSlots = 5;
@@ -154,8 +168,8 @@ namespace CoopBridge
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 4;
-        public const int ClientPacketSize = 112;
+        public const ushort ProtocolVersion = 5;
+        public const int ClientPacketSize = 120;
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
         public const int ChallengePacketSize = 24; // header + cookie (u64 @16)
@@ -383,6 +397,8 @@ namespace CoopBridge
 
         // Last consistent snapshot of the ROM's local player block.
         private readonly byte[] _localPlayer = new byte[Mailbox.PlayerStateSize];
+        // The ROM's latched session request (trade / battle / team up), forwarded as is.
+        private readonly byte[] _sessionOut = new byte[Mailbox.SessionOutSize];
         private ushort _badgeMaskLocal;
         private uint _heartbeatRom;
         // Bounds published by the ROM (mailbox v3), used to sanitize relay data.
@@ -1103,6 +1119,7 @@ namespace CoopBridge
             Buffer.BlockCopy(_localPlayer, 0, tx, 32, Mailbox.PlayerStateSize);
             Buffer.BlockCopy(BitConverter.GetBytes(Interlocked.Read(ref _cookie)), 0, tx, 96, 8);
             Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
+            Buffer.BlockCopy(_sessionOut, 0, tx, 112, Mailbox.SessionOutSize);
 
             return tx;
         }
@@ -1237,6 +1254,11 @@ namespace CoopBridge
                 _badgeMaskLocal = badges;
             }
             _heartbeatRom = _memoryApi.ReadU32(mb + Mailbox.HeartbeatRom, MemoryDomain);
+            // The ROM fills the block before bumping its seq byte, and only
+            // between frames, so one read is consistent.
+            var session = _memoryApi.ReadByteRange(mb + Mailbox.SessionOut, Mailbox.SessionOutSize, MemoryDomain);
+            if (session.Count == Mailbox.SessionOutSize)
+                for (int i = 0; i < Mailbox.SessionOutSize; i++) _sessionOut[i] = session[i];
         }
 
         private void ProcessLatestServerPacket(uint mb)
@@ -1321,6 +1343,7 @@ namespace CoopBridge
                     continue;
                 }
                 if (p[o + Mailbox.PsAnim] > Mailbox.MaxAnim) p[o + Mailbox.PsAnim] = 0; // cosmetic only
+                if (p[o + Mailbox.PsFieldBusy] > 1) p[o + Mailbox.PsFieldBusy] = 1;
                 // A bad follower hides only the follower, not the player.
                 bool followerOk = BitConverter.ToUInt16(p, o + Mailbox.PsFollowerSpecies) <= _limitSpecies
                     && p[o + Mailbox.PsFollowerShiny] <= 1
@@ -1342,6 +1365,21 @@ namespace CoopBridge
                 && p[g + Mailbox.GateOnlineParty] <= Mailbox.MaxPlayers
                 && p[g + Mailbox.GateReadyParty] <= Mailbox.MaxPlayers;
             if (!gatesOk) Array.Clear(p, g, Mailbox.GatesSize);
+            // Session and team fields: a bad value drops only those (the ROM
+            // reads state 0 as "no session" and 0xFF as "no slot").
+            static bool SlotOk(byte b) => b < Mailbox.RemoteSlots || b == Mailbox.PlayerIdNone;
+            bool sessionOk = SlotOk(p[g + Mailbox.GateTeamPartner])
+                && (p[g + Mailbox.GateTeamedMask] & 0x60) == 0
+                && p[g + Mailbox.GateSessionState] <= Mailbox.MaxSessionState
+                && p[g + Mailbox.GateSessionKind] <= Mailbox.MaxSessionKind
+                && SlotOk(p[g + Mailbox.GateSessionPeer])
+                && p[g + Mailbox.GateSessionReason] <= Mailbox.MaxSessionReason;
+            if (!sessionOk)
+            {
+                Array.Clear(p, g + Mailbox.GateTeamPartner, Mailbox.GateSessionSize);
+                p[g + Mailbox.GateTeamPartner] = Mailbox.PlayerIdNone;
+                p[g + Mailbox.GateSessionPeer] = Mailbox.PlayerIdNone;
+            }
 
             return p;
         }
@@ -1660,12 +1698,14 @@ namespace CoopBridge
             var remote = _memoryApi.ReadByteRange(box + Mailbox.ServerPayload, Mailbox.PayloadGates, MemoryDomain);
             byte[] rp = new byte[Mailbox.PayloadGates];
             for (int i = 0; i < rp.Length && i < remote.Count; i++) rp[i] = remote[i];
+            byte partner = (byte)_memoryApi.ReadU8(g + Mailbox.GateTeamPartner, MemoryDomain);
             var lines = new List<string>();
             for (int i = 0; i < Mailbox.RemoteSlots; i++)
             {
                 int o = i * Mailbox.PlayerStateSize;
                 if (BitConverter.ToUInt32(rp, o + Mailbox.PsTrainerId) == 0) continue;
-                lines.Add($"{DecodeName(rp, o)}: {DescribePlayer(rp, o)}");
+                string tag = i == partner ? " (teammate)" : "";
+                lines.Add($"{DecodeName(rp, o)}{tag}: {DescribePlayer(rp, o)}");
             }
             SetValue(_othersValue, lines.Count > 0 ? string.Join("\n", lines) : "Nobody else yet",
                 lines.Count > 0 ? (Color?)null : Theme.TextSecondary);
