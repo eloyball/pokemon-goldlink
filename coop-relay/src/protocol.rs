@@ -235,7 +235,7 @@ pub struct ClientToServerPacket {
     pub room_code: [u8; 6],        // 6..12
     pub room_action: u8,           // 12 (1 = Create, 2 = Join, 3 = Sync, 4 = Leave)
     pub requested_player_id: u8,   // 13 (0..5 or 0xFF)
-    pub reserved_14: u8,           // 14 (readiness travels in local_player.client_ready)
+    pub allow_ahead: u8,           // 14 (1 = this player lets teammates go ahead past the gym gate)
     pub target_party_size: u8,     // 15 (host's room size, 2..6; only honored from the host)
     pub host_token: u32,           // 16..20
     pub badge_mask_local: u16,     // 20..22
@@ -255,7 +255,7 @@ impl ClientToServerPacket {
         buf[6..12].copy_from_slice(&self.room_code);
         buf[12] = self.room_action;
         buf[13] = self.requested_player_id;
-        buf[14] = self.reserved_14;
+        buf[14] = self.allow_ahead;
         buf[15] = self.target_party_size;
         buf[16..20].copy_from_slice(&self.host_token.to_le_bytes());
         buf[20..22].copy_from_slice(&self.badge_mask_local.to_le_bytes());
@@ -295,7 +295,7 @@ impl ClientToServerPacket {
             room_code: raw_room,
             room_action: buf[12],
             requested_player_id: buf[13],
-            reserved_14: buf[14],
+            allow_ahead: buf[14],
             target_party_size: buf[15],
             host_token: u32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]]),
             badge_mask_local: u16::from_le_bytes([buf[20], buf[21]]),
@@ -438,7 +438,7 @@ mod tests {
             room_code: *b"JOHTO1",
             room_action: ROOM_ACTION_CREATE,
             requested_player_id: AUTO_PLAYER_ID,
-            reserved_14: 0,
+            allow_ahead: 0,
             target_party_size: 4,
             host_token: 0x1234_5678,
             badge_mask_local: 0b0000_0011,

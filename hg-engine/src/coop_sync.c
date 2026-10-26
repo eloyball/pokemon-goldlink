@@ -150,6 +150,16 @@ static const char *const sGateLines[] = {
     "Press A, B or START.",
 };
 
+// Connected, but the bridge has not loaded this room's save yet
+// (docs/MILESTONE2_PLAN.md 7.2). It swaps it in and the game restarts.
+static const char *const sSlotGateLines[] = {
+    "Getting this room's",
+    "save ready...",
+    "",
+    "The game will restart.",
+    "Press A, B or START.",
+};
+
 static const u16 sGateLineY[] = { 16, 44, 60, 76, 108 };
 
 // Any of these dismisses the startup gate. A and B are how every vanilla
@@ -163,7 +173,7 @@ static const u16 sGateLineY[] = { 16, 44, 60, 76, 108 };
 // same heap/IRQ/BG setup with a black background. Only used before the
 // overworld is running (New Game / Continue), never mid-game: it rebuilds
 // the heap system. Blocks on a fresh A press, then soft-resets.
-static void Coop_ShowStartupGateAndReset(void)
+static void Coop_ShowStartupGateAndReset(const char *const *lines)
 {
     u32 window;
     u32 line;
@@ -217,10 +227,10 @@ static void Coop_ShowStartupGateAndReset(void)
     FillWindowPixelRect(&window, 0xF, 0, 0, 208, 144);
     DrawFrameAndWindow1(&window, FALSE, 0x1F7, 2);
 
-    for (line = 0; line < NELEMS(sGateLines); line++)
+    for (line = 0; line < NELEMS(sGateLineY); line++)
     {
         String *msg_str = String_New(64, HEAP_ID_DEFAULT);
-        Coop_SetStringFromAscii(msg_str, sGateLines[line]);
+        Coop_SetStringFromAscii(msg_str, lines[line]);
         AddTextPrinterParameterized(&window, 0, msg_str, 8, sGateLineY[line], 0, NULL);
         String_Delete(msg_str);
     }
@@ -269,9 +279,9 @@ static void Coop_ShowStartupGateAndReset(void)
 void LONG_CALL Coop_CheckStartupGate(void)
 {
     if (!Coop_IsConnectedToRoom())
-    {
-        Coop_ShowStartupGateAndReset();
-    }
+        Coop_ShowStartupGateAndReset(sGateLines);
+    if (gCoopCommBlock.save_slot_ready != 1)
+        Coop_ShowStartupGateAndReset(sSlotGateLines);
     // Passing the gate starts the session: a drop from here on (even during
     // the New Game intro) is latched and handled at the first safe overworld
     // frame, so nobody reaches the overworld offline.
@@ -561,6 +571,7 @@ static BOOL Coop_BeginDisconnectSaveAndReset(FieldSystem *fsys)
 #define COOP_DIR_WEST 2 // pret DIR_WEST (constants/global_fieldmap.h)
 
 // pret constants/movements.h, run through the script movement engine.
+#define COOP_MOVEMENT_FACE_UP    0  // + direction
 #define COOP_MOVEMENT_STEP_RIGHT 15
 #define COOP_MOVEMENT_STEP_END   254
 
@@ -574,13 +585,6 @@ void *LONG_CALL EventObjectMovementMan_Create(LocalMapObject *object, const stru
 BOOL LONG_CALL EventObjectMovementMan_IsFinish(void *movementMan);
 void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 
-// The block only fires while facing west, so stepping back east always
-// returns the player to (4, 4), the tile they came from or an open one.
-static const struct CoopMovementCommand sStepAwayFromStairs[] = {
-    { COOP_MOVEMENT_STEP_RIGHT, 1 },
-    { COOP_MOVEMENT_STEP_END, 0 },
-};
-
 enum CoopBedroomBlockState
 {
     COOP_BLOCK_WAIT_STILL,
@@ -592,10 +596,16 @@ enum CoopBedroomBlockState
     COOP_BLOCK_WAIT_STEP,
 };
 
-struct CoopBedroomBlockEnv
+// A field block (bedroom stairs, gated bosses): two message pages, then one
+// movement that takes the player out of the blocking spot, so the check
+// does not fire again until they come back.
+struct CoopFieldBlockEnv
 {
     struct CoopDialog dialog;
     void *movement;
+    const char *page1;
+    const char *page2;
+    struct CoopMovementCommand moves[2]; // read by the movement engine until it finishes
 };
 
 BOOL LONG_CALL Coop_IsAdventureStarted(void)
@@ -631,10 +641,10 @@ static BOOL Coop_ShouldBlockBedroomStairs(FieldSystem *fsys)
 
 // Returns TRUE when done: the field task manager then frees the task, and
 // the env is freed here.
-static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
+static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
 {
     FieldSystem *fsys = taskman->fieldSystem;
-    struct CoopBedroomBlockEnv *env = taskman->env;
+    struct CoopFieldBlockEnv *env = taskman->env;
 
     switch (taskman->state)
     {
@@ -648,7 +658,7 @@ static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
     case COOP_BLOCK_OPEN_DIALOG:
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
-        Coop_DialogPrint(&env->dialog, "Oops! Looks like some trainers\nare still asleep.");
+        Coop_DialogPrint(&env->dialog, env->page1);
         taskman->state = COOP_BLOCK_WAIT_PAGE1_TEXT;
         break;
 
@@ -660,7 +670,7 @@ static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
     case COOP_BLOCK_WAIT_PAGE1_BUTTON:
         if (Coop_DialogButtonPressed())
         {
-            Coop_DialogPrint(&env->dialog, "Please wait until everyone is\nready to start your adventure.");
+            Coop_DialogPrint(&env->dialog, env->page2);
             taskman->state = COOP_BLOCK_WAIT_PAGE2_TEXT;
         }
         break;
@@ -677,7 +687,7 @@ static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
             MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
             // Same engine as the applymovement script command; player input
             // stays blocked until this task ends.
-            env->movement = EventObjectMovementMan_Create(Coop_GetPlayerMapObject(fsys), sStepAwayFromStairs);
+            env->movement = EventObjectMovementMan_Create(Coop_GetPlayerMapObject(fsys), env->moves);
             taskman->state = COOP_BLOCK_WAIT_STEP;
         }
         break;
@@ -693,6 +703,180 @@ static BOOL Coop_Task_BedroomBlock(TaskManager *taskman)
     }
 
     return FALSE;
+}
+
+static BOOL Coop_StartFieldBlock(FieldSystem *fsys, const char *page1, const char *page2, u16 movement)
+{
+    struct CoopFieldBlockEnv *env;
+
+    if (!Coop_StartFieldTask(fsys, Coop_Task_FieldBlock, sizeof(struct CoopFieldBlockEnv)))
+        return FALSE;
+    env = ((TaskManager *)fsys->taskman)->env;
+    env->page1 = page1;
+    env->page2 = page2;
+    env->moves[0].command = movement;
+    env->moves[0].length = 1;
+    env->moves[1].command = COOP_MOVEMENT_STEP_END;
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
+// Gym / boss gate (docs/MILESTONE2_PLAN.md 7.2)
+// ---------------------------------------------------------------------------
+
+#define COOP_NO_BADGE 0xFF // always gated (Elite Four, Red)
+
+// What A would talk to: the object on the facing tile, or across a counter
+// one tile further (pret asm/unk_0203DB6C.s, ccd field_interaction.c).
+void LONG_CALL FieldSystem_GetFacingObject(FieldSystem *fsys, LocalMapObject **ret);
+
+struct CoopGatedBoss
+{
+    u16 mapId;
+    u8 x;
+    u8 z;
+    u8 badge; // PlayerProfile badge index (Johto 0-7, Kanto 8-15)
+};
+
+// Bosses the player starts by talking to them (pret zone_event JSON object
+// positions). Lance is started by a map script, but only after the Elite
+// Four. Talking to a leader whose badge you already have is never blocked.
+static const struct CoopGatedBoss sGatedBosses[] = {
+    { MAP_T22GYM0101, 15, 4, 0 },              // Falkner
+    { MAP_T23GYM0102, 9, 5, 1 },               // Bugsy
+    { MAP_T25GYM0101, 13, 4, 2 },              // Whitney
+    { MAP_T27GYM0101, 10, 8, 3 },              // Morty
+    { MAP_T24GYM0101, 13, 10, 4 },             // Chuck
+    { MAP_T26GYM0101, 6, 5, 5 },               // Jasmine
+    { MAP_T28GYM0101, 7, 4, 6 },               // Pryce
+    { MAP_T30GYM0101, 12, 3, 7 },              // Clair
+    { MAP_T03GYM0101, 7, 4, 8 },               // Brock
+    { MAP_T04GYM0101, 10, 1, 9 },              // Misty
+    { MAP_T06GYM0101, 6, 4, 10 },              // Lt. Surge
+    { MAP_T07GYM0101, 7, 3, 11 },              // Erika
+    { MAP_T08GYM0101, 7, 16, 12 },             // Janine
+    { MAP_T11GYM0101, 15, 13, 13 },            // Sabrina
+    { MAP_D11R0106, 13, 12, 14 },              // Blaine
+    { MAP_T02GYM0101, 5, 4, 15 },              // Blue
+    { MAP_T10R0201, 6, 10, COOP_NO_BADGE },    // Will
+    { MAP_T10R0301, 6, 11, COOP_NO_BADGE },    // Koga
+    { MAP_T10R0401, 6, 10, COOP_NO_BADGE },    // Bruno
+    { MAP_T10R0501, 6, 10, COOP_NO_BADGE },    // Karen
+    { MAP_D41R0108, 30, 11, COOP_NO_BADGE },   // Red
+};
+
+// Same end-of-frame timing argument as the bedroom stairs: talking needs a
+// later frame's A press while facing the boss (from the next tile, or across
+// a counter like Falkner's), and this sees "facing the boss" first. The relay keeps
+// flag_coop_sync_ready at 0 for this player while a teammate is behind on
+// badges (and is neither in this map nor letting others go ahead).
+static BOOL Coop_ShouldBlockGatedBoss(FieldSystem *fsys)
+{
+    LocalMapObject *facing = NULL;
+    u32 i;
+
+    if (!Coop_IsAdventureStarted() || gCoopCommBlock.gates.flag_coop_sync_ready == 1)
+        return FALSE;
+    if (!Coop_IsFieldMapActive(fsys) || fsys->taskman != NULL || fsys->textbox_open)
+        return FALSE;
+    if (Coop_GetPlayerMapObject(fsys) == NULL)
+        return FALSE;
+    FieldSystem_GetFacingObject(fsys, &facing);
+    if (facing == NULL)
+        return FALSE;
+    for (i = 0; i < NELEMS(sGatedBosses); i++)
+    {
+        const struct CoopGatedBoss *boss = &sGatedBosses[i];
+        if (boss->mapId != fsys->location->mapId || boss->x != facing->xCurr || boss->z != facing->yCurr)
+            continue;
+        if (boss->badge != COOP_NO_BADGE && (gCoopCommBlock.badge_mask_local & (1u << boss->badge)))
+            return FALSE;
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// ---------------------------------------------------------------------------
+// Adventure-start save: the roster just locked (docs/MILESTONE2_PLAN.md 7.2)
+// ---------------------------------------------------------------------------
+
+enum CoopStartSaveTaskState
+{
+    COOP_START_OPEN,
+    COOP_START_WAIT_PAGE1,
+    COOP_START_SAVE,
+    COOP_START_WAIT_RESULT,
+    COOP_START_WAIT_BUTTON,
+};
+
+struct CoopStartSaveTaskEnv
+{
+    struct CoopDialog dialog;
+    u8 frameWait;
+    u8 saved;
+};
+
+// Returns TRUE when done; the env is freed here, the task by the manager.
+static BOOL Coop_Task_AdventureStartSave(TaskManager *taskman)
+{
+    FieldSystem *fsys = taskman->fieldSystem;
+    struct CoopStartSaveTaskEnv *env = taskman->env;
+
+    switch (taskman->state)
+    {
+    case COOP_START_OPEN:
+        MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
+        Coop_DialogOpen(fsys, &env->dialog);
+        Coop_DialogPrint(&env->dialog, "Everyone is here! Your\nadventure begins now!");
+        taskman->state = COOP_START_WAIT_PAGE1;
+        break;
+
+    case COOP_START_WAIT_PAGE1:
+        if (!Coop_DialogIsPrinting(&env->dialog) && Coop_DialogButtonPressed())
+        {
+            Coop_DialogPrint(&env->dialog, "The game will now be saved.\nDon't turn off the power.");
+            env->frameWait = 0;
+            taskman->state = COOP_START_SAVE;
+        }
+        break;
+
+    case COOP_START_SAVE:
+        // Let the text finish and reach VRAM before the save blocks the CPU.
+        if (Coop_DialogIsPrinting(&env->dialog) || ++env->frameWait < 2)
+            break;
+        env->saved = Field_SaveGameNormal(fsys) ? 1 : 0;
+        Coop_DialogPrint(&env->dialog, env->saved ? "Your adventure was saved!\nHave fun, everyone!"
+                                                   : "The save failed!\nIt will be tried again.");
+        taskman->state = COOP_START_WAIT_RESULT;
+        break;
+
+    case COOP_START_WAIT_RESULT:
+        if (!Coop_DialogIsPrinting(&env->dialog))
+            taskman->state = COOP_START_WAIT_BUTTON;
+        break;
+
+    case COOP_START_WAIT_BUTTON:
+        if (!Coop_DialogButtonPressed())
+            break;
+        Coop_DialogClose(fsys, &env->dialog);
+        MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
+        gCoopCommBlock.start_save_state = env->saved ? COOP_START_SAVE_DONE : COOP_START_SAVE_NONE;
+        sys_FreeMemoryEz(env);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// Start the save once the roster is locked while this player still has the
+// fresh bedroom save the room was formed with.
+static void Coop_TryAdventureStartSave(FieldSystem *fsys)
+{
+    if (gCoopCommBlock.start_save_state != COOP_START_SAVE_NONE || !Coop_IsAdventureStarted())
+        return;
+    if (gCoopCommBlock.local_player.save_status != COOP_SAVE_FRESH || !Coop_IsSafeOverworldWindow(fsys))
+        return;
+    if (Coop_StartFieldTask(fsys, Coop_Task_AdventureStartSave, sizeof(struct CoopStartSaveTaskEnv)))
+        gCoopCommBlock.start_save_state = COOP_START_SAVE_RUNNING;
 }
 
 // ---------------------------------------------------------------------------
@@ -845,6 +1029,12 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
     fieldActive = Coop_IsFieldMapActive(fsys);
     connected = Coop_IsConnectedToRoom();
 
+    // The bridge swapped this room's save into the cartridge (SRAM): restart
+    // so the game loads it. Only before a session started (title screen,
+    // main menu), never once a save is in play.
+    if (gCoopCommBlock.reset_request == 1 && !gCoopCommBlock.was_in_active_session && !fieldActive)
+        OS_ResetSystem(0);
+
     Coop_UpdateLocalPlayerState(fsys, fieldActive);
     if (fieldActive)
         Coop_RunFieldEntry(fsys);
@@ -866,9 +1056,22 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
             if (fieldActive)
                 gCoopCommBlock.was_in_active_session = 1;
 
-            // Lobby: keep everyone in the bedroom until the adventure starts.
+            // Lobby: keep everyone in the bedroom until the adventure starts,
+            // then save once so the room is tied to a save on disk.
             if (Coop_ShouldBlockBedroomStairs(fsys))
-                (void)Coop_StartFieldTask(fsys, Coop_Task_BedroomBlock, sizeof(struct CoopBedroomBlockEnv));
+                // Facing west on the stairs: stepping back east always returns
+                // the player to (4, 4), the tile they came from or an open one.
+                (void)Coop_StartFieldBlock(fsys, "Oops! Looks like some trainers\nare still asleep.",
+                                           "Please wait until everyone is\nready to start your adventure.",
+                                           COOP_MOVEMENT_STEP_RIGHT);
+            else if (Coop_ShouldBlockGatedBoss(fsys))
+                // Turn away (the tile behind may be a wall); turning back
+                // re-checks before the next A press can reach the boss.
+                (void)Coop_StartFieldBlock(fsys, "Your teammates need to catch\nup before this battle.",
+                                           "Wait for them, or ask them to\nlet you go ahead.",
+                                           COOP_MOVEMENT_FACE_UP + ((u32)Coop_GetPlayerMapObject(fsys)->curFacing ^ 1));
+            else
+                Coop_TryAdventureStartSave(fsys);
         }
         else if (gCoopCommBlock.was_in_active_session || fieldActive)
         {

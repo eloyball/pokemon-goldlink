@@ -256,6 +256,7 @@ static const struct CoopWarpTarget sCoopWarpTargets[COOP_WARP_COUNT] = {
     [COOP_WARP_CERULEAN]    = { MAP_T04, 1309, 132 }, // MAP_CERULEAN
     [COOP_WARP_LAVENDER]    = { MAP_T05, 1418, 235 }, // MAP_LAVENDER
     [COOP_WARP_CELADON]     = { MAP_T07, 1231, 238 }, // MAP_CELADON
+    [COOP_WARP_VIOLET_GYM]  = { MAP_T22GYM0101, 15, 6 }, // MAP_VIOLET_GYM (Falkner on 15, 4)
 };
 
 // Same check as using Surf / a rod from the menu (Field_PlayerCanSurfOnTile

@@ -31,13 +31,14 @@ namespace CoopBridge
         public const uint VersionOff = 0x004;        // u16
         public const uint AssignedPlayerId = 0x006;  // u8   bridge
         public const uint ActivePlayersMask = 0x007; // u8   bridge
-        public const uint HeartbeatRom = 0x008;      // u32  rom
+        public const uint HeartbeatRom = 0x008;      // u32  rom (restarts at 0 when the game resets)
         public const uint ServerTick = 0x00C;        // u32  bridge
         public const uint LocalPlayer = 0x010;       // 64 B rom
         public const uint ServerPayload = 0x050;     // 344 B bridge (remote players, gates)
         public const int ServerPayloadSize = 344;
         public const uint Gates = 0x190;             // 24 B bridge
         public const uint IsConnectedToRoom = 0x1A8; // u8   bridge
+        public const uint WasInActiveSession = 0x1AA; // u8  rom: a save is in play (startup gate passed)
         public const uint DisconnectState = 0x1AB;   // u8   rom
         public const uint BadgeMaskLocal = 0x1AC;    // u16  rom
         public const uint RoomRejection = 0x1AE;     // u8   bridge: relay status that turned this save away
@@ -51,6 +52,9 @@ namespace CoopBridge
         public const uint DebugSeq = 0x1DD;          // u8   bridge: bumped per command
         public const uint DebugArg = 0x1DE;          // u8   bridge: command argument
         public const uint DebugResult = 0x1DF;       // u8   rom: CoopDebugResult
+        public const uint SaveCounter = 0x1E0;       // u32  rom: bumped after every completed save write
+        public const uint SaveSlotReady = 0x1E4;     // u8   bridge: this room's save is in SRAM
+        public const uint ResetRequest = 0x1E5;      // u8   bridge: restart at the title to load SRAM
 
         // CoopDiagnostics field offsets (relative to Diag)
         public const int DgFieldEntryCalls = 0x00;   // u32
@@ -94,6 +98,7 @@ namespace CoopBridge
             "Cerulean City (Nugget Bridge north)",
             "Lavender Town (Silence Bridge south)",
             "Celadon City (dense)",
+            "Violet Gym (gym gate, Falkner ahead)",
         };
 
         // CoopPlayerState field offsets (64 bytes, follower included)
@@ -401,6 +406,10 @@ namespace CoopBridge
         private readonly Label _playersValue;
         private readonly Label _adventureValue;
         private readonly Label _gymValue;
+        private readonly Label _saveValue;
+        private readonly ThemedButton _allowAheadButton;
+        // Gym gate: teammates may challenge bosses while this player is behind on badges.
+        private bool _allowAhead;
         private readonly Label _locationValue;
         private readonly Label _othersValue;
         private readonly ThemedButton _diagToggle;
@@ -416,6 +425,17 @@ namespace CoopBridge
         private readonly Label _diagCommandValue;
         private readonly ComboBox _warpPicker;
         private readonly ThemedButton[] _diagButtons;
+        // One save per room (SaveSlots.cs). Prepared once per connection,
+        // after the relay's first OK packet names the room (room_uid).
+        private enum SlotState { None, Swapping, Ready }
+        private readonly SaveSlots _saveSlots = new SaveSlots(
+            Path.Combine(Path.GetDirectoryName(ConfigFilePath) ?? ".", "coop_saves"));
+        private SlotState _slotState = SlotState.None;
+        private string? _slotKey;
+        private uint? _lastSaveCounter;
+        private uint _lastRomHeartbeat;
+        private DateTime _swapRequestedUtc;
+        private const double SwapRetrySeconds = 10.0;
         private byte _pendingDebugCmd;
         private byte _pendingDebugArg;
         private string _sentDebugName = "";
@@ -619,9 +639,20 @@ namespace CoopBridge
             _playersValue = AddRow("Players online");
             _adventureValue = AddRow("Adventure");
             _gymValue = AddRow("Gym gate");
+            _saveValue = AddRow("Save");
             _locationValue = AddRow("You");
             _othersValue = AddRow("Players");
             sessionCard.Controls.Add(grid);
+            _allowAheadButton = Theme.MakeButton("Let others go ahead: off", Theme.ButtonKind.Neutral);
+            _allowAheadButton.Height = 28;
+            _allowAheadButton.Margin = new Padding(0, 8, 0, 0);
+            _allowAheadButton.Click += (_, _) =>
+            {
+                // Volatile: the receive thread builds packets with this flag.
+                Volatile.Write(ref _allowAhead, !Volatile.Read(ref _allowAhead));
+                _allowAheadButton.Text = Volatile.Read(ref _allowAhead) ? "Let others go ahead: on" : "Let others go ahead: off";
+            };
+            sessionCard.Controls.Add(_allowAheadButton);
 
             // --- Server (set once, so it sits at the bottom) ---
             var serverCard = Theme.MakeCard();
@@ -939,6 +970,8 @@ namespace CoopBridge
         private void BeginNewSession()
         {
             Interlocked.Increment(ref _sessionId);
+            _slotKey = null;
+            _slotState = SlotState.None;
             lock (_packetLock)
             {
                 _latestServerPacket = null;
@@ -1059,7 +1092,7 @@ namespace CoopBridge
             Buffer.BlockCopy(_roomCodeBytes, 0, tx, 6, 6);
             tx[12] = action;
             tx[13] = _assignedSlot;
-            tx[14] = 0; // reserved: readiness travels in local_player.client_ready
+            tx[14] = (byte)(Volatile.Read(ref _allowAhead) ? 1 : 0); // gym gate: let teammates go ahead
             tx[15] = (byte)_partySize; // honored by the relay only from the host
             Buffer.BlockCopy(BitConverter.GetBytes(_hostToken), 0, tx, 16, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(_badgeMaskLocal), 0, tx, 20, 2);
@@ -1110,6 +1143,7 @@ namespace CoopBridge
                 // Tell the ROM we are alive (drives its disconnect watchdog).
                 _memoryApi!.WriteU32(mb + Mailbox.HeartbeatBridge, ++_bridgeHeartbeat, MemoryDomain);
                 ReadLocalPlayerSnapshot(mb);
+                UpdateSaveSlot(mb);
                 SendPendingDebugCommand(mb);
                 RefreshDiagnostics(mb);
 
@@ -1230,6 +1264,10 @@ namespace CoopBridge
             byte assigned = pkt[6];
             if (assigned >= Mailbox.MaxPlayers) return; // malformed: ignore the packet
 
+            uint roomUid = BitConverter.ToUInt32(pkt, Wire.ServerPayloadOffset + Mailbox.PayloadGates + Mailbox.GateRoomUid);
+            if (roomUid != 0 && _slotKey == null)
+                _slotKey = SaveSlots.RoomKey(_activeRoomString, roomUid);
+
             bool firstOk = _link != LinkState.Connected || _assignedSlot != assigned;
             _assignedSlot = assigned;
             _activeAction = Wire.ActionSync; // Handshake complete; switch to steady-state SYNC
@@ -1303,6 +1341,76 @@ namespace CoopBridge
             if (!gatesOk) Array.Clear(p, g, Mailbox.GatesSize);
 
             return p;
+        }
+
+        private byte[] ReadSram()
+        {
+            var raw = _memoryApi!.ReadByteRange(0, SaveSlots.SramSize, SaveSlots.SramDomain);
+            byte[] image = new byte[SaveSlots.SramSize];
+            for (int i = 0; i < image.Length && i < raw.Count; i++) image[i] = raw[i];
+            return image;
+        }
+
+        /// <summary>
+        /// One save per room. Copies SRAM to the owning room's file after every
+        /// completed in-game save (also while disconnected: the disconnect flow
+        /// saves after the link drops). Once connected at the title screen,
+        /// swaps the room's save (or a blank one for a new room) into SRAM and
+        /// asks the ROM to restart so the game loads it. save_slot_ready lets
+        /// the startup gate pass only when the right save is loaded.
+        /// </summary>
+        private void UpdateSaveSlot(uint mb)
+        {
+            uint romHeartbeat = _memoryApi!.ReadU32(mb + Mailbox.HeartbeatRom, MemoryDomain);
+            bool romRestarted = romHeartbeat < _lastRomHeartbeat;
+            _lastRomHeartbeat = romHeartbeat;
+
+            // save_counter restarts at 0 with the game; only a change to a
+            // non-zero value is a new save.
+            uint counter = _memoryApi.ReadU32(mb + Mailbox.SaveCounter, MemoryDomain);
+            if (_lastSaveCounter.HasValue && counter != _lastSaveCounter.Value && counter != 0 && _slotState != SlotState.Swapping)
+                _saveSlots.Capture(ReadSram());
+            _lastSaveCounter = counter;
+
+            if (_link == LinkState.Connected && _slotKey != null)
+            {
+                switch (_slotState)
+                {
+                    case SlotState.None:
+                        if (_memoryApi.ReadU8(mb + Mailbox.WasInActiveSession, MemoryDomain) == 1)
+                        {
+                            // A save is already in play: never swap under it.
+                            _slotState = SlotState.Ready;
+                            break;
+                        }
+                        byte[]? image = _saveSlots.PrepareJoin(_slotKey, ReadSram());
+                        if (image == null)
+                        {
+                            _slotState = SlotState.Ready;
+                            break;
+                        }
+                        _memoryApi.WriteByteRange(0, image, SaveSlots.SramDomain);
+                        _memoryApi.WriteU8(mb + Mailbox.ResetRequest, 1, MemoryDomain);
+                        _swapRequestedUtc = DateTime.UtcNow;
+                        _slotState = SlotState.Swapping;
+                        break;
+
+                    case SlotState.Swapping:
+                        // The restart re-initializes the mailbox (heartbeat_rom
+                        // back near 0, reset_request cleared).
+                        if (romRestarted)
+                            _slotState = SlotState.Ready;
+                        else if ((DateTime.UtcNow - _swapRequestedUtc).TotalSeconds > SwapRetrySeconds)
+                        {
+                            _memoryApi.WriteU8(mb + Mailbox.ResetRequest, 1, MemoryDomain);
+                            _swapRequestedUtc = DateTime.UtcNow;
+                        }
+                        break;
+                }
+            }
+
+            bool ready = _link == LinkState.Connected && _slotState == SlotState.Ready;
+            _memoryApi.WriteU8(mb + Mailbox.SaveSlotReady, (byte)(ready ? 1 : 0), MemoryDomain);
         }
 
         /// <summary>
@@ -1495,7 +1603,7 @@ namespace CoopBridge
             if (mb is not uint box)
             {
                 SetValue(_gameValue, waitReason ?? none, Theme.Connecting);
-                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _gymValue, _locationValue, _othersValue })
+                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _gymValue, _locationValue, _othersValue, _saveValue })
                     SetValue(l, none, Theme.TextSecondary);
                 return;
             }
@@ -1514,6 +1622,17 @@ namespace CoopBridge
             SetValue(_trainerValue, otid != 0 ? $"{DecodeName(_localPlayer, 0)} · {otid & 0xFFFF:D5}  (0x{otid:X8})" : "No trainer yet", otid != 0 ? (Color?)null : Theme.TextSecondary);
             SetValue(_bedroomValue, ready ? "Yes" : "No", ready ? Theme.Connected : Theme.TextSecondary);
             SetValue(_locationValue, otid != 0 ? DescribePlayer(_localPlayer, 0) : "Not in the overworld", otid != 0 ? (Color?)null : Theme.TextSecondary);
+
+            if (_saveSlots.LastError.Length > 0)
+                SetValue(_saveValue, "Error: " + _saveSlots.LastError, Theme.Error);
+            else if (_link != LinkState.Connected || _slotKey == null)
+                SetValue(_saveValue, _saveSlots.Owner.Length > 0 ? $"Last room: {_saveSlots.Owner.Split('-')[0]}" : none, Theme.TextSecondary);
+            else if (_slotState == SlotState.Swapping)
+                SetValue(_saveValue, "Loading this room's save (the game restarts)…", Theme.Connecting);
+            else if (_slotState == SlotState.Ready)
+                SetValue(_saveValue, _saveSlots.HasRoomSave(_slotKey) ? "This room's save is loaded" : "New room: start a New Game", Theme.Connected);
+            else
+                SetValue(_saveValue, "Preparing…", Theme.Connecting);
 
             if (_link != LinkState.Connected)
             {
@@ -1549,7 +1668,7 @@ namespace CoopBridge
                 lines.Count > 0 ? (Color?)null : Theme.TextSecondary);
             SetValue(_adventureValue, started == 1 ? "Started · room locked" : "Waiting for everyone in the bedroom",
                 started == 1 ? Theme.Connected : Theme.Connecting);
-            SetValue(_gymValue, syncReady == 1 ? "Open" : "Closed · needs everyone, equal badges",
+            SetValue(_gymValue, syncReady == 1 ? "Open for you" : "Closed · a teammate is behind on badges",
                 syncReady == 1 ? Theme.Connected : Theme.TextSecondary);
         }
 

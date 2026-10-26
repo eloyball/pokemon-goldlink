@@ -792,6 +792,9 @@ EventObjectMovementMan_Delete = 0x0206226C | 1;
 MapObject_AreBitsSetForMovementScriptInit = 0x02062108 | 1;
 MapObject_SetHeldMovement = 0x0206214C | 1;
 MapObject_ClearHeldMovementIfActive = 0x020621C0 | 1;
+/* Object the A button would talk to, across counters (gym gate).
+   Source: pret asm/unk_0203DB6C.s label "FieldSystem_GetFacingObject: ; 0x0203DBF8" */
+FieldSystem_GetFacingObject = 0x0203DBF8 | 1;
 /* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them.
    Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking. */

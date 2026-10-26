@@ -62,7 +62,7 @@ fn make_packet(
         room_code,
         room_action,
         requested_player_id: player_id,
-        reserved_14: 0,
+        allow_ahead: 0,
         target_party_size,
         host_token,
         badge_mask_local: badges,
@@ -373,7 +373,8 @@ fn test_auto_start_lock_and_offline_progression_block() {
     let gates_offset = 16 + 5 * PLAYER_STATE_SIZE;
     assert_eq!(batch_online[0].1[gates_offset + 4], 1);
 
-    // 6. P1 goes stale (80ms > 60ms timeout) and is pruned -> progress gate locks (0)
+    // 6. P0 earns a badge while P1 goes stale (80ms > 60ms timeout) and is
+    //    pruned: an offline teammate behind on badges closes P0's gym gate (0)
     sleep(Duration::from_millis(80));
     let _ = lobby.handle_client_packet(
         p0_addr,
@@ -388,14 +389,15 @@ fn test_auto_start_lock_and_offline_progression_block() {
             10,
             10,
             155,
-            0,
+            1,
         ),
     );
     lobby.prune_stale_clients();
     let batch_offline = lobby.build_broadcast_batch();
     assert_eq!(batch_offline[0].1[gates_offset + 4], 0);
 
-    // 7. P1 reconnects at Title Screen (OTID 0) and then loads save (Map 28 -> OTID 0x2222_2222)
+    // 7. P1 reconnects at Title Screen (OTID 0) and then loads save (Map 28 -> OTID 0x2222_2222):
+    //    still behind, but in the same map as P0, so P0's gate opens again
     let p1_new_addr: SocketAddr = "127.0.0.1:61234".parse().unwrap();
     assert_eq!(
         lobby.handle_client_packet(
@@ -1201,4 +1203,80 @@ fn test_room_uid_is_broadcast_and_persisted() {
     assert!(raw.contains(&format!("\"room_uid\": {uid}")));
 
     let _ = fs::remove_dir_all(test_dir);
+}
+
+#[test]
+fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
+    let mut lobby = LobbyState::new(Duration::from_secs(5), 2, false);
+    let p0: SocketAddr = "127.0.0.1:54001".parse().unwrap();
+    let p1: SocketAddr = "127.0.0.1:54002".parse().unwrap();
+    let gate = 16 + 5 * PLAYER_STATE_SIZE + 4; // flag_coop_sync_ready
+    let gate_for = |batch: &Vec<(SocketAddr, [u8; 360])>, addr: SocketAddr| {
+        batch.iter().find(|(a, _)| *a == addr).unwrap().1[gate]
+    };
+
+    // Both fresh in the bedroom: the roster locks.
+    let a = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 0, 0x10, 2, 4, 1, 1, 0, 0);
+    let b = make_packet(*b"TEST01", ROOM_ACTION_JOIN, 0, 1, 0x20, 2, 4, 2, 1, 0, 0);
+    assert_eq!(lobby.handle_client_packet(p0, a), Ok(0));
+    assert_eq!(lobby.handle_client_packet(p1, b), Ok(1));
+    assert!(lobby.is_campaign_started());
+
+    // Equal badges, different maps: both may challenge.
+    let mut a = make_packet(
+        *b"TEST01",
+        ROOM_ACTION_SYNC,
+        0,
+        0,
+        0x10,
+        2,
+        135,
+        15,
+        6,
+        0,
+        0b1,
+    );
+    let mut b = make_packet(
+        *b"TEST01",
+        ROOM_ACTION_SYNC,
+        0,
+        1,
+        0x20,
+        2,
+        33,
+        5,
+        5,
+        0,
+        0b1,
+    );
+    a.local_player.save_status = SAVE_STATUS_IN_PROGRESS;
+    b.local_player.save_status = SAVE_STATUS_IN_PROGRESS;
+    a.sequence = 2;
+    b.sequence = 2;
+    lobby.handle_client_packet(p0, a).unwrap();
+    lobby.handle_client_packet(p1, b).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!((gate_for(&batch, p0), gate_for(&batch, p1)), (1, 1));
+
+    // P0 wins the next badge: P0 now waits for P1, while P1 may still challenge.
+    a.badge_mask_local = 0b11;
+    a.sequence = 3;
+    lobby.handle_client_packet(p0, a).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!((gate_for(&batch, p0), gate_for(&batch, p1)), (0, 1));
+
+    // P1 lets the others go ahead: P0's gate opens.
+    b.allow_ahead = 1;
+    b.sequence = 3;
+    lobby.handle_client_packet(p1, b).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!(gate_for(&batch, p0), 1);
+
+    // Without that, P1 standing in the same map (the gym) also opens it.
+    b.allow_ahead = 0;
+    b.local_player.map_id = 135;
+    b.sequence = 4;
+    lobby.handle_client_packet(p1, b).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!(gate_for(&batch, p0), 1);
 }

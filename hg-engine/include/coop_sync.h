@@ -115,6 +115,7 @@ enum CoopWarpPreset
     COOP_WARP_CERULEAN,      // Cerulean City: Nugget Bridge (Route 24) to the north
     COOP_WARP_LAVENDER,      // Lavender Town: Route 12 Silence Bridge to the south
     COOP_WARP_CELADON,       // Celadon City: dense map
+    COOP_WARP_VIOLET_GYM,    // Violet Gym, two tiles in front of Falkner: gym gate
     COOP_WARP_COUNT
 };
 
@@ -156,6 +157,18 @@ struct CoopDiagnostics
     s16 test_ghost_y;       // 0x14 render height (position vector Y, world units)
     s16 player_y;           // 0x16 local player's render height, for comparison
 }; // 24 bytes
+
+// The adventure-start save (docs/MILESTONE2_PLAN.md 7.2): when the relay
+// locks the roster, everyone still in the bedroom with a fresh save is told
+// the adventure begins and the game is saved, so the room is tied to a save
+// that exists on disk. Resets with the mailbox on a soft reset; a player who
+// comes back to the bedroom with a still-fresh save just saves again.
+enum CoopStartSaveState
+{
+    COOP_START_SAVE_NONE = 0,
+    COOP_START_SAVE_RUNNING = 1,
+    COOP_START_SAVE_DONE = 2,
+};
 
 // The bridge bumps heartbeat_bridge once per emulated frame. If the ROM sees
 // no change for this many of its own main-loop ticks, the bridge is treated
@@ -264,7 +277,7 @@ struct CoopCommBlock
     u8  disconnect_state;                                       // 0x1AB enum CoopDisconnectState
     u16 badge_mask_local;                                       // 0x1AC
     u8  room_rejection;                                         // 0x1AE bridge: relay ROOM_STATUS_ERR_* that turned this save away
-    u8  start_save_state;                                       // 0x1AF ROM: adventure-start save progress (Phase 1.5)
+    u8  start_save_state;                                       // 0x1AF ROM: enum CoopStartSaveState
     u32 heartbeat_bridge;                                       // 0x1B0
     u32 local_player_seq;                                       // 0x1B4 odd while local_player is being written
     u32 bridge_hb_last_seen;                                    // 0x1B8

@@ -38,6 +38,10 @@ pub struct RegisteredTrainer {
     /// rejoin from a new install.
     #[serde(default)]
     pub player_secret: u64,
+    /// "Let others go ahead" (bridge toggle), remembered while offline so an
+    /// absent teammate can still let the others through the gym gate.
+    #[serde(default)]
+    pub allow_ahead: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +69,7 @@ pub struct ConnectedPlayer {
     pub badge_mask: u16,
     pub assigned_monolocke: u8,
     pub player_secret: u64,
+    pub allow_ahead: bool,
 }
 
 pub struct LobbyState {
@@ -275,6 +280,9 @@ impl LobbyState {
             }
 
             let badge_changed = existing.badge_mask != pkt.badge_mask_local;
+            let allow_ahead = pkt.allow_ahead == 1;
+            let allow_changed = existing.allow_ahead != allow_ahead;
+            existing.allow_ahead = allow_ahead;
             existing.addr = addr;
             existing.player_secret = pkt.player_secret;
             existing.last_seen = now;
@@ -284,7 +292,7 @@ impl LobbyState {
             existing.state = pkt.local_player;
             existing.badge_mask = pkt.badge_mask_local;
 
-            if badge_changed
+            if (badge_changed || allow_changed)
                 && self.campaign_started
                 && let Some(r) = self
                     .roster
@@ -292,6 +300,7 @@ impl LobbyState {
                     .find(|r| r.slot_id as usize == slot_idx)
             {
                 r.last_badge_mask = pkt.badge_mask_local;
+                r.allow_ahead = allow_ahead;
                 self.save_campaign_to_disk();
             }
         } else {
@@ -313,6 +322,7 @@ impl LobbyState {
                 badge_mask: pkt.badge_mask_local,
                 assigned_monolocke,
                 player_secret: pkt.player_secret,
+                allow_ahead: pkt.allow_ahead == 1,
             });
         }
 
@@ -491,6 +501,7 @@ impl LobbyState {
                 last_badge_mask: p.badge_mask,
                 assigned_monolocke: p.assigned_monolocke,
                 player_secret: p.player_secret,
+                allow_ahead: p.allow_ahead,
             });
         }
 
@@ -532,7 +543,7 @@ impl LobbyState {
             .count() as u8;
         let expected_size = self.expected_party_size() as u8;
 
-        let (synced_badges, sync_ready) = self.compute_progression_gates();
+        let synced_badges = self.compute_synced_badges();
 
         let mut batch = Vec::with_capacity(MAX_PLAYERS);
 
@@ -568,7 +579,7 @@ impl LobbyState {
                 remote_players,
                 badge_mask_local_echo: recipient.badge_mask,
                 badge_mask_synced: synced_badges,
-                flag_coop_sync_ready: u8::from(sync_ready),
+                flag_coop_sync_ready: u8::from(self.gym_gate_open_for(recipient)),
                 current_checkpoint: synced_badges.count_ones() as u8,
                 assigned_monolocke: recipient.assigned_monolocke,
                 nuzlocke_failed: 0,
@@ -586,46 +597,47 @@ impl LobbyState {
         batch
     }
 
-    fn compute_progression_gates(&self) -> (u16, bool) {
-        let active: Vec<&ConnectedPlayer> = self.slots.iter().filter_map(|s| s.as_ref()).collect();
-        if active.is_empty() {
-            return (0, false);
+    /// Badges every roster member has (offline members count with their
+    /// last known badges).
+    fn compute_synced_badges(&self) -> u16 {
+        let mut common = 0xFFFFu16;
+        let mut any = false;
+        for p in self.slots.iter().flatten() {
+            common &= p.badge_mask;
+            any = true;
         }
-
-        let required_party_size = self.expected_party_size();
-        let all_registered_online = active.len() >= required_party_size;
-
-        let mut common_badges = 0xFFFFu16;
-        let first_map = active[0].state.map_id;
-        let first_badges = active[0].badge_mask;
-        let mut all_same_map = true;
-        let mut all_equal_badges = true;
-
-        for p in &active {
-            common_badges &= p.badge_mask;
-            if p.state.map_id != first_map {
-                all_same_map = false;
-            }
-            if p.badge_mask != first_badges {
-                all_equal_badges = false;
-            }
-        }
-
         if self.campaign_started {
             for reg in &self.roster {
                 if self.slots[reg.slot_id as usize].is_none() {
-                    common_badges &= reg.last_badge_mask;
+                    common &= reg.last_badge_mask;
+                    any = true;
                 }
             }
         }
+        if any { common } else { 0 }
+    }
 
-        let sync_ready = self.campaign_started
-            && all_registered_online
-            && all_equal_badges
-            && all_same_map
-            && first_map != 0;
-
-        (common_badges, sync_ready)
+    /// Gym / boss gate (docs/MILESTONE2_PLAN.md 7.2), per player and
+    /// game-agnostic: `recipient` may challenge a gated boss unless a roster
+    /// teammate has fewer badges and is neither in the same map nor letting
+    /// others go ahead. Everyone can be at most one badge ahead. Offline
+    /// teammates count with their last known badges and choice.
+    fn gym_gate_open_for(&self, recipient: &ConnectedPlayer) -> bool {
+        if !self.campaign_started {
+            return false;
+        }
+        let mine = recipient.badge_mask.count_ones();
+        self.roster
+            .iter()
+            .filter(|reg| reg.slot_id != recipient.slot_id)
+            .all(|reg| match &self.slots[reg.slot_id as usize] {
+                Some(p) => {
+                    p.badge_mask.count_ones() >= mine
+                        || p.allow_ahead
+                        || (p.state.map_id != 0 && p.state.map_id == recipient.state.map_id)
+                }
+                None => reg.last_badge_mask.count_ones() >= mine || reg.allow_ahead,
+            })
     }
 
     fn compute_active_bitmask(&self) -> u8 {
@@ -644,23 +656,27 @@ impl LobbyState {
         if connected.is_empty() {
             return;
         }
-        let (synced_badges, ready) = self.compute_progression_gates();
+        let synced_badges = self.compute_synced_badges();
         let room_str = room_code_to_string(&self.room_code);
         info!(
-            "--- [Room {room_str} | Online: {}/{} | Started: {} | Synced Badges: 0b{:08b} | Gym Gate: {}] ---",
+            "--- [Room {room_str} | Online: {}/{} | Started: {} | Synced Badges: 0b{:016b}] ---",
             connected.len(),
             self.expected_party_size(),
             self.campaign_started,
-            synced_badges,
-            if ready { "UNLOCKED" } else { "LOCKED" }
+            synced_badges
         );
         for p in connected {
             info!(
-                "    Slot P{} ({}) -> OTID: 0x{:08X} | InBedroom: {} | Map {:3} | XZ: ({:3}, {:3}) | Activity: {} | Follower: #{:4}",
+                "    Slot P{} ({}) -> OTID: 0x{:08X} | InBedroom: {} | Gym Gate: {} | Map {:3} | XZ: ({:3}, {:3}) | Activity: {} | Follower: #{:4}",
                 p.slot_id,
                 p.addr,
                 p.state.trainer_id,
                 p.in_bedroom_ready,
+                if self.gym_gate_open_for(p) {
+                    "open"
+                } else {
+                    "closed"
+                },
                 p.state.map_id,
                 p.state.x,
                 p.state.z,

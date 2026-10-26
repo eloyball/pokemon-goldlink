@@ -240,6 +240,7 @@ int SaveGameNormal(SaveData *saveData)
     if (ret == WRITE_STATUS_SUCCESS) {
         saveData->saveFileExists = TRUE;
         saveData->isNewGame = FALSE;
+        gCoopCommBlock.save_counter++; // the bridge copies the room's save now
     }
     return ret;
 }
@@ -287,6 +288,8 @@ int Save_WriteFileAsync(SaveData *saveData)
     }
     if (!(ret == WRITE_STATUS_CONTINUE || ret == WRITE_STATUS_NEXT)) {
         Save_WriteManFinish(saveData, &saveData->asyncWriteMan, ret);
+        if (ret == WRITE_STATUS_SUCCESS)
+            gCoopCommBlock.save_counter++; // the bridge copies the room's save now
     }
     return ret;
 }
