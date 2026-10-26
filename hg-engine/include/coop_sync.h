@@ -43,14 +43,14 @@
 #define COOP_BEDROOM_STAIRS_X 3
 #define COOP_BEDROOM_STAIRS_Z 4
 
-// Map object IDs reserved for remote players' ghosts (0xE0-0xE4) and their
-// followers (0xE5-0xE9). Vanilla maps use IDs <= 50; 249-255 are reserved
-// by vanilla scripts (photo subject, daycare, apricorn, partner, player).
+// Map object IDs reserved for remote players' ghosts (0xE0-0xE4, ghost of
+// remote slot k = 0xE0 + k) and their followers (0xE5-0xE9), plus the debug
+// test ghost (0xEA). Vanilla maps use IDs <= 50; 249-255 are reserved by
+// vanilla scripts (photo subject, daycare, apricorn, partner, player).
 #define COOP_GHOST_ID_FIRST    0xE0
-#define COOP_GHOST_ID_LAST     0xE9
-#define COOP_IS_GHOST_ID(id)   ((id) >= COOP_GHOST_ID_FIRST && (id) <= COOP_GHOST_ID_LAST)
-// Phase 0 probe: one test ghost spawned from the bridge's diagnostics card.
-#define COOP_TEST_GHOST_ID     COOP_GHOST_ID_FIRST
+#define COOP_FOLLOWER_ID_FIRST 0xE5
+#define COOP_TEST_GHOST_ID     0xEA // debug tools (diagnostics card)
+#define COOP_IS_GHOST_ID(id)   ((id) >= COOP_GHOST_ID_FIRST && (id) <= COOP_TEST_GHOST_ID)
 
 // Overlay 131 (OVERLAY_FIELD_EXTENSION, src/field/) is loaded together with
 // the field overlay. Overlay 129 links before it, so it cannot call 131 by

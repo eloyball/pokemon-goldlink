@@ -181,10 +181,6 @@ static s16 Coop_RenderHeight(const LocalMapObject *object)
     return (s16)((s32)object->posVec[1] >> 12); // fx32 -> world units
 }
 
-#if COOP_DEBUG_TOOLS
-// Spawning and driving the test ghost is a debug tool; reporting it (below)
-// stays so the diagnostics card works in every build.
-
 static void Coop_DirectionDelta(u32 direction, s32 *dx, s32 *dz)
 {
     *dx = 0;
@@ -204,31 +200,44 @@ static BOOL Coop_GhostIsIdle(LocalMapObject *ghost)
     return MapObject_ClearHeldMovementIfActive(ghost) && MapObject_AreBitsSetForMovementScriptInit(ghost);
 }
 
-static BOOL Coop_SpawnTestGhost(MapObjectMan *manager, LocalMapObject *player)
+#define COOP_OBJECT_HEADROOM 4 // map object slots always left for vanilla
+
+// A ghost: a plain map object (movement 0, no script) that survives zone
+// changes inside the matrix, never collides and never runs a vanilla script.
+// MapObject_Create snaps it to the ground, so the height is written after:
+// a ghost created on a bridge stays on the bridge. NULL when the object
+// list is (nearly) full.
+static LocalMapObject *Coop_CreateGhostObject(MapObjectMan *manager, u32 id, s32 x, s32 z, u32 direction,
+                                              u32 sprite, s16 height)
 {
     LocalMapObject *ghost;
+
+    if (manager->active_count + COOP_OBJECT_HEADROOM >= manager->object_count)
+        return NULL;
+    ghost = CreateSpecialFieldObject(manager, (u32)x, (u32)z, direction, sprite, 0, MAP_NOTHING);
+    if (ghost == NULL)
+        return NULL;
+    ghost->id = (int)id;
+    MapObject_SetBits(ghost, COOP_MOFLAG_KEEP | COOP_MOFLAG_UNK13 | COOP_MOFLAG_NO_COLLISION | COOP_MOFLAG_NO_INTERACT);
+    ghost->hPrev = height >> 3; // tile height = render height / 8
+    ghost->hCurr = height >> 3;
+    ghost->posVec[1] = (u32)((s32)height << 12);
+    return ghost;
+}
+
+#if COOP_DEBUG_TOOLS
+// Spawning and driving the test ghost is a debug tool; reporting it (below)
+// stays so the diagnostics card works in every build.
+
+static BOOL Coop_SpawnTestGhost(MapObjectMan *manager, LocalMapObject *player)
+{
     s32 dx, dz;
     u32 direction = (u32)player->curFacing;
 
-    if (manager->active_count + 4 >= manager->object_count)
-        return FALSE; // keep headroom for vanilla objects
-
     Coop_DirectionDelta(direction, &dx, &dz);
     // Same sprite as the local player: no extra texture / model / sequence.
-    ghost = CreateSpecialFieldObject(manager, (u32)(player->xCurr + dx), (u32)(player->yCurr + dz),
-                                     direction, (u32)player->gfxId, 0, MAP_NOTHING);
-    if (ghost == NULL)
-        return FALSE;
-
-    ghost->id = COOP_TEST_GHOST_ID;
-    MapObject_SetBits(ghost, COOP_MOFLAG_KEEP | COOP_MOFLAG_UNK13 | COOP_MOFLAG_NO_COLLISION | COOP_MOFLAG_NO_INTERACT);
-
-    // Probe 4: MapObject_Create snaps to the ground; copy the player's height
-    // so a ghost spawned on a bridge starts on the bridge.
-    ghost->hPrev = player->hCurr;
-    ghost->hCurr = player->hCurr;
-    ghost->posVec[1] = player->posVec[1];
-    return TRUE;
+    return Coop_CreateGhostObject(manager, COOP_TEST_GHOST_ID, player->xCurr + dx, player->yCurr + dz, direction,
+                                  (u32)player->gfxId, Coop_RenderHeight(player)) != NULL;
 }
 
 // ---------------------------------------------------------------------------
@@ -615,6 +624,204 @@ static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *play
 }
 
 // ---------------------------------------------------------------------------
+// Player ghosts (docs/MILESTONE2_PLAN.md 5.4, Phase 2: walking sprites)
+// ---------------------------------------------------------------------------
+
+#define COOP_SPRITE_HERO    0  // pret SPRITE_HERO
+#define COOP_SPRITE_HEROINE 97 // pret SPRITE_HEROINE
+
+// Radii in tiles around the local player. The DS shows about 16 x 12 tiles,
+// so "on screen" is within 8 x 6 (plus a tile of margin). A player walking
+// toward us gets their ghost just off screen, and it despawns beyond a
+// larger radius; a player who arrives in view (through a door, or by
+// connecting) appears like any NPC. An existing ghost never jumps on screen.
+#define COOP_SPAWN_RADIUS_X   10
+#define COOP_SPAWN_RADIUS_Z   8
+#define COOP_DESPAWN_RADIUS_X 13
+#define COOP_DESPAWN_RADIUS_Z 10
+#define COOP_SCREEN_RADIUS_X  9
+#define COOP_SCREEN_RADIUS_Z  7
+#define COOP_CATCHUP_MAX      4 // farther behind than this: snap when off screen
+
+// pret constants/movements.h groups (+ direction: north, south, west, east).
+#define COOP_MOVEMENT_FACE      0
+#define COOP_MOVEMENT_WALK      12 // normal speed
+#define COOP_MOVEMENT_WALK_FAST 16 // running-shoes speed, for catching up
+
+// Per-ghost bookkeeping in the ghost object's own params (movement 0 never
+// reads them): survives frames without statics (Overlay 131 has no BSS
+// init) and disappears with the object on every map reload.
+#define COOP_GHOST_SEQ(ghost)     ((ghost)->param[0]) // last move_seq handled, | 0x100 once set
+#define COOP_GHOST_TRAINER(ghost) ((ghost)->param[1]) // trainer the ghost belongs to
+#define COOP_SEQ_VALID 0x100
+
+static s32 Coop_Abs(s32 v)
+{
+    return v < 0 ? -v : v;
+}
+
+// Tiles a held movement moves its object, or -1 for actions never replayed
+// as movement (delays, warps, emotes, scripted poses, odd-direction jumps).
+static s32 Coop_ActionDistance(u32 action)
+{
+    if (action <= 3)
+        return 0; // face
+    if (action <= 23)
+        return 1; // walk, slower .. faster
+    if (action <= 51)
+        return 0; // walk / jump on the spot
+    if (action <= 55)
+        return 1; // jump near (onto water, etc.)
+    if (action <= 59)
+        return 2; // jump far (ledges)
+    if (action >= 76 && action <= 91)
+        return 1; // walk / run variants
+    if (action >= 96 && action <= 99)
+        return 1;
+    return -1;
+}
+
+static u32 Coop_LocalMatrixId(FieldSystem *fsys)
+{
+    return fsys->map_matrix != NULL ? ((const u8 *)fsys->map_matrix)[COOP_MATRIX_ID_OFFSET] : 0;
+}
+
+// Same place as the local player: the same matrix, and outside the outdoor
+// matrix (0) also the same map, because interiors share matrices (every
+// Pokemon Center uses one) and their tile coordinates are per map.
+static BOOL Coop_IsSamePlace(FieldSystem *fsys, const struct CoopPlayerState *remote)
+{
+    u32 matrix = Coop_LocalMatrixId(fsys);
+
+    if (remote->matrix_id != matrix)
+        return FALSE;
+    return matrix == 0 || remote->map_id == (u16)fsys->location->mapId;
+}
+
+static BOOL Coop_IsWithin(s32 x, s32 z, const LocalMapObject *player, s32 radiusX, s32 radiusZ)
+{
+    return Coop_Abs(x - player->xCurr) <= radiusX && Coop_Abs(z - player->yCurr) <= radiusZ;
+}
+
+// Room for one more sprite: a texture and an animation slot spare beyond a
+// reserve for vanilla and the local player's own state changes (full budget
+// with fallbacks in Phase 4; plan 5.5).
+static BOOL Coop_HasSpriteBudget(MapObjectMan *manager)
+{
+    const struct CoopMapObjectRender *render = (const void *)((const u8 *)manager + COOP_RENDER_OFFSET);
+
+    if (render->residentTextureCount + render->dynamicTextureCount > 32
+        || render->residentSequenceCount + render->dynamicSequenceCount > 8)
+        return FALSE;
+    return Coop_CountFreeSlots(render->textureIds, render->residentTextureCount, render->dynamicTextureCount, COOP_FREE_TEXTURE_ID) > 2
+        && Coop_CountFreeSlots(render->sequenceIds, render->residentSequenceCount, render->dynamicSequenceCount, COOP_FREE_SEQUENCE_ID) > 1;
+}
+
+static void Coop_SetGhostAction(LocalMapObject *ghost, u32 action, u8 seq)
+{
+    MapObject_SetHeldMovement(ghost, action);
+    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | seq;
+}
+
+// One decision per idle ghost: replay the remote's latest action exactly
+// when that lands on the remote's tile (steps, runs, bike speed, ledge
+// jumps, turns); otherwise walk (run when more than a tile behind) toward
+// it. Held movements ignore collision, like the ghost itself.
+static void Coop_DriveGhost(LocalMapObject *ghost, const struct CoopPlayerState *remote)
+{
+    s32 gx = ghost->xCurr, gz = ghost->yCurr;
+    s32 dx, dz, distance;
+    u32 direction;
+
+    if (!Coop_GhostIsIdle(ghost))
+        return;
+
+    if (COOP_GHOST_SEQ(ghost) != (COOP_SEQ_VALID | remote->move_seq) && remote->move_action != 0xFF)
+    {
+        distance = Coop_ActionDistance(remote->move_action);
+        Coop_DirectionDelta(remote->move_action & 3, &dx, &dz);
+        if (distance >= 0 && gx + dx * distance == remote->x && gz + dz * distance == remote->z)
+        {
+            Coop_SetGhostAction(ghost, remote->move_action, remote->move_seq);
+            return;
+        }
+    }
+
+    dx = remote->x - gx;
+    dz = remote->z - gz;
+    if (dx != 0 || dz != 0)
+    {
+        if (Coop_Abs(dx) >= Coop_Abs(dz))
+            direction = dx < 0 ? 2 : 3; // DIR_WEST / DIR_EAST
+        else
+            direction = dz < 0 ? 0 : 1; // DIR_NORTH / DIR_SOUTH
+        Coop_SetGhostAction(ghost, (Coop_Abs(dx) + Coop_Abs(dz) > 1 ? COOP_MOVEMENT_WALK_FAST : COOP_MOVEMENT_WALK) + direction,
+                            remote->move_seq);
+        return;
+    }
+    if ((u32)ghost->curFacing != remote->direction)
+    {
+        Coop_SetGhostAction(ghost, COOP_MOVEMENT_FACE + remote->direction, remote->move_seq);
+        return;
+    }
+    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote->move_seq; // in sync
+}
+
+// Reconciles one remote slot with its ghost: create, drive, snap or delete.
+static void Coop_UpdateGhost(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player, u32 slot)
+{
+    struct CoopPlayerState remote;
+    LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
+    BOOL valid = Coop_ReadRemotePlayer(slot, &remote) && Coop_IsSamePlace(fsys, &remote);
+    u32 sprite = remote.gender ? COOP_SPRITE_HEROINE : COOP_SPRITE_HERO;
+
+    if (ghost != NULL)
+    {
+        // Gone, elsewhere, out of range, another player in this slot, or a
+        // sprite to change: remove (the next frame may recreate it).
+        if (!valid
+            || (u32)COOP_GHOST_TRAINER(ghost) != remote.trainer_id
+            || (u32)ghost->gfxId != sprite
+            || !Coop_IsWithin(remote.x, remote.z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z))
+        {
+            DeleteMapObject(ghost);
+            return;
+        }
+        // Far behind while nobody can see it: snap (delete, recreate next frame).
+        if (Coop_Abs(remote.x - ghost->xCurr) + Coop_Abs(remote.z - ghost->yCurr) > COOP_CATCHUP_MAX
+            && !Coop_IsWithin(ghost->xCurr, ghost->yCurr, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
+            && !Coop_IsWithin(remote.x, remote.z, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
+            && Coop_GhostIsIdle(ghost))
+        {
+            DeleteMapObject(ghost);
+            return;
+        }
+        if (remote.is_active)
+            Coop_DriveGhost(ghost, &remote); // frozen in battle / menus otherwise (emotes: Phase 3)
+        return;
+    }
+
+    if (!valid || !Coop_IsWithin(remote.x, remote.z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z))
+        return;
+    if (sprite != (u32)player->gfxId && !Coop_HasSpriteBudget(manager))
+        return;
+    ghost = Coop_CreateGhostObject(manager, COOP_GHOST_ID_FIRST + slot, remote.x, remote.z, remote.direction, sprite,
+                                   remote.height);
+    if (ghost == NULL)
+        return;
+    COOP_GHOST_TRAINER(ghost) = (int)remote.trainer_id;
+    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote.move_seq;
+}
+
+static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player)
+{
+    u32 slot;
+
+    for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
+        Coop_UpdateGhost(fsys, manager, player, slot);
+}
+
+// ---------------------------------------------------------------------------
 // Entry (probe 2): called by Coop_MainSysTask (Overlay 129) once per frame
 // while the field map is active and this overlay is loaded.
 // ---------------------------------------------------------------------------
@@ -633,6 +840,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
         return;
     Coop_PublishLocalPlayerState(fsys, player);
     Coop_ProbeRender(manager);
+    Coop_UpdateGhosts(fsys, manager, player);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
 }
