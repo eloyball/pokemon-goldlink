@@ -124,6 +124,8 @@ namespace CoopBridge
         public const int PsFollowerDirection = 0x36;
         public const int PsFollowerMoveAction = 0x37;
         public const int PsAvatarId = 0x3C;          // follower block ends here
+        public const int PsAnim = 0x3D;              // pose animation index
+        public const int MaxAnim = 15;
         public const int MaxHeldMovement = 0x71;     // MapObject_SetHeldMovement limit
         public const byte MoveActionNone = 0xFF;     // no action since the map loaded
         public const int MaxAvatarState = 14;
@@ -1318,6 +1320,7 @@ namespace CoopBridge
                     Array.Clear(p, o, Mailbox.PlayerStateSize);
                     continue;
                 }
+                if (p[o + Mailbox.PsAnim] > Mailbox.MaxAnim) p[o + Mailbox.PsAnim] = 0; // cosmetic only
                 // A bad follower hides only the follower, not the player.
                 bool followerOk = BitConverter.ToUInt16(p, o + Mailbox.PsFollowerSpecies) <= _limitSpecies
                     && p[o + Mailbox.PsFollowerShiny] <= 1

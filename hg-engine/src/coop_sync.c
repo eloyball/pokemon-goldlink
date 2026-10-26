@@ -1012,6 +1012,7 @@ static BOOL Coop_IsValidMoveAction(u8 action)
     return action < COOP_MAX_HELD_MOVEMENT || action == COOP_MOVE_ACTION_NONE;
 }
 #define COOP_MAX_PLAYER_STATE  14   // pret PLAYER_STATE_ROCKET_SAVING
+#define COOP_MAX_ANIMATION     15   // player pose animations are small indexes
 
 BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out)
 {
@@ -1032,6 +1033,8 @@ BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out
         Coop_Zero(out, sizeof(*out));
         return FALSE;
     }
+    if (out->anim > COOP_MAX_ANIMATION)
+        out->anim = 0; // cosmetic: show the pose's first animation instead of dropping the player
     if (out->follower_visible > 1 || out->follower_shiny > 1 || out->follower_gender > 2
         || out->follower_species > MAX_SPECIES_INCLUDING_FORMS
         || (out->follower_visible && out->follower_species == 0)

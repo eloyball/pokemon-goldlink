@@ -125,7 +125,8 @@ pub struct PlayerState {
     pub follower_move_seq: u8,    // 0x38
     pub pad39: [u8; 3],           // 0x39
     pub avatar_id: u8,            // 0x3C
-    pub pad3d: [u8; 3],           // 0x3D
+    pub anim: u8,                 // 0x3D pose animation index (forwarded untouched)
+    pub pad3e: [u8; 2],           // 0x3E
 }
 
 fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {
@@ -176,7 +177,8 @@ impl PlayerState {
         out[0x38] = self.follower_move_seq;
         out[0x39..0x3C].copy_from_slice(&self.pad39);
         out[0x3C] = self.avatar_id;
-        out[0x3D..0x40].copy_from_slice(&self.pad3d);
+        out[0x3D] = self.anim;
+        out[0x3E..0x40].copy_from_slice(&self.pad3e);
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
@@ -222,7 +224,8 @@ impl PlayerState {
             follower_move_seq: buf[0x38],
             pad39: [buf[0x39], buf[0x3A], buf[0x3B]],
             avatar_id: buf[0x3C],
-            pad3d: [buf[0x3D], buf[0x3E], buf[0x3F]],
+            anim: buf[0x3D],
+            pad3e: [buf[0x3E], buf[0x3F]],
         })
     }
 }
@@ -426,7 +429,8 @@ mod tests {
             follower_move_seq: 6,
             pad39: [0; 3],
             avatar_id: 2,
-            pad3d: [0; 3],
+            anim: 3,
+            pad3e: [0; 2],
         }
     }
 
@@ -487,6 +491,7 @@ mod tests {
         assert_eq!(&buf[0x30..0x32], &[12, 0]); // follower_x
         assert_eq!(buf[0x38], 6); // follower_move_seq
         assert_eq!(buf[0x3C], 2); // avatar_id
+        assert_eq!(buf[0x3D], 3); // anim
         assert_eq!(PlayerState::decode_le(&buf).unwrap(), st);
 
         // The bridge copies packet[16..360] to mailbox 0x050..0x1A8, so the

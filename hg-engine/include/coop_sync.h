@@ -238,7 +238,8 @@ struct CoopPlayerState
     u8  follower_move_seq;   // 0x38
     u8  pad39[3];            // 0x39
     u8  avatar_id;           // 0x3C custom player sprite set (later milestone; 0 = vanilla)
-    u8  pad3D[3];            // 0x3D
+    u8  anim;                // 0x3D map object animation (pret MapObject_SetAnimation): pose frames (fishing cast / bite / reel...)
+    u8  pad3E[2];            // 0x3E
 };
 
 // 24-byte progression gates block (relay -> ROM).
@@ -322,6 +323,7 @@ COOP_ASSERT_OFFSET(CoopPlayerState, follower_species, 0x28);
 COOP_ASSERT_OFFSET(CoopPlayerState, follower_x, 0x30);
 COOP_ASSERT_OFFSET(CoopPlayerState, follower_move_seq, 0x38);
 COOP_ASSERT_OFFSET(CoopPlayerState, avatar_id, 0x3C);
+COOP_ASSERT_OFFSET(CoopPlayerState, anim, 0x3D);
 COOP_ASSERT_OFFSET(CoopProgressionGates, flag_campaign_started, 0x08);
 COOP_ASSERT_OFFSET(CoopProgressionGates, room_uid, 0x0C);
 COOP_ASSERT_OFFSET(CoopCommBlock, assigned_player_id, 0x006);

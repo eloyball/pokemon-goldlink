@@ -20,8 +20,9 @@ struct Args {
     #[arg(short, long, default_value = "0.0.0.0:7777")]
     bind: SocketAddr,
 
-    /// Broadcast tick frequency in Hz
-    #[arg(short, long, default_value_t = 30)]
+    /// Broadcast tick frequency in Hz. The ROM samples telemetry at 30 Hz;
+    /// 60 Hz halves the relay's queueing delay (about 22 KB/s per client).
+    #[arg(short, long, default_value_t = 60)]
     tick_rate: u32,
 
     /// Fallback party size if room creator does not specify one (2..6)

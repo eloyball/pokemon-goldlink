@@ -816,6 +816,12 @@ Facing_GetBillboardStandSequence = 0x021FA44C | 1;
 ResourceBank_Get = 0x021FC5A4 | 1;
 /* pret label ov01_021FA2D4 (asm/overlay_01_021F944C.s), ccd MapObject_IsBillboardPending. */
 MapObject_IsBillboardPending = 0x021FA2D4 | 1;
+/* Phase 5 (ccd names). Overlay 01: pret labels ov01_02200540
+   (asm/overlay_01_022001E4.s, EmoteMark_Spawn: the "!" / "!!" mark) and
+   ov01_021F9FB0 (asm/overlay_01_021F944C.s, MapObjectRender_ReleaseUnused:
+   frees loaded renderer slots no object uses; vanilla runs it on zone changes). */
+EmoteMark_Spawn = 0x02200540 | 1;
+MapObjectRender_ReleaseUnused = 0x021F9FB0 | 1;
 BillboardObject_SetResource = 0x02023EC8 | 1;
 BillboardObject_SetSequence = 0x02023EE0 | 1;
 BillboardObject_SetSequenceFrame = 0x02023F40 | 1;
@@ -830,6 +836,8 @@ Field_PlayerAvatar_ApplyTransitionFlags = 0x021F1B04 | 1;
 Field_PlayerCanSurfOnTile = 0x021F20C0 | 1;
 CreateFishingRodTaskEnv = 0x021FC66C | 1;
 Task_OverworldFish = 0x021FC698 | 1;
+/* pret label "CallFieldTask_Surf: ; 0x021F2068" (asm/overlay_01_021F1AFC.s). */
+CallFieldTask_Surf = 0x021F2068 | 1;
 FieldSystem_LoadFieldOverlay = 0x020505C0 | 1;
 sub_020505C8 = 0x020505C8 | 1;
 BeginNormalPaletteFade = 0x0200FA24 | 1;
