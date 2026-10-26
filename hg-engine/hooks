@@ -636,6 +636,10 @@ arm9 PartyMenu_StartContextMenuButtonPressAnim_FromCursorObj 0207CB9C 3
 0001 CheckRockSmashItemDrop 02204CF8 2
 0001 DrawRockSmashIdx 02204E8C 1
 
+#co-op (Milestone 2 Phase 4): remote follower ghosts (IDs 0xE5-0xE9) get their shiny palette too
+0001 Coop_MapObject_IsShinyPokemon 0220553C 1
+0001 Coop_FollowMonBillboard_SetResource 02205808 3
+
 0012 BattleMessage_BufferNickname 0223CDD0
 0012 BattleMessage_BufferPokemon 0223CE80
 0012 hook_GrabIllusionBoxMonForHpBar 022651AE 3

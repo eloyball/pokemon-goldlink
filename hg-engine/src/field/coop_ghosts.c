@@ -43,6 +43,7 @@ BOOL LONG_CALL MapObject_ClearHeldMovementIfActive(LocalMapObject *object);
 // pret map object flag bits (include/map_object.h).
 #define COOP_MOFLAG_ACTIVE          (1u << 0)
 #define COOP_MOFLAG_SINGLE_MOVEMENT (1u << 1)
+#define COOP_MOFLAG_HIDDEN          (1u << 9)  // pret MAPOBJECTFLAG_VISIBLE: set = not drawn (follower in its ball)
 #define COOP_MOFLAG_KEEP            (1u << 10) // survives zone changes in the matrix
 #define COOP_MOFLAG_UNK13           (1u << 13) // set with KEEP on player / follower objects
 #define COOP_MOFLAG_NO_COLLISION    (1u << 18) // skipped by sub_02060BFC
@@ -101,6 +102,8 @@ _Static_assert(__builtin_offsetof(LocalMapObject, xCurr) == 0x64, "xCurr");
 _Static_assert(__builtin_offsetof(LocalMapObject, hCurr) == 0x68, "hCurr");
 _Static_assert(__builtin_offsetof(LocalMapObject, yCurr) == 0x6C, "yCurr (tile Z)");
 _Static_assert(__builtin_offsetof(LocalMapObject, posVec) == 0x70, "posVec");
+_Static_assert(__builtin_offsetof(FieldSystem, unkD3) == 0xD3, "FieldSystem.textbox_open byte must be 0xD2 (pret field_system.h)");
+_Static_assert(__builtin_offsetof(FieldSystem, followMon) == 0xE4, "FieldSystem.followMon must be at 0xE4 (pret field_system.h)");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, modelIds) == 0x20, "modelIds");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, sequenceIds) == 0x40, "sequenceIds");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, textureIds) == 0x60, "textureIds");
@@ -536,13 +539,15 @@ static void Coop_BuildFollower(FieldSystem *fsys, struct CoopPlayerState *ps, co
     ps->follower_form = (u8)follow->forme;
     ps->follower_shiny = follow->shiny ? 1 : 0;
     ps->follower_gender = follow->gender;
-    ps->follower_visible = 1;
+    // Vanilla hides the follower (in its ball) while cycling, surfing and in
+    // some maps, without deleting it.
+    ps->follower_visible = (object->flags & COOP_MOFLAG_HIDDEN) ? 0 : 1;
     ps->follower_x = (s16)object->xCurr;
     ps->follower_z = (s16)object->yCurr;
     ps->follower_height = Coop_ObjectHeight(object);
     ps->follower_direction = (u8)object->curFacing;
     ps->follower_move_action = (u8)object->movementCmd;
-    ps->follower_move_seq = Coop_NextMoveSeq(object, lastValid && last->follower_visible,
+    ps->follower_move_seq = Coop_NextMoveSeq(object, lastValid && last->follower_species != 0,
                                              last->follower_x, last->follower_z, last->follower_move_action,
                                              last->follower_move_seq, &gCoopCommBlock.track_follower_step);
 }
@@ -717,6 +722,9 @@ static BOOL Coop_IsWithin(s32 x, s32 z, const LocalMapObject *player, s32 radius
 void *LONG_CALL SurfMountEffect_Create(LocalMapObject *object, u32 x, u32 z, u32 direction, BOOL bobbing);
 void LONG_CALL FieldEffectManager_DestroyEffect(void *effect);
 void LONG_CALL MapObjectRender_ReleaseSpriteResources(MapObjectMan *manager, u32 sprite, LocalMapObject *skip);
+// Overlay 01 lookup of an overworld tag (rom.ld; hg-engine repoints its table
+// to gOWTagToFileNum). NULL for a tag that does not exist.
+struct OVERWORLD_TAG *LONG_CALL ObjectEvent_GetGraphicsInfo(u32 spriteId);
 
 // Every player sprite (PlayerAvatar_GetSpriteByStateAndGender, plus the
 // map-load variants) with the billboard model and animation sequence it
@@ -777,7 +785,7 @@ static u32 Coop_WantedSprite(const struct CoopPlayerState *remote)
 #define COOP_RESERVE_MODELS    1
 #define COOP_RESERVE_SEQUENCES 2
 
-#define COOP_BUDGET_IDS (32 + COOP_REMOTE_SLOTS)
+#define COOP_BUDGET_IDS (32 + 2 * COOP_REMOTE_SLOTS)
 
 // One resource kind: the IDs loaded (resident or dynamic) or claimed by a
 // ghost whose billboard is still queued, and the dynamic slots left.
@@ -875,6 +883,14 @@ static BOOL Coop_BudgetShort(const struct CoopBudget *budget)
         || budget->sequences.free < COOP_RESERVE_SEQUENCES;
 }
 
+// Follower sprites use resident models (0, 10) and the resident sequence
+// 0x15 (billboard entries 19 and 20, from the hg-engine overworld table's
+// size values), so they only cost their texture.
+static BOOL Coop_BudgetFitsTexture(const struct CoopBudget *budget, u32 sprite)
+{
+    return Coop_IdSetFits(&budget->textures, sprite, COOP_RESERVE_TEXTURES);
+}
+
 // What the renderer holds now, plus what existing ghosts hold or wait for
 // (a new billboard loads its model and sequence only once its texture is
 // in VRAM, a few frames later). Retail never frees a slot it cannot track
@@ -898,8 +914,11 @@ static void Coop_BudgetInit(struct CoopBudget *budget, MapObjectMan *manager)
     for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
     {
         const LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
+        const LocalMapObject *follower = Coop_FindObjectById(manager, COOP_FOLLOWER_ID_FIRST + slot);
         if (ghost != NULL)
             Coop_BudgetClaim(budget, (u32)ghost->gfxId);
+        if (follower != NULL)
+            Coop_IdSetClaim(&budget->textures, (u32)follower->gfxId);
     }
 }
 
@@ -907,54 +926,86 @@ static void Coop_BudgetInit(struct CoopBudget *budget, MapObjectMan *manager)
 // Player ghosts: reconcile, movement, states (docs/MILESTONE2_PLAN.md 5.4)
 // ---------------------------------------------------------------------------
 
-static void Coop_SetGhostAction(LocalMapObject *ghost, u32 action, u8 seq)
+// Where a ghost should be: a remote player, or their follower.
+struct CoopGhostTarget
 {
-    MapObject_SetHeldMovement(ghost, action);
-    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | seq;
+    s32 x;
+    s32 z;
+    u32 direction;
+    u32 action;
+    u8 seq;
+};
+
+static void Coop_PlayerTarget(const struct CoopPlayerState *remote, struct CoopGhostTarget *target)
+{
+    target->x = remote->x;
+    target->z = remote->z;
+    target->direction = remote->direction;
+    target->action = remote->move_action;
+    target->seq = remote->move_seq;
 }
 
-// One decision per idle ghost: replay the remote's latest action exactly
-// when that lands on the remote's tile (steps, runs, bike speed, ledge
+static void Coop_FollowerTarget(const struct CoopPlayerState *remote, struct CoopGhostTarget *target)
+{
+    target->x = remote->follower_x;
+    target->z = remote->follower_z;
+    target->direction = remote->follower_direction;
+    target->action = remote->follower_move_action;
+    target->seq = remote->follower_move_seq;
+}
+
+static u32 Coop_SetGhostAction(LocalMapObject *ghost, u32 action, u8 seq)
+{
+    MapObject_SetHeldMovement(ghost, action);
+    return COOP_SEQ_VALID | seq;
+}
+
+// One decision per idle ghost: replay the target's latest action exactly
+// when that lands on the target's tile (steps, runs, bike speed, ledge
 // jumps, turns); otherwise walk (run when more than a tile behind) toward
-// it. Held movements ignore collision, like the ghost itself.
-static void Coop_DriveGhost(LocalMapObject *ghost, const struct CoopPlayerState *remote)
+// it. Held movements ignore collision, like the ghost itself. handled is
+// the last move_seq handled (| COOP_SEQ_VALID); returns the new one.
+static u32 Coop_DriveGhost(LocalMapObject *ghost, const struct CoopGhostTarget *target, u32 handled)
 {
     s32 gx = ghost->xCurr, gz = ghost->yCurr;
     s32 dx, dz, distance;
     u32 direction;
 
     if (!Coop_GhostIsIdle(ghost))
-        return;
+        return handled;
 
-    if (COOP_GHOST_SEQ(ghost) != (COOP_SEQ_VALID | remote->move_seq) && remote->move_action != 0xFF)
+    if (handled != (COOP_SEQ_VALID | target->seq) && target->action != 0xFF)
     {
-        distance = Coop_ActionDistance(remote->move_action);
-        Coop_DirectionDelta(remote->move_action & 3, &dx, &dz);
-        if (distance >= 0 && gx + dx * distance == remote->x && gz + dz * distance == remote->z)
-        {
-            Coop_SetGhostAction(ghost, remote->move_action, remote->move_seq);
-            return;
-        }
+        distance = Coop_ActionDistance(target->action);
+        Coop_DirectionDelta(target->action & 3, &dx, &dz);
+        if (distance >= 0 && gx + dx * distance == target->x && gz + dz * distance == target->z)
+            return Coop_SetGhostAction(ghost, target->action, target->seq);
     }
 
-    dx = remote->x - gx;
-    dz = remote->z - gz;
+    dx = target->x - gx;
+    dz = target->z - gz;
     if (dx != 0 || dz != 0)
     {
         if (Coop_Abs(dx) >= Coop_Abs(dz))
             direction = dx < 0 ? 2 : 3; // DIR_WEST / DIR_EAST
         else
             direction = dz < 0 ? 0 : 1; // DIR_NORTH / DIR_SOUTH
-        Coop_SetGhostAction(ghost, (Coop_Abs(dx) + Coop_Abs(dz) > 1 ? COOP_MOVEMENT_WALK_FAST : COOP_MOVEMENT_WALK) + direction,
-                            remote->move_seq);
-        return;
+        return Coop_SetGhostAction(ghost, (Coop_Abs(dx) + Coop_Abs(dz) > 1 ? COOP_MOVEMENT_WALK_FAST : COOP_MOVEMENT_WALK) + direction,
+                                   target->seq);
     }
-    if ((u32)ghost->curFacing != remote->direction)
-    {
-        Coop_SetGhostAction(ghost, COOP_MOVEMENT_FACE + remote->direction, remote->move_seq);
-        return;
-    }
-    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote->move_seq; // in sync
+    if ((u32)ghost->curFacing != target->direction)
+        return Coop_SetGhostAction(ghost, COOP_MOVEMENT_FACE + target->direction, target->seq);
+    return COOP_SEQ_VALID | target->seq; // in sync
+}
+
+// Far behind while nobody can see it: delete, so it is recreated on the
+// target's tile next frame.
+static BOOL Coop_ShouldSnap(LocalMapObject *ghost, const LocalMapObject *player, s32 x, s32 z)
+{
+    return Coop_Abs(x - ghost->xCurr) + Coop_Abs(z - ghost->yCurr) > COOP_CATCHUP_MAX
+        && !Coop_IsWithin(ghost->xCurr, ghost->yCurr, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
+        && !Coop_IsWithin(x, z, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
+        && Coop_GhostIsIdle(ghost);
 }
 
 // A remote in a battle or a menu: the ghost stays on its last tile and
@@ -993,13 +1044,15 @@ static void Coop_UpdateSurfMount(LocalMapObject *ghost, const struct CoopPlayerS
     }
 }
 
-// Deletes a ghost and frees the renderer slots only it used, as a vanilla
-// sprite change does (deleting alone leaves them loaded until a zone change).
+// Deletes a ghost or follower and frees the renderer slots only it used, as
+// a vanilla sprite change does (deleting alone leaves them loaded until a
+// zone change).
 static void Coop_RemoveGhost(MapObjectMan *manager, LocalMapObject *ghost)
 {
     u32 sprite = (u32)ghost->gfxId;
 
-    if (COOP_GHOST_MOUNT(ghost) != 0)
+    // Follower params belong to the follower draw code (param[2] = shiny).
+    if ((u32)ghost->id < COOP_FOLLOWER_ID_FIRST && COOP_GHOST_MOUNT(ghost) != 0)
     {
         FieldEffectManager_DestroyEffect((void *)COOP_GHOST_MOUNT(ghost));
         COOP_GHOST_MOUNT(ghost) = 0;
@@ -1033,70 +1086,314 @@ static void Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *gh
 }
 
 // Reconciles one remote slot with its ghost: create, drive, snap or delete.
-static void Coop_UpdateGhost(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot)
+// valid: the remote is readable and in the same place.
+static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
+                             const struct CoopPlayerState *remote, BOOL valid)
 {
-    struct CoopPlayerState remote;
     LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
-    BOOL valid = Coop_ReadRemotePlayer(slot, &remote) && Coop_IsSamePlace(fsys, &remote);
+    struct CoopGhostTarget target;
     u32 sprite;
 
     if (ghost != NULL)
     {
-        // Gone, elsewhere, out of range, or another player in this slot:
-        // remove (the next frame may recreate it).
+        // Gone, elsewhere, out of range, another player in this slot, or
+        // far behind off screen: remove (the next frame may recreate it).
         if (!valid
-            || (u32)COOP_GHOST_TRAINER(ghost) != remote.trainer_id
-            || !Coop_IsWithin(remote.x, remote.z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z))
+            || (u32)COOP_GHOST_TRAINER(ghost) != remote->trainer_id
+            || !Coop_IsWithin(remote->x, remote->z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
+            || Coop_ShouldSnap(ghost, player, remote->x, remote->z))
         {
             Coop_RemoveGhost(manager, ghost);
             return;
         }
-        // Far behind while nobody can see it: snap (delete, recreate next frame).
-        if (Coop_Abs(remote.x - ghost->xCurr) + Coop_Abs(remote.z - ghost->yCurr) > COOP_CATCHUP_MAX
-            && !Coop_IsWithin(ghost->xCurr, ghost->yCurr, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
-            && !Coop_IsWithin(remote.x, remote.z, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
-            && Coop_GhostIsIdle(ghost))
+        Coop_UpdateGhostSprite(budget, ghost, remote);
+        Coop_UpdateSurfMount(ghost, remote);
+        if (remote->is_active)
         {
-            Coop_RemoveGhost(manager, ghost);
-            return;
+            Coop_PlayerTarget(remote, &target);
+            COOP_GHOST_SEQ(ghost) = (int)Coop_DriveGhost(ghost, &target, (u32)COOP_GHOST_SEQ(ghost));
         }
-        Coop_UpdateGhostSprite(budget, ghost, &remote);
-        Coop_UpdateSurfMount(ghost, &remote);
-        if (remote.is_active)
-            Coop_DriveGhost(ghost, &remote);
         else
-            Coop_FreezeGhost(ghost, &remote, slot);
+            Coop_FreezeGhost(ghost, remote, slot);
         return;
     }
 
-    if (!valid || !Coop_IsWithin(remote.x, remote.z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z))
+    if (!valid || !Coop_IsWithin(remote->x, remote->z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z))
         return;
-    sprite = Coop_WantedSprite(&remote);
+    sprite = Coop_WantedSprite(remote);
     if (!Coop_BudgetFits(budget, sprite))
     {
-        sprite = Coop_WalkingSprite(&remote);
+        sprite = Coop_WalkingSprite(remote);
         if (!Coop_BudgetFits(budget, sprite))
             return;
     }
-    ghost = Coop_CreateGhostObject(manager, COOP_GHOST_ID_FIRST + slot, remote.x, remote.z, remote.direction, sprite,
-                                   remote.height);
+    ghost = Coop_CreateGhostObject(manager, COOP_GHOST_ID_FIRST + slot, remote->x, remote->z, remote->direction, sprite,
+                                   remote->height);
     if (ghost == NULL)
         return;
     Coop_BudgetClaim(budget, sprite);
-    COOP_GHOST_TRAINER(ghost) = (int)remote.trainer_id;
-    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote.move_seq;
+    COOP_GHOST_TRAINER(ghost) = (int)remote->trainer_id;
+    COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote->move_seq;
     COOP_GHOST_MOUNT(ghost) = 0;
-    Coop_UpdateSurfMount(ghost, &remote);
+    Coop_UpdateSurfMount(ghost, remote);
+}
+
+// ---------------------------------------------------------------------------
+// Remote followers (plan 3.3, 5.8; Phase 4)
+// ---------------------------------------------------------------------------
+
+void Coop_FollowMonBillboard_SetResource(BOOL alternate, LocalMapObject *object, void *billboard);
+BOOL LONG_CALL MapObject_IsBillboardPending(LocalMapObject *object);
+
+// Vanilla picks the shiny sequence once per object, on its first draw update
+// with a billboard (draw byte 0x17 bit 0), which a recycled object slot can
+// skip. So the follower ghost gets it here once its billboard exists (the
+// first word of the billboard draw data, pret LocalMapObject.unk108).
+static void Coop_ApplyFollowerShiny(LocalMapObject *follower, u32 slot)
+{
+    void *billboard;
+
+    if (!(follower->param[2] & 1) || (gCoopCommBlock.track_follower_shiny & (1u << slot)))
+        return;
+    __builtin_memcpy(&billboard, follower->unk108, sizeof(billboard));
+    if (billboard == NULL || MapObject_IsBillboardPending(follower))
+        return;
+    Coop_FollowMonBillboard_SetResource(TRUE, follower, billboard);
+    gCoopCommBlock.track_follower_shiny |= (u8)(1u << slot);
+}
+
+#define COOP_MON_FEMALE 1 // pret MON_FEMALE
+
+// Overworld tag the remote's follower shows, worked out here from species,
+// form and gender with hg-engine's own lookup (what the local follower
+// uses), never taken from the network: an unknown tag would break the
+// renderer. 0 = none (no follower, in its ball, or no overworld).
+static u32 Coop_FollowerSprite(const struct CoopPlayerState *remote)
+{
+    u32 tag;
+
+    if (remote->follower_species == 0 || !remote->follower_visible)
+        return 0;
+    tag = get_mon_ow_tag(remote->follower_species, remote->follower_form, remote->follower_gender == COOP_MON_FEMALE);
+    return ObjectEvent_GetGraphicsInfo(tag) != NULL ? tag : 0;
+}
+
+// A follower ghost: the follower's sprite and draw params (species, shiny;
+// no form-size params, vanilla reads those only for its own follower ID),
+// moved like a player ghost. Shown only next to its player's ghost, so it
+// goes away with it (another trainer in the slot, a snap) and the players
+// always get the budget first. Its last handled move_seq lives in the
+// mailbox: follower params belong to the follower draw code.
+static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
+                                const struct CoopPlayerState *remote, BOOL valid)
+{
+    LocalMapObject *follower = Coop_FindObjectById(manager, COOP_FOLLOWER_ID_FIRST + slot);
+    BOOL hasGhost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot) != NULL;
+    u32 sprite = (valid && hasGhost) ? Coop_FollowerSprite(remote) : 0;
+    struct CoopGhostTarget target;
+
+    if (follower != NULL)
+    {
+        if (sprite == 0
+            || (u32)follower->gfxId != sprite
+            || (u32)(follower->param[2] & 1) != remote->follower_shiny
+            || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
+            || Coop_ShouldSnap(follower, player, remote->follower_x, remote->follower_z))
+        {
+            Coop_RemoveGhost(manager, follower);
+            return;
+        }
+        Coop_ApplyFollowerShiny(follower, slot);
+        if (remote->is_active)
+        {
+            Coop_FollowerTarget(remote, &target);
+            gCoopCommBlock.track_follower_seq[slot] =
+                (u8)Coop_DriveGhost(follower, &target, COOP_SEQ_VALID | gCoopCommBlock.track_follower_seq[slot]);
+        }
+        return;
+    }
+
+    if (sprite == 0
+        || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z)
+        || !Coop_BudgetFitsTexture(budget, sprite))
+        return;
+    follower = Coop_CreateGhostObject(manager, COOP_FOLLOWER_ID_FIRST + slot, remote->follower_x, remote->follower_z,
+                                      remote->follower_direction, sprite, remote->follower_height);
+    if (follower == NULL)
+        return;
+    Coop_IdSetClaim(&budget->textures, sprite);
+    follower->param[0] = remote->follower_species; // pret FOLLOW_MON_PARAM_SPECIES
+    follower->param[1] = 0;
+    follower->param[2] = remote->follower_shiny ? 1 : 0; // FollowMon_SetObjectShiny
+    gCoopCommBlock.track_follower_seq[slot] = remote->follower_move_seq;
+    gCoopCommBlock.track_follower_shiny &= (u8)~(1u << slot);
+}
+
+// Overlay-01 hook (hooks: ov01_0220553C, ccd MapObject_IsShinyPokemon; the
+// whole function is replaced). Vanilla reads the shiny bit only for its own
+// follower IDs; remote followers carry it the same way.
+BOOL Coop_MapObject_IsShinyPokemon(LocalMapObject *object)
+{
+    u32 id = (u32)object->id;
+
+    if (id == 0xFD || id == 0xFA || id == 0xFB
+        || (id >= COOP_FOLLOWER_ID_FIRST && id < COOP_FOLLOWER_ID_FIRST + COOP_REMOTE_SLOTS))
+        return object->param[2] & 1;
+    return FALSE;
+}
+
+// ccd BillboardResource (include/billboard_internal.h), filled by vanilla;
+// gfxSequence (ccd BillboardGfxSequence) is written here.
+struct CoopBillboardResource
+{
+    void *modelFile;
+    void *texture;
+    const void *ranges;
+    const u16 *startFrame;
+    const u8 *textureIdx;
+    const u8 *plttIdx;
+    u32 seqCount;
+    u32 texKey;
+    u32 tex4x4Key;
+    u32 plttKey;
+};
+
+_Static_assert(sizeof(struct CoopBillboardResource) == 0x28, "BillboardResource is 0x28 bytes (ccd billboard_internal.h)");
+
+BOOL LONG_CALL MapObjectRender_GetBillboardResource(MapObjectMan *manager, u32 sprite, struct CoopBillboardResource *dest);
+const void *LONG_CALL ResourceBank_Get(void *bank, u32 id);
+u32 LONG_CALL Facing_GetBillboardStandSequence(u32 direction);
+void LONG_CALL BillboardObject_SetResource(void *billboard, struct CoopBillboardResource *resource);
+void LONG_CALL BillboardObject_SetSequence(void *billboard, u32 sequence);
+void LONG_CALL BillboardObject_SetSequenceFrame(void *billboard, u32 frame);
+
+#define COOP_RENDER_SEQUENCE_BANK  0xFC   // ccd MapObjectRender.sequenceBank
+#define COOP_SEQUENCE_FOLLOW_MON   0x15   // ccd BILLBOARD_SEQUENCE_FOLLOW_MON
+#define COOP_SEQUENCE_FOLLOW_SHINY 0x16   // ccd BILLBOARD_SEQUENCE_FOLLOW_MON_ALT (shiny palette frames)
+
+// ccd BillboardGfxSequence_Init (C in pret, unmapped): points the sequence at
+// its frame table.
+static void Coop_InitGfxSequence(const void *data, struct CoopBillboardResource *resource)
+{
+    const u8 *bytes = data;
+
+    __builtin_memcpy(&resource->seqCount, bytes, sizeof(u32));
+    bytes += sizeof(u32);
+    resource->startFrame = (const u16 *)bytes;
+    bytes += sizeof(u16) * resource->seqCount;
+    resource->textureIdx = bytes;
+    bytes += resource->seqCount;
+    resource->plttIdx = bytes;
+}
+
+// Overlay-01 hook (hooks: ov01_02205808, ccd FollowMonBillboard_SetResource;
+// the whole function is replaced): the same steps, with the remote follower
+// IDs accepted next to vanilla's. The shiny look is the alternate animation
+// sequence 0x16 (palette frames), picked when IsShinyPokemon says so.
+void Coop_FollowMonBillboard_SetResource(BOOL alternate, LocalMapObject *object, void *billboard)
+{
+    struct CoopBillboardResource resource;
+    MapObjectMan *manager = (MapObjectMan *)object->unkB4; // pret LocalMapObject.manager
+    const u8 *render = (const u8 *)manager + COOP_RENDER_OFFSET;
+    void *bank;
+    u32 id = (u32)object->id;
+
+    MapObjectRender_GetBillboardResource(manager, (u32)object->gfxId, &resource);
+    if (id != 0xFD && id != 0xFA && id != 0xFB
+        && !(id >= COOP_FOLLOWER_ID_FIRST && id < COOP_FOLLOWER_ID_FIRST + COOP_REMOTE_SLOTS))
+        return;
+    __builtin_memcpy(&bank, render + COOP_RENDER_SEQUENCE_BANK, sizeof(bank));
+    Coop_InitGfxSequence(ResourceBank_Get(bank, alternate ? COOP_SEQUENCE_FOLLOW_SHINY : COOP_SEQUENCE_FOLLOW_MON), &resource);
+    BillboardObject_SetResource(billboard, &resource);
+    BillboardObject_SetSequence(billboard, Facing_GetBillboardStandSequence((u32)object->curFacing));
+    BillboardObject_SetSequenceFrame(billboard, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Priorities and fallbacks (plan 5.5): nearest teammates first; when vanilla
+// needs room back, followers go first (furthest first), then the furthest
+// players. One removal per frame.
+// ---------------------------------------------------------------------------
+
+static void Coop_SortByDistance(u8 *order, const struct CoopPlayerState *remotes, const BOOL *valid, const LocalMapObject *player)
+{
+    s32 distance[COOP_REMOTE_SLOTS];
+    u32 i, j;
+
+    for (i = 0; i < COOP_REMOTE_SLOTS; i++)
+    {
+        distance[i] = valid[i] ? Coop_Abs(remotes[i].x - player->xCurr) + Coop_Abs(remotes[i].z - player->yCurr) : 0x7FFF;
+        for (j = i; j > 0 && distance[order[j - 1]] > distance[i]; j--)
+            order[j] = order[j - 1];
+        order[j] = (u8)i;
+    }
+}
+
+// Texture or object slots short: drop a follower, else a player ghost.
+// Animation or model slots short with every ghost already walking (the
+// sprite downgrade has nothing left to give): drop a player ghost.
+static BOOL Coop_ShedGhost(MapObjectMan *manager, const struct CoopBudget *budget, const u8 *order, const struct CoopPlayerState *remotes)
+{
+    BOOL roomShort = budget->textures.free < COOP_RESERVE_TEXTURES
+        || manager->active_count + COOP_OBJECT_HEADROOM > manager->object_count;
+    BOOL animShort = budget->models.free < COOP_RESERVE_MODELS || budget->sequences.free < COOP_RESERVE_SEQUENCES;
+    LocalMapObject *object;
+    s32 i;
+
+    if (roomShort)
+    {
+        for (i = COOP_REMOTE_SLOTS - 1; i >= 0; i--)
+        {
+            object = Coop_FindObjectById(manager, COOP_FOLLOWER_ID_FIRST + order[i]);
+            if (object != NULL)
+            {
+                Coop_RemoveGhost(manager, object);
+                return TRUE;
+            }
+        }
+    }
+    else if (animShort)
+    {
+        for (i = 0; i < COOP_REMOTE_SLOTS; i++)
+        {
+            object = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + i);
+            if (object != NULL && (u32)object->gfxId != Coop_WalkingSprite(&remotes[i]))
+                return FALSE; // a downgrade will free it
+        }
+    }
+    else
+        return FALSE;
+    for (i = COOP_REMOTE_SLOTS - 1; i >= 0; i--)
+    {
+        object = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + order[i]);
+        if (object != NULL)
+        {
+            Coop_RemoveGhost(manager, object);
+            return TRUE;
+        }
+    }
+    return FALSE;
 }
 
 static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player)
 {
+    struct CoopPlayerState remotes[COOP_REMOTE_SLOTS];
+    BOOL valid[COOP_REMOTE_SLOTS];
+    u8 order[COOP_REMOTE_SLOTS];
     struct CoopBudget budget;
-    u32 slot;
+    u32 i;
+
+    for (i = 0; i < COOP_REMOTE_SLOTS; i++)
+        valid[i] = Coop_ReadRemotePlayer(i, &remotes[i]) && Coop_IsSamePlace(fsys, &remotes[i]);
+    Coop_SortByDistance(order, remotes, valid, player);
 
     Coop_BudgetInit(&budget, manager);
-    for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
-        Coop_UpdateGhost(fsys, manager, player, &budget, slot);
+    if (Coop_ShedGhost(manager, &budget, order, remotes))
+        Coop_BudgetInit(&budget, manager); // slots were freed
+    for (i = 0; i < COOP_REMOTE_SLOTS; i++)
+        Coop_UpdateGhost(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]]);
+    for (i = 0; i < COOP_REMOTE_SLOTS; i++)
+        Coop_UpdateFollower(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]]);
 }
 
 // ---------------------------------------------------------------------------

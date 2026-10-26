@@ -621,7 +621,7 @@ typedef struct FieldSystem {
     /* 0x70 */ u8 unk70[0x3C];
     /* 0xAC */ u32 unkAC;
     /* 0xB0 */ u8 unkB0[0x4];
-    /* 0xB4 */ s64 unkB4;
+    /* 0xB4 */ u32 unkB4[2]; // pret s64; GCC aligns s64 to 8, which moved every later field 4 bytes
     /* 0xBC */ u8 unkBC[0x16];
     /* 0xD2 */ u8 unkD2_0 : 6;
     /* 0xD2 */ u8 textbox_open : 1;

@@ -298,7 +298,9 @@ struct CoopCommBlock
     u8  track_player_step;                                      // 0x1E6 ROM private: last movement step seen (move_seq)
     u8  track_follower_step;                                    // 0x1E7 ROM private
     u8  track_field_idle;                                       // 0x1E8 ROM private: no field task / message last frame (ghost talk)
-    u8  reserved[0x200 - 0x1E9];                                // 0x1E9..0x1FF
+    u8  track_follower_seq[COOP_REMOTE_SLOTS];                  // 0x1E9 ROM private: last follower move_seq each follower ghost handled
+    u8  track_follower_shiny;                                   // 0x1EE ROM private: bit per slot, shiny sequence applied to its follower ghost
+    u8  reserved[0x200 - 0x1EF];                                // 0x1EF..0x1FF
 };
 
 #define COOP_ASSERT_OFFSET(type, field, off) \
@@ -347,7 +349,9 @@ COOP_ASSERT_OFFSET(CoopCommBlock, save_slot_ready, 0x1E4);
 COOP_ASSERT_OFFSET(CoopCommBlock, reset_request, 0x1E5);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_player_step, 0x1E6);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_field_idle, 0x1E8);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1E9);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_seq, 0x1E9);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_shiny, 0x1EE);
+COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1EF);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
 

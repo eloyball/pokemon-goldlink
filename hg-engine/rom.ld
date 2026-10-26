@@ -804,6 +804,21 @@ FieldSystem_GetFacingObject = 0x0203DBF8 | 1;
 SurfMountEffect_Create = 0x021FE7DC | 1;
 FieldEffectManager_DestroyEffect = 0x021F1640 | 1;
 MapObjectRender_ReleaseSpriteResources = 0x021FA108 | 1;
+/* Remote follower shiny sequence (Milestone 2 Phase 4; ccd names). Overlay 01:
+   pret labels ov01_021F9744 (asm/overlay_01_021F944C.s,
+   MapObjectRender_GetBillboardResource), ov01_021FA44C (same file,
+   Facing_GetBillboardStandSequence), ov01_021FC5A4 (asm/overlay_01_021FC4C4.s,
+   ResourceBank_Get). ARM9: pret labels sub_02023EC8 / sub_02023EE0 /
+   sub_02023F40 (asm/unk_02023694.s; ccd BillboardObject_SetResource /
+   _SetSequence / _SetSequenceFrame). */
+MapObjectRender_GetBillboardResource = 0x021F9744 | 1;
+Facing_GetBillboardStandSequence = 0x021FA44C | 1;
+ResourceBank_Get = 0x021FC5A4 | 1;
+/* pret label ov01_021FA2D4 (asm/overlay_01_021F944C.s), ccd MapObject_IsBillboardPending. */
+MapObject_IsBillboardPending = 0x021FA2D4 | 1;
+BillboardObject_SetResource = 0x02023EC8 | 1;
+BillboardObject_SetSequence = 0x02023EE0 | 1;
+BillboardObject_SetSequenceFrame = 0x02023F40 | 1;
 /* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them.
    Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking. */

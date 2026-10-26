@@ -391,12 +391,31 @@ static void Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
     dialog->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
 }
 
+// pret TextPrinter (include/font_types_def.h): the template the callback
+// receives is its first member, and delayCounter (frames until the next
+// character) sits at 0x2A.
+#define COOP_TEXT_PRINTER_DELAY_OFFSET 0x2A
+
+// Printer callback, run every frame the printer waits for its next
+// character: A or B held prints one character per frame. Vanilla only does
+// this after a new press, and only while the global canABSpeedUpPrint flag
+// is set (unmapped; vanilla messages set it, so it depended on what printed
+// last). Written through a u8 pointer, which may alias anything.
+static BOOL Coop_DialogSpeedUp(void *printerTemplate, u16 glyph)
+{
+    (void)glyph;
+    if (gSystem.heldKeys & (PAD_BUTTON_A | PAD_BUTTON_B))
+        ((u8 *)printerTemplate)[COOP_TEXT_PRINTER_DELAY_OFFSET] = 0;
+    return FALSE; // never pause the printer
+}
+
 // Prints one page (two lines max: the box is 4 tiles tall).
 static void Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
 {
     FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
     Coop_SetStringFromAscii(dialog->text, msg, dialog->name);
-    dialog->printerId = AddTextPrinterParameterized(&dialog->window, DIALOG_FONT, dialog->text, 0, 0, dialog->textDelay, NULL);
+    dialog->printerId = AddTextPrinterParameterized(&dialog->window, DIALOG_FONT, dialog->text, 0, 0, dialog->textDelay,
+                                                    Coop_DialogSpeedUp);
 }
 
 static BOOL Coop_DialogIsPrinting(const struct CoopDialog *dialog)
