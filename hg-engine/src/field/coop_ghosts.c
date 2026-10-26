@@ -1119,7 +1119,7 @@ static void Coop_ClearMark(LocalMapObject *ghost)
 }
 
 // A remote in a battle or a menu: the ghost stays on its last tile under a
-// steady "!" (battle) or "!!" (menu, bag, other app). HGSS has "?" only in
+// steady "!!" (battle) or "!" (menu, bag, other app). HGSS has "?" only in
 // the emote balloon, which shows one balloon at a time and animates out.
 // Map transitions and the field show none.
 static void Coop_UpdateMark(LocalMapObject *ghost, const struct CoopPlayerState *remote)
@@ -1129,9 +1129,9 @@ static void Coop_UpdateMark(LocalMapObject *ghost, const struct CoopPlayerState 
     void *effect;
 
     if (!remote->is_active && remote->activity == COOP_ACTIVITY_BATTLE)
-        kind = COOP_MARK_EXCLAMATION;
-    else if (!remote->is_active && remote->activity == COOP_ACTIVITY_MENU)
         kind = COOP_MARK_DOUBLE;
+    else if (!remote->is_active && remote->activity == COOP_ACTIVITY_MENU)
+        kind = COOP_MARK_EXCLAMATION;
     if (mark != 0 && (mark & 1u) == kind)
         return;
     Coop_ClearMark(ghost);
