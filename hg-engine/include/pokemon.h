@@ -628,9 +628,9 @@ typedef struct FieldSystem {
     /* 0xD2 */ u8 unkD2_7 : 1;
     /* 0xD3 */ u8 unkD3[0x11];
     /* 0xE4 */ FollowMon followMon;
-    // u8 unk104[4];
-    // void *unk108;//struct FieldSystemUnk108 *unk108;
-    // u8 filler_10C[8];
+    /* 0x104 */ u8 unk104[0x8];
+    /* 0x10C */ u32 menuInputState; // pret MenuInputStateMgr: the last menu input was touch or keypad
+    // u8 filler_110[4];
     // void *unk114;//struct UnkFsysSub_114* unk114;
     // void *bugContest;//BUGCONTEST* bugContest;
     // u8 unk11C[0xC];

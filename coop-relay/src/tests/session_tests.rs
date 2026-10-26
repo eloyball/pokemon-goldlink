@@ -9,11 +9,11 @@ use crate::lobby::{LobbyState, SESSION_TIMEOUT};
 use crate::lobby_tests::make_packet;
 use crate::protocol::{
     ClientToServerPacket, NO_SLOT, PLAYER_STATE_SIZE, REMOTE_SLOTS, ROOM_ACTION_SYNC,
-    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE,
-    SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST,
-    SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
+    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP,
+    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE,
+    SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
     SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED,
-    SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING,
+    SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE,
     SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, SessionOut,
     TEAMED_SELF_BIT,
 };
@@ -181,7 +181,7 @@ fn test_refusals() {
 }
 
 #[test]
-fn test_team_up_is_permanent_and_rules_battles() {
+fn test_team_up_rules_battles() {
     let mut lobby = room(3, true);
     op(
         &mut lobby,
@@ -207,7 +207,7 @@ fn test_team_up_is_permanent_and_rules_battles() {
         "remote slots 0 and 1 are teamed; player 2 is not"
     );
 
-    // Teams cannot be changed.
+    // A teamed player cannot join another team (leaving comes first).
     op(
         &mut lobby,
         2,
@@ -269,5 +269,143 @@ fn test_teams_survive_a_relay_restart() {
     .unwrap();
     assert!(restored.is_campaign_started());
     assert_eq!(restored.teams(), &[[TRAINERS[0], TRAINERS[1]]]);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Teams 0 + 1 in a started room of `n`.
+fn teamed_room(n: usize, save_dir: Option<PathBuf>) -> LobbyState {
+    let mut lobby = room_in(n, true, save_dir);
+    op(
+        &mut lobby,
+        0,
+        1,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_TEAM_UP,
+        1,
+    );
+    op(&mut lobby, 1, 1, SESSION_OP_ACCEPT, 0, 0);
+    assert_eq!(lobby.teams(), &[[TRAINERS[0], TRAINERS[1]]]);
+    lobby
+}
+
+#[test]
+fn test_leave_team() {
+    let mut lobby = teamed_room(3, None);
+
+    // Not in a team: nothing to leave.
+    op(
+        &mut lobby,
+        2,
+        1,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        0,
+    );
+    let g2 = gates(&mut lobby, 2);
+    assert_eq!(
+        (g2[2], g2[3], g2[6]),
+        (
+            SESSION_STATE_REFUSED,
+            SESSION_KIND_LEAVE_TEAM,
+            SESSION_REASON_INVALID
+        )
+    );
+
+    // Player 0 leaves at once: no answer from player 1, who reads a notice.
+    op(
+        &mut lobby,
+        0,
+        2,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        1,
+    );
+    assert!(lobby.teams().is_empty());
+    let g0 = gates(&mut lobby, 0);
+    assert_eq!((g0[0], g0[1]), (NO_SLOT, 0), "no partner, nobody teamed");
+    assert_eq!(
+        (g0[2], g0[3], g0[4]),
+        (SESSION_STATE_ACCEPTED, SESSION_KIND_LEAVE_TEAM, 0)
+    );
+    let g1 = gates(&mut lobby, 1);
+    assert_eq!((g1[0], g1[1]), (NO_SLOT, 0));
+    assert_eq!(
+        (g1[2], g1[3], g1[4]),
+        (SESSION_STATE_NOTICE, SESSION_KIND_LEAVE_TEAM, 0)
+    );
+
+    // Either can team up again, with anyone.
+    op(
+        &mut lobby,
+        0,
+        3,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_TEAM_UP,
+        2,
+    );
+    op(&mut lobby, 2, 2, SESSION_OP_ACCEPT, 0, 0);
+    assert_eq!(lobby.teams(), &[[TRAINERS[0], TRAINERS[2]]]);
+}
+
+#[test]
+fn test_leave_team_while_busy() {
+    let mut lobby = teamed_room(3, None);
+
+    // The partner is asking someone else: the team is dropped, the partner's
+    // request is left alone (no notice over it).
+    op(&mut lobby, 1, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 2);
+    op(
+        &mut lobby,
+        0,
+        2,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        1,
+    );
+    assert!(lobby.teams().is_empty());
+    assert_eq!(gates(&mut lobby, 1)[2], SESSION_STATE_OUTGOING);
+    op(&mut lobby, 1, 3, SESSION_OP_CANCEL, 0, 0);
+
+    // The leaver is in a session of its own: refused, the team stays.
+    let mut lobby = teamed_room(3, None);
+    op(&mut lobby, 2, 1, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 0);
+    op(
+        &mut lobby,
+        0,
+        2,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        1,
+    );
+    assert_eq!(gates(&mut lobby, 0)[6], SESSION_REASON_BUSY);
+    assert_eq!(lobby.teams(), &[[TRAINERS[0], TRAINERS[1]]]);
+}
+
+#[test]
+fn test_leaving_is_saved() {
+    let dir = PathBuf::from("target/test_saves_leave_team");
+    let _ = fs::remove_dir_all(&dir);
+    let mut lobby = teamed_room(2, Some(dir.clone()));
+    op(
+        &mut lobby,
+        1,
+        2,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        0,
+    );
+    drop(lobby);
+
+    let restored = LobbyState::with_room(
+        *b"TEST01",
+        0,
+        None,
+        Duration::from_secs(60),
+        2,
+        false,
+        Some(dir.clone()),
+    )
+    .unwrap();
+    assert!(restored.teams().is_empty());
     let _ = fs::remove_dir_all(&dir);
 }

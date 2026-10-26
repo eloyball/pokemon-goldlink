@@ -43,6 +43,7 @@ pub const SESSION_OP_CANCEL: u8 = 4;
 pub const SESSION_KIND_TRADE: u8 = 1;
 pub const SESSION_KIND_BATTLE: u8 = 2;
 pub const SESSION_KIND_TEAM_UP: u8 = 3;
+pub const SESSION_KIND_LEAVE_TEAM: u8 = 4; // one-sided: applied at once, no answer
 
 pub const SESSION_STATE_NONE: u8 = 0;
 pub const SESSION_STATE_OUTGOING: u8 = 1; // my request, waiting for the answer
@@ -52,6 +53,7 @@ pub const SESSION_STATE_DECLINED: u8 = 4;
 pub const SESSION_STATE_CANCELLED: u8 = 5; // withdrawn, or the other side left
 pub const SESSION_STATE_TIMEOUT: u8 = 6;
 pub const SESSION_STATE_REFUSED: u8 = 7; // the relay turned the request down (reason)
+pub const SESSION_STATE_NOTICE: u8 = 8; // to the ex-teammate: the peer left the team (kind LEAVE_TEAM)
 
 pub const SESSION_REASON_NONE: u8 = 0;
 pub const SESSION_REASON_NOT_HERE: u8 = 1; // target not connected

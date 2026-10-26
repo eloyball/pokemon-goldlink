@@ -825,12 +825,39 @@ MapObjectRender_ReleaseUnused = 0x021F9FB0 | 1;
 BillboardObject_SetResource = 0x02023EC8 | 1;
 BillboardObject_SetSequence = 0x02023EE0 | 1;
 BillboardObject_SetSequenceFrame = 0x02023F40 | 1;
-/* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
-   the name is the address): fade, load the map, set the player walking.
-   Trades reload the map in place after the lead Pokemon changed (Milestone 3
-   Phase 2); also used by the debug warps. */
-sub_020538C0 = 0x020538C0 | 1;
+/* Trade and evolution scenes (Milestone 3, src/coop_scene.c). Vanilla's link
+   trade (pret src/launch_application.c Task_WirelessTrade) and NPC trade
+   (asm/unk_0206793C.s CallTask_NPCTrade). Addresses from pret asm labels
+   (asm/unk_02055244.s, asm/overlay_71.s, asm/unk_020755E8.s) and, for
+   functions pret has since converted to C, the address-named labels they
+   had before their rename in pret's history (CallApplicationAsTask was
+   sub_02050624; Heap_Create / Heap_Destroy were CreateHeap / DestroyHeap). */
+CallTask_LeaveOverworld = 0x0205525C | 1;
+CallTask_RestoreOverworld = 0x020552A4 | 1;
+PaletteFadeUntilFinished = 0x020552E8 | 1;
+CallTask_FadeFromBlack = 0x0205532C | 1;
+CallApplicationAsTask = 0x02050624 | 1;
+TradeSequence_Init = 0x02246960 | 1;
+TradeSequence_Exit = 0x02246B58 | 1;
+TradeSequence_Main = 0x02246BB8 | 1;
+EvolutionScene_New = 0x02075A7C | 1;
+EvolutionScene_IsDone = 0x02075D3C | 1;
+EvolutionScene_Delete = 0x02075D4C | 1;
+PokemonSummary_GetDefaultUnk2C = 0x02088288 | 1;
+Heap_Create = 0x0201A910 | 1;
+Heap_Destroy = 0x0201A9C4 | 1;
+/* The party screen in vanilla's NPC-trade context (pret
+   launch_application.c PartyMenu_LaunchApp_InGameTrade). The app's
+   functions are sub_02078E30 / sub_02079034 / sub_020795E0 in pret's old
+   asm (gOverlayTemplate_PartyMenu); Exit is hg-engine's PokeListProc_End.
+   Save_Mailbox_Get was Sav2_Mailbox_get. */
+PartyMenuApp_Init = 0x02078E30 | 1;
+PartyMenuApp_Main = 0x02079034 | 1;
+Save_Mailbox_Get = 0x0202B50C | 1;
 /* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
+/* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
+   the name is the address): fade, load the map, set the player walking. */
+sub_020538C0 = 0x020538C0 | 1;
 /* Overlay 01 (field). Source: pret asm/overlay_01_021F1AFC.s and
    asm/overlay_01_021FC66C.s labels. */
 Field_PlayerAvatar_OrrTransitionFlags = 0x021F1AFC | 1;

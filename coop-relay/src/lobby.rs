@@ -16,12 +16,13 @@ use crate::protocol::{
     ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL, ROOM_STATUS_ERR_LOCKED,
     ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED,
     ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE,
-    SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL,
-    SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY,
-    SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE,
-    SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED,
-    SESSION_STATE_INCOMING, SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT,
-    ServerToClientPacket, SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
+    SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
+    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
+    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
+    SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
+    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE, SESSION_STATE_OUTGOING,
+    SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket, SessionOut,
+    TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
 };
 
 mod trade;
@@ -825,6 +826,9 @@ impl LobbyState {
                 let refuse = |lobby: &mut Self, reason: u8| {
                     lobby.set_view(slot, SESSION_STATE_REFUSED, kind, target, reason);
                 };
+                if kind == SESSION_KIND_LEAVE_TEAM {
+                    return self.leave_team(slot);
+                }
                 if !matches!(
                     kind,
                     SESSION_KIND_TRADE | SESSION_KIND_BATTLE | SESSION_KIND_TEAM_UP
@@ -945,6 +949,56 @@ impl LobbyState {
                 );
             }
             _ => {}
+        }
+    }
+
+    /// Leaves the team `slot` is in: no answer needed. The team is dropped
+    /// and saved at once; the ex-teammate, when here and not in a session of
+    /// their own, gets a notice.
+    fn leave_team(&mut self, slot: usize) {
+        let room_str = room_code_to_string(&self.room_code);
+        let kind = SESSION_KIND_LEAVE_TEAM;
+        let me = self.trainer_at(slot).unwrap_or(0);
+        let Some(partner) = self.team_partner_of(me).filter(|_| me != 0) else {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                None,
+                SESSION_REASON_INVALID,
+            );
+        };
+        let partner_slot =
+            (0..MAX_PLAYERS).find(|&j| j != slot && self.trainer_at(j) == Some(partner));
+        if self.in_session(slot) {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                partner_slot,
+                SESSION_REASON_BUSY,
+            );
+        }
+        self.teams.retain(|t| !t.contains(&me));
+        info!("[Room {room_str} | TEAM] 0x{me:08X} left the team with 0x{partner:08X}");
+        self.save_campaign_to_disk();
+        self.set_view(
+            slot,
+            SESSION_STATE_ACCEPTED,
+            kind,
+            partner_slot,
+            SESSION_REASON_NONE,
+        );
+        if let Some(p) = partner_slot
+            && !self.in_session(p)
+        {
+            self.set_view(
+                p,
+                SESSION_STATE_NOTICE,
+                kind,
+                Some(slot),
+                SESSION_REASON_NONE,
+            );
         }
     }
 

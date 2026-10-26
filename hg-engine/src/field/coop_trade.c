@@ -16,6 +16,7 @@
 #include "coop_dialog.h"
 #include "coop_choice.h"
 #include "coop_session.h"
+#include "coop_scene.h"
 
 // ---------------------------------------------------------------------------
 // Trading (docs/MILESTONE3_PLAN.md, Phase 2), Overlay 131.
@@ -29,7 +30,8 @@
 //
 //   pick a Pokemon -> offer (encrypted, as in the party) -> the partner's
 //   offer arrives, validated -> Yes -> both confirmed: the relay journals the
-//   trade and commits -> swap, Pokedex, trade evolution, save -> DONE
+//   trade and commits -> swap, Pokedex -> trade scene and evolution scene
+//   (src/coop_scene.c) -> save -> DONE
 //
 // The relay only commits once both sides confirmed each other's current
 // offer, and keeps the commit (with both Pokemon) on disk until both games
@@ -42,12 +44,9 @@
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 void LONG_CALL PokeCopyPPtoPP(struct PartyPokemon *src, struct PartyPokemon *dst);
-// Warp task of script command 180: fade, load the map, set the player walking.
-void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
 
 extern u16 gEvolutionSceneOverride[2][2]; // src/pokemon.c: form of the evolution GetMonEvolution found
 
-#define COOP_PLAYER_STATE_WALKING 0 // pret PLAYER_STATE_WALKING
 #define COOP_NICK_CHARS           12 // 10 + EOS, plus a guard terminator
 #define COOP_FPS                  60
 #define COOP_SYNC_FAILSAFE        (5 * COOP_FPS)
@@ -60,7 +59,8 @@ enum CoopTradeTaskState
     COOP_TRADE_OPEN,
     COOP_TRADE_SYNC,          // wait for the relay's view of this trade
     COOP_TRADE_PICK_TEXT,     // "Which Pokémon will you trade?"
-    COOP_TRADE_PICK,
+    COOP_TRADE_PICK_SCREEN,   // back from the party screen (overworld left meanwhile)
+    COOP_TRADE_PICK,          // the in-field list, when the party screen cannot open
     COOP_TRADE_RULE_TEXT,     // why that Pokemon cannot be traded; back to the list
     COOP_TRADE_RULE_BUTTON,
     COOP_TRADE_WAIT_OFFER,    // my offer is out; waiting for the partner's
@@ -69,8 +69,10 @@ enum CoopTradeTaskState
     COOP_TRADE_CONFIRM,
     COOP_TRADE_WAIT_COMMIT,   // I said yes; waiting for the partner
     COOP_TRADE_CANCELLING,    // CANCEL sent; waiting for the relay to drop the trade
-    COOP_TRADE_APPLY_TEXT,    // "You traded X for Y!"
-    COOP_TRADE_EVOLVE_TEXT,   // "What? Y is evolving!"
+    COOP_TRADE_APPLY_TEXT,    // after a reconnect: "Finishing your last trade..."
+    COOP_TRADE_SCENE,         // the trade and evolution scenes (overworld left)
+    COOP_TRADE_SCENE_DONE,    // the overworld is back
+    COOP_TRADE_EVOLVE_TEXT,   // without the scenes (no memory): "What? Y is evolving!"
     COOP_TRADE_EVOLVED_TEXT,  // "Congratulations! ..."
     COOP_TRADE_SAVE_TEXT,
     COOP_TRADE_SAVE,
@@ -84,6 +86,7 @@ struct CoopTradeEnv
 {
     struct CoopTradeExchange ex; // mirrored by the bridge while published
     struct PartyPokemon incoming; // validated private copy (0xF0 >= COOP_PARTY_MON_SIZE)
+    struct PartyPokemon outgoing; // the Pokemon given, for the trade scene
     struct CoopDialog dialog;
     struct CoopChoice choice;
     u16 peerName[9];
@@ -94,9 +97,11 @@ struct CoopTradeEnv
     u32 tradeId;
     u16 frames;
     u8 slot;           // my offered party slot
+    u8 picked;         // the party screen's result (COOP_PARTY_SELECT_CANCEL: B)
+    u8 cursor;         // where the party screen's cursor starts
+    u8 listOnly;       // the party screen could not open: use the in-field list
     u8 partnerOfferId; // the partner offer shown and validated
     u8 evolved;
-    u8 reload;         // the lead Pokemon changed: reload the map afterwards
     u8 recovery;       // applying a commit this task never confirmed (after a reconnect)
     u8 swapped;        // the received Pokemon entered the party in this task
 };
@@ -169,8 +174,10 @@ static BOOL Coop_TradeLoadIncoming(struct CoopTradeEnv *env, const u8 *bytes)
     return TRUE;
 }
 
-// Why a party Pokemon cannot be offered, or NULL.
-static const char *Coop_TradePickRule(FieldSystem *fsys, struct Party *party, u32 slot)
+// Why a party Pokemon cannot be offered, or NULL. The lead may be traded
+// even while riding or surfing: the trade scene leaves and restores the
+// overworld, which rebuilds the follower from the party.
+static const char *Coop_TradePickRule(struct Party *party, u32 slot)
 {
     struct PartyPokemon *mon = Party_GetMonByIndex(party, slot);
     u32 i, healthy = 0;
@@ -187,10 +194,6 @@ static const char *Coop_TradePickRule(FieldSystem *fsys, struct Party *party, u3
     }
     if (healthy == 0)
         return "You'd have no Pokémon left\nthat can battle!";
-    // The lead walks behind the player: after trading it the map reloads in
-    // place (sub_020538C0), which sets the player walking.
-    if (slot == 0 && fsys->playerAvatar->state != COOP_PLAYER_STATE_WALKING)
-        return "Your lead can't be traded\nwhile riding or surfing.";
     return NULL;
 }
 
@@ -240,8 +243,6 @@ static void Coop_TradeOpenPartyList(FieldSystem *fsys, struct CoopTradeEnv *env,
 static BOOL Coop_TradeEnd(FieldSystem *fsys, struct CoopTradeEnv *env)
 {
     gCoopCommBlock.exchange_ptr = 0; // before the free: the bridge stops mirroring
-    if (env->reload)
-        gCoopCommBlock.track_trade_reload = 1;
     Coop_ChoiceClose(&env->choice);
     Coop_DialogClose(fsys, &env->dialog);
     MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
@@ -276,8 +277,9 @@ static const char *Coop_TradeAbortText(u32 reason)
     }
 }
 
-// Swaps the received Pokemon in. Returns the message to show, and sets the
-// state the task continues with.
+// Swaps the received Pokemon in and sets the state the task continues with:
+// the trade scene, after a page when finishing a trade from before a
+// reconnect.
 static void Coop_TradeApply(FieldSystem *fsys, TaskManager *taskman, struct CoopTradeEnv *env)
 {
     struct Party *party = SaveArray_Party_Get(fsys->savedata);
@@ -321,17 +323,22 @@ static void Coop_TradeApply(FieldSystem *fsys, TaskManager *taskman, struct Coop
 
     env->slot = (u8)slot;
     Coop_GetNickname(Party_GetMonByIndex(party, slot), env->myNick);
+    PokeCopyPPtoPP(Party_GetMonByIndex(party, slot), &env->outgoing);
     PokeCopyPPtoPP(&env->incoming, Party_GetMonByIndex(party, slot));
     env->swapped = TRUE;
     UpdatePokedexWithReceivedSpecies(fsys->savedata, Party_GetMonByIndex(party, slot));
-    if (slot == 0)
-        env->reload = TRUE;
-    Coop_DialogPrint(&env->dialog, env->recovery ? "Finishing your last trade:\nyou received $!" : "You traded ^\nfor $!");
-    taskman->state = COOP_TRADE_APPLY_TEXT;
+    if (env->recovery)
+    {
+        Coop_DialogPrint(&env->dialog, "Finishing your last trade\nwith @...");
+        taskman->state = COOP_TRADE_APPLY_TEXT;
+    }
+    else
+        taskman->state = COOP_TRADE_SCENE;
 }
 
-// Trade evolution without the evolution scene (unmapped; docs/BACKLOG.md):
-// species and form, stats, the consumed item, the name, the Pokedex.
+// Trade evolution without the evolution scene, when the scenes could not
+// start (no memory): species and form, stats, the consumed item, the name,
+// the Pokedex. No moves are learned.
 static BOOL Coop_TradeEvolve(FieldSystem *fsys, struct CoopTradeEnv *env)
 {
     struct Party *party = SaveArray_Party_Get(fsys->savedata);
@@ -411,13 +418,48 @@ static void Coop_TradeLoadPeerName(struct CoopTradeEnv *env)
     env->peerName[8] = 0xFFFF;
 }
 
+static void Coop_TradeOpenDialog(FieldSystem *fsys, struct CoopTradeEnv *env)
+{
+    MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
+    Coop_DialogOpen(fsys, &env->dialog);
+    env->dialog.args[0] = env->peerName;
+    env->dialog.args[1] = env->theirNick;
+    env->dialog.args[2] = env->levelText;
+    env->dialog.args[3] = env->myNick;
+}
+
+// A Pokemon was picked: why it cannot be traded, or offer it (the encrypted
+// bytes as the party holds them) and wait for the partner's.
+static void Coop_TradePicked(TaskManager *taskman, struct CoopTradeEnv *env, struct Party *party, u32 slot)
+{
+    const char *msg;
+
+    env->slot = (u8)slot;
+    env->cursor = (u8)slot;
+    if (party->count < 2)
+        msg = "You need at least two\nPokémon to trade.";
+    else
+        msg = Coop_TradePickRule(party, slot);
+    if (msg != NULL)
+    {
+        Coop_DialogPrint(&env->dialog, msg);
+        taskman->state = COOP_TRADE_RULE_TEXT;
+        return;
+    }
+    __builtin_memcpy(env->ex.out.mon, Party_GetMonByIndex(party, slot), COOP_PARTY_MON_SIZE);
+    Coop_GetNickname(Party_GetMonByIndex(party, slot), env->myNick);
+    env->ex.out.offer_id = (u8)(env->ex.out.offer_id + 1);
+    env->ex.out.state = COOP_TRADE_OUT_OFFERED;
+    Coop_DialogPrint(&env->dialog, "Waiting for @...\nPress B to cancel.");
+    taskman->state = COOP_TRADE_WAIT_OFFER;
+}
+
 static BOOL Coop_Task_Trade(TaskManager *taskman)
 {
     FieldSystem *fsys = taskman->fieldSystem;
     struct CoopTradeEnv *env = taskman->env;
     struct Party *party = SaveArray_Party_Get(fsys->savedata);
     u32 value;
-    const char *msg;
 
     switch (taskman->state)
     {
@@ -427,12 +469,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
         taskman->state = COOP_TRADE_OPEN;
         // fallthrough
     case COOP_TRADE_OPEN:
-        MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
-        Coop_DialogOpen(fsys, &env->dialog);
-        env->dialog.args[0] = env->peerName;
-        env->dialog.args[1] = env->theirNick;
-        env->dialog.args[2] = env->levelText;
-        env->dialog.args[3] = env->myNick;
+        Coop_TradeOpenDialog(fsys, env);
         Coop_DialogPrint(&env->dialog, "Please wait...");
         env->frames = 0;
         taskman->state = COOP_TRADE_SYNC;
@@ -470,11 +507,38 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
     case COOP_TRADE_PICK_TEXT:
         if (Coop_TradeCheckInterrupt(fsys, taskman, env))
             break;
-        if (!Coop_DialogIsPrinting(&env->dialog))
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        if (!env->listOnly)
         {
-            Coop_TradeOpenPartyList(fsys, env, party);
-            taskman->state = COOP_TRADE_PICK;
+            // The party screen, as for vanilla's NPC trades. Its window and
+            // ours belong to the field map, which it unloads.
+            Coop_ChoiceClose(&env->choice);
+            Coop_DialogClose(fsys, &env->dialog);
+            if (Coop_CallTradePartySelect(taskman, env->cursor, &env->picked))
+            {
+                taskman->state = COOP_TRADE_PICK_SCREEN;
+                break;
+            }
+            env->listOnly = TRUE;
+            Coop_TradeOpenDialog(fsys, env);
+            Coop_DialogPrint(&env->dialog, "Which Pokémon will you\ntrade with @?");
+            break;
         }
+        Coop_TradeOpenPartyList(fsys, env, party);
+        taskman->state = COOP_TRADE_PICK;
+        break;
+
+    case COOP_TRADE_PICK_SCREEN:
+        // The field is back. A cancel, abort or lost link while the screen was
+        // up is handled first.
+        Coop_TradeOpenDialog(fsys, env);
+        if (Coop_TradeCheckInterrupt(fsys, taskman, env))
+            break;
+        if (env->picked >= (u32)party->count)
+            Coop_TradeCancel(taskman, env);
+        else
+            Coop_TradePicked(taskman, env, party, env->picked);
         break;
 
     case COOP_TRADE_PICK:
@@ -489,24 +553,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             break;
         }
         Coop_ChoiceClose(&env->choice);
-        env->slot = (u8)(value - 1);
-        if (party->count < 2)
-            msg = "You need at least two\nPokémon to trade.";
-        else
-            msg = Coop_TradePickRule(fsys, party, env->slot);
-        if (msg != NULL)
-        {
-            Coop_DialogPrint(&env->dialog, msg);
-            taskman->state = COOP_TRADE_RULE_TEXT;
-            break;
-        }
-        // Offer it: the encrypted bytes as the party holds them.
-        __builtin_memcpy(env->ex.out.mon, Party_GetMonByIndex(party, env->slot), COOP_PARTY_MON_SIZE);
-        Coop_GetNickname(Party_GetMonByIndex(party, env->slot), env->myNick);
-        env->ex.out.offer_id = (u8)(env->ex.out.offer_id + 1);
-        env->ex.out.state = COOP_TRADE_OUT_OFFERED;
-        Coop_DialogPrint(&env->dialog, "Waiting for @...\nPress B to cancel.");
-        taskman->state = COOP_TRADE_WAIT_OFFER;
+        Coop_TradePicked(taskman, env, party, value - 1);
         break;
 
     case COOP_TRADE_RULE_TEXT:
@@ -611,6 +658,20 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
     case COOP_TRADE_APPLY_TEXT:
         if (Coop_DialogIsPrinting(&env->dialog) || !(gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)))
             break;
+        taskman->state = COOP_TRADE_SCENE;
+        // fallthrough
+    case COOP_TRADE_SCENE:
+        // The windows belong to the field map, which the scene unloads.
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        Coop_ChoiceClose(&env->choice);
+        Coop_DialogClose(fsys, &env->dialog);
+        if (Coop_CallTradeScene(taskman, &env->outgoing, Party_GetMonByIndex(party, env->slot), env->peerName))
+        {
+            taskman->state = COOP_TRADE_SCENE_DONE;
+            break;
+        }
+        Coop_TradeOpenDialog(fsys, env);
         if (Coop_TradeEvolve(fsys, env))
         {
             Coop_DialogPrint(&env->dialog, "What? $ is evolving!");
@@ -621,6 +682,12 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             Coop_DialogPrint(&env->dialog, "Saving. Don't turn off\nthe power.");
             taskman->state = COOP_TRADE_SAVE_TEXT;
         }
+        break;
+
+    case COOP_TRADE_SCENE_DONE:
+        Coop_TradeOpenDialog(fsys, env);
+        Coop_DialogPrint(&env->dialog, "Saving. Don't turn off\nthe power.");
+        taskman->state = COOP_TRADE_SAVE_TEXT;
         break;
 
     case COOP_TRADE_EVOLVE_TEXT:
@@ -684,8 +751,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             taskman->state = COOP_TRADE_FINAL_BUTTON;
             break;
         }
-        Coop_GetNickname(Party_GetMonByIndex(party, env->slot), env->theirNick);
-        Coop_TradeFinal(taskman, env, "Take good care of $!");
+        Coop_TradeFinal(taskman, env, "Your trade with @\nis complete!");
         break;
 
     // --- Last page ----------------------------------------------------------
@@ -727,20 +793,8 @@ static BOOL Coop_StartTradeTask(FieldSystem *fsys)
 
 void Coop_UpdateTrade(FieldSystem *fsys)
 {
-    LocalMapObject *player = fsys->playerAvatar->mapObject;
-
     if (!Coop_IsFieldFree(fsys))
         return;
-    if (gCoopCommBlock.track_trade_reload)
-    {
-        // The traded lead walked behind the player: reload the map in place
-        // so the follower is rebuilt from the party (vanilla leaves and
-        // restores the overworld around its trade scene the same way).
-        gCoopCommBlock.track_trade_reload = 0;
-        if (fsys->playerAvatar->state == COOP_PLAYER_STATE_WALKING)
-            (void)sub_020538C0(fsys, (u32)fsys->location->mapId, -1, player->xCurr, player->yCurr, player->curFacing);
-        return;
-    }
     if (gCoopCommBlock.gates.trade_pending == 1 && Coop_IsConnectedToRoom())
         (void)Coop_StartTradeTask(fsys);
 }

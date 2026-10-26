@@ -170,8 +170,8 @@ namespace CoopBridge
         public const int GateSessionReason = 0x16;
         public const int GateSessionSize = 7;
         public const int GateTradePending = 0x17;
-        public const int MaxSessionState = 7;
-        public const int MaxSessionKind = 3;
+        public const int MaxSessionState = 8; // 8: notice (a teammate left)
+        public const int MaxSessionKind = 4;  // 4: leave team
         public const int MaxSessionReason = 5;
 
         // Layout of the 344-byte server payload (relative to ServerPayload)

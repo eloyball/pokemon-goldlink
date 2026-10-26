@@ -293,6 +293,7 @@ enum CoopSessionKind
     COOP_SESSION_KIND_TRADE = 1,
     COOP_SESSION_KIND_BATTLE = 2,
     COOP_SESSION_KIND_TEAM_UP = 3,
+    COOP_SESSION_KIND_LEAVE_TEAM = 4, // one-sided: no answer needed, the relay applies it at once
 };
 
 enum CoopSessionState
@@ -305,7 +306,8 @@ enum CoopSessionState
     COOP_SESSION_CANCELLED = 5, // withdrawn, or the other side left
     COOP_SESSION_TIMEOUT = 6,
     COOP_SESSION_REFUSED = 7,   // turned down by the relay (session_reason)
-    COOP_SESSION_STATE_MAX = 7,
+    COOP_SESSION_NOTICE = 8,    // to the ex-teammate: the peer left our team (kind LEAVE_TEAM)
+    COOP_SESSION_STATE_MAX = 8,
 };
 
 enum CoopSessionReason
@@ -470,8 +472,7 @@ struct CoopCommBlock
     u8  track_field_hidden;                                     // 0x1EF ROM private: the field was covered (menu, battle, app) since the last field tick
     struct CoopSessionOut session_out;                          // 0x1F0 ROM: latched session operation (Milestone 3)
     u8  track_session_answered;                                 // 0x1F8 ROM private: session_seq of the pending request already prompted (0: none pending)
-    u8  track_trade_reload;                                     // 0x1F9 ROM private: reload the map once free (the lead Pokemon was traded)
-    u8  reserved[2];                                            // 0x1FA
+    u8  reserved[3];                                            // 0x1F9
     u32 exchange_ptr;                                           // 0x1FC ROM: address of the open CoopTradeExchange, 0 when none
 };
 
@@ -543,7 +544,7 @@ COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_shiny, 0x1EE);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_field_hidden, 0x1EF);
 COOP_ASSERT_OFFSET(CoopCommBlock, session_out, 0x1F0);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_session_answered, 0x1F8);
-COOP_ASSERT_OFFSET(CoopCommBlock, track_trade_reload, 0x1F9);
+COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1F9);
 COOP_ASSERT_OFFSET(CoopCommBlock, exchange_ptr, 0x1FC);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
