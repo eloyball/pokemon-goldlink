@@ -297,7 +297,8 @@ struct CoopCommBlock
     u8  reset_request;                                          // 0x1E5 bridge: soft-reset at the title screen (Phase 1.5)
     u8  track_player_step;                                      // 0x1E6 ROM private: last movement step seen (move_seq)
     u8  track_follower_step;                                    // 0x1E7 ROM private
-    u8  reserved[0x200 - 0x1E8];                                // 0x1E8..0x1FF
+    u8  track_field_idle;                                       // 0x1E8 ROM private: no field task / message last frame (ghost talk)
+    u8  reserved[0x200 - 0x1E9];                                // 0x1E9..0x1FF
 };
 
 #define COOP_ASSERT_OFFSET(type, field, off) \
@@ -345,7 +346,8 @@ COOP_ASSERT_OFFSET(CoopCommBlock, save_counter, 0x1E0);
 COOP_ASSERT_OFFSET(CoopCommBlock, save_slot_ready, 0x1E4);
 COOP_ASSERT_OFFSET(CoopCommBlock, reset_request, 0x1E5);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_player_step, 0x1E6);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1E8);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_field_idle, 0x1E8);
+COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1E9);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);
 
@@ -366,6 +368,12 @@ BOOL LONG_CALL Coop_IsConnectedToRoom(void);
 // TRUE once the relay locked the roster (everyone was ready in the bedroom).
 BOOL LONG_CALL Coop_IsAdventureStarted(void);
 void LONG_CALL Coop_CheckStartupGate(void);
+
+// Talking to a ghost (Overlay 131 detects the A press): "It's NAME!" plus a
+// second page when the player is in a battle or a menu (activity, enum
+// CoopActivity). name is HG-encoded, up to 8 chars, 0xFFFF-terminated when
+// shorter. FALSE when a field task could not be started.
+BOOL LONG_CALL Coop_StartTalkDialog(struct FieldSystem *fsys, const u16 *name, u32 activity);
 
 // Validated copy of relay-provided data for ROM consumers (ghosts and their
 // followers). Returns FALSE, leaving *out zeroed, when the slot is out of

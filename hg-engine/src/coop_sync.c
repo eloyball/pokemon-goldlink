@@ -65,19 +65,30 @@ volatile struct CoopCommBlock gCoopCommBlock = {
 // Text helpers
 // ---------------------------------------------------------------------------
 
+#define COOP_NAME_CHARS 8
+
 // Converts a plain ASCII message into an HG-encoded String (charmap.txt).
 // Supports A-Z a-z 0-9, space, ! ? , . - ' and \n; "..." becomes the
-// ellipsis glyph. Anything else is rendered as '?'.
-static void Coop_SetStringFromAscii(String *dst, const char *src)
+// ellipsis glyph. Anything else is rendered as '?'. '@' inserts name (an
+// HG-encoded player name from the relay, or NULL): up to 8 chars, ending at
+// 0xFFFF; control and format codes (0x200 and up) become '?'.
+static void Coop_SetStringFromAscii(String *dst, const char *src, const u16 *name)
 {
     u16 buf[COOP_TEXT_MAX + 1];
     u32 n = 0;
+    u32 i;
 
     while (*src != '\0' && n < COOP_TEXT_MAX)
     {
         char c = *src++;
         u16 out;
 
+        if (c == '@' && name != NULL)
+        {
+            for (i = 0; i < COOP_NAME_CHARS && name[i] != 0xFFFF && n < COOP_TEXT_MAX; i++)
+                buf[n++] = (name[i] != 0 && name[i] < 0x200) ? name[i] : 0x01AC;
+            continue;
+        }
         if (c >= 'A' && c <= 'Z')
             out = 0x012B + (c - 'A');
         else if (c >= 'a' && c <= 'z')
@@ -230,7 +241,7 @@ static void Coop_ShowStartupGateAndReset(const char *const *lines)
     for (line = 0; line < NELEMS(sGateLineY); line++)
     {
         String *msg_str = String_New(64, HEAP_ID_DEFAULT);
-        Coop_SetStringFromAscii(msg_str, lines[line]);
+        Coop_SetStringFromAscii(msg_str, lines[line], NULL);
         AddTextPrinterParameterized(&window, 0, msg_str, 8, sGateLineY[line], 0, NULL);
         String_Delete(msg_str);
     }
@@ -344,6 +355,7 @@ struct CoopDialog
 {
     GF_BGL_BMPWIN window;
     String *text;
+    const u16 *name; // what '@' prints (Coop_SetStringFromAscii), or NULL
     u8 printerId;
     u8 textDelay;
 };
@@ -383,7 +395,7 @@ static void Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
 static void Coop_DialogPrint(struct CoopDialog *dialog, const char *msg)
 {
     FillWindowPixelBuffer(&dialog->window, DIALOG_BG_FILL);
-    Coop_SetStringFromAscii(dialog->text, msg);
+    Coop_SetStringFromAscii(dialog->text, msg, dialog->name);
     dialog->printerId = AddTextPrinterParameterized(&dialog->window, DIALOG_FONT, dialog->text, 0, 0, dialog->textDelay, NULL);
 }
 
@@ -598,14 +610,16 @@ enum CoopBedroomBlockState
 
 // A field block (bedroom stairs, gated bosses): two message pages, then one
 // movement that takes the player out of the blocking spot, so the check
-// does not fire again until they come back.
+// does not fire again until they come back. Also talking to a ghost: one or
+// two pages naming the player ('@'), and no movement (STEP_END).
 struct CoopFieldBlockEnv
 {
     struct CoopDialog dialog;
     void *movement;
     const char *page1;
-    const char *page2;
+    const char *page2; // NULL: one page
     struct CoopMovementCommand moves[2]; // read by the movement engine until it finishes
+    u16 name[COOP_NAME_CHARS];
 };
 
 BOOL LONG_CALL Coop_IsAdventureStarted(void)
@@ -639,6 +653,18 @@ static BOOL Coop_ShouldBlockBedroomStairs(FieldSystem *fsys)
         && player->curFacing == COOP_DIR_WEST;
 }
 
+// Closes the message and starts the movement (none for STEP_END).
+static void Coop_FieldBlockClose(TaskManager *taskman, FieldSystem *fsys, struct CoopFieldBlockEnv *env)
+{
+    Coop_DialogClose(fsys, &env->dialog);
+    MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
+    // Same engine as the applymovement script command; player input stays
+    // blocked until this task ends.
+    if (env->moves[0].command != COOP_MOVEMENT_STEP_END)
+        env->movement = EventObjectMovementMan_Create(Coop_GetPlayerMapObject(fsys), env->moves);
+    taskman->state = COOP_BLOCK_WAIT_STEP;
+}
+
 // Returns TRUE when done: the field task manager then frees the task, and
 // the env is freed here.
 static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
@@ -658,6 +684,7 @@ static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
     case COOP_BLOCK_OPEN_DIALOG:
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
+        env->dialog.name = env->name;
         Coop_DialogPrint(&env->dialog, env->page1);
         taskman->state = COOP_BLOCK_WAIT_PAGE1_TEXT;
         break;
@@ -668,11 +695,15 @@ static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
         break;
 
     case COOP_BLOCK_WAIT_PAGE1_BUTTON:
-        if (Coop_DialogButtonPressed())
+        if (!Coop_DialogButtonPressed())
+            break;
+        if (env->page2 != NULL)
         {
             Coop_DialogPrint(&env->dialog, env->page2);
             taskman->state = COOP_BLOCK_WAIT_PAGE2_TEXT;
         }
+        else
+            Coop_FieldBlockClose(taskman, fsys, env);
         break;
 
     case COOP_BLOCK_WAIT_PAGE2_TEXT:
@@ -682,14 +713,7 @@ static BOOL Coop_Task_FieldBlock(TaskManager *taskman)
 
     case COOP_BLOCK_WAIT_PAGE2_BUTTON:
         if (Coop_DialogButtonPressed())
-        {
-            Coop_DialogClose(fsys, &env->dialog);
-            MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
-            // Same engine as the applymovement script command; player input
-            // stays blocked until this task ends.
-            env->movement = EventObjectMovementMan_Create(Coop_GetPlayerMapObject(fsys), env->moves);
-            taskman->state = COOP_BLOCK_WAIT_STEP;
-        }
+            Coop_FieldBlockClose(taskman, fsys, env);
         break;
 
     case COOP_BLOCK_WAIT_STEP:
@@ -717,6 +741,24 @@ static BOOL Coop_StartFieldBlock(FieldSystem *fsys, const char *page1, const cha
     env->moves[0].command = movement;
     env->moves[0].length = 1;
     env->moves[1].command = COOP_MOVEMENT_STEP_END;
+    return TRUE;
+}
+
+BOOL LONG_CALL Coop_StartTalkDialog(FieldSystem *fsys, const u16 *name, u32 activity)
+{
+    struct CoopFieldBlockEnv *env;
+    const char *page2 = NULL;
+    u32 i;
+
+    if (activity == COOP_ACTIVITY_BATTLE)
+        page2 = "Looks like they're in the\nmiddle of a battle!";
+    else if (activity == COOP_ACTIVITY_MENU)
+        page2 = "Looks like they're busy\nright now.";
+    if (!Coop_StartFieldBlock(fsys, "It's @!", page2, COOP_MOVEMENT_STEP_END))
+        return FALSE;
+    env = ((TaskManager *)fsys->taskman)->env;
+    for (i = 0; i < COOP_NAME_CHARS; i++)
+        env->name[i] = name[i];
     return TRUE;
 }
 
@@ -1039,7 +1081,10 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
     if (fieldActive)
         Coop_RunFieldEntry(fsys);
     else
+    {
         gCoopCommBlock.diag.field_entry_status = COOP_FIELD_ENTRY_NOT_IN_FIELD;
+        gCoopCommBlock.track_field_idle = 0; // the first field frame cannot start a ghost talk
+    }
 
     // The relay turned this save away (docs/MILESTONE2_PLAN.md 7.1): same
     // safe-window path as a disconnect, but the task resets without saving.

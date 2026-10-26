@@ -1,11 +1,13 @@
 #include "config.h"
 #include "types.h"
 
+#include "constants/buttons.h"
 #include "constants/maps.h"
 
 #include "map_events_internal.h"
 #include "pokemon.h"
 #include "save.h"
+#include "system.h"
 #include "task.h"
 #include "coop_sync.h"
 
@@ -25,7 +27,8 @@
 // and bike / surf / fishing toggles, compiled only with COOP_DEBUG_TOOLS.
 //
 // It also builds and publishes the local player's telemetry every field
-// frame (Coop_PublishLocalPlayerState below).
+// frame (Coop_PublishLocalPlayerState below) and runs the remote players'
+// ghosts (Coop_UpdateGhosts, Coop_CheckGhostTalk; Phases 2 and 3).
 //
 // Overlay 131 is loaded without BSS init, so no state lives in statics: the
 // test ghost is looked up in the map object list every frame, and the command
@@ -50,6 +53,7 @@ BOOL LONG_CALL MapObject_ClearHeldMovementIfActive(LocalMapObject *object);
 #define COOP_MOVEMENT_STEP_UP        12 // + direction: up, down, left, right
 #define COOP_MOVEMENT_JUMP_NEAR_FAST 52 // + direction (asm/macros/movement.inc)
 #define COOP_MOVEMENT_EMOTE_EXCLAIM  75
+#define COOP_MOVEMENT_EMOTE_QUESTION 103
 
 #if COOP_DEBUG_TOOLS
 // pret constants/global_fieldmap.h
@@ -624,7 +628,7 @@ static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *play
 }
 
 // ---------------------------------------------------------------------------
-// Player ghosts (docs/MILESTONE2_PLAN.md 5.4, Phase 2: walking sprites)
+// Player ghosts: radii, bookkeeping, placement (docs/MILESTONE2_PLAN.md 5.4)
 // ---------------------------------------------------------------------------
 
 #define COOP_SPRITE_HERO    0  // pret SPRITE_HERO
@@ -642,6 +646,7 @@ static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *play
 #define COOP_SCREEN_RADIUS_X  9
 #define COOP_SCREEN_RADIUS_Z  7
 #define COOP_CATCHUP_MAX      4 // farther behind than this: snap when off screen
+#define COOP_EMOTE_PERIOD     64 // field ticks (30 Hz) between frozen-ghost emotes; power of two
 
 // pret constants/movements.h groups (+ direction: north, south, west, east).
 #define COOP_MOVEMENT_FACE      0
@@ -653,6 +658,7 @@ static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *play
 // init) and disappears with the object on every map reload.
 #define COOP_GHOST_SEQ(ghost)     ((ghost)->param[0]) // last move_seq handled, | 0x100 once set
 #define COOP_GHOST_TRAINER(ghost) ((ghost)->param[1]) // trainer the ghost belongs to
+#define COOP_GHOST_MOUNT(ghost)   ((ghost)->param[2]) // its surf mount field effect, 0 = none
 #define COOP_SEQ_VALID 0x100
 
 static s32 Coop_Abs(s32 v)
@@ -703,19 +709,203 @@ static BOOL Coop_IsWithin(s32 x, s32 z, const LocalMapObject *player, s32 radius
     return Coop_Abs(x - player->xCurr) <= radiusX && Coop_Abs(z - player->yCurr) <= radiusZ;
 }
 
-// Room for one more sprite: a texture and an animation slot spare beyond a
-// reserve for vanilla and the local player's own state changes (full budget
-// with fallbacks in Phase 4; plan 5.5).
-static BOOL Coop_HasSpriteBudget(MapObjectMan *manager)
+// ---------------------------------------------------------------------------
+// Ghost sprites and the renderer budget (plan 3.2, 5.5; Phase 3)
+// ---------------------------------------------------------------------------
+
+// Overlay 01 (rom.ld "Player ghost states"; ccd names).
+void *LONG_CALL SurfMountEffect_Create(LocalMapObject *object, u32 x, u32 z, u32 direction, BOOL bobbing);
+void LONG_CALL FieldEffectManager_DestroyEffect(void *effect);
+void LONG_CALL MapObjectRender_ReleaseSpriteResources(MapObjectMan *manager, u32 sprite, LocalMapObject *skip);
+
+// Every player sprite (PlayerAvatar_GetSpriteByStateAndGender, plus the
+// map-load variants) with the billboard model and animation sequence it
+// needs (ccd gObjectEventGraphicsInfos -> gSpriteBillboardInfos). The texture
+// is per sprite. A remote sprite outside this list shows as walking.
+struct CoopPlayerSprite
+{
+    u16 sprite;
+    u8 model;
+    u8 sequence;
+};
+
+static const struct CoopPlayerSprite sCoopPlayerSprites[] = {
+    { 0, 0, 0x01 },   { 97, 0, 0x01 },  // HERO, HEROINE (walking, running)
+    { 21, 0, 0x03 },  { 98, 0, 0x03 },  // CYCLEHERO(INE)
+    { 176, 0, 0x04 }, { 177, 0, 0x04 }, // SPHERO(INE): HM pose
+    { 178, 0, 0x06 }, { 179, 0, 0x06 }, // SWIMHERO(INE)
+    { 180, 0, 0x05 }, { 181, 0, 0x05 }, // WATERHERO(INE): SquirtBottle
+    { 188, 6, 0x0A }, { 189, 6, 0x0A }, // FISHINGHERO, FISH_HEROINE
+    { 196, 0, 0x0D }, { 197, 0, 0x0D }, // POKEHERO(INE): Pokegear
+    { 198, 0, 0x0E }, { 199, 0, 0x0E }, // SAVEHERO(INE)
+    { 200, 0, 0x0F }, { 201, 0, 0x0F }, // BANZAIHERO(INE): healing
+    { 238, 0, 0x01 }, { 239, 0, 0x01 }, // HERO_2, HEROINE_2
+    { 248, 11, 0x17 }, { 249, 11, 0x17 }, // LADDERHERO(INE)
+    { 258, 0, 0x01 }, { 259, 0, 0x01 }, // RHERO(INE): Rocket disguise
+    { 260, 0, 0x0F }, { 261, 0, 0x0F }, // RBANZAIHERO, RBANZAIINE
+    { 297, 0, 0x0E }, { 298, 0, 0x0E }, // SAVERHERO(INE)
+    { 407, 0, 0x01 }, { 408, 0, 0x01 }, // PKTHHERO(INE): Pokeathlon
+    { 423, 0, 0x1A }, { 424, 0, 0x1A }, // SHAKEHERO(INE): Apricorn shake
+};
+
+static const struct CoopPlayerSprite *Coop_FindPlayerSprite(u32 sprite)
+{
+    u32 i;
+
+    for (i = 0; i < NELEMS(sCoopPlayerSprites); i++)
+    {
+        if (sCoopPlayerSprites[i].sprite == sprite)
+            return &sCoopPlayerSprites[i];
+    }
+    return NULL;
+}
+
+static u32 Coop_WalkingSprite(const struct CoopPlayerState *remote)
+{
+    return remote->gender ? COOP_SPRITE_HEROINE : COOP_SPRITE_HERO;
+}
+
+// The remote's own sprite when it is a player sprite, else walking.
+static u32 Coop_WantedSprite(const struct CoopPlayerState *remote)
+{
+    return Coop_FindPlayerSprite(remote->sprite_id) != NULL ? remote->sprite_id : Coop_WalkingSprite(remote);
+}
+
+// Free slots always left for vanilla: the local player's own state change
+// (its old sequence may stay in use by a ghost) and NPCs a script adds.
+#define COOP_RESERVE_TEXTURES  2
+#define COOP_RESERVE_MODELS    1
+#define COOP_RESERVE_SEQUENCES 2
+
+#define COOP_BUDGET_IDS (32 + COOP_REMOTE_SLOTS)
+
+// One resource kind: the IDs loaded (resident or dynamic) or claimed by a
+// ghost whose billboard is still queued, and the dynamic slots left.
+struct CoopIdSet
+{
+    u16 ids[COOP_BUDGET_IDS];
+    s32 count;
+    s32 free;
+};
+
+struct CoopBudget
+{
+    struct CoopIdSet textures; // texture ID = sprite ID
+    struct CoopIdSet models;
+    struct CoopIdSet sequences;
+};
+
+static void Coop_IdSetInit(struct CoopIdSet *set, const u32 *ids, u32 resident, u32 dynamic, u32 freeId)
+{
+    u32 i;
+
+    set->count = 0;
+    set->free = 0;
+    for (i = 0; i < resident + dynamic; i++)
+    {
+        if (ids[i] == freeId)
+            set->free += i >= resident;
+        else
+            set->ids[set->count++] = (u16)ids[i];
+    }
+}
+
+static BOOL Coop_IdSetHas(const struct CoopIdSet *set, u32 id)
+{
+    s32 i;
+
+    for (i = 0; i < set->count; i++)
+    {
+        if (set->ids[i] == id)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOL Coop_IdSetFits(const struct CoopIdSet *set, u32 id, s32 reserve)
+{
+    return set->free - (Coop_IdSetHas(set, id) ? 0 : 1) >= reserve;
+}
+
+static void Coop_IdSetClaim(struct CoopIdSet *set, u32 id)
+{
+    if (Coop_IdSetHas(set, id) || set->count >= COOP_BUDGET_IDS)
+        return;
+    set->ids[set->count++] = (u16)id;
+    set->free--;
+}
+
+static BOOL Coop_BudgetFits(const struct CoopBudget *budget, u32 sprite)
+{
+    const struct CoopPlayerSprite *info = Coop_FindPlayerSprite(sprite);
+
+    return info != NULL
+        && Coop_IdSetFits(&budget->textures, sprite, COOP_RESERVE_TEXTURES)
+        && Coop_IdSetFits(&budget->models, info->model, COOP_RESERVE_MODELS)
+        && Coop_IdSetFits(&budget->sequences, info->sequence, COOP_RESERVE_SEQUENCES);
+}
+
+static void Coop_BudgetClaim(struct CoopBudget *budget, u32 sprite)
+{
+    const struct CoopPlayerSprite *info = Coop_FindPlayerSprite(sprite);
+
+    if (info == NULL)
+        return;
+    Coop_IdSetClaim(&budget->textures, sprite);
+    Coop_IdSetClaim(&budget->models, info->model);
+    Coop_IdSetClaim(&budget->sequences, info->sequence);
+}
+
+// Everything the sprite needs is already loaded or claimed.
+static BOOL Coop_BudgetHas(const struct CoopBudget *budget, u32 sprite)
+{
+    const struct CoopPlayerSprite *info = Coop_FindPlayerSprite(sprite);
+
+    return info != NULL
+        && Coop_IdSetHas(&budget->textures, sprite)
+        && Coop_IdSetHas(&budget->models, info->model)
+        && Coop_IdSetHas(&budget->sequences, info->sequence);
+}
+
+// Something else ate into the reserve: give it back.
+static BOOL Coop_BudgetShort(const struct CoopBudget *budget)
+{
+    return budget->textures.free < COOP_RESERVE_TEXTURES
+        || budget->models.free < COOP_RESERVE_MODELS
+        || budget->sequences.free < COOP_RESERVE_SEQUENCES;
+}
+
+// What the renderer holds now, plus what existing ghosts hold or wait for
+// (a new billboard loads its model and sequence only once its texture is
+// in VRAM, a few frames later). Retail never frees a slot it cannot track
+// (the insert fails into a silent assert), so a bad header claims nothing
+// is free.
+static void Coop_BudgetInit(struct CoopBudget *budget, MapObjectMan *manager)
 {
     const struct CoopMapObjectRender *render = (const void *)((const u8 *)manager + COOP_RENDER_OFFSET);
+    u32 slot;
 
     if (render->residentTextureCount + render->dynamicTextureCount > 32
+        || render->residentModelCount + render->dynamicModelCount > 8
         || render->residentSequenceCount + render->dynamicSequenceCount > 8)
-        return FALSE;
-    return Coop_CountFreeSlots(render->textureIds, render->residentTextureCount, render->dynamicTextureCount, COOP_FREE_TEXTURE_ID) > 2
-        && Coop_CountFreeSlots(render->sequenceIds, render->residentSequenceCount, render->dynamicSequenceCount, COOP_FREE_SEQUENCE_ID) > 1;
+    {
+        __builtin_memset(budget, 0, sizeof(*budget));
+        return;
+    }
+    Coop_IdSetInit(&budget->textures, render->textureIds, render->residentTextureCount, render->dynamicTextureCount, COOP_FREE_TEXTURE_ID);
+    Coop_IdSetInit(&budget->models, render->modelIds, render->residentModelCount, render->dynamicModelCount, COOP_FREE_MODEL_ID);
+    Coop_IdSetInit(&budget->sequences, render->sequenceIds, render->residentSequenceCount, render->dynamicSequenceCount, COOP_FREE_SEQUENCE_ID);
+    for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
+    {
+        const LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
+        if (ghost != NULL)
+            Coop_BudgetClaim(budget, (u32)ghost->gfxId);
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Player ghosts: reconcile, movement, states (docs/MILESTONE2_PLAN.md 5.4)
+// ---------------------------------------------------------------------------
 
 static void Coop_SetGhostAction(LocalMapObject *ghost, u32 action, u8 seq)
 {
@@ -767,24 +957,98 @@ static void Coop_DriveGhost(LocalMapObject *ghost, const struct CoopPlayerState 
     COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote->move_seq; // in sync
 }
 
+// A remote in a battle or a menu: the ghost stays on its last tile and
+// shows "!" (battle) or "?" (menu, bag, other app) every ~2 s, slots
+// staggered. Map transitions show nothing.
+static void Coop_FreezeGhost(LocalMapObject *ghost, const struct CoopPlayerState *remote, u32 slot)
+{
+    u32 action;
+
+    if (remote->activity == COOP_ACTIVITY_BATTLE)
+        action = COOP_MOVEMENT_EMOTE_EXCLAIM;
+    else if (remote->activity == COOP_ACTIVITY_MENU)
+        action = COOP_MOVEMENT_EMOTE_QUESTION;
+    else
+        return;
+    if (((gCoopCommBlock.diag.field_entry_calls + slot * 13) & (COOP_EMOTE_PERIOD - 1)) != 0)
+        return;
+    if (Coop_GhostIsIdle(ghost))
+        MapObject_SetHeldMovement(ghost, action);
+}
+
+// The mount is a field effect (no map-object renderer slots). It removes
+// itself once its object is gone (SurfMountEffect_Update checks ID and map),
+// so only a dismount needs this.
+static void Coop_UpdateSurfMount(LocalMapObject *ghost, const struct CoopPlayerState *remote)
+{
+    void *mount = (void *)COOP_GHOST_MOUNT(ghost);
+
+    if (remote->avatar_state == COOP_PLAYER_STATE_SURFING && mount == NULL)
+        COOP_GHOST_MOUNT(ghost) = (int)SurfMountEffect_Create(ghost, (u32)ghost->xCurr, (u32)ghost->yCurr,
+                                                              (u32)ghost->curFacing, TRUE);
+    else if (remote->avatar_state != COOP_PLAYER_STATE_SURFING && mount != NULL)
+    {
+        FieldEffectManager_DestroyEffect(mount);
+        COOP_GHOST_MOUNT(ghost) = 0;
+    }
+}
+
+// Deletes a ghost and frees the renderer slots only it used, as a vanilla
+// sprite change does (deleting alone leaves them loaded until a zone change).
+static void Coop_RemoveGhost(MapObjectMan *manager, LocalMapObject *ghost)
+{
+    u32 sprite = (u32)ghost->gfxId;
+
+    if (COOP_GHOST_MOUNT(ghost) != 0)
+    {
+        FieldEffectManager_DestroyEffect((void *)COOP_GHOST_MOUNT(ghost));
+        COOP_GHOST_MOUNT(ghost) = 0;
+    }
+    DeleteMapObject(ghost);
+    MapObjectRender_ReleaseSpriteResources(manager, sprite, NULL);
+}
+
+// The ghost's sprite this frame: the remote's when it fits the budget, else
+// walking when that fits; a ghost not walking goes back to walking (when
+// that costs nothing) once something else needs the reserve. Changes keep
+// the old billboard on screen until the new one loads (vanilla's own state
+// changes do the same).
+static void Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *ghost, const struct CoopPlayerState *remote)
+{
+    u32 current = (u32)ghost->gfxId;
+    u32 wanted = Coop_WantedSprite(remote);
+    u32 walking = Coop_WalkingSprite(remote);
+    u32 target = current;
+
+    if (current != wanted && Coop_BudgetFits(budget, wanted))
+        target = wanted;
+    else if (current != walking && current != wanted && Coop_BudgetFits(budget, walking))
+        target = walking; // the new state does not fit
+    else if (current != walking && Coop_BudgetShort(budget) && Coop_BudgetHas(budget, walking))
+        target = walking; // vanilla needs the room back
+    if (target == current)
+        return;
+    ChangeMapObjSprite(ghost, target);
+    Coop_BudgetClaim(budget, target);
+}
+
 // Reconciles one remote slot with its ghost: create, drive, snap or delete.
-static void Coop_UpdateGhost(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player, u32 slot)
+static void Coop_UpdateGhost(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot)
 {
     struct CoopPlayerState remote;
     LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
     BOOL valid = Coop_ReadRemotePlayer(slot, &remote) && Coop_IsSamePlace(fsys, &remote);
-    u32 sprite = remote.gender ? COOP_SPRITE_HEROINE : COOP_SPRITE_HERO;
+    u32 sprite;
 
     if (ghost != NULL)
     {
-        // Gone, elsewhere, out of range, another player in this slot, or a
-        // sprite to change: remove (the next frame may recreate it).
+        // Gone, elsewhere, out of range, or another player in this slot:
+        // remove (the next frame may recreate it).
         if (!valid
             || (u32)COOP_GHOST_TRAINER(ghost) != remote.trainer_id
-            || (u32)ghost->gfxId != sprite
             || !Coop_IsWithin(remote.x, remote.z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z))
         {
-            DeleteMapObject(ghost);
+            Coop_RemoveGhost(manager, ghost);
             return;
         }
         // Far behind while nobody can see it: snap (delete, recreate next frame).
@@ -793,32 +1057,79 @@ static void Coop_UpdateGhost(FieldSystem *fsys, MapObjectMan *manager, LocalMapO
             && !Coop_IsWithin(remote.x, remote.z, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
             && Coop_GhostIsIdle(ghost))
         {
-            DeleteMapObject(ghost);
+            Coop_RemoveGhost(manager, ghost);
             return;
         }
+        Coop_UpdateGhostSprite(budget, ghost, &remote);
+        Coop_UpdateSurfMount(ghost, &remote);
         if (remote.is_active)
-            Coop_DriveGhost(ghost, &remote); // frozen in battle / menus otherwise (emotes: Phase 3)
+            Coop_DriveGhost(ghost, &remote);
+        else
+            Coop_FreezeGhost(ghost, &remote, slot);
         return;
     }
 
     if (!valid || !Coop_IsWithin(remote.x, remote.z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z))
         return;
-    if (sprite != (u32)player->gfxId && !Coop_HasSpriteBudget(manager))
-        return;
+    sprite = Coop_WantedSprite(&remote);
+    if (!Coop_BudgetFits(budget, sprite))
+    {
+        sprite = Coop_WalkingSprite(&remote);
+        if (!Coop_BudgetFits(budget, sprite))
+            return;
+    }
     ghost = Coop_CreateGhostObject(manager, COOP_GHOST_ID_FIRST + slot, remote.x, remote.z, remote.direction, sprite,
                                    remote.height);
     if (ghost == NULL)
         return;
+    Coop_BudgetClaim(budget, sprite);
     COOP_GHOST_TRAINER(ghost) = (int)remote.trainer_id;
     COOP_GHOST_SEQ(ghost) = COOP_SEQ_VALID | remote.move_seq;
+    COOP_GHOST_MOUNT(ghost) = 0;
+    Coop_UpdateSurfMount(ghost, &remote);
 }
 
 static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player)
 {
+    struct CoopBudget budget;
     u32 slot;
 
+    Coop_BudgetInit(&budget, manager);
     for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
-        Coop_UpdateGhost(fsys, manager, player, slot);
+        Coop_UpdateGhost(fsys, manager, player, &budget, slot);
+}
+
+// ---------------------------------------------------------------------------
+// Talking to a ghost (plan 5.7): ghosts carry NO_INTERACT, so vanilla's A
+// press finds nothing (or an event behind the ghost, which wins: the field
+// runs before this SysTask). Needs a frame with no field task or message
+// before this one, so the A that closes a sign does not open a ghost talk.
+// ---------------------------------------------------------------------------
+
+static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalMapObject *player)
+{
+    BOOL idle = fsys->taskman == NULL && !fsys->textbox_open;
+    BOOL wasIdle = gCoopCommBlock.track_field_idle == 1;
+    struct CoopPlayerState remote;
+    s32 dx, dz;
+    u32 slot;
+
+    gCoopCommBlock.track_field_idle = idle ? 1 : 0;
+    if (!idle || !wasIdle || !(gSystem.newKeys & PAD_BUTTON_A))
+        return;
+    if (gCoopCommBlock.disconnect_state != COOP_DISCONNECT_NONE || MapObject_IsSingleMovementActive(player))
+        return;
+    Coop_DirectionDelta((u32)player->curFacing, &dx, &dz);
+    for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)
+    {
+        LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
+        if (ghost == NULL || ghost->xCurr != player->xCurr + dx || ghost->yCurr != player->yCurr + dz)
+            continue;
+        if (!Coop_ReadRemotePlayer(slot, &remote) || remote.trainer_id != (u32)COOP_GHOST_TRAINER(ghost))
+            continue;
+        (void)Coop_StartTalkDialog(fsys, remote.name, remote.is_active ? COOP_ACTIVITY_FIELD : remote.activity);
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -841,6 +1152,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_PublishLocalPlayerState(fsys, player);
     Coop_ProbeRender(manager);
     Coop_UpdateGhosts(fsys, manager, player);
+    Coop_CheckGhostTalk(fsys, manager, player);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
 }

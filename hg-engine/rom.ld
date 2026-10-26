@@ -795,6 +795,15 @@ MapObject_ClearHeldMovementIfActive = 0x020621C0 | 1;
 /* Object the A button would talk to, across counters (gym gate).
    Source: pret asm/unk_0203DB6C.s label "FieldSystem_GetFacingObject: ; 0x0203DBF8" */
 FieldSystem_GetFacingObject = 0x0203DBF8 | 1;
+/* Player ghost states (Milestone 2 Phase 3). Overlay 01 (field).
+   Source: pret labels ov01_021FE7DC (asm/overlay_01_021FE780.s, ccd
+   SurfMountEffect_Create), ov01_021F1640 (asm/overlay_01_021F1348.s, ccd
+   FieldEffectManager_DestroyEffect) and ov01_021FA108 (asm/overlay_01_021F944C.s,
+   ccd MapObjectRender_ReleaseSpriteResources). The sprite change itself is
+   ChangeMapObjSprite above (ov01_021FA930). */
+SurfMountEffect_Create = 0x021FE7DC | 1;
+FieldEffectManager_DestroyEffect = 0x021F1640 | 1;
+MapObjectRender_ReleaseSpriteResources = 0x021FA108 | 1;
 /* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them.
    Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking. */
