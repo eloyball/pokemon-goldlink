@@ -3,7 +3,9 @@
 
 #include "constants/buttons.h"
 #include "constants/maps.h"
+#include "constants/species.h"
 
+#include "battle.h"
 #include "item.h"
 
 #include "map_events_internal.h"
@@ -329,7 +331,8 @@ static BOOL Coop_Task_DebugSurf(TaskManager *taskman)
 // Returns FALSE while they must wait.
 static BOOL Coop_CanRunFieldDebugCommand(FieldSystem *fsys, LocalMapObject *player)
 {
-    return fsys->taskman == NULL && !fsys->textbox_open && !MapObject_IsSingleMovementActive(player);
+    return fsys->taskman == NULL && !fsys->textbox_open && !MapObject_IsSingleMovementActive(player)
+        && !Coop_IsMapNameBannerShowing(fsys);
 }
 
 static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
@@ -426,6 +429,94 @@ static u8 Coop_DebugFish(FieldSystem *fsys, LocalMapObject *player)
     return COOP_DEBUG_RESULT_OK;
 }
 
+// Milestone 3 probe A: Pokemon transfer. The encrypted struct is copied
+// byte for byte (its encryption is keyed by its own PID and checksum); the
+// receiving side reads it decrypted only to validate it.
+// hg-engine's struct PartyPokemon has the right field layout but a u64
+// ribbon field makes GCC align it to 8, so sizeof is 0xF0, not the game's
+// 0xEC: copy COOP_PARTY_MON_SIZE bytes, never sizeof, and never index
+// party->members[] (stride 0xF0); use Party_GetMonByIndex.
+_Static_assert(__builtin_offsetof(struct PartyPokemon, party) + sizeof(PARTYONLYMON) == COOP_PARTY_MON_SIZE,
+               "party Pokemon data must end at 0xEC");
+
+static void Coop_DebugDescribeMon(struct PartyPokemon *mon, struct Party *party)
+{
+    volatile struct CoopDebugMonBuffer *buf = &gCoopDebugMonBuffer;
+
+    buf->checksum_failed = (u8)GetMonData(mon, MON_DATA_CHECKSUM_FAILED, NULL);
+    buf->species = (u16)GetMonData(mon, MON_DATA_SPECIES, NULL);
+    buf->held_item = (u16)GetMonData(mon, MON_DATA_HELD_ITEM, NULL);
+    buf->level = (u8)GetMonData(mon, MON_DATA_LEVEL, NULL);
+    buf->is_egg = (u8)GetMonData(mon, MON_DATA_IS_EGG, NULL);
+    buf->party_count = (u8)party->count;
+}
+
+static u8 Coop_DebugMonTransfer(FieldSystem *fsys, u8 cmd, u8 slot)
+{
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    struct PartyPokemon mon;
+
+    if (party == NULL)
+        return COOP_DEBUG_RESULT_FAILED;
+    if (cmd == COOP_DEBUG_MON_EXPORT)
+    {
+        if (slot >= party->count)
+            return COOP_DEBUG_RESULT_BAD_ARG;
+        __builtin_memcpy((void *)gCoopDebugMonBuffer.mon, Party_GetMonByIndex(party, slot), COOP_PARTY_MON_SIZE);
+        Coop_DebugDescribeMon(Party_GetMonByIndex(party, slot), party);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    // Import: validate a private copy before it can touch the party.
+    __builtin_memset(&mon, 0, sizeof(mon));
+    __builtin_memcpy(&mon, (const void *)gCoopDebugMonBuffer.mon, COOP_PARTY_MON_SIZE);
+    Coop_DebugDescribeMon(&mon, party);
+    if (gCoopDebugMonBuffer.checksum_failed || gCoopDebugMonBuffer.is_egg
+        || gCoopDebugMonBuffer.species == 0 || gCoopDebugMonBuffer.species > MAX_SPECIES_INCLUDING_FORMS
+        || gCoopDebugMonBuffer.level == 0 || gCoopDebugMonBuffer.level > 100)
+        return COOP_DEBUG_RESULT_REJECTED;
+    if (party->count >= 6 || !PokeParty_Add(party, &mon))
+        return COOP_DEBUG_RESULT_FAILED;
+    gCoopDebugMonBuffer.party_count = (u8)party->count;
+    return COOP_DEBUG_RESULT_OK;
+}
+
+// Milestone 3 probe E: once armed, the next trainer battle, right after its
+// opponent party is built, becomes a multi battle with an AI partner: the
+// player and a partner (the player's own party standing in for a teammate)
+// against the same trainer in both opponent seats. Shows whether a lone
+// leader can fill a 2v2 and how vanilla presents it.
+void LONG_CALL PokeParty_Init(struct Party *party, int max);
+
+void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num)
+{
+    struct Party *source;
+    int i;
+
+    if (!gCoopDebugMonBuffer.team_battle_armed || num != 1)
+        return;
+    gCoopDebugMonBuffer.team_battle_armed = 0;
+    bp->fight_type = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLES | BATTLE_TYPE_MULTI | BATTLE_TYPE_AI;
+
+    bp->trainer_id[3] = bp->trainer_id[1];
+    bp->trainer_data[3] = bp->trainer_data[1];
+    source = bp->poke_party[1];
+    PokeParty_Init(bp->poke_party[3], 6);
+    for (i = 0; i < source->count; i++)
+        PokeParty_Add(bp->poke_party[3], Party_GetMonByIndex(source, i));
+
+    // Vanilla EnemyTrainerSet_Init re-reads fight_type and then builds the
+    // other seats' parties from trainer_id too (seen in the probe: the
+    // partner seat ended up with the leader's team). A real version must
+    // fill seats 2 / 3 after it, or hook later.
+    bp->trainer_id[2] = bp->trainer_id[1];
+    bp->trainer_data[2] = bp->trainer_data[1];
+    source = bp->poke_party[0];
+    PokeParty_Init(bp->poke_party[2], 6);
+    for (i = 0; i < source->count && i < 3; i++)
+        PokeParty_Add(bp->poke_party[2], Party_GetMonByIndex(source, i));
+    gCoopDebugMonBuffer.team_battle_used = 1;
+}
+
 static u8 Coop_DebugTestGhost(MapObjectMan *manager, LocalMapObject *player, u8 cmd, BOOL *wait)
 {
     LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_TEST_GHOST_ID);
@@ -479,6 +570,17 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
         case COOP_DEBUG_EMOTE_TEST_GHOST:
         case COOP_DEBUG_REMOVE_TEST_GHOST:
             result = Coop_DebugTestGhost(manager, player, cmd, &wait);
+            break;
+        case COOP_DEBUG_ARM_TEAM_BATTLE:
+            gCoopDebugMonBuffer.team_battle_armed = 1;
+            gCoopDebugMonBuffer.team_battle_used = 0;
+            result = COOP_DEBUG_RESULT_OK;
+            break;
+        case COOP_DEBUG_MON_EXPORT:
+        case COOP_DEBUG_MON_IMPORT:
+            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+                return;
+            result = Coop_DebugMonTransfer(fsys, cmd, mb->debug_arg);
             break;
         case COOP_DEBUG_WARP:
         case COOP_DEBUG_TOGGLE_BIKE:
@@ -1581,7 +1683,8 @@ static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalM
     gCoopCommBlock.track_field_idle = idle ? 1 : 0;
     if (!idle || !wasIdle || !(gSystem.newKeys & PAD_BUTTON_A))
         return;
-    if (gCoopCommBlock.disconnect_state != COOP_DISCONNECT_NONE || MapObject_IsSingleMovementActive(player))
+    if (gCoopCommBlock.disconnect_state != COOP_DISCONNECT_NONE || MapObject_IsSingleMovementActive(player)
+        || Coop_IsMapNameBannerShowing(fsys))
         return;
     Coop_DirectionDelta((u32)player->curFacing, &dx, &dz);
     for (slot = 0; slot < COOP_REMOTE_SLOTS; slot++)

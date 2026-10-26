@@ -87,6 +87,9 @@ enum CoopDebugCommand
     COOP_DEBUG_TOGGLE_BIKE = 6,      // walking <-> cycling
     COOP_DEBUG_SURF = 7,             // start surfing onto the faced water tile
     COOP_DEBUG_FISH = 8,             // cast the Old Rod into the faced water
+    COOP_DEBUG_MON_EXPORT = 9,       // Milestone 3 probe A: party slot debug_arg -> gCoopDebugMonBuffer
+    COOP_DEBUG_MON_IMPORT = 10,      // Milestone 3 probe A: validate gCoopDebugMonBuffer, add it to the party
+    COOP_DEBUG_ARM_TEAM_BATTLE = 11, // Milestone 3 probe E: next trainer battle becomes player + AI partner vs the trainer twice
 };
 
 enum CoopDebugResult
@@ -99,7 +102,32 @@ enum CoopDebugResult
     COOP_DEBUG_RESULT_BAD_ARG = 5,    // unknown command or warp preset
     COOP_DEBUG_RESULT_FAILED = 6,     // no free map object or heap memory
     COOP_DEBUG_RESULT_DISABLED = 7,   // built with COOP_DEBUG_TOOLS 0
+    COOP_DEBUG_RESULT_REJECTED = 8,   // Pokemon import: failed validation (checksum, species, level, egg)
 };
+
+#if COOP_DEBUG_TOOLS
+// DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md; Milestone 3 Phase 0 probe A): one
+// Pokemon in transit, exactly as the party stores it (encrypted, 236 bytes),
+// plus what the ROM read from it (decrypted reads). Resident (Overlay 129
+// .data); probes find it through build/rom_gen.ld.
+#define COOP_PARTY_MON_SIZE 0xEC // struct PartyPokemon (hg-engine include/pokemon.h)
+struct CoopDebugMonBuffer
+{
+    u8  mon[COOP_PARTY_MON_SIZE];
+    u16 species;
+    u16 held_item;
+    u8  level;
+    u8  checksum_failed;
+    u8  is_egg;
+    u8  party_count; // after the command
+    u8  team_battle_armed; // probe E: one-shot, cleared when used
+    u8  team_battle_used;  // probe E: set when a battle was converted
+    u8  pad[2];
+};
+extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;
+struct BATTLE_PARAM;
+void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num); // Overlay 131, called by hg-engine MakeTrainerPokemonParty
+#endif
 
 // Warp presets: vanilla fly landing spots (ccd src/spawn_warp.c) chosen to
 // test dense maps, zone borders, bridges and water. Must match the bridge.
@@ -382,6 +410,9 @@ void LONG_CALL Coop_CheckStartupGate(void);
 // CoopActivity). name is HG-encoded, up to 8 chars, 0xFFFF-terminated when
 // shorter. FALSE when a field task could not be started.
 BOOL LONG_CALL Coop_StartTalkDialog(struct FieldSystem *fsys, const u16 *name, u32 activity);
+
+// TRUE while the location banner is showing; co-op field tasks wait for it.
+BOOL LONG_CALL Coop_IsMapNameBannerShowing(struct FieldSystem *fsys);
 
 // Validated copy of relay-provided data for ROM consumers (ghosts and their
 // followers). Returns FALSE, leaving *out zeroed, when the slot is out of

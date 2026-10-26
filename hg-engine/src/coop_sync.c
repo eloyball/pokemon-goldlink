@@ -61,6 +61,11 @@ volatile struct CoopCommBlock gCoopCommBlock = {
     .limit_species = MAX_SPECIES_INCLUDING_FORMS,
 };
 
+#if COOP_DEBUG_TOOLS
+// Initialized so it lands in .data (Overlay 129 is loaded without BSS init).
+struct CoopDebugMonBuffer gCoopDebugMonBuffer = { .party_count = 0xFF };
+#endif
+
 // ---------------------------------------------------------------------------
 // Text helpers
 // ---------------------------------------------------------------------------
@@ -330,11 +335,40 @@ static BOOL Coop_IsFieldMapActive(FieldSystem *fsys)
 // paused, no field task - scripts, cutscenes, the start menu and warps all
 // run as field tasks), no message box open, and the player is standing on
 // a tile rather than mid-step.
+// pret FieldSystem.mapSystems (+0x04, hg-engine unk4) -> drawMapNameInfo
+// (+0x08) -> task (+0x08), the SysTask animating the location banner; NULL
+// once the banner is gone (ccd draw_map_name.c FieldDrawMapName_ResetState).
+#define COOP_FSYS_MAP_SYSTEMS_OFFSET     0x04
+#define COOP_MAP_SYSTEMS_MAP_NAME_OFFSET 0x08
+#define COOP_MAP_NAME_TASK_OFFSET        0x08
+
+// Vanilla removes the location banner (FieldDrawMapName_Reset, unmapped)
+// whenever a field event starts. Our field tasks cannot, so they wait for
+// it: a warp under it crashed in window code, and it scrolls BG3, the layer
+// our dialogs draw on (docs/KNOWN_RISKS.md #14).
+BOOL LONG_CALL Coop_IsMapNameBannerShowing(FieldSystem *fsys)
+{
+    const u8 *mapSystems;
+    const u8 *info;
+    void *task;
+
+    __builtin_memcpy(&mapSystems, (const u8 *)fsys + COOP_FSYS_MAP_SYSTEMS_OFFSET, sizeof(mapSystems));
+    if (mapSystems == NULL)
+        return FALSE;
+    __builtin_memcpy(&info, mapSystems + COOP_MAP_SYSTEMS_MAP_NAME_OFFSET, sizeof(info));
+    if (info == NULL)
+        return FALSE;
+    __builtin_memcpy(&task, info + COOP_MAP_NAME_TASK_OFFSET, sizeof(task));
+    return task != NULL;
+}
+
 static BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
 {
     LocalMapObject *player;
 
     if (!Coop_IsFieldMapActive(fsys))
+        return FALSE;
+    if (Coop_IsMapNameBannerShowing(fsys))
         return FALSE;
     if (fsys->taskman != NULL || fsys->textbox_open)
         return FALSE;

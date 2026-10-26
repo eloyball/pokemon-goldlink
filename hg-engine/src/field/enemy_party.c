@@ -22,6 +22,7 @@
 #ifdef DEBUG_BATTLE_SCENARIOS
 #include "test_battle.h"
 #endif // DEBUG_BATTLE_SCENARIOS
+#include "coop_sync.h"
 
 struct BattleSetup LONG_CALL *BattleSetup_New_Tutorial(u32 heapID, FieldSystem *fieldSystem);
 int LONG_CALL BattleSetup_GetWildTransitionEffect(struct BattleSetup *setup);
@@ -405,6 +406,9 @@ void MakeTrainerPokemonParty(struct BATTLE_PARAM *bp, int num, int heapID)
 #ifdef DEBUG_BATTLE_SCENARIOS
     // Override parties with test scenario if enabled
     TestBattle_OverrideParties(bp);
+#endif
+#if COOP_DEBUG_TOOLS
+    Coop_DebugTeamBattle(bp, num); // co-op Milestone 3 probe E (docs/DEBUG_TOOLS.md)
 #endif
 
     // Change battle forms for player party
