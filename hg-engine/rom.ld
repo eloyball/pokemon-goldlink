@@ -877,10 +877,13 @@ Wireless_OnEntrySet = 0x020339F0 | 1;
 CommState_GetLinkMode = 0x0203993C | 1;
 sWirelessManager = 0x021D4124;
 sCommWireless = 0x021D4134;
-/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
-/* Link test commands (Milestone 3 Phase 3): CommState from pret
-   f90c3a7c0:asm/unk_02037C94.s, LinkSync from asm/unk_020379A0.s, named by
-   ccd comm_state.c / link_synchronization.c (docs/LINK_SYMBOLS.md). */
+/* Link battles (Milestone 3 Phase 4, src/field/coop_battle.c). CommState
+   from pret f90c3a7c0:asm/unk_02037C94.s, LinkSync from asm/unk_020379A0.s,
+   CommWireless from asm/unk_02034B0C.s, the comm core from
+   asm/unk_02035900.s, named by ccd's matching files (docs/LINK_SYMBOLS.md).
+   Task_LinkBattle and BattleSetup_InitForLinkBattle are pret's
+   Task_020508B8 (src/encounter.c) and sub_020522F0 (src/battle/
+   battle_setup.c): the address is in the name. */
 CommState_Exists = 0x02037D78 | 1;
 CommState_StartParentSession = 0x02037D8C | 1;
 CommState_StartChildSession = 0x02037DD4 | 1;
@@ -889,6 +892,31 @@ CommState_RequestShutdown = 0x02037E9C | 1;
 CommState_IsLinked = 0x02037EC8 | 1;
 LinkSync_StartSync = 0x02037AC0 | 1;
 LinkSync_IsSynced = 0x02037B38 | 1;
+LinkSync_Exists = 0x02037A10 | 1;
+Comm_GetLocalNetId = 0x0203769C | 1;
+LinkSync_RecvDone = 0x02037AAC | 1;
+CommWireless_CountParents = 0x0203511C | 1;
+Comm_CountConnected = 0x02037454 | 1;
+Task_LinkBattle = 0x020508B8 | 1;
+BattleSetup_InitForLinkBattle = 0x020522F0 | 1;
+/* Team bosses (Milestone 3 Phase 5, src/coop_boss.c, src/field/coop_battle.c).
+   pret names, addresses from their labels before the renames (pret git
+   history: asm/fieldmap.s, src/encounter.c, src/battle/battle_setup.c,
+   asm/unk_02072914.s; docs/LINK_SYMBOLS.md). StartMapSceneScript (0x0203FE74)
+   and SetupAndStartTrainerBattle (0x02051370) are hooked (`hooks`). */
+QueueScript = 0x0203FED4 | 1;
+Task_RunScripts = 0x0203FF44 | 1;
+ScriptEnvironment_New = 0x0204001C | 1;
+SetupScriptEngine = 0x0204005C | 1;
+FieldSystem_CreateTask = 0x020504F0 | 1;
+CallTask_StartBattle = 0x020506AC | 1;
+CallTask_StartEncounter = 0x0205085C | 1;
+CallTask_BattleTransition = 0x02055218 | 1;
+BattleSetup_Delete = 0x02051BF8 | 1;
+BattleSetup_CopyPokedexToSaveData = 0x02052444 | 1;
+BattleSetup_SetAllySideBattlersToPlayer = 0x02052580 | 1;
+EnemyTrainerSet_Init = 0x020733C0 | 1;
+/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
 /* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking. */
 sub_020538C0 = 0x020538C0 | 1;

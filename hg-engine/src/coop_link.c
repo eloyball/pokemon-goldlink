@@ -1,6 +1,7 @@
 #include "config.h"
 #include "types.h"
 
+#include "pokemon.h"
 #include "coop_sync.h"
 #include "coop_link.h"
 
@@ -214,12 +215,21 @@ static void Coop_LinkPend(u32 bits)
 }
 
 // Queues a message for the bridge; FALSE when the out ring is full.
+// Called from the main loop and, for data, from the VBlank interrupt (the
+// comm core's sends): interrupts off, so two pushes never take one slot.
 static BOOL Coop_LinkPush(struct CoopLinkBlock *blk, u32 type, u32 aid, const void *data, u32 length)
 {
     struct CoopLinkMsg *msg;
+    u32 intr;
 
-    if ((u8)(blk->out_head - blk->out_tail) >= COOP_LINK_OUT_SLOTS || length > COOP_LINK_DATA_MAX)
+    if (length > COOP_LINK_DATA_MAX)
         return FALSE;
+    intr = OS_DisableInterrupts();
+    if ((u8)(blk->out_head - blk->out_tail) >= COOP_LINK_OUT_SLOTS)
+    {
+        OS_RestoreInterrupts(intr);
+        return FALSE;
+    }
     msg = &blk->out[blk->out_head % COOP_LINK_OUT_SLOTS];
     msg->type = (u8)type;
     msg->aid = (u8)aid;
@@ -227,6 +237,7 @@ static BOOL Coop_LinkPush(struct CoopLinkBlock *blk, u32 type, u32 aid, const vo
     if (length != 0)
         __builtin_memcpy(msg->data, data, length);
     blk->out_head++; // last: the bridge reads up to out_head
+    OS_RestoreInterrupts(intr);
     return TRUE;
 }
 
@@ -685,7 +696,7 @@ void Coop_LinkUpdate(void)
 {
     struct CoopWirelessWork *work = Coop_LinkWork();
     struct CoopLinkBlock *blk = Coop_LinkBlock();
-    u32 pending, i, count;
+    u32 pending, i, count, intr;
     void *sent[4];
 
     if (blk == NULL)
@@ -730,11 +741,17 @@ void Coop_LinkUpdate(void)
     if (pending & PEND_RESET)
         Coop_LinkOk(Wireless_OnReset);
 
-    // Sends of last frame went out.
+    // Sends of last frame went out. The comm core sends from the VBlank
+    // interrupt (ccd Comm_VBlankSendTask), which can land in the middle of
+    // this: a send between reading the list and clearing it lost its
+    // callback, and that game never sent again (both stalled). Take the
+    // list with interrupts off.
+    intr = OS_DisableInterrupts();
     count = blk->sent_count;
     for (i = 0; i < count; i++)
         sent[i] = blk->sent[i];
     blk->sent_count = 0;
+    OS_RestoreInterrupts(intr);
     for (i = 0; i < count; i++)
     {
         u32 event[0x24 / 4];
@@ -779,4 +796,108 @@ void Coop_LinkUpdate(void)
         if (gCoopCommBlock.exchange_ptr == (u32)blk)
             gCoopCommBlock.exchange_ptr = 0;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Link battle watchdog (docs/MILESTONE3_PLAN.md §17)
+// ---------------------------------------------------------------------------
+
+// Our sessions report no errors (vanilla's error screen resets the console),
+// so a link lost in a battle would leave both games waiting forever. While a
+// co-op battle runs (src/field/coop_battle.c), a link lost for a moment ends
+// it the way vanilla's BattleLink_RecvEnd does when the server is done: the
+// link tasks stop and the battle finishes; an undecided battle is a draw.
+// The link result screen's sync is then completed locally.
+// Lost: the relay's BYE (the other bridge went quiet or left), or our own
+// bridge gone or out of the room.
+
+#define COOP_LINK_BATTLE_LOST_FRAMES 30
+#define COOP_OVY_BATTLE              12 // FS_OVERLAY_ID(OVY_12): the battle app
+#define COOP_BSTATE_BATTLE_MAIN      9  // ccd battle_022378C0.c BattleState
+
+// ccd OverlayManager: the template's overlay id, the app's state, its data.
+#define OVM_OVY_ID     0x0C
+#define OVM_PROC_STATE 0x14
+#define OVM_DATA       0x1C
+// pret BattleSystem (include/battle/battle.h; hg-engine pads these): the link
+// tasks' state pointers, battleFinished (ov12_0223BC2C), battleOutcomeFlag.
+#define BSYS_LINK_SEND_STATE 0x23F4
+#define BSYS_LINK_RECV_STATE 0x23F8
+#define BSYS_FINISHED        0x23FE
+#define BSYS_OUTCOME         0x2420
+#define BATTLE_LINK_STATE_END 0xFF
+#define BATTLE_OUTCOME_DRAW   3
+#define COOP_SYNC_LINK_SCREEN 0x3E // ccd link_battle_screen.c: "waiting for partner"
+
+BOOL LONG_CALL LinkSync_Exists(void);
+void LONG_CALL LinkSync_RecvDone(int sender, int size, void *data, void *context);
+
+// A word of a vanilla struct hg-engine does not declare (no type-punning).
+static u32 Coop_LinkReadWord(const u8 *p)
+{
+    u32 v;
+
+    __builtin_memcpy(&v, p, 4);
+    return v;
+}
+
+static BOOL Coop_LinkBattleIsLost(void)
+{
+    struct CoopWirelessWork *work = Coop_LinkWork();
+    struct CoopLinkBlock *blk = Coop_LinkBlock();
+
+    if (!Coop_IsConnectedToRoom() || blk == NULL)
+        return TRUE;
+    if (blk->role == COOP_LINK_ROLE_CHILD)
+        return !blk->linked;
+    return (work->connectedBitmap & 0xFFFE) == 0;
+}
+
+void Coop_LinkBattleWatchdog(FieldSystem *fsys)
+{
+    FieldProcessManager *pm;
+    u8 *app, *bsys, *send, *recv;
+
+    if (gCoopCommBlock.track_link_battle == COOP_LINK_BATTLE_LOST)
+    {
+        // The link result screen after the battle waits for the partner
+        // (LinkSync 0x3E): complete it as the host's "done" would.
+        u8 done = COOP_SYNC_LINK_SCREEN;
+        if (LinkSync_Exists())
+            LinkSync_RecvDone(0, 1, &done, NULL);
+        return;
+    }
+    if (gCoopCommBlock.track_link_battle != COOP_LINK_BATTLE_RUNNING)
+        return;
+    if (!Coop_LinkBattleIsLost())
+    {
+        gCoopCommBlock.track_link_lost_frames = 0;
+        return;
+    }
+    if (gCoopCommBlock.track_link_lost_frames < COOP_LINK_BATTLE_LOST_FRAMES)
+    {
+        gCoopCommBlock.track_link_lost_frames++;
+        return;
+    }
+    // Only the battle itself can be ended: a link lost in the exchange
+    // before it still stalls (docs/KNOWN_RISKS.md); the link screen after it
+    // needs no link.
+    pm = fsys != NULL ? fsys->processManager : NULL;
+    app = pm != NULL ? pm->child : NULL;
+    if (app == NULL || Coop_LinkReadWord(app + OVM_OVY_ID) != COOP_OVY_BATTLE
+        || Coop_LinkReadWord(app + OVM_PROC_STATE) != COOP_BSTATE_BATTLE_MAIN)
+        return;
+    bsys = (u8 *)Coop_LinkReadWord(app + OVM_DATA);
+    if (bsys == NULL || bsys[BSYS_FINISHED])
+        return;
+    send = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_SEND_STATE);
+    recv = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_RECV_STATE);
+    if (send != NULL)
+        *send = BATTLE_LINK_STATE_END;
+    if (recv != NULL)
+        *recv = BATTLE_LINK_STATE_END;
+    if (bsys[BSYS_OUTCOME] == 0)
+        bsys[BSYS_OUTCOME] = BATTLE_OUTCOME_DRAW;
+    bsys[BSYS_FINISHED] = 1;
+    gCoopCommBlock.track_link_battle = COOP_LINK_BATTLE_LOST;
 }

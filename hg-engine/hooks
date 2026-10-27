@@ -692,3 +692,13 @@ arm9 Coop_Link_UpdateGameInfo 020339B4
 arm9 Coop_Link_SetEntry 02033A0C 3
 arm9 Coop_Link_CommStartUp 02034D8C 3
 arm9 Coop_Link_CommTerminate 02034DE0 3
+
+# co-op team bosses (Milestone 3 Phase 5, src/coop_boss.c): talking to a team
+# boss starts the waiting; its TrainerBattle becomes the link multi. Both
+# replacements do what vanilla does otherwise (no register: 4+ arguments).
+arm9 Coop_StartMapSceneScript 0203FE74
+arm9 Coop_SetupAndStartTrainerBattle 02051370
+
+# co-op: GF_AssertFail never resets, even during a link session; it keeps
+# the caller (src/coop_boss.c). r0: no arguments, lr stays the caller's.
+arm9 Coop_GF_AssertFail 0202551C 0

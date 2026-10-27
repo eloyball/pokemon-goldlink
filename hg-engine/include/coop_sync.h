@@ -92,6 +92,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ARM_TEAM_BATTLE = 11, // Milestone 3 probe E: next trainer battle becomes player + AI partner vs the trainer twice
     COOP_DEBUG_LINK = 12,            // Milestone 3 Phase 3: debug_arg = enum CoopDebugLinkOp (vanilla CommState sessions)
     COOP_DEBUG_LINK_STATUS = 13,     // result COOP_DEBUG_LINK_STATUS_BASE | COOP_DEBUG_LINK_* flags; debug_arg: LinkSync value
+    COOP_DEBUG_GIVE_TEST_MON = 14,   // a shiny test Pokemon (debug_arg 1 Haunter, 2 Onix + Metal Coat: trade evolvers; 3 / 4 the lead for the boss probe: level 40 Golem, Rock Slide / level 5 Magikarp, Splash), then saves
 };
 
 enum CoopDebugLinkOp
@@ -101,6 +102,8 @@ enum CoopDebugLinkOp
     COOP_DEBUG_LINK_CONNECT = 3,  // CommState_ConnectToSlot(0): the first parent the scan listed
     COOP_DEBUG_LINK_SYNC = 4,     // LinkSync_StartSync(0x42)
     COOP_DEBUG_LINK_SHUTDOWN = 5, // CommState_RequestShutdown
+    COOP_DEBUG_LINK_BATTLE_PARENT = 6, // Phase 4: the battle task as the parent (beacon id 1), no session request
+    COOP_DEBUG_LINK_BATTLE_CHILD = 7,  // Phase 4: the battle task as the child
 };
 
 #define COOP_DEBUG_LINK_STATUS_BASE 0x40
@@ -284,7 +287,8 @@ struct CoopPlayerState
     u8  follower_direction;  // 0x36
     u8  follower_move_action; // 0x37
     u8  follower_move_seq;   // 0x38
-    u8  pad39[3];            // 0x39
+    u8  boss_wait;           // 0x39 team boss this player waits at: sGatedBosses index + 1; 0 = none (Phase 5)
+    u8  pad3A[2];            // 0x3A
     u8  avatar_id;           // 0x3C custom player sprite set (later milestone; 0 = vanilla)
     u8  anim;                // 0x3D map object animation (pret MapObject_SetAnimation): pose frames (fishing cast / bite / reel...)
     u8  field_busy;          // 0x3E 1 while a field task or message runs (NPC talk, start menu, co-op menus)
@@ -450,6 +454,14 @@ enum CoopLinkMsgType
     COOP_LINK_MSG_BYE = 5,     // out: I left; in: aid = who left
 };
 
+// gCoopCommBlock.track_link_battle: a co-op link battle and how it ended.
+enum CoopLinkBattleState
+{
+    COOP_LINK_BATTLE_NONE = 0,
+    COOP_LINK_BATTLE_RUNNING = 1, // set by the battle task right before the battle
+    COOP_LINK_BATTLE_LOST = 2,    // the link dropped: the watchdog ended the battle (a draw)
+};
+
 enum CoopLinkRole
 {
     COOP_LINK_ROLE_NONE = 0,
@@ -569,7 +581,9 @@ struct CoopCommBlock
     u8  track_field_hidden;                                     // 0x1EF ROM private: the field was covered (menu, battle, app) since the last field tick
     struct CoopSessionOut session_out;                          // 0x1F0 ROM: latched session operation (Milestone 3)
     u8  track_session_answered;                                 // 0x1F8 ROM private: session_seq of the pending request already prompted (0: none pending)
-    u8  reserved[3];                                            // 0x1F9
+    u8  track_link_battle;                                      // 0x1F9 ROM private: enum CoopLinkBattleState (Phase 4)
+    u8  track_link_lost_frames;                                 // 0x1FA ROM private: frames since the link of a battle was lost
+    u8  track_boss_wait;                                        // 0x1FB ROM private: published as local_player.boss_wait
     u32 exchange_ptr;                                           // 0x1FC ROM: address of the open CoopTradeExchange, 0 when none
 };
 
@@ -588,6 +602,7 @@ _Static_assert(sizeof(struct CoopTradeExchange) == 0x1F8, "CoopTradeExchange mus
 COOP_ASSERT_OFFSET(CoopPlayerState, matrix_id, 0x02);
 COOP_ASSERT_OFFSET(CoopPlayerState, height, 0x08);
 COOP_ASSERT_OFFSET(CoopPlayerState, sprite_id, 0x0C);
+COOP_ASSERT_OFFSET(CoopPlayerState, boss_wait, 0x39);
 COOP_ASSERT_OFFSET(CoopPlayerState, move_seq, 0x0F);
 COOP_ASSERT_OFFSET(CoopPlayerState, activity, 0x13);
 COOP_ASSERT_OFFSET(CoopPlayerState, trainer_id, 0x14);
@@ -649,7 +664,9 @@ COOP_ASSERT_OFFSET(CoopCommBlock, track_follower_shiny, 0x1EE);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_field_hidden, 0x1EF);
 COOP_ASSERT_OFFSET(CoopCommBlock, session_out, 0x1F0);
 COOP_ASSERT_OFFSET(CoopCommBlock, track_session_answered, 0x1F8);
-COOP_ASSERT_OFFSET(CoopCommBlock, reserved, 0x1F9);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_link_battle, 0x1F9);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_link_lost_frames, 0x1FA);
+COOP_ASSERT_OFFSET(CoopCommBlock, track_boss_wait, 0x1FB);
 COOP_ASSERT_OFFSET(CoopCommBlock, exchange_ptr, 0x1FC);
 COOP_ASSERT_OFFSET(CoopDiagnostics, test_ghost_x, 0x10);
 COOP_ASSERT_OFFSET(CoopDiagnostics, player_y, 0x16);

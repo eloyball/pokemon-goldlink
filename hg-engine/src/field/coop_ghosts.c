@@ -1,3 +1,4 @@
+#include "constants/moves.h"
 #include "config.h"
 #include "types.h"
 
@@ -14,7 +15,9 @@
 #include "system.h"
 #include "task.h"
 #include "coop_sync.h"
+#include "coop_boss.h"
 #include "coop_session.h"
+#include "coop_battle.h"
 
 // ---------------------------------------------------------------------------
 // Overlay 131 (OVERLAY_FIELD_EXTENSION): co-op field code.
@@ -481,6 +484,73 @@ static u8 Coop_DebugMonTransfer(FieldSystem *fsys, u8 cmd, u8 slot)
     return COOP_DEBUG_RESULT_OK;
 }
 
+// Development aid (debug command 14): a shiny Pokemon that evolves by
+// trade, for testing trades and shiny sprites. debug_arg 1: Haunter
+// (-> Gengar), 2: Onix holding a Metal Coat (-> Steelix). Built by the
+// game's own constructor at level 10 with the player as its Original Trainer
+// (it obeys after a trade even without badges), a personality value whose
+// shiny value against the player's ID is 0, then the game is saved.
+BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
+
+static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
+{
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    struct PlayerProfile *profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
+    struct PartyPokemon mon;
+    u32 species, item = ITEM_NONE, otid, pidLow, pid, gender, level = 10, move = MOVE_NONE, pp = 0, i;
+    BOOL lead = preset == 3 || preset == 4;
+
+    if (preset == 1)
+        species = SPECIES_HAUNTER;
+    else if (lead)
+    {
+        // Team boss probe (scripts/bizhawk/link_e2e_probe.lua): the lead,
+        // in place of the first Pokemon, with one move that never asks for a
+        // target (the probe only presses A; one Pokemon: no switch screen).
+        // 3 wins against Falkner (Rock Slide hits both foes), 4 loses.
+        species = preset == 3 ? SPECIES_GOLEM : SPECIES_MAGIKARP;
+        level = preset == 3 ? 40 : 5;
+        move = preset == 3 ? MOVE_ROCK_SLIDE : MOVE_SPLASH;
+        pp = preset == 3 ? 10 : 40;
+    }
+    else if (preset == 2)
+    {
+        species = SPECIES_ONIX;
+        item = ITEM_METAL_COAT;
+    }
+    else
+        return COOP_DEBUG_RESULT_BAD_ARG;
+    if (party == NULL || profile == NULL || (!lead && party->count >= 6) || (lead && party->count < 1))
+        return COOP_DEBUG_RESULT_FAILED;
+    otid = profile->id;
+    pidLow = 0x2E50 + preset;
+    pid = ((((otid >> 16) ^ (otid & 0xFFFF) ^ pidLow) & 0xFFFF) << 16) | pidLow;
+    __builtin_memset(&mon, 0, sizeof(mon));
+    PokeParaSet(&mon, (int)species, (int)level, 32, TRUE, pid, 1, otid); // random IVs, fixed PID, preset OT ID
+    SetMonData(&mon, MON_DATA_OT_NAME, profile->name);
+    gender = profile->gender;
+    SetMonData(&mon, MON_DATA_MET_GENDER, &gender);
+    if (item != ITEM_NONE)
+        SetMonData(&mon, MON_DATA_HELD_ITEM, &item);
+    if (lead)
+    {
+        for (i = 0; i < 4; i++)
+        {
+            u32 m = i == 0 ? move : MOVE_NONE, p = i == 0 ? pp : 0;
+            SetMonData(&mon, MON_DATA_MOVE1 + i, &m);
+            SetMonData(&mon, MON_DATA_MOVE1PP + i, &p);
+        }
+    }
+    if (!SHINY_CHECK(otid, GetMonData(&mon, MON_DATA_PERSONALITY, NULL)))
+        return COOP_DEBUG_RESULT_FAILED;
+    if (lead)
+        __builtin_memcpy(Party_GetMonByIndex(party, 0), &mon, COOP_PARTY_MON_SIZE);
+    else if (!PokeParty_Add(party, &mon))
+        return COOP_DEBUG_RESULT_FAILED;
+    Coop_DebugDescribeMon(Party_GetMonByIndex(party, lead ? 0 : party->count - 1), party);
+    return Field_SaveGameNormal(fsys) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+}
+
 // Milestone 3 probe E: once armed, the next trainer battle, right after its
 // opponent party is built, becomes a multi battle with an AI partner: the
 // player and a partner (the player's own party standing in for a teammate)
@@ -570,6 +640,11 @@ static u8 Coop_DebugLink(FieldSystem *fsys, u32 op)
     case COOP_DEBUG_LINK_CHILD:
         CommState_StartChildSession(fsys->savedata, COOP_COMM_TYPE_SINGLE_BATTLE, 0, NULL, 0);
         break;
+    case COOP_DEBUG_LINK_BATTLE_PARENT:
+    case COOP_DEBUG_LINK_BATTLE_CHILD:
+        if (fsys->taskman != NULL || CommState_Exists())
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        return Coop_DebugStartBattle(fsys, op == COOP_DEBUG_LINK_BATTLE_PARENT) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
     case COOP_DEBUG_LINK_CONNECT:
     case COOP_DEBUG_LINK_SYNC:
     case COOP_DEBUG_LINK_SHUTDOWN:
@@ -638,6 +713,11 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
             if (!Coop_CanRunFieldDebugCommand(fsys, player))
                 return;
             result = Coop_DebugMonTransfer(fsys, cmd, mb->debug_arg);
+            break;
+        case COOP_DEBUG_GIVE_TEST_MON:
+            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+                return;
+            result = Coop_DebugGiveTestMon(fsys, mb->debug_arg);
             break;
         case COOP_DEBUG_WARP:
         case COOP_DEBUG_TOGGLE_BIKE:
@@ -776,6 +856,7 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
     ps->activity = COOP_ACTIVITY_FIELD;
     // Others see "busy" instead of the session menu when they talk to us.
     ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) ? 1 : 0;
+    ps->boss_wait = gCoopCommBlock.track_boss_wait; // a team boss we wait at (src/field/coop_battle.c)
 
     profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
     if (profile != NULL)
@@ -1789,6 +1870,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_CheckGhostTalk(fsys, manager, player);
     Coop_UpdateTrade(fsys);
     Coop_UpdateSessionPrompt(fsys);
+    Coop_UpdateBossWatch(fsys);
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry

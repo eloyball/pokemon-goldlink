@@ -22,6 +22,7 @@
 #ifdef DEBUG_BATTLE_SCENARIOS
 #include "test_battle.h"
 #endif // DEBUG_BATTLE_SCENARIOS
+#include "coop_boss.h"
 #include "coop_sync.h"
 
 struct BattleSetup LONG_CALL *BattleSetup_New_Tutorial(u32 heapID, FieldSystem *fieldSystem);
@@ -410,10 +411,14 @@ void MakeTrainerPokemonParty(struct BATTLE_PARAM *bp, int num, int heapID)
 #if COOP_DEBUG_TOOLS
     Coop_DebugTeamBattle(bp, num); // co-op Milestone 3 probe E (docs/DEBUG_TOOLS.md)
 #endif
+    Coop_BossSplitParty(bp, num);  // co-op team bosses: the team across both enemy seats (src/field/coop_battle.c)
 
     // Change battle forms for player party
+    // (only the filled slots: Party_GetMonByIndex asserts past the count, and
+    // vanilla turns a failed assert into the error screen while a link
+    // session is open, as in a co-op team boss battle)
     for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 6; j++) {
+        for (int j = 0; j < bp->poke_party[i]->count; j++) {
             struct PartyPokemon *mon = Party_GetMonByIndex(bp->poke_party[i], j);
             if (mon != NULL) {
                 ChangeToBattleForm(mon);

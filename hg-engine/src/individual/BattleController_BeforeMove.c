@@ -191,7 +191,12 @@ void __attribute__((section(".init"))) BattleController_BeforeMove(struct Battle
     debug_printf("In BattleController_BeforeMove %d, move %d, attacker %d, defender: %d\n", ctx->wb_seq_no, ctx->current_move_index, ctx->attack_client, ctx->defence_client);
 #endif
 
-    if (IsAttackerOnField(ctx)) {
+    // Called every frame while the move is set up. Each copy is a command to
+    // every game; in a link battle (co-op, docs/MILESTONE3_PLAN.md §17) the
+    // games answer a few frames later, so copying every frame filled the
+    // link queue (16 per battler) and the battle stalled. There, copy only
+    // with nothing outstanding; the next copy catches up.
+    if (IsAttackerOnField(ctx) && (!(BattleTypeGet(bsys) & BATTLE_TYPE_LINK) || Link_QueueIsEmpty(ctx))) {
         CopyBattleMonToPartyMon(bsys, ctx, ctx->attack_client);
     }
     if (ctx->defence_client != BATTLER_NONE) {

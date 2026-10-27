@@ -8,4 +8,9 @@
 // co-op SysTask, in and out of the field.
 void LONG_CALL Coop_LinkUpdate(void);
 
+// Ends a co-op link battle whose link was lost (gCoopCommBlock.
+// track_link_battle); once a frame, from the co-op SysTask.
+struct FieldSystem;
+void LONG_CALL Coop_LinkBattleWatchdog(struct FieldSystem *fsys);
+
 #endif

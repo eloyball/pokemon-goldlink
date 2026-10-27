@@ -17,6 +17,7 @@
 #include "coop_sync.h"
 #include "coop_dialog.h"
 #include "coop_link.h"
+#include "coop_boss.h"
 
 // Vanilla functions not declared (or declared without LONG_CALL) in any
 // hg-engine header. Addresses live in rom.ld.
@@ -466,9 +467,12 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
     gCoopCommBlock.heartbeat_rom++;
     Coop_UpdateBridgeWatchdog();
     Coop_LinkUpdate(); // the virtual radio: in and out of the field
+    Coop_LinkBattleWatchdog(fsys);
 
     fieldActive = Coop_IsFieldMapActive(fsys);
     connected = Coop_IsConnectedToRoom();
+    if (!fieldActive)
+        gCoopBoss.talkObj = NULL; // set again by the next field frame (Coop_UpdateBossWatch)
 
     // The bridge swapped this room's save into the cartridge (SRAM): restart
     // so the game loads it. Only before a session started (title screen,

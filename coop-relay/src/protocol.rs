@@ -283,7 +283,8 @@ pub struct PlayerState {
     pub follower_direction: u8,   // 0x36
     pub follower_move_action: u8, // 0x37
     pub follower_move_seq: u8,    // 0x38
-    pub pad39: [u8; 3],           // 0x39
+    pub boss_wait: u8,            // 0x39 team boss waited at (Phase 5): the ROM's boss index + 1; 0 none
+    pub pad3a: [u8; 2],           // 0x3A
     pub avatar_id: u8,            // 0x3C
     pub anim: u8,                 // 0x3D pose animation index (forwarded untouched)
     pub field_busy: u8,           // 0x3E (a field task or message is running; forwarded as is)
@@ -336,7 +337,8 @@ impl PlayerState {
         out[0x36] = self.follower_direction;
         out[0x37] = self.follower_move_action;
         out[0x38] = self.follower_move_seq;
-        out[0x39..0x3C].copy_from_slice(&self.pad39);
+        out[0x39] = self.boss_wait;
+        out[0x3A..0x3C].copy_from_slice(&self.pad3a);
         out[0x3C] = self.avatar_id;
         out[0x3D] = self.anim;
         out[0x3E] = self.field_busy;
@@ -384,7 +386,8 @@ impl PlayerState {
             follower_direction: buf[0x36],
             follower_move_action: buf[0x37],
             follower_move_seq: buf[0x38],
-            pad39: [buf[0x39], buf[0x3A], buf[0x3B]],
+            boss_wait: buf[0x39],
+            pad3a: [buf[0x3A], buf[0x3B]],
             avatar_id: buf[0x3C],
             anim: buf[0x3D],
             field_busy: buf[0x3E],
@@ -404,6 +407,13 @@ pub const LINK_MAGIC: u32 = 0x314B_4E4C; // "LNK1"
 pub const LINK_DATA_MAX: usize = 0xC0;
 pub const LINK_BEACON_MAX: usize = 0x70;
 pub const LINK_MAX_MSGS: usize = 16; // per trailer
+/// Bytes of messages (4-byte header + data each) per trailer, both ways
+/// (coop-bridge CoopLink.cs SendBudget); keeps a packet under one MTU.
+pub const LINK_SEND_BUDGET: usize = 1000;
+/// The largest link trailer up: header, a full beacon, a full budget.
+pub const LINK_UP_MAX: usize = 12 + 8 + LINK_BEACON_MAX + LINK_SEND_BUDGET;
+/// The largest client packet: fixed part, trade trailer, link trailer.
+pub const CLIENT_PACKET_MAX: usize = CLIENT_PACKET_SIZE + TRADE_OUT_SIZE + LINK_UP_MAX;
 
 pub const LINK_MSG_DATA: u8 = 1;
 pub const LINK_MSG_CONNECT: u8 = 2;
@@ -910,7 +920,8 @@ mod tests {
             follower_direction: 3,
             follower_move_action: 15,
             follower_move_seq: 6,
-            pad39: [0; 3],
+            boss_wait: 0,
+            pad3a: [0; 2],
             avatar_id: 2,
             anim: 3,
             field_busy: 1,
@@ -980,6 +991,37 @@ mod tests {
         let decoded = ClientToServerPacket::decode_le(&full).expect("valid decode");
         assert_eq!(decoded, with_trade);
         assert_eq!(mon_pid(&decoded.trade.unwrap().mon), 0x1234_5678);
+
+        // The largest packet a bridge sends (a trade, a full beacon and a full
+        // message budget: five 192-byte frames) fits CLIENT_PACKET_MAX, which
+        // sizes the relay's receive buffer. A 512-byte buffer once cut every
+        // packet with two or more frames, and the link stalled.
+        let frame = LinkMsg {
+            kind: LINK_MSG_DATA,
+            aid: 0,
+            data: vec![0x5A; LINK_DATA_MAX],
+        };
+        let msgs = vec![frame; LINK_SEND_BUDGET / (4 + LINK_DATA_MAX)];
+        let biggest = ClientToServerPacket {
+            link: Some(LinkUp {
+                epoch: 1,
+                role: LINK_ROLE_PARENT,
+                ack: 7,
+                first_seq: 40,
+                beacon: Some(LinkBeacon {
+                    ggid: 0x0040_0318,
+                    entry: 1,
+                    seq: 3,
+                    data: vec![0xA5; LINK_BEACON_MAX],
+                }),
+                msgs,
+            }),
+            ..with_trade
+        };
+        let full = biggest.encode_full();
+        assert!(full.len() > 512 && full.len() <= CLIENT_PACKET_MAX, "{} bytes", full.len());
+        let decoded = ClientToServerPacket::decode_le(&full).expect("valid decode");
+        assert_eq!(decoded.link.expect("link trailer").msgs.len(), 5);
     }
 
     #[test]

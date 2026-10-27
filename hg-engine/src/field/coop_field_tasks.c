@@ -13,6 +13,8 @@
 #include "window.h"
 #include "coop_sync.h"
 #include "coop_dialog.h"
+#include "coop_battle.h"
+#include "coop_boss.h"
 
 // ---------------------------------------------------------------------------
 // Co-op field tasks and the native dialog box, Overlay 131.
@@ -631,7 +633,6 @@ static const struct CoopGatedBoss sGatedBosses[] = {
 static BOOL Coop_ShouldBlockGatedBoss(FieldSystem *fsys)
 {
     LocalMapObject *facing = NULL;
-    u32 i;
 
     if (!Coop_IsAdventureStarted() || gCoopCommBlock.gates.flag_coop_sync_ready == 1)
         return FALSE;
@@ -640,18 +641,43 @@ static BOOL Coop_ShouldBlockGatedBoss(FieldSystem *fsys)
     if (Coop_GetPlayerMapObject(fsys) == NULL)
         return FALSE;
     FieldSystem_GetFacingObject(fsys, &facing);
-    if (facing == NULL)
-        return FALSE;
+    return Coop_FindGatedBoss(fsys, facing) >= 0;
+}
+
+// Team bosses (docs/MILESTONE3_PLAN.md §18): the team boss the player faces,
+// for the resident talk hook (src/coop_boss.c). A player whose teammate is
+// offline (no partner slot) fights alone, as vanilla.
+void LONG_CALL Coop_UpdateBossWatch(FieldSystem *fsys)
+{
+    LocalMapObject *facing = NULL;
+
+    gCoopBoss.talkObj = NULL;
+    gCoopBoss.talkStart = Coop_BossTalkStart;
+    if (gCoopCommBlock.gates.team_partner_slot == COOP_SLOT_NONE || !Coop_IsAdventureStarted())
+        return;
+    if (!Coop_IsFieldMapActive(fsys) || fsys->taskman != NULL || fsys->textbox_open || Coop_GetPlayerMapObject(fsys) == NULL)
+        return;
+    FieldSystem_GetFacingObject(fsys, &facing);
+    if (Coop_FindGatedBoss(fsys, facing) >= 0)
+        gCoopBoss.talkObj = facing;
+}
+
+int LONG_CALL Coop_FindGatedBoss(FieldSystem *fsys, LocalMapObject *obj)
+{
+    u32 i;
+
+    if (obj == NULL || fsys->location == NULL)
+        return -1;
     for (i = 0; i < NELEMS(sGatedBosses); i++)
     {
         const struct CoopGatedBoss *boss = &sGatedBosses[i];
-        if (boss->mapId != fsys->location->mapId || boss->x != facing->xCurr || boss->z != facing->yCurr)
+        if (boss->mapId != fsys->location->mapId || boss->x != obj->xCurr || boss->z != obj->yCurr)
             continue;
         if (boss->badge != COOP_NO_BADGE && (gCoopCommBlock.badge_mask_local & (1u << boss->badge)))
-            return FALSE;
-        return TRUE;
+            return -1;
+        return (int)i;
     }
-    return FALSE;
+    return -1;
 }
 
 // ---------------------------------------------------------------------------

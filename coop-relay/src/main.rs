@@ -8,7 +8,7 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info, warn};
 
 use coop_relay::lobby::{DEFAULT_MAX_ROOMS, Rejection, RoomManager};
-use coop_relay::protocol::{ClientToServerPacket, ServerToClientPacket};
+use coop_relay::protocol::{CLIENT_PACKET_MAX, ClientToServerPacket, ServerToClientPacket};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -82,7 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut summary_timer = interval(Duration::from_secs(5));
     summary_timer.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    let mut recv_buf = [0u8; 512];
+    // One byte over the largest client packet: a datagram that fills it was
+    // cut short (recv_from truncates) and is dropped, never half-decoded.
+    let mut recv_buf = [0u8; CLIENT_PACKET_MAX + 1];
 
     // Created once: re-creating ctrl_c() every loop iteration could drop a
     // signal that arrives between iterations.
@@ -93,6 +95,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::select! {
             recv_res = socket.recv_from(&mut recv_buf) => {
                 match recv_res {
+                    Ok((len, peer_addr)) if len > CLIENT_PACKET_MAX => {
+                        warn!("Dropped an oversized packet from {peer_addr} ({len}+ bytes)");
+                    }
                     Ok((len, peer_addr)) => {
                         match ClientToServerPacket::decode_le(&recv_buf[..len]) {
                             Ok(pkt) => {

@@ -1397,5 +1397,12 @@ BOOL LONG_CALL IsMonValidAndHealthy(struct PartyPokemon *mon)
 BOOL LONG_CALL IsBattlerSlotValid(struct BattleSystem *battleSystem, int battlerId)
 {
     // TODO implement battle type check for relevant types like raids and totem battles here
+    // Link battles (co-op, docs/MILESTONE3_PLAN.md §17): only the host runs the
+    // battle logic, so a client's context never has its battlemon filled in
+    // and every slot would read as empty; the client then skipped the
+    // Pokemon's appearance without reporting it done, and the host waited
+    // forever. A link battle uses every slot it has.
+    if (BattleTypeGet(battleSystem) & BATTLE_TYPE_LINK)
+        return TRUE;
     return battleSystem->sp->battlemon[battlerId].species != SPECIES_NONE;
 }

@@ -14,6 +14,7 @@
 #include "coop_dialog.h"
 #include "coop_session.h"
 #include "coop_choice.h"
+#include "coop_battle.h"
 
 // ---------------------------------------------------------------------------
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1), Overlay 131.
@@ -124,8 +125,6 @@ static const char *Coop_AcceptedText(u32 kind)
         return "You and @ are now a team!";
     if (kind == COOP_SESSION_KIND_LEAVE_TEAM)
         return "You left your team with @.";
-    if (kind == COOP_SESSION_KIND_BATTLE)
-        return "@ is up for a battle!\nBattles are coming later.";
     return "Let's trade with @!";
 }
 
@@ -339,6 +338,23 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         env->frames++;
         if (Coop_SessionIsOver(env, &state, &reason))
         {
+            // An accepted battle continues in this task slot (coop_battle.c).
+            if (state == COOP_SESSION_ACCEPTED && env->kind == COOP_SESSION_KIND_BATTLE)
+            {
+                if (Coop_DialogIsPrinting(&env->dialog))
+                    break;
+                Coop_ChoiceClose(&env->choice);
+                Coop_DialogClose(fsys, &env->dialog);
+                if (Coop_BattleTakeOver(taskman, env->name, env->peerSlot, !env->incoming))
+                {
+                    sys_FreeMemoryEz(env);
+                    break;
+                }
+                Coop_DialogOpen(fsys, &env->dialog);
+                env->dialog.args[0] = env->name;
+                Coop_SessionFinal(taskman, env, "The battle couldn't start.\nPlease try again.");
+                break;
+            }
             // An accepted trade continues in its own task (coop_trade.c),
             // which starts as soon as this one is gone.
             msg = Coop_ResultText(env, state, reason);

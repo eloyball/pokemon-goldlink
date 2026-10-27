@@ -20,11 +20,11 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::LobbyState;
 use crate::protocol::{
-    LINK_DATA_MAX, LINK_MAX_MSGS, LINK_MSG_ACCEPT, LINK_MSG_BYE, LINK_MSG_CONNECT, LINK_MSG_DATA,
+    LINK_DATA_MAX, LINK_MAX_MSGS, LINK_SEND_BUDGET, LINK_MSG_ACCEPT, LINK_MSG_BYE, LINK_MSG_CONNECT, LINK_MSG_DATA,
     LINK_MSG_REFUSE, LINK_ROLE_PARENT, LinkBeacon, LinkDown, LinkMsg, LinkUp, MAX_PLAYERS,
     room_code_to_string,
 };
@@ -33,8 +33,6 @@ use crate::protocol::{
 pub const LINK_RESEND: Duration = Duration::from_millis(150);
 /// A link member whose bridge stopped sending link trailers this long left it.
 pub const LINK_SILENCE: Duration = Duration::from_secs(2);
-/// Bytes of messages per server packet (keeps it well under one MTU).
-const LINK_SEND_BUDGET: usize = 1000;
 /// Messages waiting for one recipient; more means it stopped acking.
 const LINK_QUEUE_MAX: usize = 256;
 /// aids a parent hands out (vanilla: up to 4 players, the parent is 0).
@@ -102,8 +100,13 @@ impl LobbyState {
         for (i, msg) in up.msgs.into_iter().enumerate() {
             let seq = up.first_seq.wrapping_add(i as u16);
             if seq != self.links[slot].in_next {
+                debug!(
+                    "link P{slot} up seq {seq} kind {} skipped (expecting {})",
+                    msg.kind, self.links[slot].in_next
+                );
                 continue; // a duplicate, or after a gap: resent later
             }
+            debug!("link P{slot} up seq {seq} kind {} len {}", msg.kind, msg.data.len());
             self.links[slot].in_next = seq.wrapping_add(1);
             self.route_link_msg(slot, msg);
         }
@@ -123,6 +126,7 @@ impl LobbyState {
         }
         let seq = peer.out_next;
         peer.out_next = seq.wrapping_add(1);
+        debug!("link P{to} queue seq {seq} kind {kind} len {}", data.len());
         peer.out.push_back(Outgoing {
             seq,
             msg: LinkMsg { kind, aid, data },
@@ -281,6 +285,9 @@ impl LobbyState {
                 o.sent = Some(now);
                 msgs.push(o.msg.clone());
             }
+        }
+        if !msgs.is_empty() {
+            debug!("link P{slot} down seq {first_seq}+{} (queued {})", msgs.len(), peer.out.len());
         }
         Some(LinkDown {
             ack: peer.in_next,
