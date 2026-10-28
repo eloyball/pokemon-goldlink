@@ -10,6 +10,9 @@
 0012 load_mega_button 0802FBFC 1
 0012 Sub_PokeIconResourceLoad 080308D4 1
 0012 Sub_PokeIconResourceFree 08030954 1
+# co-op: the player's Mega request in link battles (docs/GAME_REBALANCE_UPDATE.md §21)
+0012 Coop_EmitSelectedMove 02262FE0 3
+0012 Coop_EmitSelectedTarget 0226311C 3
 0012 ServerBeforeAct 08011A4C 2
 0012 ServerWazaBefore 08014ACC 2
 #0012 set_proper_mega_status 0802E868 4

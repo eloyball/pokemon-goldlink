@@ -782,12 +782,11 @@ BOOL CheckCanDrawMegaButton(struct BI_PARAM *bip)
     }
 #endif
 
-    // co-op (rebalance plan §9.3): the choice would stay on this game, and only
-    // the host runs a link battle; no player Mega Evolves in a link battle.
-    if (BattleTypeGet(bip->bw) & BATTLE_TYPE_LINK)
-    {
-        return FALSE;
-    }
+    // co-op (rebalance plan §21): a new fight screen starts without this
+    // battler's request; a lit Mega button sets it again when the screen
+    // closes (Sub_PokeIconResourceFree). A request left from an earlier turn
+    // must not tag this turn's move (Coop_EmitSelectedMove).
+    newBS.playerWantMega &= ~No2Bit(bip->client_no);
 
     if (bip->client_no && newBS.playerWantMega) // if client number is not zero but the player has already queued up mega
     {
@@ -849,4 +848,35 @@ BOOL IsMegaSpeciesByMove(u32 species, u32 form)
 #endif // MEGA_EVOLUTIONS
 
     return FALSE;
+}
+
+// ---------------------------------------------------------------------------
+// co-op: the player's Mega request in link battles (docs/GAME_REBALANCE_UPDATE.md
+// §21). Only the host runs a link battle, and the request is made on each
+// player's own game (the Mega button). These replace vanilla's
+// BattleController_EmitSelectedMove / _EmitSelectedTarget (0x02262FE0 /
+// 0x0226311C, hooks), which send the choice as an int of which the host reads
+// byte 0 only: in a link battle, byte 1 carries COOP_MEGA_REQUEST_TAG while
+// this battler's Mega button is lit or its request is queued. The host reads
+// it from the battler's last reply (ServerBeforeAct.c); the next menu clears
+// that buffer. Both send through vanilla's identical EmitSelectedCommand.
+// ---------------------------------------------------------------------------
+
+void LONG_CALL BattleController_EmitSelectedCommand(void *bsys, int battler, int command);
+
+static int Coop_TagMegaRequest(void *bsys, int battler, int command)
+{
+    if ((BattleTypeGet(bsys) & BATTLE_TYPE_LINK) && (newBS.MegaIconLight || (newBS.playerWantMega & No2Bit(battler))))
+        command |= COOP_MEGA_REQUEST_TAG << 8;
+    return command;
+}
+
+void LONG_CALL Coop_EmitSelectedMove(void *bsys, int battler, int command)
+{
+    BattleController_EmitSelectedCommand(bsys, battler, Coop_TagMegaRequest(bsys, battler, command));
+}
+
+void LONG_CALL Coop_EmitSelectedTarget(void *bsys, int battler, int command)
+{
+    BattleController_EmitSelectedCommand(bsys, battler, Coop_TagMegaRequest(bsys, battler, command));
 }

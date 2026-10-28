@@ -743,6 +743,7 @@ BattleControllerPlayer_ItemInput = 0x0224AAF0 | 1;
 BattleControllerPlayer_PokemonInput = 0x0224AC50 | 1;
 BattleControllerPlayer_RunInput = 0x0224AC94 | 1;
 BattleController_EmitHealthbarUpdate = 0x02263488 | 1;
+BattleController_EmitSelectedCommand = 0x02262F24 | 1; /* pret battle_controller.c, ov12_02262F24 before 3dbc3fe9c */
 BattleController_EmitMonFlicker = 0x0226346C | 1;
 BattleMon_GetMoveIndex = 0x02251C60 | 1;
 CheckTruant = 0x02252C40 | 1;
