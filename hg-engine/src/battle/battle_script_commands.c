@@ -1322,6 +1322,25 @@ u8 ALIGN4 scratchpad[4] = { 0, 0, 0, 0 };
 #define monCountFromItem     scratchpad[1]
 #define trackPartyExperience scratchpad[2]
 
+#ifdef GLOBAL_EXP_SHARE
+// the Pokémon (party slot bits) that really battled the fainted one; set on the first step of each distribution
+u32 ALIGN4 expShareParticipants = 0;
+
+/**
+ *  @brief the experience a Pokémon gets under the always-on Exp. Share
+ *
+ *  @param totalexp experience for a Pokémon that battled
+ *  @param slot party slot of the Pokémon getting it
+ *  @return full experience for a participant, GLOBAL_EXP_SHARE_PERCENT of it for the rest (at least 1)
+ */
+static u32 GlobalExpShareAmount(u32 totalexp, int slot)
+{
+    u32 exp = (expShareParticipants & No2Bit(slot)) ? totalexp : totalexp * GLOBAL_EXP_SHARE_PERCENT / 100;
+
+    return exp ? exp : 1;
+}
+#endif
+
 /**
  *  @brief task to distribute experience
  *
@@ -1340,6 +1359,20 @@ void Task_DistributeExp_Extend(void *arg0, void *work)
     struct BattleStruct *sp = expcalc->sp;
 
     client_no = (sp->fainting_client >> 1) & 1;
+
+#ifdef GLOBAL_EXP_SHARE
+    // first step of the distribution: remember who battled, then mark every healthy party member as getting
+    // experience, so that vanilla visits them all (it clears each one's bit once that Pokémon is done)
+    if (expcalc->seq_no == 0 && expcalc->work[6] == 0) {
+        expShareParticipants = sp->obtained_exp_right_flag[client_no];
+        for (int i = 0; i < BattleWorkPokeCountGet(expcalc->bw, exp_client_no); i++) {
+            struct PartyPokemon *pploop = BattleWorkPokemonParamGet(expcalc->bw, exp_client_no, i);
+            if (GetMonData(pploop, MON_DATA_SPECIES, NULL) && GetMonData(pploop, MON_DATA_HP, NULL) && !GetMonData(pploop, MON_DATA_IS_EGG, NULL)) {
+                sp->obtained_exp_right_flag[client_no] |= No2Bit(i);
+            }
+        }
+    }
+#endif
 
     if (expcalc->seq_no < 37) {
         // grab the pokémon that is actually gaining the experience
@@ -1415,6 +1448,10 @@ void Task_DistributeExp_Extend(void *arg0, void *work)
 
             // debug_printf("[Task_DistributeExp_Extend] L = %d, Lp = %d, b = %d, top = %d, bottom = %d, exp = %d\n", level, Lp, base, top, bottom, totalexp);
 
+#ifdef GLOBAL_EXP_SHARE
+            sp->obtained_exp = GlobalExpShareAmount(totalexp, sel_mons_no);
+            sp->exp_share_obtained_exp = 0;
+#else
             if (monCountFromItem) {
                 sp->obtained_exp = (totalexp / 2) / monCount;
                 if (sp->obtained_exp == 0) {
@@ -1431,6 +1468,7 @@ void Task_DistributeExp_Extend(void *arg0, void *work)
                 }
                 sp->exp_share_obtained_exp = 0;
             }
+#endif
         }
     }
 
@@ -1473,6 +1511,10 @@ void Task_DistributeExp_Extend(void *arg0, void *work)
         // multiply by 255/390 (map audino to 255) to not get massively inflated experience rates
         totalexp = 255 * GetSpeciesBaseExp(sp->battlemon[sp->fainting_client].species, sp->battlemon[sp->fainting_client].form_no) / 390; // PokePersonalParaGet(sp->battlemon[sp->fainting_client].species, PERSONAL_EXP_YIELD);
         totalexp = (totalexp * sp->battlemon[sp->fainting_client].level) / 7;
+#ifdef GLOBAL_EXP_SHARE
+        sp->obtained_exp = GlobalExpShareAmount(totalexp, sel_mons_no);
+        sp->exp_share_obtained_exp = 0;
+#else
         if (monCountFromItem) {
             sp->obtained_exp = (totalexp / 2) / monCount;
             if (sp->obtained_exp == 0) {
@@ -1489,6 +1531,7 @@ void Task_DistributeExp_Extend(void *arg0, void *work)
             }
             sp->exp_share_obtained_exp = 0;
         }
+#endif
     }
 
 #ifdef DEBUG_PRINT_EXPERIENCE_VALUES

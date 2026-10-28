@@ -411,6 +411,7 @@ void MakeTrainerPokemonParty(struct BATTLE_PARAM *bp, int num, int heapID)
 #if COOP_DEBUG_TOOLS
     Coop_DebugTeamBattle(bp, num); // co-op Milestone 3 probe E (docs/DEBUG_TOOLS.md)
 #endif
+    Coop_ScaleBossParty(bp, num);  // badge-scaled bosses (src/field/coop_battle.c, rebalance plan §3.3)
     Coop_BossSplitParty(bp, num);  // co-op team bosses: the team across both enemy seats (src/field/coop_battle.c)
 
     // Change battle forms for player party

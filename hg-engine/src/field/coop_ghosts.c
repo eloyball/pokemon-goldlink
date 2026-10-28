@@ -18,6 +18,11 @@
 #include "coop_boss.h"
 #include "coop_session.h"
 #include "coop_battle.h"
+#include "coop_hm.h"
+#include "coop_marts.h"
+#include "coop_wild.h"
+#include "bag.h"
+#include "script.h"
 
 // ---------------------------------------------------------------------------
 // Overlay 131 (OVERLAY_FIELD_EXTENSION): co-op field code.
@@ -122,6 +127,7 @@ __attribute__((section(".coop_field_entry"), used))
 const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .magic = COOP_FIELD_ENTRY_MAGIC,
     .entry = Coop_FieldEntry,
+    .wildLevel = Coop_WildLevelAdjust,
 };
 
 // ---------------------------------------------------------------------------
@@ -498,20 +504,36 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     struct PlayerProfile *profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
     struct PartyPokemon mon;
     u32 species, item = ITEM_NONE, otid, pidLow, pid, gender, level = 10, move = MOVE_NONE, pp = 0, i;
-    BOOL lead = preset == 3 || preset == 4;
+    BOOL alone = preset == 5 || preset == 6 || preset == 9; // the lead alone in the party
+    BOOL lead = (preset >= 3 && preset <= 7) || preset == 9;
 
     if (preset == 1)
         species = SPECIES_HAUNTER;
+    else if (preset == 8)
+        species = SPECIES_RATTATA; // stress probe: fills the party, fainted (below)
+    else if (preset == 9)
+    {
+        // Milestone 4 Phase 0 (Mega probes): the probe's species, held item
+        // and level, with its level-up moves.
+        species = gCoopDebugMonBuffer.species & 0x7FF;
+        item = gCoopDebugMonBuffer.held_item;
+        level = gCoopDebugMonBuffer.level;
+        if (species == SPECIES_NONE || level == 0 || level > 100)
+            return COOP_DEBUG_RESULT_BAD_ARG;
+    }
     else if (lead)
     {
         // Team boss probe (scripts/bizhawk/link_e2e_probe.lua): the lead,
         // in place of the first Pokemon, with one move that never asks for a
         // target (the probe only presses A; one Pokemon: no switch screen).
         // 3 wins against Falkner (Rock Slide hits both foes), 4 loses.
-        species = preset == 3 ? SPECIES_GOLEM : SPECIES_MAGIKARP;
-        level = preset == 3 ? 40 : 5;
-        move = preset == 3 ? MOVE_ROCK_SLIDE : MOVE_SPLASH;
-        pp = preset == 3 ? 10 : 40;
+        // 7 (§20 rewards): a level 24 Geodude one EXP point short of 25,
+        // which wins too, then levels up and evolves into Graveler.
+        BOOL golem = preset == 3 || preset == 5;
+        species = golem ? SPECIES_GOLEM : preset == 7 ? SPECIES_GEODUDE : SPECIES_MAGIKARP;
+        level = golem ? 40 : preset == 7 ? 24 : 5;
+        move = (golem || preset == 7) ? MOVE_ROCK_SLIDE : MOVE_SPLASH;
+        pp = (golem || preset == 7) ? 10 : 40;
     }
     else if (preset == 2)
     {
@@ -520,7 +542,7 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     }
     else
         return COOP_DEBUG_RESULT_BAD_ARG;
-    if (party == NULL || profile == NULL || (!lead && party->count >= 6) || (lead && party->count < 1))
+    if (party == NULL || profile == NULL || (!lead && party->count >= 6) || (lead && !alone && party->count < 1))
         return COOP_DEBUG_RESULT_FAILED;
     otid = profile->id;
     pidLow = 0x2E50 + preset;
@@ -532,7 +554,7 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     SetMonData(&mon, MON_DATA_MET_GENDER, &gender);
     if (item != ITEM_NONE)
         SetMonData(&mon, MON_DATA_HELD_ITEM, &item);
-    if (lead)
+    if (lead && preset != 9)
     {
         for (i = 0; i < 4; i++)
         {
@@ -541,14 +563,154 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
             SetMonData(&mon, MON_DATA_MOVE1PP + i, &p);
         }
     }
+    if (preset == 7)
+    {
+        u32 exp = PokeLevelExpGet(SPECIES_GEODUDE, 25) - 1;
+        SetMonData(&mon, MON_DATA_EXPERIENCE, &exp);
+    }
+    if (preset == 8)
+    {
+        // Fainted: a full party, but never a switch screen for the probe's A presses.
+        u32 hp = 0;
+        SetMonData(&mon, MON_DATA_HP, &hp);
+    }
     if (!SHINY_CHECK(otid, GetMonData(&mon, MON_DATA_PERSONALITY, NULL)))
         return COOP_DEBUG_RESULT_FAILED;
+    if (alone)
+        party->count = 1; // the other slots are only read below count
     if (lead)
         __builtin_memcpy(Party_GetMonByIndex(party, 0), &mon, COOP_PARTY_MON_SIZE);
     else if (!PokeParty_Add(party, &mon))
         return COOP_DEBUG_RESULT_FAILED;
     Coop_DebugDescribeMon(Party_GetMonByIndex(party, lead ? 0 : party->count - 1), party);
     return Field_SaveGameNormal(fsys) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+}
+
+// HM probe (docs/MILESTONE3_PLAN.md §21): the eight HMs (bit 0) and all
+// sixteen badges (bit 1), straight into the bag and the trainer card.
+static u8 Coop_DebugGiveHms(FieldSystem *fsys, u8 what)
+{
+    struct PlayerProfile *profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
+    u32 i;
+
+    if (what & 1)
+        for (i = 0; i < COOP_HM_COUNT; i++)
+            Bag_AddItem(Sav2_Bag_get(fsys->savedata), (u16)(ITEM_HM01 + i), 1, 11 /* HEAP_ID_FIELD2 */);
+    if (what & 2)
+    {
+        profile->johtoBadges = 0xFF;
+        profile->kantoBadges = 0xFF;
+    }
+    if (what & 4)
+        profile->kantoBadges = 0xFF; // Milestone 4 Phase 3 probe: Kanto's eight only
+    if (what & 8)
+        SetScriptFlag(2404); // Milestone 4 Phase 5 probe: FLAG_GAME_CLEAR (the Key Stone gift follows)
+
+    return COOP_DEBUG_RESULT_OK;
+}
+
+// HM probe: both of the overworld's questions for one HM move, through
+// vanilla's addresses (so through the hooks): GetIdxOfFirstPartyMonWithMove,
+// and script command 141 run on a two-parameter script (a var, the move).
+// The var is a map temp var (a save var; the special 0x8000 ones live in a
+// running script's environment, and there is none here), restored after.
+#define COOP_VANILLA_GET_IDX_WITH_MOVE  (0x020542E8 | 1)
+#define COOP_VANILLA_SCRCMD_SLOT_W_MOVE (0x0204D3CC | 1)
+#define COOP_VAR_PROBE                  0x401F // pret VAR_TEMP_x range (0x4000-0x401F)
+
+static u8 Coop_DebugAskHm(FieldSystem *fsys, u8 index)
+{
+    u32 (*getIdx)(struct Party *, u16) = (void *)COOP_VANILLA_GET_IDX_WITH_MOVE;
+    ScrCmdFunc slotWithMove = (ScrCmdFunc)COOP_VANILLA_SCRCMD_SLOT_W_MOVE;
+    SCRIPTCONTEXT ctx;
+    u8 script[4];
+    u32 move, idx, scr;
+    u16 saved;
+
+    if (index >= COOP_HM_COUNT)
+        return COOP_DEBUG_RESULT_BAD_ARG;
+    move = gCoopHmMenuMoves[index];
+    idx = getIdx(SaveData_GetPlayerPartyPtr(fsys->savedata), (u16)move);
+    __builtin_memset(&ctx, 0, sizeof(ctx));
+    saved = VarGet(fsys, COOP_VAR_PROBE);
+    script[0] = (u8)COOP_VAR_PROBE;
+    script[1] = (u8)(COOP_VAR_PROBE >> 8);
+    script[2] = (u8)move;
+    script[3] = (u8)(move >> 8);
+    ctx.script_ptr = script;
+    ctx.fsys = fsys;
+    slotWithMove(&ctx);
+    scr = VarGet(fsys, COOP_VAR_PROBE);
+    VarSet(fsys, COOP_VAR_PROBE, saved);
+    return (u8)(0x80 | ((scr > 7 ? 7 : scr) << 3) | (idx > 6 ? 7 : idx));
+}
+
+// EXP Share probe (docs/MILESTONE3_PLAN.md §20): a wild battle against a
+// Rattata of the given level, as a script's WildBattle starts one.
+struct CoopDebugWildEnv
+{
+    u32 winFlag;
+    u16 species; // species | form << 11 (hg-engine's wild hook splits it)
+    u8 level;
+};
+
+static BOOL Coop_Task_DebugWildBattle(TaskManager *taskman)
+{
+    struct CoopDebugWildEnv *env = taskman->env;
+
+    if (taskman->state++ == 0)
+    {
+        SetupAndStartWildBattle(taskman, env->species, env->level, &env->winFlag, TRUE, FALSE);
+        return FALSE;
+    }
+    sys_FreeMemoryEz(env);
+    return TRUE;
+}
+
+static u8 Coop_DebugWildBattle(FieldSystem *fsys, u16 species, u8 level)
+{
+    struct CoopDebugWildEnv *env;
+
+    if (level == 0 || level > 100)
+        return COOP_DEBUG_RESULT_BAD_ARG;
+    if (fsys->taskman != NULL)
+        return COOP_DEBUG_RESULT_NOT_NOW;
+    env = sys_AllocMemory(32 /* HEAP_ID_FIELD3 */, sizeof(*env));
+    if (env == NULL)
+        return COOP_DEBUG_RESULT_FAILED;
+    env->winFlag = 0;
+    env->species = species;
+    env->level = level;
+    if (Coop_FieldSystem_CreateTask(fsys, Coop_Task_DebugWildBattle, env) == NULL)
+    {
+        sys_FreeMemoryEz(env);
+        return COOP_DEBUG_RESULT_FAILED;
+    }
+    return COOP_DEBUG_RESULT_OK;
+}
+
+// Milestone 4 Phase 1 (rebalance plan §8): hg-engine's own evolution check on
+// the lead with the probe's item (EVOCTX_ITEM_CHECK, as the bag does) or by a
+// level up (EVOCTX_LEVELUP); or one gated department store list rebuilt.
+static u8 Coop_DebugRebalance(FieldSystem *fsys, u8 what)
+{
+    static const u16 sMartMaps[] = { MAP_T25R1004, MAP_T25R1005, MAP_T07R0103, MAP_T07R0104 };
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    u16 item = gCoopDebugMonBuffer.held_item;
+    int method = 0;
+
+    if (what >= 1 && what <= 4)
+    {
+        static u16 *const sMartLists[] = { sGoldenrodDepartment4F, sGoldenrodDepartment5F, sCeladonDepartment3F, sCeladonDepartment4F };
+        Coop_RefreshGatedMart(fsys, sMartMaps[what - 1]);
+        __builtin_memcpy(gCoopDebugMonBuffer.mon, sMartLists[what - 1], sizeof(gCoopDebugMonBuffer.mon) & ~1u); // the first 118 entries
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what != 0 || party == NULL || party->count == 0)
+        return COOP_DEBUG_RESULT_BAD_ARG;
+    gCoopDebugMonBuffer.species = GetMonEvolution(party, Party_GetMonByIndex(party, 0),
+                                                  item != ITEM_NONE ? EVOCTX_ITEM_CHECK : EVOCTX_LEVELUP, item, &method);
+    return COOP_DEBUG_RESULT_OK;
 }
 
 // Milestone 3 probe E: once armed, the next trainer battle, right after its
@@ -563,8 +725,22 @@ void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num)
     struct Party *source;
     int i;
 
-    if (!gCoopDebugMonBuffer.team_battle_armed || num != 1)
+    if (!gCoopDebugMonBuffer.team_battle_armed || num != 1 || gCoopDebugMonBuffer.team_battle_armed == 3)
+        return; // 3: for Coop_ScaleBossParty (src/field/coop_battle.c)
+    if (gCoopDebugMonBuffer.team_battle_armed == 2)
+    {
+        // Milestone 4 Phase 0 (Mega probe): the trainer's first Pokemon becomes
+        // the probe's species, at its level, holding the probe's item. The AI
+        // Mega Evolves on its own when that item is the species' stone.
+        struct PartyPokemon *foe = Party_GetMonByIndex(bp->poke_party[1], 0);
+        u32 level = GetMonData(foe, MON_DATA_LEVEL, NULL), item = gCoopDebugMonBuffer.held_item;
+
+        gCoopDebugMonBuffer.team_battle_armed = 0;
+        PokeParaSet(foe, gCoopDebugMonBuffer.species & 0x7FF, (int)level, 32, FALSE, 0, 0, 0);
+        SetMonData(foe, MON_DATA_HELD_ITEM, &item);
+        gCoopDebugMonBuffer.team_battle_used = 2;
         return;
+    }
     gCoopDebugMonBuffer.team_battle_armed = 0;
     bp->fight_type = BATTLE_TYPE_TRAINER | BATTLE_TYPE_DOUBLES | BATTLE_TYPE_MULTI | BATTLE_TYPE_AI;
 
@@ -645,6 +821,22 @@ static u8 Coop_DebugLink(FieldSystem *fsys, u32 op)
         if (fsys->taskman != NULL || CommState_Exists())
             return COOP_DEBUG_RESULT_NOT_NOW;
         return Coop_DebugStartBattle(fsys, op == COOP_DEBUG_LINK_BATTLE_PARENT) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+    case COOP_DEBUG_LINK_REQUEST_BATTLE + 0:
+    case COOP_DEBUG_LINK_REQUEST_BATTLE + 1:
+    case COOP_DEBUG_LINK_REQUEST_BATTLE + 2:
+    case COOP_DEBUG_LINK_REQUEST_BATTLE + 3:
+    case COOP_DEBUG_LINK_REQUEST_BATTLE + 4:
+        if (fsys->taskman != NULL || CommState_Exists())
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        return Coop_DebugRequestSession(fsys, op - COOP_DEBUG_LINK_REQUEST_BATTLE, COOP_SESSION_KIND_BATTLE) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+    case COOP_DEBUG_LINK_REQUEST_TRADE + 0:
+    case COOP_DEBUG_LINK_REQUEST_TRADE + 1:
+    case COOP_DEBUG_LINK_REQUEST_TRADE + 2:
+    case COOP_DEBUG_LINK_REQUEST_TRADE + 3:
+    case COOP_DEBUG_LINK_REQUEST_TRADE + 4:
+        if (fsys->taskman != NULL || CommState_Exists())
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        return Coop_DebugRequestSession(fsys, op - COOP_DEBUG_LINK_REQUEST_TRADE, COOP_SESSION_KIND_TRADE) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
     case COOP_DEBUG_LINK_CONNECT:
     case COOP_DEBUG_LINK_SYNC:
     case COOP_DEBUG_LINK_SHUTDOWN:
@@ -704,7 +896,7 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
             }
             break;
         case COOP_DEBUG_ARM_TEAM_BATTLE:
-            gCoopDebugMonBuffer.team_battle_armed = 1;
+            gCoopDebugMonBuffer.team_battle_armed = mb->debug_arg == 2 || mb->debug_arg == 3 ? mb->debug_arg : 1;
             gCoopDebugMonBuffer.team_battle_used = 0;
             result = COOP_DEBUG_RESULT_OK;
             break;
@@ -718,6 +910,25 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
             if (!Coop_CanRunFieldDebugCommand(fsys, player))
                 return;
             result = Coop_DebugGiveTestMon(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_GIVE_HMS:
+            result = Coop_DebugGiveHms(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_ASK_HM:
+            result = Coop_DebugAskHm(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_WILD_BATTLE:
+            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+                return;
+            result = Coop_DebugWildBattle(fsys, SPECIES_RATTATA, mb->debug_arg);
+            break;
+        case COOP_DEBUG_REBALANCE:
+            result = Coop_DebugRebalance(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_WILD_SPECIES:
+            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+                return;
+            result = Coop_DebugWildBattle(fsys, gCoopDebugMonBuffer.species, mb->debug_arg);
             break;
         case COOP_DEBUG_WARP:
         case COOP_DEBUG_TOGGLE_BIKE:
@@ -857,6 +1068,8 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
     // Others see "busy" instead of the session menu when they talk to us.
     ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) ? 1 : 0;
     ps->boss_wait = gCoopCommBlock.track_boss_wait; // a team boss we wait at (src/field/coop_battle.c)
+    ps->badge_mask[0] = (u8)gCoopCommBlock.badge_mask_local; // for a team's badge-scaled bosses
+    ps->badge_mask[1] = (u8)(gCoopCommBlock.badge_mask_local >> 8);
 
     profile = Sav2_PlayerData_GetProfileAddr(fsys->savedata);
     if (profile != NULL)
@@ -1871,6 +2084,8 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_UpdateTrade(fsys);
     Coop_UpdateSessionPrompt(fsys);
     Coop_UpdateBossWatch(fsys);
+    gCoopHmMask = (u8)Coop_HmUnlockedMask(fsys->savedata); // for the party menu (§21)
+    Coop_RefreshGatedMarts(fsys); // badge-gated department store counters (rebalance plan §8.2)
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry

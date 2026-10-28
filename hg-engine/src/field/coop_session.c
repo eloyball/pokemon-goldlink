@@ -28,6 +28,10 @@
 // stored by the relay in the campaign file. Leaving needs no answer: the
 // relay drops the team at once and the ex-teammate reads a notice.
 //
+// A battle between two teamed players is a team battle (2v2, §19): the relay
+// asks the target, the target's teammate and the requester's teammate, and
+// only reports ACCEPTED (to all four) once all three said yes.
+//
 // Like the rest of Overlay 131, nothing lives in statics (no BSS init): the
 // task env holds the flow, and gCoopCommBlock the latched seqs.
 // ---------------------------------------------------------------------------
@@ -69,6 +73,7 @@ struct CoopSessionTaskEnv
     struct CoopDialog dialog;
     struct CoopChoice choice;
     u16 name[9];       // the other player's name (HG-encoded), always 0xFFFF-terminated
+    u16 name2[9];      // team battle, the requester's teammate: the opponent's name
     u32 peerTrainer;   // their trainer ID
     u16 frames;        // frames spent in the current wait
     u8 peerSlot;       // their remote slot
@@ -112,6 +117,25 @@ static BOOL Coop_SessionEnd(FieldSystem *fsys, struct CoopSessionTaskEnv *env)
     return TRUE;
 }
 
+// Copies a remote player's name (0xFFFF-terminated); FALSE when nobody is there.
+static BOOL Coop_SessionLoadName(u16 *dst, u32 slot)
+{
+    struct CoopPlayerState remote;
+    u32 i;
+
+    if (!Coop_ReadRemotePlayer(slot, &remote))
+        return FALSE;
+    for (i = 0; i < 8; i++)
+        dst[i] = remote.name[i];
+    dst[8] = 0xFFFF;
+    return TRUE;
+}
+
+static BOOL Coop_IsTeamBattle(const struct CoopSessionTaskEnv *env)
+{
+    return env->kind == COOP_SESSION_KIND_TEAM_BATTLE || gCoopCommBlock.gates.session_kind == COOP_SESSION_KIND_TEAM_BATTLE;
+}
+
 static void Coop_SessionFinal(TaskManager *taskman, struct CoopSessionTaskEnv *env, const char *msg)
 {
     Coop_ChoiceClose(&env->choice);
@@ -129,8 +153,30 @@ static const char *Coop_AcceptedText(u32 kind)
 }
 
 // What either side reads once the request is over (state != OUTGOING/INCOMING).
-static const char *Coop_ResultText(const struct CoopSessionTaskEnv *env, u32 state, u32 reason)
+static const char *Coop_TeamBattleResultText(struct CoopSessionTaskEnv *env, u32 state)
 {
+    switch (state)
+    {
+    case COOP_SESSION_DECLINED:
+        // The requester learns who said no; the others only that someone did.
+        if (!env->incoming && Coop_SessionLoadName(env->name, gCoopCommBlock.gates.session_peer_slot))
+            return "@ said no.\nThe team battle is off.";
+        return "Someone said no.\nThe team battle is off.";
+    case COOP_SESSION_TIMEOUT:
+        return "Not everyone answered.\nThe team battle is off.";
+    case COOP_SESSION_CANCELLED:
+        if (env->incoming)
+            return "The team battle\nwas called off.";
+        return env->cancelSent ? "You cancelled the request." : "Someone left.\nThe team battle is off.";
+    default:
+        return "That isn't possible\nright now.";
+    }
+}
+
+static const char *Coop_ResultText(struct CoopSessionTaskEnv *env, u32 state, u32 reason)
+{
+    if (state != COOP_SESSION_REFUSED && state != COOP_SESSION_ACCEPTED && Coop_IsTeamBattle(env))
+        return Coop_TeamBattleResultText(env, state);
     switch (state)
     {
     case COOP_SESSION_ACCEPTED:
@@ -150,6 +196,7 @@ static const char *Coop_ResultText(const struct CoopSessionTaskEnv *env, u32 sta
         case COOP_SESSION_REASON_BUSY:           return "@ is busy right now.\nTry again in a moment.";
         case COOP_SESSION_REASON_TEAM_RULE:      return "Teams can only battle\nother teams for now.";
         case COOP_SESSION_REASON_ALREADY_TEAMED: return "One of you is already\non a team.";
+        case COOP_SESSION_REASON_TEAMMATE_AWAY:  return "A team battle needs\nboth teams here.";
         case COOP_SESSION_REASON_INVALID:
             if (env->kind == COOP_SESSION_KIND_LEAVE_TEAM)
                 return "You aren't on a team\nanymore.";
@@ -162,7 +209,7 @@ static const char *Coop_ResultText(const struct CoopSessionTaskEnv *env, u32 sta
 }
 
 // The request is over once the relay reports a final state for it.
-static BOOL Coop_SessionIsOver(const struct CoopSessionTaskEnv *env, u32 *state, u32 *reason)
+static BOOL Coop_SessionIsOver(struct CoopSessionTaskEnv *env, u32 *state, u32 *reason)
 {
     const volatile struct CoopProgressionGates *gates = &gCoopCommBlock.gates;
 
@@ -269,6 +316,21 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
             Coop_DialogPrint(&env->dialog, "@ wants to team up!\nYou'd battle as a team.");
             taskman->state = COOP_SESSION_PROMPT_PAGE;
         }
+        else if (env->kind == COOP_SESSION_KIND_TEAM_BATTLE)
+        {
+            // My teammate asks for both of us; the other team is asked by them.
+            if (gCoopCommBlock.gates.team_partner_slot == env->peerSlot
+                && Coop_SessionLoadName(env->name2, gCoopCommBlock.gates.session_reason))
+            {
+                env->dialog.args[1] = env->name2;
+                Coop_DialogPrint(&env->dialog, "@ wants our team to\nbattle $'s team!");
+            }
+            else
+            {
+                Coop_DialogPrint(&env->dialog, "@'s team wants to\nbattle your team!");
+            }
+            taskman->state = COOP_SESSION_PROMPT_PAGE;
+        }
         else
         {
             Coop_DialogPrint(&env->dialog, env->kind == COOP_SESSION_KIND_BATTLE ? "@ wants to battle!\nWill you accept?"
@@ -339,13 +401,14 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         if (Coop_SessionIsOver(env, &state, &reason))
         {
             // An accepted battle continues in this task slot (coop_battle.c).
-            if (state == COOP_SESSION_ACCEPTED && env->kind == COOP_SESSION_KIND_BATTLE)
+            if (state == COOP_SESSION_ACCEPTED
+                && (env->kind == COOP_SESSION_KIND_BATTLE || env->kind == COOP_SESSION_KIND_TEAM_BATTLE))
             {
                 if (Coop_DialogIsPrinting(&env->dialog))
                     break;
                 Coop_ChoiceClose(&env->choice);
                 Coop_DialogClose(fsys, &env->dialog);
-                if (Coop_BattleTakeOver(taskman, env->name, env->peerSlot, !env->incoming))
+                if (Coop_BattleTakeOver(taskman, env->name, env->peerSlot, !env->incoming, Coop_IsTeamBattle(env)))
                 {
                     sys_FreeMemoryEz(env);
                     break;
@@ -376,8 +439,9 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         }
         if (env->incoming || env->kind == COOP_SESSION_KIND_LEAVE_TEAM)
         {
-            // My Yes (or my leaving) is with the relay; it answers within a few frames.
-            if (env->frames >= COOP_RESULT_FAILSAFE)
+            // My Yes (or my leaving) is with the relay; it answers within a
+            // few frames, or for a team battle once the others answered.
+            if (env->frames >= (env->kind == COOP_SESSION_KIND_TEAM_BATTLE ? COOP_ANSWER_FAILSAFE : COOP_RESULT_FAILSAFE))
                 Coop_SessionFinal(taskman, env, "No answer from the link.\nPlease try again.");
             break;
         }
@@ -404,7 +468,8 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
             break;
         if (!Coop_DialogIsPrinting(&env->dialog) && (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)))
         {
-            Coop_DialogPrint(&env->dialog, "Team up with @?");
+            Coop_DialogPrint(&env->dialog, env->kind == COOP_SESSION_KIND_TEAM_BATTLE ? "Battle two on two?\nEach brings three Pokemon."
+                                                                                      : "Team up with @?");
             taskman->state = COOP_SESSION_PROMPT_TEXT;
         }
         break;
@@ -430,6 +495,8 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
                          COOP_SESSION_KIND_NONE, 0);
         if (value == COOP_CHOICE_NO)
             return Coop_SessionEnd(fsys, env);
+        if (env->kind == COOP_SESSION_KIND_TEAM_BATTLE)
+            Coop_DialogPrint(&env->dialog, "Waiting for the others...");
         env->frames = 0;
         taskman->state = COOP_SESSION_WAIT_ANSWER;
         break;
@@ -474,6 +541,25 @@ BOOL Coop_StartSessionMenu(FieldSystem *fsys, u32 remoteSlot, const struct CoopP
     return Coop_StartSessionTask(fsys, remoteSlot, remote, FALSE, COOP_SESSION_KIND_NONE);
 }
 
+#if COOP_DEBUG_TOOLS
+BOOL Coop_DebugRequestSession(FieldSystem *fsys, u32 remoteSlot, u32 kind)
+{
+    struct CoopPlayerState remote;
+    struct CoopSessionTaskEnv *env;
+    TaskManager *taskman;
+
+    if (!Coop_ReadRemotePlayer(remoteSlot, &remote) || !Coop_StartSessionTask(fsys, remoteSlot, &remote, FALSE, COOP_SESSION_KIND_NONE))
+        return FALSE;
+    taskman = fsys->taskman;
+    env = taskman->env;
+    MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
+    Coop_DialogOpen(fsys, &env->dialog);
+    env->dialog.args[0] = env->name;
+    Coop_SessionRequest(taskman, env, kind);
+    return TRUE;
+}
+#endif
+
 void Coop_UpdateSessionPrompt(FieldSystem *fsys)
 {
     const volatile struct CoopProgressionGates *gates = &gCoopCommBlock.gates;
@@ -497,7 +583,8 @@ void Coop_UpdateSessionPrompt(FieldSystem *fsys)
         || MapObject_IsSingleMovementActive(fsys->playerAvatar->mapObject))
         return; // asked again next frame; the relay expires the request after 20 s
     if (gates->session_state == COOP_SESSION_NOTICE ? kind != COOP_SESSION_KIND_LEAVE_TEAM
-                                                    : (kind < COOP_SESSION_KIND_TRADE || kind > COOP_SESSION_KIND_TEAM_UP))
+                                                    : (kind < COOP_SESSION_KIND_TRADE || kind > COOP_SESSION_KIND_TEAM_BATTLE
+                                                       || kind == COOP_SESSION_KIND_LEAVE_TEAM))
         kind = COOP_SESSION_KIND_NONE;
     if (kind == COOP_SESSION_KIND_NONE || !Coop_ReadRemotePlayer(slot, &remote))
     {

@@ -24,4 +24,10 @@ void Coop_UpdateSessionPrompt(struct FieldSystem *fsys);
 // player is free, and reloads the map in place after the lead was traded.
 void Coop_UpdateTrade(struct FieldSystem *fsys);
 
+#if COOP_DEBUG_TOOLS
+// Probes: a request of `kind` (Battle, Trade) to remoteSlot as if picked
+// from the ghost menu (the session task, waiting for the answer).
+BOOL Coop_DebugRequestSession(struct FieldSystem *fsys, u32 remoteSlot, u32 kind);
+#endif
+
 #endif // COOP_SESSION_H

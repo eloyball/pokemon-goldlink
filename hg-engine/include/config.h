@@ -33,6 +33,12 @@
 // i.e. defining this as "5", "7", or "8" would use a scaled formula, whereas "6" and others would use the default formula.  There is a multiplier of 255 / 390 to not artificially inflate the experience given as well with higher base experience.
 #define EXPERIENCE_FORMULA_GEN GEN_LATEST
 
+// GLOBAL_EXP_SHARE (co-op, docs/MILESTONE3_PLAN.md §20) makes the Exp. Share always on, as in Gen VI and later: every Pokémon
+// that battled the fainted Pokémon gets its full experience (no longer split between them), and every other healthy party
+// member gets GLOBAL_EXP_SHARE_PERCENT of it.  The Exp. Share item adds nothing on top.  Comment it out for vanilla behavior.
+#define GLOBAL_EXP_SHARE
+#define GLOBAL_EXP_SHARE_PERCENT 50
+
 // HIDDEN_ABILITIES defines whether or not Pokémon with their hidden ability bit set will receive their hidden abilities when being generated/changing form in battle.
 // commenting this line out essentially disables hidden abilities to maintain default behavior, while leaving this as-is will introduce hidden abilities and all of their handling.
 // just need to set the HIDDEN_ABILITIES_FLAG from the save and then every mon should be generated with its hidden ability until the flag is cleared from another script

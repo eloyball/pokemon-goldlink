@@ -841,6 +841,10 @@ static u32 Coop_LinkReadWord(const u8 *p)
     return v;
 }
 
+// Children the parent links with in the running battle (src/field/coop_battle.c
+// sets it): 1, or 3 in a team battle. In .data (Overlay 129 is never zeroed).
+u8 gCoopLinkBattleChildren = 1;
+
 static BOOL Coop_LinkBattleIsLost(void)
 {
     struct CoopWirelessWork *work = Coop_LinkWork();
@@ -850,7 +854,7 @@ static BOOL Coop_LinkBattleIsLost(void)
         return TRUE;
     if (blk->role == COOP_LINK_ROLE_CHILD)
         return !blk->linked;
-    return (work->connectedBitmap & 0xFFFE) == 0;
+    return Coop_LinkCountBits(work->connectedBitmap & 0xFFFE) < gCoopLinkBattleChildren;
 }
 
 void Coop_LinkBattleWatchdog(FieldSystem *fsys)

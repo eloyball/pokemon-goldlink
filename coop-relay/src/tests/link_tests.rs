@@ -10,7 +10,7 @@ use crate::protocol::{
     LINK_ROLE_PARENT, LinkBeacon, LinkDown, LinkMsg, LinkUp, SERVER_PACKET_SIZE, SessionOut,
     TRADE_MON_SIZE, TRADE_OUT_SIZE, TradeOut,
 };
-use crate::session_tests::{addr, packet, room_in};
+use crate::session_tests::{addr, packet, room_in, teamed_room};
 
 fn msg(kind: u8, aid: u8, data: &[u8]) -> LinkMsg {
     LinkMsg {
@@ -345,4 +345,42 @@ fn test_link_bye_epoch_silence_and_disconnect() {
     let (mut lobby, _p, mut c, _) = linked_room();
     lobby.remove_client_by_addr(addr(0));
     assert_eq!(c.recv(&mut lobby, 1).1, vec![msg(LINK_MSG_BYE, 0, &[])]);
+}
+
+#[test]
+fn test_link_multi_battle_seats_teammates_together() {
+    // Players 0 and 1 are a team; 0 hosts a 4-player multi (link mode 4).
+    let mut lobby = teamed_room(4, None);
+    let mut clients: Vec<Client> = (0..4).map(|_| Client::default()).collect();
+    clients[0].send(&mut lobby, 0, LINK_ROLE_PARENT, Some(beacon()), vec![]);
+    // An opponent connects first, then the teammate, then the other opponent.
+    for (i, aid) in [(2, 1), (1, 2), (3, 3)] {
+        clients[i].send(
+            &mut lobby,
+            i,
+            LINK_ROLE_CHILD,
+            None,
+            vec![msg(LINK_MSG_CONNECT, 0, &[0, 4, b'D', b'P', 0])],
+        );
+        let (_, got) = clients[0].recv(&mut lobby, 0);
+        assert_eq!(
+            got,
+            vec![msg(LINK_MSG_CONNECT, aid, &[4, b'D', b'P', 0])],
+            "player {i}"
+        );
+    }
+
+    // Outside a multi, children get aids in order.
+    let mut lobby = teamed_room(3, None);
+    let mut clients: Vec<Client> = (0..3).map(|_| Client::default()).collect();
+    clients[0].send(&mut lobby, 0, LINK_ROLE_PARENT, Some(beacon()), vec![]);
+    clients[1].send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_CONNECT, 0, &[0, 1, b'D', b'P', 0])],
+    );
+    let (_, got) = clients[0].recv(&mut lobby, 0);
+    assert_eq!(got, vec![msg(LINK_MSG_CONNECT, 1, &[1, b'D', b'P', 0])]);
 }

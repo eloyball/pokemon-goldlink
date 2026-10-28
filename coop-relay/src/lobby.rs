@@ -11,15 +11,16 @@ use tracing::{error, info, warn};
 
 use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, LinkDown, MAX_PLAYERS, NO_SLOT,
-    PROTOCOL_VERSION, PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
+    ACTIVITY_BATTLE, AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, LinkDown, MAX_PLAYERS,
+    NO_SLOT, PROTOCOL_VERSION, PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
     ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
     ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND,
     ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK,
-    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP,
-    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE,
-    SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
-    SESSION_REASON_NONE, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED,
+    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM,
+    SESSION_KIND_TEAM_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
+    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
+    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
+    SESSION_REASON_TEAM_RULE, SESSION_REASON_TEAMMATE_AWAY, SESSION_STATE_ACCEPTED,
     SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE,
     SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket,
     SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
@@ -95,6 +96,35 @@ struct Session {
     from: usize,
     to: usize,
     created: Instant,
+    /// A team battle's other two players and who still has to accept.
+    team: Option<TeamBattle>,
+}
+
+#[derive(Debug, Clone)]
+struct TeamBattle {
+    from_mate: usize,
+    to_mate: usize,
+    pending: Vec<usize>,
+}
+
+impl Session {
+    /// Everyone in the session, the requester first.
+    fn members(&self) -> Vec<usize> {
+        let mut m = vec![self.from, self.to];
+        if let Some(t) = &self.team {
+            m.push(t.from_mate);
+            m.push(t.to_mate);
+        }
+        m
+    }
+
+    /// Players who answer: the target, and in a team battle both teammates.
+    fn answers(&self, slot: usize) -> bool {
+        match &self.team {
+            Some(t) => t.pending.contains(&slot),
+            None => self.to == slot,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -810,9 +840,35 @@ impl LobbyState {
             .is_some_and(|t| t != 0 && self.team_partner_of(t).is_some())
     }
 
-    /// In a pending request, an open trade, or a trade still to finish.
+    /// Busy for a new request: in a pending request, an open trade or a
+    /// trade still to finish, linked (a co-op battle), waiting at a team boss
+    /// for the teammate, or in a battle of their own.
     fn in_session(&self, slot: usize) -> bool {
-        self.sessions.iter().any(|s| s.from == slot || s.to == slot) || self.trade_busy(slot)
+        self.sessions.iter().any(|s| s.members().contains(&slot))
+            || self.trade_busy(slot)
+            || self.link_busy(slot)
+            || self.slots[slot]
+                .as_ref()
+                .is_some_and(|p| p.state.boss_wait != 0 || p.state.activity == ACTIVITY_BATTLE)
+    }
+
+    fn slot_of_trainer(&self, trainer: u32) -> Option<usize> {
+        (0..MAX_PLAYERS).find(|&j| trainer != 0 && self.trainer_at(j) == Some(trainer))
+    }
+
+    /// Tells every player of a session how it ended: the requester sees the
+    /// target (or `about`, e.g. who declined), everyone else the requester.
+    fn end_session(&mut self, s: &Session, state: u8, about: Option<usize>) {
+        self.set_view(
+            s.from,
+            state,
+            s.kind,
+            about.or(Some(s.to)),
+            SESSION_REASON_NONE,
+        );
+        for m in s.members().into_iter().skip(1) {
+            self.set_view(m, state, s.kind, Some(s.from), SESSION_REASON_NONE);
+        }
     }
 
     fn set_view(&mut self, slot: usize, state: u8, kind: u8, peer: Option<usize>, reason: u8) {
@@ -875,12 +931,59 @@ impl LobbyState {
                         return refuse(self, SESSION_REASON_TEAM_RULE);
                     }
                 }
+                // Two teams: a 2v2 that both teammates are asked about too.
+                let team = if kind == SESSION_KIND_BATTLE && self.is_teamed(slot) {
+                    let me = self.trainer_at(slot).unwrap_or(0);
+                    let them = self.trainer_at(target).unwrap_or(0);
+                    let (Some(from_mate), Some(to_mate)) = (
+                        self.team_partner_of(me)
+                            .and_then(|t| self.slot_of_trainer(t)),
+                        self.team_partner_of(them)
+                            .and_then(|t| self.slot_of_trainer(t)),
+                    ) else {
+                        return refuse(self, SESSION_REASON_TEAMMATE_AWAY);
+                    };
+                    if self.in_session(from_mate) || self.in_session(to_mate) {
+                        return refuse(self, SESSION_REASON_BUSY);
+                    }
+                    Some(TeamBattle {
+                        from_mate,
+                        to_mate,
+                        pending: vec![target, from_mate, to_mate],
+                    })
+                } else {
+                    None
+                };
+                let kind = if team.is_some() {
+                    SESSION_KIND_TEAM_BATTLE
+                } else {
+                    kind
+                };
                 info!("[Room {room_str} | SESSION] P{slot} asks P{target} (kind {kind})");
+                if let Some(t) = &team {
+                    // The requester's teammate is told whom they would battle.
+                    let opponent = remote_slot_of(t.from_mate, target);
+                    self.set_view(
+                        t.from_mate,
+                        SESSION_STATE_INCOMING,
+                        kind,
+                        Some(slot),
+                        opponent,
+                    );
+                    self.set_view(
+                        t.to_mate,
+                        SESSION_STATE_INCOMING,
+                        kind,
+                        Some(slot),
+                        SESSION_REASON_NONE,
+                    );
+                }
                 self.sessions.push(Session {
                     kind,
                     from: slot,
                     to: target,
                     created: now,
+                    team,
                 });
                 self.set_view(
                     slot,
@@ -898,11 +1001,35 @@ impl LobbyState {
                 );
             }
             SESSION_OP_ACCEPT | SESSION_OP_DECLINE => {
-                let Some(i) = self.sessions.iter().position(|s| s.to == slot) else {
+                let Some(i) = self.sessions.iter().position(|s| s.answers(slot)) else {
                     return;
                 };
-                let session = self.sessions.remove(i);
                 let accepted = out.op == SESSION_OP_ACCEPT;
+                if let Some(t) = self.sessions[i].team.as_mut() {
+                    // A team battle starts once all three have said yes; one
+                    // no ends it for everyone.
+                    if accepted {
+                        t.pending.retain(|&p| p != slot);
+                        info!("[Room {room_str} | SESSION] P{slot} accepted a team battle");
+                        if !t.pending.is_empty() {
+                            return;
+                        }
+                    }
+                    let session = self.sessions.remove(i);
+                    let state = if accepted {
+                        SESSION_STATE_ACCEPTED
+                    } else {
+                        SESSION_STATE_DECLINED
+                    };
+                    info!(
+                        "[Room {room_str} | SESSION] team battle of P{} {}",
+                        session.from,
+                        if accepted { "starts" } else { "declined" }
+                    );
+                    let about = if accepted { None } else { Some(slot) };
+                    return self.end_session(&session, state, about);
+                }
+                let session = self.sessions.remove(i);
                 let state = if accepted {
                     SESSION_STATE_ACCEPTED
                 } else {
@@ -949,20 +1076,7 @@ impl LobbyState {
                     return;
                 };
                 let session = self.sessions.remove(i);
-                self.set_view(
-                    session.from,
-                    SESSION_STATE_CANCELLED,
-                    session.kind,
-                    Some(session.to),
-                    SESSION_REASON_NONE,
-                );
-                self.set_view(
-                    session.to,
-                    SESSION_STATE_CANCELLED,
-                    session.kind,
-                    Some(session.from),
-                    SESSION_REASON_NONE,
-                );
+                self.end_session(&session, SESSION_STATE_CANCELLED, None);
             }
             _ => {}
         }
@@ -1026,20 +1140,7 @@ impl LobbyState {
             .partition(|s| now.duration_since(s.created) >= SESSION_TIMEOUT);
         self.sessions = kept;
         for s in expired {
-            self.set_view(
-                s.from,
-                SESSION_STATE_TIMEOUT,
-                s.kind,
-                Some(s.to),
-                SESSION_REASON_NONE,
-            );
-            self.set_view(
-                s.to,
-                SESSION_STATE_TIMEOUT,
-                s.kind,
-                Some(s.from),
-                SESSION_REASON_NONE,
-            );
+            self.end_session(&s, SESSION_STATE_TIMEOUT, None);
         }
     }
 
@@ -1050,23 +1151,10 @@ impl LobbyState {
         let (gone, kept): (Vec<Session>, Vec<Session>) = self
             .sessions
             .drain(..)
-            .partition(|s| self.slots[s.from].is_none() || self.slots[s.to].is_none());
+            .partition(|s| s.members().iter().any(|&m| self.slots[m].is_none()));
         self.sessions = kept;
         for s in gone {
-            self.set_view(
-                s.from,
-                SESSION_STATE_CANCELLED,
-                s.kind,
-                Some(s.to),
-                SESSION_REASON_NONE,
-            );
-            self.set_view(
-                s.to,
-                SESSION_STATE_CANCELLED,
-                s.kind,
-                Some(s.from),
-                SESSION_REASON_NONE,
-            );
+            self.end_session(&s, SESSION_STATE_CANCELLED, None);
         }
     }
 

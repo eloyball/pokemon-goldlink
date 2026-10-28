@@ -9,16 +9,16 @@ use crate::lobby::{LobbyState, SESSION_TIMEOUT};
 use crate::lobby_tests::make_packet;
 use crate::protocol::{
     ClientToServerPacket, NO_SLOT, PLAYER_STATE_SIZE, REMOTE_SLOTS, ROOM_ACTION_SYNC,
-    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM, SESSION_KIND_TEAM_UP,
-    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE,
-    SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
-    SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED,
-    SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE,
-    SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, SessionOut,
-    TEAMED_SELF_BIT,
+    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM,
+    SESSION_KIND_TEAM_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
+    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
+    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE,
+    SESSION_REASON_TEAMMATE_AWAY, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
+    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE, SESSION_STATE_OUTGOING,
+    SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, SessionOut, TEAMED_SELF_BIT,
 };
 
-pub(crate) const TRAINERS: [u32; 3] = [0x1111, 0x2222, 0x3333];
+pub(crate) const TRAINERS: [u32; 4] = [0x1111, 0x2222, 0x3333, 0x4444];
 
 pub(crate) fn addr(i: usize) -> SocketAddr {
     format!("127.0.0.1:{}", 53000 + i).parse().unwrap()
@@ -273,7 +273,7 @@ fn test_teams_survive_a_relay_restart() {
 }
 
 /// Teams 0 + 1 in a started room of `n`.
-fn teamed_room(n: usize, save_dir: Option<PathBuf>) -> LobbyState {
+pub(crate) fn teamed_room(n: usize, save_dir: Option<PathBuf>) -> LobbyState {
     let mut lobby = room_in(n, true, save_dir);
     op(
         &mut lobby,
@@ -408,4 +408,193 @@ fn test_leaving_is_saved() {
     .unwrap();
     assert!(restored.teams().is_empty());
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// Players 0+1 and 2+3 in two teams.
+fn two_teams() -> LobbyState {
+    let mut lobby = teamed_room(4, None);
+    op(
+        &mut lobby,
+        2,
+        1,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_TEAM_UP,
+        3,
+    );
+    op(&mut lobby, 3, 1, SESSION_OP_ACCEPT, 0, 0);
+    assert_eq!(lobby.teams().len(), 2);
+    lobby
+}
+
+#[test]
+fn test_team_battle_needs_all_four() {
+    let mut lobby = two_teams();
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+
+    // The three others are asked; my teammate also learns the opponent
+    // (player 2 is remote slot 1 for player 1) through the reason byte.
+    let g0 = gates(&mut lobby, 0);
+    assert_eq!(
+        (g0[2], g0[3], g0[4]),
+        (SESSION_STATE_OUTGOING, SESSION_KIND_TEAM_BATTLE, 1)
+    );
+    let g1 = gates(&mut lobby, 1);
+    assert_eq!(
+        (g1[2], g1[3], g1[4], g1[6]),
+        (SESSION_STATE_INCOMING, SESSION_KIND_TEAM_BATTLE, 0, 1)
+    );
+    for i in [2, 3] {
+        let g = gates(&mut lobby, i);
+        assert_eq!(
+            (g[2], g[3], g[4]),
+            (SESSION_STATE_INCOMING, SESSION_KIND_TEAM_BATTLE, 0)
+        );
+    }
+
+    // Two yeses are not enough; nobody hears anything until the third.
+    op(&mut lobby, 2, 2, SESSION_OP_ACCEPT, 0, 0);
+    op(&mut lobby, 1, 2, SESSION_OP_ACCEPT, 0, 0);
+    op(&mut lobby, 1, 3, SESSION_OP_ACCEPT, 0, 0); // a repeat changes nothing
+    for i in 0..4 {
+        assert_ne!(
+            gates(&mut lobby, i)[2],
+            SESSION_STATE_ACCEPTED,
+            "player {i}"
+        );
+    }
+    // Everyone is busy meanwhile.
+    op(&mut lobby, 1, 4, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 3);
+    assert_eq!(gates(&mut lobby, 1)[6], SESSION_REASON_BUSY);
+
+    op(&mut lobby, 3, 2, SESSION_OP_ACCEPT, 0, 0);
+    for i in 0..4 {
+        let g = gates(&mut lobby, i);
+        assert_eq!(
+            (g[2], g[3]),
+            (SESSION_STATE_ACCEPTED, SESSION_KIND_TEAM_BATTLE),
+            "player {i}"
+        );
+    }
+}
+
+#[test]
+fn test_team_battle_one_no_ends_it() {
+    let mut lobby = two_teams();
+    op(&mut lobby, 2, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 1);
+    op(&mut lobby, 1, 2, SESSION_OP_ACCEPT, 0, 0);
+    op(&mut lobby, 3, 2, SESSION_OP_DECLINE, 0, 0);
+    // The requester sees who said no (player 3: its remote slot 2).
+    let g2 = gates(&mut lobby, 2);
+    assert_eq!((g2[2], g2[4]), (SESSION_STATE_DECLINED, 2));
+    for i in [0, 1, 3] {
+        assert_eq!(
+            gates(&mut lobby, i)[2],
+            SESSION_STATE_DECLINED,
+            "player {i}"
+        );
+    }
+    // A late answer finds nothing; a new request is possible at once.
+    op(&mut lobby, 0, 2, SESSION_OP_ACCEPT, 0, 0);
+    assert_eq!(gates(&mut lobby, 0)[2], SESSION_STATE_DECLINED);
+    op(&mut lobby, 0, 3, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 3);
+    assert_eq!(gates(&mut lobby, 0)[2], SESSION_STATE_OUTGOING);
+}
+
+#[test]
+fn test_team_battle_timeout_cancel_and_leaving() {
+    let mut lobby = two_teams();
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    op(&mut lobby, 1, 2, SESSION_OP_ACCEPT, 0, 0);
+    lobby.expire_sessions(Instant::now() + SESSION_TIMEOUT);
+    for i in 0..4 {
+        assert_eq!(gates(&mut lobby, i)[2], SESSION_STATE_TIMEOUT, "player {i}");
+    }
+
+    op(&mut lobby, 0, 3, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    op(&mut lobby, 0, 4, SESSION_OP_CANCEL, 0, 0);
+    for i in 0..4 {
+        assert_eq!(
+            gates(&mut lobby, i)[2],
+            SESSION_STATE_CANCELLED,
+            "player {i}"
+        );
+    }
+
+    // A teammate who goes offline cancels it for everyone.
+    op(&mut lobby, 0, 5, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    lobby.remove_client_by_addr(addr(3));
+    for i in 0..3 {
+        assert_eq!(
+            gates(&mut lobby, i)[2],
+            SESSION_STATE_CANCELLED,
+            "player {i}"
+        );
+    }
+}
+
+#[test]
+fn test_team_battle_needs_both_teammates_here() {
+    let mut lobby = two_teams();
+    lobby.remove_client_by_addr(addr(3));
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    assert_eq!(gates(&mut lobby, 0)[2], SESSION_STATE_REFUSED);
+    assert_eq!(gates(&mut lobby, 0)[6], SESSION_REASON_TEAMMATE_AWAY);
+    // A busy teammate (here: in a trade request) blocks it too.
+    let mut lobby = two_teams();
+    op(&mut lobby, 1, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 3);
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    assert_eq!(gates(&mut lobby, 0)[6], SESSION_REASON_BUSY);
+}
+
+/// Player i's packet with a changed player state, and no new session op.
+fn state_packet(lobby: &mut LobbyState, i: usize, edit: impl Fn(&mut ClientToServerPacket)) {
+    let mut pkt = packet(i, SessionOut::default(), true);
+    edit(&mut pkt);
+    lobby.handle_client_packet(addr(i), pkt).unwrap();
+}
+
+#[test]
+fn test_busy_while_waiting_at_a_boss_or_battling() {
+    let mut lobby = room(3, true);
+    // Player 1 waits at a team boss for its teammate: busy.
+    state_packet(&mut lobby, 1, |p| p.local_player.boss_wait = 1);
+    op(&mut lobby, 2, 1, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
+    assert_eq!(
+        (gates(&mut lobby, 2)[2], gates(&mut lobby, 2)[6]),
+        (SESSION_STATE_REFUSED, SESSION_REASON_BUSY)
+    );
+    // In a battle of its own: busy too.
+    state_packet(&mut lobby, 1, |p| {
+        p.local_player.boss_wait = 0;
+        p.local_player.activity = 2;
+    });
+    op(&mut lobby, 2, 2, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 1);
+    assert_eq!(gates(&mut lobby, 2)[6], SESSION_REASON_BUSY);
+    // Back in the field: free.
+    state_packet(&mut lobby, 1, |p| p.local_player.activity = 1);
+    op(&mut lobby, 2, 3, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
+    assert_eq!(gates(&mut lobby, 2)[2], SESSION_STATE_OUTGOING);
+}
+
+#[test]
+fn test_busy_while_linked() {
+    use crate::protocol::{LINK_ROLE_PARENT, LinkUp};
+    let mut lobby = room(3, true);
+    // Player 1 hosts a co-op link session (a battle starting): busy.
+    state_packet(&mut lobby, 1, |p| {
+        p.link = Some(LinkUp {
+            epoch: 1,
+            role: LINK_ROLE_PARENT,
+            ack: 0,
+            first_seq: 0,
+            beacon: None,
+            msgs: vec![],
+        })
+    });
+    op(&mut lobby, 2, 1, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
+    assert_eq!(gates(&mut lobby, 2)[6], SESSION_REASON_BUSY);
+    // The link went quiet: free again.
+    lobby.expire_links(Instant::now() + crate::lobby::LINK_SILENCE + Duration::from_secs(1));
+    op(&mut lobby, 2, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
+    assert_eq!(gates(&mut lobby, 2)[2], SESSION_STATE_OUTGOING);
 }

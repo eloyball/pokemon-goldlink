@@ -12,6 +12,7 @@
 #include "../include/pokemon.h"
 #include "../include/types.h"
 #include "../include/window.h"
+#include "../include/coop_hm.h"
 
 extern const u16 sButtonFrameTileOffsets[];
 extern const u8 sButtonRects[][4];
@@ -24,6 +25,16 @@ static const u8 sPartyMenuRotomCatalogFormOrder[] = { 3, 4, 5, /*quit*/ 0, 0, 1,
 u32 LONG_CALL getButtonColorDepressed(int selection);
 u32 LONG_CALL getButtonColorRaised(int selection);
 void PartyMenu_ShowRotomCatalogList(struct PartyMenu *partyMenu);
+
+static BOOL PartyMenu_MonKnowsMove(struct PartyPokemon *pp, u16 move)
+{
+    for (int i = 0; i < MAX_MON_MOVES; ++i) {
+        if (GetMonData(pp, MON_DATA_MOVE1 + i, NULL) == move) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
 
 u8 LONG_CALL sub_0207B0B0(struct PartyMenu *wk, u8 *buf)
 {
@@ -63,6 +74,18 @@ u8 LONG_CALL sub_0207B0B0(struct PartyMenu *wk, u8 *buf)
                 fieldEffect = MoveId_GetFieldEffectId(move);
                 if (fieldEffect != 0xFF) {
                     buf[count] = fieldEffect;
+                    ++count;
+                    PartyMenu_ContextMenuAddFieldMove(wk, move, fieldMoveIndex);
+                    ++fieldMoveIndex;
+                }
+            }
+
+            // co-op (docs/MILESTONE3_PLAN.md §21): the unlocked HMs this Pokémon does not know, as long as the menu has room for
+            // field moves (four, one per move slot in vanilla)
+            for (i = 0; i < COOP_HM_COUNT && fieldMoveIndex < MAX_MON_MOVES; ++i) {
+                move = gCoopHmMenuMoves[i];
+                if ((gCoopHmMask & (1 << i)) && !PartyMenu_MonKnowsMove(pp, move)) {
+                    buf[count] = MoveId_GetFieldEffectId(move);
                     ++count;
                     PartyMenu_ContextMenuAddFieldMove(wk, move, fieldMoveIndex);
                     ++fieldMoveIndex;

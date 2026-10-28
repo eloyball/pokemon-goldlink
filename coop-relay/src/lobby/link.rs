@@ -24,9 +24,9 @@ use tracing::{debug, info, warn};
 
 use super::LobbyState;
 use crate::protocol::{
-    LINK_DATA_MAX, LINK_MAX_MSGS, LINK_SEND_BUDGET, LINK_MSG_ACCEPT, LINK_MSG_BYE, LINK_MSG_CONNECT, LINK_MSG_DATA,
-    LINK_MSG_REFUSE, LINK_ROLE_PARENT, LinkBeacon, LinkDown, LinkMsg, LinkUp, MAX_PLAYERS,
-    room_code_to_string,
+    LINK_DATA_MAX, LINK_MAX_MSGS, LINK_MODE_MULTI_BATTLE, LINK_MSG_ACCEPT, LINK_MSG_BYE,
+    LINK_MSG_CONNECT, LINK_MSG_DATA, LINK_MSG_REFUSE, LINK_ROLE_PARENT, LINK_SEND_BUDGET,
+    LinkBeacon, LinkDown, LinkMsg, LinkUp, MAX_PLAYERS, room_code_to_string,
 };
 
 /// A message not acked this long after it was sent goes again.
@@ -67,6 +67,11 @@ fn seq_before(a: u16, b: u16) -> bool {
 }
 
 impl LobbyState {
+    /// In a co-op link session (a battle starting or running).
+    pub(super) fn link_busy(&self, slot: usize) -> bool {
+        self.links[slot].active
+    }
+
     /// The link trailer of a client packet (or its absence).
     pub(super) fn apply_link_up(&mut self, slot: usize, up: Option<LinkUp>, now: Instant) {
         let Some(up) = up else {
@@ -106,7 +111,11 @@ impl LobbyState {
                 );
                 continue; // a duplicate, or after a gap: resent later
             }
-            debug!("link P{slot} up seq {seq} kind {} len {}", msg.kind, msg.data.len());
+            debug!(
+                "link P{slot} up seq {seq} kind {} len {}",
+                msg.kind,
+                msg.data.len()
+            );
             self.links[slot].in_next = seq.wrapping_add(1);
             self.route_link_msg(slot, msg);
         }
@@ -176,7 +185,23 @@ impl LobbyState {
                             .iter()
                             .map(|&c| self.links[c].aid)
                             .collect();
-                        (1..=LINK_MAX_AID)
+                        // A 4-player multi battle seats aids 0 and 2 on one
+                        // side: the parent's teammate gets 2, the others 1, 3.
+                        let multi = msg
+                            .data
+                            .get(1)
+                            .is_some_and(|m| LINK_MODE_MULTI_BATTLE.contains(m));
+                        let teammate = self
+                            .trainer_at(from)
+                            .is_some_and(|me| self.team_partner_of(me) == self.trainer_at(t));
+                        let order: [u8; 3] = match (multi, teammate) {
+                            (true, true) => [2, 1, 3],
+                            (true, false) => [1, 3, 2],
+                            _ => [1, 2, 3],
+                        };
+                        order
+                            .into_iter()
+                            .filter(|&a| a <= LINK_MAX_AID)
                             .find(|a| !used.contains(a))
                             .map(|a| (t, a))
                     });
@@ -287,7 +312,11 @@ impl LobbyState {
             }
         }
         if !msgs.is_empty() {
-            debug!("link P{slot} down seq {first_seq}+{} (queued {})", msgs.len(), peer.out.len());
+            debug!(
+                "link P{slot} down seq {first_seq}+{} (queued {})",
+                msgs.len(),
+                peer.out.len()
+            );
         }
         Some(LinkDown {
             ack: peer.in_next,

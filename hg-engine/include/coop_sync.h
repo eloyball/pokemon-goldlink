@@ -64,6 +64,7 @@ struct CoopFieldEntryHeader
 {
     u32 magic;
     void (*entry)(struct FieldSystem *fsys); // runs once per frame while the field map is active
+    u32 (*wildLevel)(u32 level);             // 0x08: Kanto wild levels (src/field/coop_wild.c), called by asm/other_hook.s
 };
 
 // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): the bridge's debug commands below
@@ -92,7 +93,12 @@ enum CoopDebugCommand
     COOP_DEBUG_ARM_TEAM_BATTLE = 11, // Milestone 3 probe E: next trainer battle becomes player + AI partner vs the trainer twice
     COOP_DEBUG_LINK = 12,            // Milestone 3 Phase 3: debug_arg = enum CoopDebugLinkOp (vanilla CommState sessions)
     COOP_DEBUG_LINK_STATUS = 13,     // result COOP_DEBUG_LINK_STATUS_BASE | COOP_DEBUG_LINK_* flags; debug_arg: LinkSync value
-    COOP_DEBUG_GIVE_TEST_MON = 14,   // a shiny test Pokemon (debug_arg 1 Haunter, 2 Onix + Metal Coat: trade evolvers; 3 / 4 the lead for the boss probe: level 40 Golem, Rock Slide / level 5 Magikarp, Splash), then saves
+    COOP_DEBUG_GIVE_TEST_MON = 14,   // a shiny test Pokemon (debug_arg 1 Haunter, 2 Onix + Metal Coat: trade evolvers; 3 / 4 the lead for the boss probe: level 40 Golem, Rock Slide / level 5 Magikarp, Splash; 5 / 6 the same, alone in the party; 7 a level 24 Geodude with Rock Slide, one EXP point short of 25, in place of the first; 8 a fainted Rattata added to the party; 9 Milestone 4 Phase 0: gCoopDebugMonBuffer's species / held_item / level, alone in the party), then saves
+    COOP_DEBUG_WILD_BATTLE = 15,     // §20 EXP Share probe: a wild battle against a level debug_arg Rattata
+    COOP_DEBUG_GIVE_HMS = 16,        // §21 HM probe: debug_arg bit 0 the eight HMs, bit 1 all sixteen badges, bit 2 the eight Kanto badges, bit 3 FLAG_GAME_CLEAR
+    COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
+    COOP_DEBUG_WILD_SPECIES = 18,    // Milestone 4 Phase 0: a wild battle against gCoopDebugMonBuffer.species (species | form << 11) at level debug_arg
+    COOP_DEBUG_REBALANCE = 19,       // Milestone 4 Phase 1: debug_arg 0 = the lead's evolution with gCoopDebugMonBuffer.held_item (0: by level up) -> buffer.species (0: none); 1-4 = rebuild a department store list (Goldenrod 4F / 5F, Celadon 3F / 4F) from the save
 };
 
 enum CoopDebugLinkOp
@@ -104,6 +110,8 @@ enum CoopDebugLinkOp
     COOP_DEBUG_LINK_SHUTDOWN = 5, // CommState_RequestShutdown
     COOP_DEBUG_LINK_BATTLE_PARENT = 6, // Phase 4: the battle task as the parent (beacon id 1), no session request
     COOP_DEBUG_LINK_BATTLE_CHILD = 7,  // Phase 4: the battle task as the child
+    COOP_DEBUG_LINK_REQUEST_BATTLE = 8, // §19: a real Battle request (the session task) to remote slot op - 8 (8..12)
+    COOP_DEBUG_LINK_REQUEST_TRADE = 13, // stress probe: a real Trade request to remote slot op - 13 (13..17)
 };
 
 #define COOP_DEBUG_LINK_STATUS_BASE 0x40
@@ -143,9 +151,11 @@ struct CoopDebugMonBuffer
     u8  checksum_failed;
     u8  is_egg;
     u8  party_count; // after the command
-    u8  team_battle_armed; // probe E: one-shot, cleared when used
+    u8  team_battle_armed; // one-shot, cleared when used: 1 probe E (multi with an AI partner); 2 Milestone 4 Phase 0: the trainer's first Pokemon becomes species holding held_item; 3 Phase 3: the trainer scales like a Kanto leader (+2 per Kanto badge)
     u8  team_battle_used;  // probe E: set when a battle was converted
-    u8  pad[2];
+    u8  pad[2];            // pad[0]: battle results; pad[1]: the Pokemon this player brought to a 2v2
+    u8  auto_pick[3];      // probes: a 2v2's three (party slots, 1-based) instead of the party screen; 0: none
+    u8  pad2;
 };
 extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;
 struct BATTLE_PARAM;
@@ -288,7 +298,7 @@ struct CoopPlayerState
     u8  follower_move_action; // 0x37
     u8  follower_move_seq;   // 0x38
     u8  boss_wait;           // 0x39 team boss this player waits at: sGatedBosses index + 1; 0 = none (Phase 5)
-    u8  pad3A[2];            // 0x3A
+    u8  badge_mask[2];       // 0x3A the player's sixteen badges (little endian; bits 8-15 Kanto): a team's badge-scaled bosses use the lower count (rebalance plan §11)
     u8  avatar_id;           // 0x3C custom player sprite set (later milestone; 0 = vanilla)
     u8  anim;                // 0x3D map object animation (pret MapObject_SetAnimation): pose frames (fishing cast / bite / reel...)
     u8  field_busy;          // 0x3E 1 while a field task or message runs (NPC talk, start menu, co-op menus)
@@ -315,6 +325,10 @@ enum CoopSessionKind
     COOP_SESSION_KIND_BATTLE = 2,
     COOP_SESSION_KIND_TEAM_UP = 3,
     COOP_SESSION_KIND_LEAVE_TEAM = 4, // one-sided: no answer needed, the relay applies it at once
+    // Two teams battle (2v2): the relay turns a BATTLE request between two
+    // teamed players into this one and asks the other three. For the
+    // requester's teammate, session_reason holds the opponent's remote slot.
+    COOP_SESSION_KIND_TEAM_BATTLE = 5,
 };
 
 enum CoopSessionState
@@ -339,6 +353,7 @@ enum CoopSessionReason
     COOP_SESSION_REASON_TEAM_RULE = 3,      // a team only battles a team, never its own teammate
     COOP_SESSION_REASON_ALREADY_TEAMED = 4,
     COOP_SESSION_REASON_INVALID = 5,
+    COOP_SESSION_REASON_TEAMMATE_AWAY = 6,  // a team battle needs all four players here
 };
 
 #define COOP_SLOT_NONE        0xFF // team_partner_slot / session_peer_slot: nobody

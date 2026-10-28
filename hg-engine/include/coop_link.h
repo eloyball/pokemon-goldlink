@@ -13,4 +13,8 @@ void LONG_CALL Coop_LinkUpdate(void);
 struct FieldSystem;
 void LONG_CALL Coop_LinkBattleWatchdog(struct FieldSystem *fsys);
 
+// The parent's children in the running link battle (1; 3 in a team battle):
+// fewer means the link is lost.
+extern u8 gCoopLinkBattleChildren;
+
 #endif

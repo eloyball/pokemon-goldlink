@@ -782,6 +782,13 @@ BOOL CheckCanDrawMegaButton(struct BI_PARAM *bip)
     }
 #endif
 
+    // co-op (rebalance plan §9.3): the choice would stay on this game, and only
+    // the host runs a link battle; no player Mega Evolves in a link battle.
+    if (BattleTypeGet(bip->bw) & BATTLE_TYPE_LINK)
+    {
+        return FALSE;
+    }
+
     if (bip->client_no && newBS.playerWantMega) // if client number is not zero but the player has already queued up mega
     {
         return FALSE;

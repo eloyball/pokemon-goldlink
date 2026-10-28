@@ -122,7 +122,12 @@ void __attribute__((section(".init"))) ServerBeforeActInternal(struct BattleSyst
                         // player requests mega
                         if (!(client_no & 1) && (newBS.playerWantMega & No2Bit(client_no)) != 0) {
                             flag = TRUE;
-                        } else if ((client_no & 1) != 0 || (client_no == 2 && (bw->trainerId[client_no] != 0))) {
+                        } else if ((BattleTypeGet(bw) & BATTLE_TYPE_LINK)
+                                       // co-op (rebalance plan §9.3): in a link battle only the host runs this, and
+                                       // every client is a human except a team boss's two seats (the Battle Tower's
+                                       // link multi): the others never Mega Evolve on their own
+                                       ? ((BattleTypeGet(bw) & BATTLE_TYPE_FRONTIER) && (client_no & 1) != 0)
+                                       : ((client_no & 1) != 0 || (client_no == 2 && (bw->trainerId[client_no] != 0)))) {
                             // ai requests mega
                             if (BattleTypeGet(bw) & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_FRONTIER)) {
                                 flag = TRUE;

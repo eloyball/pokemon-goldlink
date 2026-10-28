@@ -44,6 +44,10 @@ pub const SESSION_KIND_TRADE: u8 = 1;
 pub const SESSION_KIND_BATTLE: u8 = 2;
 pub const SESSION_KIND_TEAM_UP: u8 = 3;
 pub const SESSION_KIND_LEAVE_TEAM: u8 = 4; // one-sided: applied at once, no answer
+/// Two teams battle (2v2): set by the relay for a BATTLE request between
+/// two teamed players; all four must accept. For the requester's teammate,
+/// `session_reason` carries the opponent's remote slot while it is asked.
+pub const SESSION_KIND_TEAM_BATTLE: u8 = 5;
 
 pub const SESSION_STATE_NONE: u8 = 0;
 pub const SESSION_STATE_OUTGOING: u8 = 1; // my request, waiting for the answer
@@ -57,10 +61,14 @@ pub const SESSION_STATE_NOTICE: u8 = 8; // to the ex-teammate: the peer left the
 
 pub const SESSION_REASON_NONE: u8 = 0;
 pub const SESSION_REASON_NOT_HERE: u8 = 1; // target not connected
-pub const SESSION_REASON_BUSY: u8 = 2; // either side already in a session
+pub const SESSION_REASON_BUSY: u8 = 2; // either side already busy (a session, a link, a boss, a battle)
+
+/// `PlayerState.activity` (the ROM's enum CoopActivity): in a battle.
+pub const ACTIVITY_BATTLE: u8 = 2;
 pub const SESSION_REASON_TEAM_RULE: u8 = 3; // a team cannot battle a solo player or its own teammate
 pub const SESSION_REASON_ALREADY_TEAMED: u8 = 4;
 pub const SESSION_REASON_INVALID: u8 = 5; // unknown kind, or a request to oneself
+pub const SESSION_REASON_TEAMMATE_AWAY: u8 = 6; // a team battle needs all four players here
 
 pub const NO_SLOT: u8 = 0xFF;
 
@@ -283,12 +291,12 @@ pub struct PlayerState {
     pub follower_direction: u8,   // 0x36
     pub follower_move_action: u8, // 0x37
     pub follower_move_seq: u8,    // 0x38
-    pub boss_wait: u8,            // 0x39 team boss waited at (Phase 5): the ROM's boss index + 1; 0 none
-    pub pad3a: [u8; 2],           // 0x3A
-    pub avatar_id: u8,            // 0x3C
-    pub anim: u8,                 // 0x3D pose animation index (forwarded untouched)
-    pub field_busy: u8,           // 0x3E (a field task or message is running; forwarded as is)
-    pub pad3f: u8,                // 0x3F
+    pub boss_wait: u8, // 0x39 team boss waited at (Phase 5): the ROM's boss index + 1; 0 none
+    pub badge_mask: [u8; 2], // 0x3A the player's sixteen badges (ROM: badge-scaled team bosses use the lower count)
+    pub avatar_id: u8, // 0x3C
+    pub anim: u8,      // 0x3D pose animation index (forwarded untouched)
+    pub field_busy: u8, // 0x3E (a field task or message is running; forwarded as is)
+    pub pad3f: u8,     // 0x3F
 }
 
 fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {
@@ -338,7 +346,7 @@ impl PlayerState {
         out[0x37] = self.follower_move_action;
         out[0x38] = self.follower_move_seq;
         out[0x39] = self.boss_wait;
-        out[0x3A..0x3C].copy_from_slice(&self.pad3a);
+        out[0x3A..0x3C].copy_from_slice(&self.badge_mask);
         out[0x3C] = self.avatar_id;
         out[0x3D] = self.anim;
         out[0x3E] = self.field_busy;
@@ -387,7 +395,7 @@ impl PlayerState {
             follower_move_action: buf[0x37],
             follower_move_seq: buf[0x38],
             boss_wait: buf[0x39],
-            pad3a: [buf[0x3A], buf[0x3B]],
+            badge_mask: [buf[0x3A], buf[0x3B]],
             avatar_id: buf[0x3C],
             anim: buf[0x3D],
             field_busy: buf[0x3E],
@@ -414,6 +422,10 @@ pub const LINK_SEND_BUDGET: usize = 1000;
 pub const LINK_UP_MAX: usize = 12 + 8 + LINK_BEACON_MAX + LINK_SEND_BUDGET;
 /// The largest client packet: fixed part, trade trailer, link trailer.
 pub const CLIENT_PACKET_MAX: usize = CLIENT_PACKET_SIZE + TRADE_OUT_SIZE + LINK_UP_MAX;
+
+/// The ROM's 4-player multi battle link modes (ccd COMM_TYPE_MULTI_BATTLE_1 / _2):
+/// a CONNECT's first data byte. Teams sit on opposite sides by aid.
+pub const LINK_MODE_MULTI_BATTLE: [u8; 2] = [4, 5];
 
 pub const LINK_MSG_DATA: u8 = 1;
 pub const LINK_MSG_CONNECT: u8 = 2;
@@ -921,7 +933,7 @@ mod tests {
             follower_move_action: 15,
             follower_move_seq: 6,
             boss_wait: 0,
-            pad3a: [0; 2],
+            badge_mask: [0; 2],
             avatar_id: 2,
             anim: 3,
             field_busy: 1,
@@ -1019,7 +1031,11 @@ mod tests {
             ..with_trade
         };
         let full = biggest.encode_full();
-        assert!(full.len() > 512 && full.len() <= CLIENT_PACKET_MAX, "{} bytes", full.len());
+        assert!(
+            full.len() > 512 && full.len() <= CLIENT_PACKET_MAX,
+            "{} bytes",
+            full.len()
+        );
         let decoded = ClientToServerPacket::decode_le(&full).expect("valid decode");
         assert_eq!(decoded.link.expect("link trailer").msgs.len(), 5);
     }

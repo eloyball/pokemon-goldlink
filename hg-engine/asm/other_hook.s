@@ -40,6 +40,22 @@ and r0, r4 // make r0 solely the species
 push {r3-r7, lr}
 sub sp, #0x28
 str r0, [sp, #0x10]
+// co-op: Kanto wild levels (src/field/coop_wild.c); r1 is the level
+push {r0, r2, r3}
+mov r0, r1
+// through Overlay 131's pinned header (COOP_FIELD_ENTRY_ADDR, include/coop_sync.h): magic, entry, wildLevel
+ldr r3, =0x023C8000
+ldr r2, [r3]
+ldr r1, =0x31464F43 // COOP_FIELD_ENTRY_MAGIC
+cmp r2, r1
+bne .Lcoop_wild_skip_1
+ldr r3, [r3, #8]
+cmp r3, #0
+beq .Lcoop_wild_skip_1
+bl call_via_r3
+.Lcoop_wild_skip_1:
+mov r1, r0
+pop {r0, r2, r3}
 ldr r6, [sp, #0x40]
 ldr r4, =0x02247918 | 1
 bx r4
@@ -189,6 +205,23 @@ mov r4, #7
 lsl r4, #8
 add r4, #0xFF
 and r0, r4 // make r0 solely the species
+
+// co-op: Kanto wild levels (src/field/coop_wild.c); r1 is the level
+push {r0, r2, r3}
+mov r0, r1
+// through Overlay 131's pinned header (COOP_FIELD_ENTRY_ADDR, include/coop_sync.h): magic, entry, wildLevel
+ldr r3, =0x023C8000
+ldr r2, [r3]
+ldr r1, =0x31464F43 // COOP_FIELD_ENTRY_MAGIC
+cmp r2, r1
+bne .Lcoop_wild_skip_2
+ldr r3, [r3, #8]
+cmp r3, #0
+beq .Lcoop_wild_skip_2
+bl call_via_r3
+.Lcoop_wild_skip_2:
+mov r1, r0
+pop {r0, r2, r3}
 
 // reset the function up
 //push {r3-r7, lr}

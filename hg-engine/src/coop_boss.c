@@ -34,8 +34,8 @@
 #define COOP_HEAP_ID_FIELD3      32 // field task heap
 #define COOP_GAME_STAT_TRAINER_BATTLES 9  // ccd constants/game_stats.h
 #define COOP_VAR_BATTLE_RESULT   0x4013  // pret constants/vars.h
+#define COOP_BOSS_PARTY_MAX      3       // each player's Pokemon in the boss multi
 #define COOP_BATTLE_TYPE_11      (1 << 11) // ccd constants/battle.h
-#define COOP_BOSS_BATTLE_TYPE    (BATTLE_TYPE_FRONTIER | BATTLE_TYPE_MULTI | BATTLE_TYPE_LINK | BATTLE_TYPE_DOUBLES | BATTLE_TYPE_TRAINER)
 #define COOP_SHUTDOWN_FAILSAFE   (10 * 30) // field tasks run 30 times a second
 #define COOP_BOSS_SYNC_FAILSAFE  (60 * 30) // the teammate still reading the boss's lines
 #define COOP_BOSS_BATTLE_SYNC    0x62      // LinkSync value both games reach before the battle
@@ -208,9 +208,26 @@ static BOOL Coop_Task_BossBattle(TaskManager *taskman)
         break;
     case COOP_BOSS_AFTER:
         gCoopCommBlock.track_link_battle = COOP_LINK_BATTLE_NONE;
-        __builtin_memcpy(SaveArray_Party_Get(fsys->savedata), env->setup->party[env->seat], COOP_PARTY_CORE_SIZE);
+        // Only the Pokemon that went in come back, each to its own slot; the
+        // rest of the save's party stays as it was.
+        {
+            struct Party *save = SaveArray_Party_Get(fsys->savedata);
+            struct Party *fought = env->setup->party[env->seat];
+            int i;
+
+            for (i = 0; i < fought->count && i < COOP_BOSS_PARTY_MAX; i++)
+            {
+                int slot = gCoopBoss.order[0] != 0 ? gCoopBoss.order[i] - 1 : i;
+                if (slot < save->count)
+                    __builtin_memcpy(Party_GetMonByIndex(save, slot), Party_GetMonByIndex(fought, i), COOP_PARTY_MON_SIZE);
+            }
+#if COOP_DEBUG_TOOLS
+            gCoopDebugMonBuffer.pad[1] = (u8)fought->count; // probes: the Pokemon this player brought
+#endif
+        }
         BattleSetup_CopyPokedexToSaveData(env->setup, fsys);
         env->won = env->setup->winFlag != BATTLE_OUTCOME_LOSE && env->setup->winFlag != BATTLE_OUTCOME_DRAW; // IsBattleResultWin
+        gCoopBoss.won = env->setup->winFlag == BATTLE_OUTCOME_WIN; // rewards: paid by Overlay 131 after the script
         if (env->winFlag != NULL)
             *env->winFlag = env->setup->winFlag;
         VarSet(fsys, COOP_VAR_BATTLE_RESULT, (u16)env->setup->winFlag);
@@ -259,9 +276,25 @@ static BOOL Coop_StartBossBattle(TaskManager *taskman, u32 trainer, int heapID, 
     __builtin_memset(env, 0, sizeof(*env));
     setup = BattleSetup_New(COOP_HEAP_ID_FIELD2, COOP_BOSS_BATTLE_TYPE);
     BattleSetup_InitFromFieldSystem(setup, fsys);
+    // A multi gives each player three slots: the three chosen before waiting
+    // (gCoopBoss.order), in that order, or the first three.
+    if (gCoopBoss.order[0] != 0)
+    {
+        struct Party *save = SaveArray_Party_Get(fsys->savedata);
+        int i;
+
+        for (i = 0; i < COOP_BOSS_PARTY_MAX && gCoopBoss.order[i] != 0; i++)
+            __builtin_memcpy(Party_GetMonByIndex(setup->party[0], i), Party_GetMonByIndex(save, gCoopBoss.order[i] - 1), COOP_PARTY_MON_SIZE);
+        setup->party[0]->count = i;
+    }
+    else if (setup->party[0]->count > COOP_BOSS_PARTY_MAX)
+        setup->party[0]->count = COOP_BOSS_PARTY_MAX;
     BattleSetup_SetAllySideBattlersToPlayer(setup);
     // The boss in both enemy seats; hg-engine's party builder splits its
     // team between them (Coop_BossSplitParty, while armed).
+    // Its team roster (docs/GAME_REBALANCE_UPDATE.md §4.2), through Overlay 131.
+    if (gCoopBoss.teamRoster != NULL)
+        trainer = gCoopBoss.teamRoster(trainer);
     setup->trainerId[BATTLER_ENEMY] = (int)trainer;
     setup->trainerId[BATTLER_ENEMY2] = (int)trainer;
     EnemyTrainerSet_Init(setup, fsys->savedata, heapID);

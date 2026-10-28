@@ -702,3 +702,9 @@ arm9 Coop_SetupAndStartTrainerBattle 02051370
 # co-op: GF_AssertFail never resets, even during a link session; it keeps
 # the caller (src/coop_boss.c). r0: no arguments, lr stays the caller's.
 arm9 Coop_GF_AssertFail 0202551C 0
+
+# co-op HMs (docs/MILESTONE3_PLAN.md §21): the party's slot for a move also
+# answers for an unlocked HM nobody knows (src/field/coop_hm_field.c, Overlay
+# 131: both are only called in the field). r2 / r1: not arguments.
+arm9 Coop_GetIdxOfFirstPartyMonWithMove 020542E8 2
+arm9 ScrCmd_GetPartySlotWithMove 0204D3CC 1

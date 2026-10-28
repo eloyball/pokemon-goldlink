@@ -1,5 +1,7 @@
 #include "config.h"
 #include "types.h"
+#include "constants/item.h"
+#include "bag.h"
 
 #include "constants/buttons.h"
 #include "constants/maps.h"
@@ -653,6 +655,7 @@ void LONG_CALL Coop_UpdateBossWatch(FieldSystem *fsys)
 
     gCoopBoss.talkObj = NULL;
     gCoopBoss.talkStart = Coop_BossTalkStart;
+    gCoopBoss.teamRoster = Coop_TeamRosterFor;
     if (gCoopCommBlock.gates.team_partner_slot == COOP_SLOT_NONE || !Coop_IsAdventureStarted())
         return;
     if (!Coop_IsFieldMapActive(fsys) || fsys->taskman != NULL || fsys->textbox_open || Coop_GetPlayerMapObject(fsys) == NULL)
@@ -765,6 +768,33 @@ static void Coop_TryAdventureStartSave(FieldSystem *fsys)
 
 
 // ---------------------------------------------------------------------------
+// Gifts (docs/GAME_REBALANCE_UPDATE.md §7.2, §9.1)
+// ---------------------------------------------------------------------------
+
+// Done-flags in the range no vanilla script, pret source or hg-engine uses
+// (2522-2559, rebalance plan §18).
+#define COOP_FLAG_GIFT_KEY_STONE 2522
+#define COOP_FLAG_GAME_CLEAR     2404 // vanilla FLAG_GAME_CLEAR (asm/include/flags.inc)
+
+// The Key Stone, once the credits have rolled: in the next quiet moment in the
+// overworld, the player finds it and Mega Evolution unlocks. Returns TRUE when
+// a gift message started.
+static BOOL Coop_TryGifts(FieldSystem *fsys)
+{
+    if (!CheckScriptFlag(COOP_FLAG_GAME_CLEAR) || CheckScriptFlag(COOP_FLAG_GIFT_KEY_STONE))
+        return FALSE;
+    if (!Coop_IsSafeOverworldWindow(fsys))
+        return FALSE;
+    if (!Coop_StartFieldBlock(fsys, "A Key Stone arrived from the\nPokémon League for its Champion!",
+                              "Mega Evolution awaits you\nin Kanto.", COOP_MOVEMENT_STEP_END))
+        return FALSE;
+    Bag_AddItem(Sav2_Bag_get(fsys->savedata), ITEM_KEY_STONE, 1, 11 /* HEAP_ID_FIELD2 */);
+    SetScriptFlag(FLAG_MEGA_EVOLUTION_ENABLED);
+    SetScriptFlag(COOP_FLAG_GIFT_KEY_STONE);
+    return TRUE;
+}
+
+// ---------------------------------------------------------------------------
 // Connection-driven field tasks (called at the end of every field frame)
 // ---------------------------------------------------------------------------
 
@@ -789,7 +819,7 @@ void LONG_CALL Coop_UpdateFieldConnection(FieldSystem *fsys)
             (void)Coop_StartFieldBlock(fsys, "Your teammates need to catch\nup before this battle.",
                                        "Wait for them, or ask them to\nlet you go ahead.",
                                        COOP_MOVEMENT_FACE_UP + ((u32)Coop_GetPlayerMapObject(fsys)->curFacing ^ 1));
-        else
+        else if (!Coop_TryGifts(fsys))
             Coop_TryAdventureStartSave(fsys);
         break;
 
