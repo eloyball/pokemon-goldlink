@@ -29,6 +29,11 @@ struct CoopBossState
     void (*talkStart)(struct FieldSystem *fsys, struct LocalMapObject *boss, u16 script);
     // Overlay 131: the boss's team roster (docs/GAME_REBALANCE_UPDATE.md §4.2), or the trainer itself.
     u32 (*teamRoster)(u32 trainer);
+    // Overlay 131: a team boss whose battle starts from a coord event, not a
+    // talk (Lance, docs/GAME_REBALANCE_UPDATE.md §21): its map object, and the
+    // script the coord event starts with no object.
+    struct LocalMapObject *coordObj;
+    u16 coordScript;
     u8 armed;      // the next trainer battle is the team boss battle
     u8 bossIndex;  // its sGatedBosses index
     u8 fought;     // set by the battle hook: the battle ran

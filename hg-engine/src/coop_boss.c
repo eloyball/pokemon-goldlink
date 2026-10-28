@@ -113,6 +113,10 @@ void LONG_CALL Coop_StartVanillaTalk(FieldSystem *fsys, u16 script, LocalMapObje
 
 void LONG_CALL Coop_StartMapSceneScript(FieldSystem *fsys, u16 script, LocalMapObject *obj)
 {
+    // Lance's battle starts from a coord event (no object): the waiting starts
+    // there too, with his map object (src/field/coop_field_tasks.c).
+    if (obj == NULL && gCoopBoss.coordObj != NULL && script == gCoopBoss.coordScript)
+        obj = gCoopBoss.talkObj = gCoopBoss.coordObj;
     if (obj != NULL && obj == gCoopBoss.talkObj && gCoopBoss.talkStart != NULL)
     {
         gCoopBoss.talkObj = NULL;

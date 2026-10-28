@@ -625,7 +625,14 @@ static const struct CoopGatedBoss sGatedBosses[] = {
     { MAP_T10R0401, 6, 10, COOP_NO_BADGE },    // Bruno
     { MAP_T10R0501, 6, 10, COOP_NO_BADGE },    // Karen
     { MAP_D41R0108, 30, 11, COOP_NO_BADGE },   // Red
+    { MAP_T10R0601, 6, 6, COOP_NO_BADGE },     // Lance: a coord event starts his battle (Coop_UpdateBossWatch)
 };
+
+// Lance's room: stepping on the row in front of him runs this script with no
+// object (event data: coord event, _EV_scr_seq_T10R0601_000 + 1), and he is
+// map object 0.
+#define COOP_LANCE_COORD_SCRIPT 1
+#define COOP_LANCE_OBJECT_ID    0
 
 // Same end-of-frame timing argument as the bedroom stairs: talking needs a
 // later frame's A press while facing the boss (from the next tile, or across
@@ -654,10 +661,16 @@ void LONG_CALL Coop_UpdateBossWatch(FieldSystem *fsys)
     LocalMapObject *facing = NULL;
 
     gCoopBoss.talkObj = NULL;
+    gCoopBoss.coordObj = NULL;
     gCoopBoss.talkStart = Coop_BossTalkStart;
     gCoopBoss.teamRoster = Coop_TeamRosterFor;
     if (gCoopCommBlock.gates.team_partner_slot == COOP_SLOT_NONE || !Coop_IsAdventureStarted())
         return;
+    if (fsys->location->mapId == MAP_T10R0601 && fsys->mapObjectMan != NULL)
+    {
+        gCoopBoss.coordObj = GetMapObjectByID(fsys->mapObjectMan, COOP_LANCE_OBJECT_ID);
+        gCoopBoss.coordScript = COOP_LANCE_COORD_SCRIPT;
+    }
     if (!Coop_IsFieldMapActive(fsys) || fsys->taskman != NULL || fsys->textbox_open || Coop_GetPlayerMapObject(fsys) == NULL)
         return;
     FieldSystem_GetFacingObject(fsys, &facing);

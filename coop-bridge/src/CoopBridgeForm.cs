@@ -117,6 +117,7 @@ namespace CoopBridge
             "Lavender Town (Silence Bridge south)",
             "Celadon City (dense)",
             "Violet Gym (gym gate, Falkner ahead)",
+            "Lance's room (team boss by coord event)",
         };
 
         // CoopPlayerState field offsets (64 bytes, follower included)

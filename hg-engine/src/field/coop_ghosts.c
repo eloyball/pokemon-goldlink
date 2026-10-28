@@ -287,6 +287,7 @@ static const struct CoopWarpTarget sCoopWarpTargets[COOP_WARP_COUNT] = {
     [COOP_WARP_LAVENDER]    = { MAP_T05, 1418, 235 }, // MAP_LAVENDER
     [COOP_WARP_CELADON]     = { MAP_T07, 1231, 238 }, // MAP_CELADON
     [COOP_WARP_VIOLET_GYM]  = { MAP_T22GYM0101, 15, 6 }, // MAP_VIOLET_GYM (Falkner on 15, 4)
+    [COOP_WARP_LANCE]       = { MAP_T10R0601, 6, 27 }, // Lance's room, the door (his coord event row is z 10)
 };
 
 // Same check as using Surf / a rod from the menu (Field_PlayerCanSurfOnTile

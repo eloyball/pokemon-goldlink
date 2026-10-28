@@ -177,6 +177,7 @@ enum CoopWarpPreset
     COOP_WARP_LAVENDER,      // Lavender Town: Route 12 Silence Bridge to the south
     COOP_WARP_CELADON,       // Celadon City: dense map
     COOP_WARP_VIOLET_GYM,    // Violet Gym, two tiles in front of Falkner: gym gate
+    COOP_WARP_LANCE,         // the Champion's room, at its door: Lance as a team boss (rebalance plan §21)
     COOP_WARP_COUNT
 };
 
