@@ -33,7 +33,7 @@ CRY_PSEUDOBANK_START equ 778
 BATTLE_MODE_FORCE_SET equ 0
 
 // ALWAYS_HAVE_NATIONAL_DEX defines whether or not the player will always have the national dex unlocked.
-ALWAYS_HAVE_NATIONAL_DEX equ 0
+ALWAYS_HAVE_NATIONAL_DEX equ 1 // co-op (rebalance plan §25): Gen 5-9 Pokémon show in the Pokédex from the start
 
 // ALWAYS_UNCAPPED_FRAME_RATE defines whether or not the frame rate of the game will always be uncapped, including in the overworld.
 ALWAYS_UNCAPPED_FRAME_RATE equ 0

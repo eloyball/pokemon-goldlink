@@ -293,10 +293,10 @@ pub struct PlayerState {
     pub follower_move_seq: u8,    // 0x38
     pub boss_wait: u8, // 0x39 team boss waited at (Phase 5): the ROM's boss index + 1; 0 none
     pub badge_mask: [u8; 2], // 0x3A the player's sixteen badges (ROM: badge-scaled team bosses use the lower count)
-    pub avatar_id: u8, // 0x3C
-    pub anim: u8,      // 0x3D pose animation index (forwarded untouched)
-    pub field_busy: u8, // 0x3E (a field task or message is running; forwarded as is)
-    pub pad3f: u8,     // 0x3F
+    pub avatar_id: u8,       // 0x3C
+    pub anim: u8,            // 0x3D pose animation index (forwarded untouched)
+    pub field_busy: u8,      // 0x3E (a field task or message is running; forwarded as is)
+    pub pad3f: u8,           // 0x3F
 }
 
 fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {

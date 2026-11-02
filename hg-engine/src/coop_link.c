@@ -823,6 +823,8 @@ void Coop_LinkUpdate(void)
 // tasks' state pointers, battleFinished (ov12_0223BC2C), battleOutcomeFlag.
 #define BSYS_LINK_SEND_STATE 0x23F4
 #define BSYS_LINK_RECV_STATE 0x23F8
+#define BSYS_BG_TILES        0x220 // bgTiles (then bgPalette, 0x224): allocated by the server's
+                                   // SetBattleBackground command (ccd battle_system.c)
 #define BSYS_FINISHED        0x23FE
 #define BSYS_OUTCOME         0x2420
 #define BATTLE_LINK_STATE_END 0xFF
@@ -861,6 +863,7 @@ void Coop_LinkBattleWatchdog(FieldSystem *fsys)
 {
     FieldProcessManager *pm;
     u8 *app, *bsys, *send, *recv;
+    u32 state;
 
     if (gCoopCommBlock.track_link_battle == COOP_LINK_BATTLE_LOST)
     {
@@ -883,16 +886,25 @@ void Coop_LinkBattleWatchdog(FieldSystem *fsys)
         gCoopCommBlock.track_link_lost_frames++;
         return;
     }
-    // Only the battle itself can be ended: a link lost in the exchange
-    // before it still stalls (docs/KNOWN_RISKS.md); the link screen after it
-    // needs no link.
+    // The battle app: before its main phase (the exchange of parties,
+    // profiles and LinkSync) or in it; after it, the link screen needs no link.
     pm = fsys != NULL ? fsys->processManager : NULL;
     app = pm != NULL ? pm->child : NULL;
     if (app == NULL || Coop_LinkReadWord(app + OVM_OVY_ID) != COOP_OVY_BATTLE
-        || Coop_LinkReadWord(app + OVM_PROC_STATE) != COOP_BSTATE_BATTLE_MAIN)
+        || (state = Coop_LinkReadWord(app + OVM_PROC_STATE)) > COOP_BSTATE_BATTLE_MAIN)
         return;
     bsys = (u8 *)Coop_LinkReadWord(app + OVM_DATA);
-    if (bsys == NULL || bsys[BSYS_FINISHED])
+    // Lost before the battle could end cleanly: in the exchange before it
+    // (docs/KNOWN_RISKS.md #30), or in its intro, before the server's
+    // SetBattleBackground command came (the battle's exit would free its NULL
+    // background buffers and crash both games: black screens, #52). Back to
+    // the title screen instead, as a disconnect on the field does: every
+    // co-op battle saved just before it started, so nothing is lost.
+    // (Vanilla's error screen cannot be used: its reset waits for the radio
+    // to stop, which ours only reports from this SysTask.)
+    if (state != COOP_BSTATE_BATTLE_MAIN || Coop_LinkReadWord(bsys + BSYS_BG_TILES) == 0) // bgPalette follows it
+        OS_ResetSystem(0);
+    if (bsys[BSYS_FINISHED])
         return;
     send = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_SEND_STATE);
     recv = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_RECV_STATE);

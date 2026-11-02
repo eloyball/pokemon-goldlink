@@ -15,6 +15,8 @@
 #include "coop_sync.h"
 #include "coop_wild.h"
 #include "coop_dialog.h"
+#include "coop_choice.h"
+#include "constants/file.h"
 #include "coop_battle.h"
 #include "coop_boss.h"
 #include "coop_link.h"
@@ -72,13 +74,27 @@ void LONG_CALL CallTask_FadeFromBlack(TaskManager *taskman);
 // pret src/script_manager.c: runs a script as a subtask of this task.
 void LONG_CALL QueueScript(TaskManager *taskman, u16 script, LocalMapObject *obj, void *result);
 void LONG_CALL PokeParty_Init(struct Party *party, int max);
+// Overlay 01 (rom.ld): the field's normal save (blocks until written).
+BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
+
+#define COOP_MOVE_NAME_BUF  20 // 15 characters, EOS, and 0xFFFF padding up to the split
+#define COOP_MOVE_NAME_FILE 750 // a027 message file: move names (hg-engine armips/include/movemacros.s)
+#define COOP_ARG_SPLIT      11 // Coop_SetStringFromAscii prints at most 11 characters per argument
+#define COOP_MSG_HEAP_ID    32 // HEAP_ID_FIELD3, the field task heap
+#define COOP_DEBUG_MOVES_OFFSET 0x60 // probes: the moves after a forget-a-move answer
+_Static_assert(sizeof(struct CoopRewards) <= COOP_DEBUG_MOVES_OFFSET, "the probe's moves follow the rewards summary");
+_Static_assert(__builtin_offsetof(struct CoopRewards, pendingMove) == 42 && __builtin_offsetof(struct CoopRewards, pendingCount) == 78,
+               "link_e2e_probe.lua reads these");
 
 enum CoopBattleTaskState
 {
     COOP_BATTLE_OPEN,        // a 2v2: the party screen to choose three first
     COOP_BATTLE_CHOSEN,      // back from the party screen
     COOP_BATTLE_START,
+    COOP_BATTLE_PRESAVE,     // save before linking up (a crash or disconnect loses nothing)
     COOP_BATTLE_BOSS_WAIT,   // team boss: until the teammate waits at the same boss
+    COOP_BATTLE_BOSS_ALONE,  // B while waiting: "Battle alone instead?" Yes / No
+    COOP_BATTLE_BOSS_ALONE_DONE, // the boss's script ran (a solo battle)
     COOP_BATTLE_START_LINK,
     COOP_BATTLE_FIND_PARENT, // child: until the scan lists the parent
     COOP_BATTLE_WAIT_LINKED,
@@ -93,6 +109,13 @@ enum CoopBattleTaskState
     COOP_BATTLE_REWARD_PAGE,    // team boss won: the next reward page (§20)
     COOP_BATTLE_REWARD_WAIT,
     COOP_BATTLE_REWARD_EVOLVE,  // the next level-up evolution, then the next
+    COOP_BATTLE_MOVE_NEXT,      // the next move a Pokemon with four could not learn
+    COOP_BATTLE_MOVE_PAGE,      // a page of the prompt: wait, then env->afterPage
+    COOP_BATTLE_MOVE_ASK,       // "Delete a move to make room?" Yes / No
+    COOP_BATTLE_MOVE_FORGOT,    // back from the summary screen
+    COOP_BATTLE_MOVE_STOP,      // "Stop trying to teach it?" Yes / No
+    COOP_BATTLE_POSTSAVE,       // save the battle's outcome, then end
+    COOP_BATTLE_SAVED,          // a frame for the spinner to restore the frame, then end
 };
 
 struct CoopBattleEnv
@@ -107,6 +130,7 @@ struct CoopBattleEnv
     u8 fought;
     u8 lost;       // the link dropped in the battle (Coop_LinkBattleWatchdog)
     u8 team;       // a 2v2 between two teams
+    u8 saved;      // the save after the battle was made (or tried)
     // Team boss (docs/MILESTONE3_PLAN.md §18).
     u8 boss;
     u8 bossIndex;  // sGatedBosses index
@@ -121,6 +145,14 @@ struct CoopBattleEnv
     u8 rewardSlot;     // the party slot the level pages are at
     u16 nick[12];      // its nickname, for '@'
     char text[72];     // the page being printed (Coop_DialogPrint keeps the pointer)
+    // The forget-a-move prompt (2026-11-02). A move name is up to 15
+    // characters and a dialog argument up to 11, so a name prints as '&^'
+    // (args 2 and 3: its start and the rest).
+    struct CoopChoice choice;
+    u16 moveName[COOP_MOVE_NAME_BUF];
+    u16 forgotName[COOP_MOVE_NAME_BUF];
+    u8 forgetSlot;     // the summary screen's answer
+    u8 afterPage;      // COOP_BATTLE_MOVE_PAGE goes on here
 };
 
 enum CoopRewardPage
@@ -198,11 +230,11 @@ static BOOL Coop_RewardNextPage(FieldSystem *fsys, struct CoopBattleEnv *env)
             env->rewardPage = COOP_REWARD_PAGE_NO_ROOM;
             return TRUE;
         case COOP_REWARD_PAGE_NO_ROOM:
+            // A move it could not learn is offered after the pages
+            // (COOP_BATTLE_MOVE_NEXT).
             env->rewardPage = COOP_REWARD_PAGE_LEVEL;
-            if (!(r->couldNotLearn & (1u << env->rewardSlot++)))
-                continue;
-            Coop_AppendText(p, "@ wanted to learn a move,\nbut it already knows four.");
-            return TRUE;
+            env->rewardSlot++;
+            continue;
         default:
             return FALSE;
         }
@@ -308,6 +340,158 @@ static BOOL Coop_BossTeammateWaits(FieldSystem *fsys, struct CoopBattleEnv *env)
     return mate.boss_wait == env->bossIndex + 1 && mate.map_id == (u16)fsys->location->mapId;
 }
 
+// ---------------------------------------------------------------------------
+// The forget-a-move prompt after a team boss win (2026-11-02): vanilla's
+// level-up prompt, with the move tutor's summary screen (Coop_CallForgetMove)
+// to choose the move to forget.
+// ---------------------------------------------------------------------------
+
+enum CoopMoveAfterPage
+{
+    COOP_MOVE_AFTER_CANT,    // -> "But it can't learn more than four moves."
+    COOP_MOVE_AFTER_ASK,     // -> "Delete a move to make room?"
+    COOP_MOVE_AFTER_FORGOT,  // -> "It forgot how to use X."
+    COOP_MOVE_AFTER_AND,     // -> "And..."
+    COOP_MOVE_AFTER_LEARNED, // -> "It learned Y!"
+    COOP_MOVE_AFTER_NEXT,    // -> the next move
+};
+
+// A move's name into a COOP_MOVE_NAME_BUF buffer, 0xFFFF-padded so that
+// buf + COOP_ARG_SPLIT is always a terminated rest.
+static void Coop_LoadMoveName(u32 move, u16 *buf)
+{
+    MsgData *msgData = NewMsgDataFromNarc(MSGDATA_LOAD_LAZY, ARC_MSG_DATA, COOP_MOVE_NAME_FILE, COOP_MSG_HEAP_ID);
+    String *name;
+    u32 i;
+
+    for (i = 0; i < COOP_MOVE_NAME_BUF; i++)
+        buf[i] = 0xFFFF;
+    if (msgData == NULL)
+        return;
+    name = NewString_ReadMsgData(msgData, (s32)move);
+    if (name != NULL)
+    {
+        CopyStringToU16Array(name, buf, COOP_MOVE_NAME_BUF - 1);
+        String_Delete(name);
+    }
+    DestroyMsgData(msgData);
+    buf[COOP_MOVE_NAME_BUF - 1] = 0xFFFF;
+}
+
+static void Coop_MoveSetArgs(struct CoopBattleEnv *env, u16 *name)
+{
+    env->dialog.args[2] = name;
+    env->dialog.args[3] = name + COOP_ARG_SPLIT;
+}
+
+// Starts the next pending move: its Pokemon's nickname and the move's name.
+// FALSE when none is left (or the Pokemon left the slot it learned it in).
+static BOOL Coop_MoveNext(FieldSystem *fsys, struct CoopBattleEnv *env)
+{
+    struct CoopRewards *r = &env->rewards;
+    struct Party *party = SaveData_GetPlayerPartyPtr(fsys->savedata);
+    struct PartyPokemon *mon;
+    u32 i, move, slot;
+
+    while (r->pendingNext < r->pendingCount)
+    {
+        move = r->pendingMove[r->pendingNext];
+        slot = r->pendingSlot[r->pendingNext];
+        r->pendingNext++;
+        if (slot >= (u32)party->count)
+            continue;
+        mon = Party_GetMonByIndex(party, slot);
+        for (i = 0; i < 4; i++)
+            if (GetMonData(mon, MON_DATA_MOVE1 + i, NULL) == move || GetMonData(mon, MON_DATA_MOVE1 + i, NULL) == 0)
+                break;
+        if (i < 4)
+            continue; // already knows it, or has room after all
+        GetMonData(mon, MON_DATA_NICKNAME, env->nick);
+        env->nick[11] = 0xFFFF;
+        Coop_LoadMoveName(move, env->moveName);
+        env->dialog.args[0] = env->nick;
+        Coop_MoveSetArgs(env, env->moveName);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static void Coop_MovePage(TaskManager *taskman, struct CoopBattleEnv *env, const char *text, u32 after)
+{
+    Coop_DialogPrint(&env->dialog, text);
+    env->afterPage = (u8)after;
+    taskman->state = COOP_BATTLE_MOVE_PAGE;
+}
+
+static void Coop_MoveAskDelete(TaskManager *taskman, struct CoopBattleEnv *env)
+{
+    Coop_MoveSetArgs(env, env->moveName);
+    Coop_DialogPrint(&env->dialog, "Delete a move to make\nroom for &^?");
+    taskman->state = COOP_BATTLE_MOVE_ASK;
+}
+
+static void Coop_MoveAskStop(TaskManager *taskman, struct CoopBattleEnv *env)
+{
+    Coop_MoveSetArgs(env, env->moveName);
+    Coop_DialogPrint(&env->dialog, "Stop trying to teach\n&^?");
+    taskman->state = COOP_BATTLE_MOVE_STOP;
+}
+
+// pret MonSetMoveInSlot_ResetPpUp: the new move in the chosen slot, its PP
+// Ups cleared and its PP full. Keeps the forgotten move's name for the text.
+static void Coop_MoveReplace(FieldSystem *fsys, struct CoopBattleEnv *env)
+{
+    struct CoopRewards *r = &env->rewards;
+    struct PartyPokemon *mon = Party_GetMonByIndex(SaveData_GetPlayerPartyPtr(fsys->savedata), r->pendingSlot[r->pendingNext - 1]);
+    u32 slot = env->forgetSlot;
+    u32 move = r->pendingMove[r->pendingNext - 1];
+    u32 value;
+
+    Coop_LoadMoveName(GetMonData(mon, MON_DATA_MOVE1 + slot, NULL), env->forgotName);
+    SetMonData(mon, MON_DATA_MOVE1 + slot, &move);
+    value = 0;
+    SetMonData(mon, MON_DATA_MOVE1PPUP + slot, &value);
+    value = GetMonData(mon, MON_DATA_MOVE1MAXPP + slot, NULL);
+    SetMonData(mon, MON_DATA_MOVE1PP + slot, &value);
+}
+
+static void Coop_MoveAfterPage(TaskManager *taskman, struct CoopBattleEnv *env)
+{
+    switch (env->afterPage)
+    {
+    case COOP_MOVE_AFTER_CANT:
+        Coop_MovePage(taskman, env, "But @ can't learn\nmore than four moves.", COOP_MOVE_AFTER_ASK);
+        break;
+    case COOP_MOVE_AFTER_ASK:
+        Coop_MoveAskDelete(taskman, env);
+        break;
+    case COOP_MOVE_AFTER_FORGOT:
+        Coop_MoveSetArgs(env, env->forgotName);
+        Coop_MovePage(taskman, env, "@ forgot how to\nuse &^.", COOP_MOVE_AFTER_AND);
+        break;
+    case COOP_MOVE_AFTER_AND:
+        Coop_MovePage(taskman, env, "And...", COOP_MOVE_AFTER_LEARNED);
+        break;
+    case COOP_MOVE_AFTER_LEARNED:
+        Coop_MoveSetArgs(env, env->moveName);
+        Coop_MovePage(taskman, env, "@ learned &^!", COOP_MOVE_AFTER_NEXT);
+        break;
+    default:
+        taskman->state = COOP_BATTLE_MOVE_NEXT;
+        break;
+    }
+}
+
+// After a battle that was fought: "Saving..." with the spinner, then the
+// save (COOP_BATTLE_POSTSAVE). The dialog must be open.
+static void Coop_BattleStartPostSave(TaskManager *taskman, struct CoopBattleEnv *env)
+{
+    env->dialog.args[0] = env->name;
+    Coop_DialogPrint(&env->dialog, "Saving. Don't turn off\nthe power.");
+    env->frames = 0;
+    taskman->state = COOP_BATTLE_POSTSAVE;
+}
+
 static BOOL Coop_Task_Battle(TaskManager *taskman)
 {
     FieldSystem *fsys = taskman->fieldSystem;
@@ -343,6 +527,21 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
 
     case COOP_BATTLE_START:
         Coop_BattleOpenDialog(fsys, env);
+        Coop_DialogPrint(&env->dialog, "Saving before the battle.\nDon't turn off the power.");
+        env->frames = 0;
+        taskman->state = COOP_BATTLE_PRESAVE;
+        break;
+
+    case COOP_BATTLE_PRESAVE:
+        // A failed save only means the last save stays: battle anyway.
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        Coop_DialogShowSpinner(&env->dialog);
+        if (++env->frames < 2)
+            break; // let the message reach the screen first
+        (void)Field_SaveGameNormal(fsys);
+        Coop_DialogHideSpinner(&env->dialog);
+        env->frames = 0;
         if (env->boss)
         {
             gCoopBoss.order[0] = env->order[0];
@@ -363,12 +562,44 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
     case COOP_BATTLE_BOSS_WAIT:
         if (gSystem.newKeys & PAD_BUTTON_B)
         {
+            // Stop waiting (the teammate can no longer link with us), and
+            // offer the battle alone: a teammate who is away, or whose save
+            // already beat this boss, can never soft-lock the team.
             gCoopCommBlock.track_boss_wait = 0;
-            return Coop_BattleEnd(fsys, env);
+            Coop_DialogPrint(&env->dialog, "Battle alone instead?");
+            taskman->state = COOP_BATTLE_BOSS_ALONE;
+            break;
         }
         if (Coop_BossTeammateWaits(fsys, env))
             taskman->state = COOP_BATTLE_START_LINK; // boss_wait stays up until the script starts
         break;
+
+    case COOP_BATTLE_BOSS_ALONE:
+    {
+        u32 value;
+
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        if (!env->choice.open)
+            Coop_ChoiceOpenYesNo(fsys, &env->choice);
+        value = Coop_ChoiceInput(&env->choice);
+        if (value == COOP_CHOICE_NONE)
+            break;
+        Coop_ChoiceClose(&env->choice);
+        if (value == COOP_CHOICE_NO)
+            return Coop_BattleEnd(fsys, env);
+        // The boss's own script, as the A press would have run it: not
+        // armed, so its battle is vanilla's solo battle with the solo roster.
+        Coop_DialogClose(fsys, &env->dialog);
+        MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
+        QueueScript(taskman, env->bossScript, env->bossObj, NULL);
+        taskman->state = COOP_BATTLE_BOSS_ALONE_DONE;
+        break;
+    }
+
+    case COOP_BATTLE_BOSS_ALONE_DONE:
+        sys_FreeMemoryEz(env);
+        return TRUE;
 
     case COOP_BATTLE_START_LINK:
     {
@@ -499,8 +730,11 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
         break;
 
     case COOP_BATTLE_FINAL_BUTTON:
-        if (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B))
+        if (!(gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)))
+            break;
+        if (!env->fought || env->saved)
             return Coop_BattleEnd(fsys, env);
+        Coop_BattleStartPostSave(taskman, env);
         break;
 
     case COOP_BATTLE_BOSS_SCRIPT:
@@ -537,8 +771,83 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
             taskman->state = COOP_BATTLE_REWARD_WAIT;
             break;
         }
-        Coop_DialogClose(fsys, &env->dialog); // the scenes need the windows gone
-        taskman->state = COOP_BATTLE_REWARD_EVOLVE;
+        taskman->state = COOP_BATTLE_MOVE_NEXT;
+        // fallthrough
+    case COOP_BATTLE_MOVE_NEXT:
+        if (!Coop_MoveNext(fsys, env))
+        {
+            Coop_DialogClose(fsys, &env->dialog); // the scenes need the windows gone
+            taskman->state = COOP_BATTLE_REWARD_EVOLVE;
+            break;
+        }
+        Coop_MovePage(taskman, env, "@ wants to learn\nthe move &^.", COOP_MOVE_AFTER_CANT);
+        break;
+
+    case COOP_BATTLE_MOVE_PAGE:
+        if (Coop_DialogIsPrinting(&env->dialog) || !(gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)))
+            break;
+        Coop_MoveAfterPage(taskman, env);
+        break;
+
+    case COOP_BATTLE_MOVE_ASK:
+    case COOP_BATTLE_MOVE_STOP:
+    {
+        u32 value;
+
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        if (!env->choice.open)
+            Coop_ChoiceOpenYesNo(fsys, &env->choice);
+        value = Coop_ChoiceInput(&env->choice);
+        if (value == COOP_CHOICE_NONE)
+            break;
+        Coop_ChoiceClose(&env->choice);
+        if (taskman->state == COOP_BATTLE_MOVE_STOP)
+        {
+            if (value == COOP_CHOICE_YES)
+                Coop_MovePage(taskman, env, "@ did not learn\nthe move &^.", COOP_MOVE_AFTER_NEXT);
+            else
+                Coop_MoveAskDelete(taskman, env);
+            break;
+        }
+        if (value == COOP_CHOICE_NO)
+        {
+            Coop_MoveAskStop(taskman, env);
+            break;
+        }
+        // The move tutor's screen: the overworld is left meanwhile.
+        Coop_DialogClose(fsys, &env->dialog);
+        if (!Coop_CallForgetMove(taskman, env->rewards.pendingSlot[env->rewards.pendingNext - 1],
+                                 env->rewards.pendingMove[env->rewards.pendingNext - 1], &env->forgetSlot))
+            env->forgetSlot = COOP_FORGET_MOVE_GIVE_UP; // out of memory
+        taskman->state = COOP_BATTLE_MOVE_FORGOT;
+        break;
+    }
+
+    case COOP_BATTLE_MOVE_FORGOT:
+        Coop_BattleOpenDialog(fsys, env);
+        env->dialog.args[0] = env->nick;
+        if (env->forgetSlot >= COOP_FORGET_MOVE_GIVE_UP)
+        {
+            Coop_MoveAskStop(taskman, env);
+            break;
+        }
+        Coop_MoveReplace(fsys, env);
+#if COOP_DEBUG_TOOLS
+        {
+            // link_e2e_probe.lua (E2E_BOSS_LEAD=10): the Pokemon's moves now,
+            // after the rewards summary (80 bytes) at the buffer's start.
+            struct PartyPokemon *mon = Party_GetMonByIndex(SaveData_GetPlayerPartyPtr(fsys->savedata),
+                                                           env->rewards.pendingSlot[env->rewards.pendingNext - 1]);
+            u32 i;
+            for (i = 0; i < 4; i++)
+            {
+                u16 m = (u16)GetMonData(mon, MON_DATA_MOVE1 + i, NULL);
+                __builtin_memcpy((u8 *)gCoopDebugMonBuffer.mon + COOP_DEBUG_MOVES_OFFSET + i * 2, &m, 2);
+            }
+        }
+#endif
+        Coop_MovePage(taskman, env, "1, 2, and... ... Poof!", COOP_MOVE_AFTER_FORGOT);
         break;
 
     case COOP_BATTLE_REWARD_WAIT:
@@ -556,10 +865,34 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
             break; // back here once the overworld is back
         if (slot >= 0)
             break; // out of memory: try the next one
-        MapObjectMan_UnpauseAllMovement(fsys->mapObjectMan);
-        sys_FreeMemoryEz(env);
-        return TRUE;
+        // The badge, the rewards and the evolutions go on the save now, so
+        // both games of the team keep the win (one that never saves after a
+        // win would have to fight the boss again, alone).
+        Coop_BattleOpenDialog(fsys, env);
+        Coop_BattleStartPostSave(taskman, env);
+        break;
     }
+
+    case COOP_BATTLE_POSTSAVE:
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        Coop_DialogShowSpinner(&env->dialog);
+        if (++env->frames < 2)
+            break; // let the message reach the screen first
+        env->saved = TRUE;
+        if (Field_SaveGameNormal(fsys))
+        {
+            Coop_DialogHideSpinner(&env->dialog);
+            taskman->state = COOP_BATTLE_SAVED;
+            break;
+        }
+        Coop_DialogHideSpinner(&env->dialog);
+        Coop_DialogPrint(&env->dialog, "The save failed.\nSave from the menu soon.");
+        taskman->state = COOP_BATTLE_FINAL_TEXT;
+        break;
+
+    case COOP_BATTLE_SAVED:
+        return Coop_BattleEnd(fsys, env);
     }
     return FALSE;
 }
@@ -616,6 +949,20 @@ BOOL Coop_DebugStartBattle(FieldSystem *fsys, BOOL parent)
 // Team bosses (docs/MILESTONE3_PLAN.md §18)
 // ---------------------------------------------------------------------------
 
+// The teammate already has this leader's badge (their save kept a win this
+// one lost, e.g. after a crash before saving): their leader would not battle,
+// so this player fights alone, as vanilla. sGatedBosses (coop_field_tasks.c)
+// lists the sixteen leaders first, in badge order, so a leader's index is
+// its badge; the Elite Four, Red and Lance follow and have none.
+#define COOP_BOSS_BADGE_COUNT 16
+
+static BOOL Coop_MateHasBossBadge(const struct CoopPlayerState *mate, u32 index)
+{
+    u32 badges = (u32)mate->badge_mask[0] | ((u32)mate->badge_mask[1] << 8);
+
+    return index < COOP_BOSS_BADGE_COUNT && (badges & (1u << index)) != 0;
+}
+
 // The resident talk hook (src/coop_boss.c): the player talked to a team boss
 // while teamed. Wait for the teammate instead of the boss's script; with no
 // teammate to wait for, talk as vanilla does.
@@ -628,7 +975,8 @@ void LONG_CALL Coop_BossTalkStart(FieldSystem *fsys, LocalMapObject *boss, u16 s
     struct CoopPlayerState mate;
     struct CoopBattleEnv *env;
 
-    if (index < 0 || slot == COOP_SLOT_NONE || !Coop_ReadRemotePlayer(slot, &mate))
+    if (index < 0 || slot == COOP_SLOT_NONE || !Coop_ReadRemotePlayer(slot, &mate)
+        || Coop_MateHasBossBadge(&mate, (u32)index))
     {
         Coop_StartVanillaTalk(fsys, script, boss);
         return;

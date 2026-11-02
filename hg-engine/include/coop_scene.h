@@ -38,4 +38,11 @@ BOOL LONG_CALL Coop_CallPartySelectEntries(TaskManager *taskman, u8 count, u8 *o
 #define COOP_PARTY_SELECT_CANCEL 7 // the party screen's Cancel / B
 BOOL LONG_CALL Coop_CallTradePartySelect(TaskManager *taskman, u8 cursor, u8 *slotOut);
 
+// The move tutor's summary screen ("forget which move?"), the same way: the
+// moves of party slot `partySlot` with `move` to learn. Writes the move slot
+// to forget (0-3) to `*slotOut`, or COOP_FORGET_MOVE_GIVE_UP. It only
+// chooses: the caller replaces the move.
+#define COOP_FORGET_MOVE_GIVE_UP 4
+BOOL LONG_CALL Coop_CallForgetMove(TaskManager *taskman, u8 partySlot, u16 move, u8 *slotOut);
+
 #endif

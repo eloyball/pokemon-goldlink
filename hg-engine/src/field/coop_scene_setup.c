@@ -121,6 +121,43 @@ BOOL Coop_CallTradePartySelect(TaskManager *taskman, u8 cursor, u8 *slotOut)
     args = Coop_PartyMenuArgs(fsys, env, PARTY_MENU_CONTEXT_INGAME_TRADE);
     args->partySlot = cursor;
     env->slotOut = slotOut;
+    env->slotOffset = (u8)__builtin_offsetof(PartyMenuArgs, partySlot);
     *slotOut = COOP_PARTY_SELECT_CANCEL;
+    return Coop_RunScene(taskman, env);
+}
+
+// pret LearnForgetMove_LaunchApp (the move tutor's summary screen): the
+// moves page of `partySlot` with `move` to learn. Its template is not
+// resident, so it goes into the env (the summary app itself is arm9).
+BOOL Coop_CallForgetMove(TaskManager *taskman, u8 partySlot, u16 move, u8 *slotOut)
+{
+    static const u8 sPages[] = { 0x01, 0x04 }; // pret _020FA1A8
+    FieldSystem *fsys = taskman->fieldSystem;
+    struct CoopSceneEnv *env = Coop_NewScene(NULL);
+    struct CoopSummaryArgs *args;
+
+    if (env == NULL)
+        return FALSE;
+    env->appCopy.init = PokemonSummary_Init;
+    env->appCopy.main = PokemonSummary_Main;
+    env->appCopy.exit = PokemonSummary_Exit;
+    env->appCopy.overlayId = COOP_OVERLAY_NONE;
+    env->app = &env->appCopy;
+    args = &env->u.summary;
+    args->party = SaveArray_Party_Get(fsys->savedata);
+    args->options = Save_PlayerData_GetOptionsAddr(fsys->savedata);
+    args->unk11 = 1;
+    args->partySlot = partySlot;
+    args->partyCount = 1;
+    args->moveToLearn = move;
+    args->mode = COOP_SUMMARY_MODE_LEARN_FORGET;
+    args->natDexEnabled = TRUE;
+    args->menuInputStatePtr = &fsys->menuInputState;
+    args->selectedMoveSlot = COOP_SUMMARY_GIVE_UP;
+    sub_02089D40(args, sPages);
+    sub_0208AD34(args, Sav2_PlayerData_GetProfileAddr(fsys->savedata));
+    env->slotOut = slotOut;
+    env->slotOffset = (u8)__builtin_offsetof(struct CoopSummaryArgs, selectedMoveSlot);
+    *slotOut = COOP_SUMMARY_GIVE_UP;
     return Coop_RunScene(taskman, env);
 }

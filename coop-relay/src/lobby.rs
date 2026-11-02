@@ -635,8 +635,25 @@ impl LobbyState {
         self.expire_sessions(now);
         self.expire_trades(now);
         self.expire_links(now);
+        self.build_packets(now, false)
+    }
+
+    /// Link messages without waiting for the next tick (link latency,
+    /// rebalance plan §25): the usual packet, now, for each member with a
+    /// link message never sent. The tick still carries acks and resends.
+    pub fn build_link_flush(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
+        self.build_packets(Instant::now(), true)
+    }
+
+    fn build_packets(&mut self, now: Instant, link_flush: bool) -> Vec<(SocketAddr, Vec<u8>)> {
         let links: Vec<Option<LinkDown>> = (0..MAX_PLAYERS)
-            .map(|i| self.link_down_for(i, now))
+            .map(|i| {
+                if link_flush && !self.link_has_unsent(i) {
+                    None
+                } else {
+                    self.link_down_for(i, now)
+                }
+            })
             .collect();
 
         let active_mask = self.compute_active_bitmask();
@@ -657,6 +674,9 @@ impl LobbyState {
             let Some(recipient) = &self.slots[recipient_idx] else {
                 continue;
             };
+            if link_flush && links[recipient_idx].is_none() {
+                continue;
+            }
 
             // Every other member's state, untouched: the receiving ROM decides
             // what to show (same matrix and map, distance, renderer budget).
@@ -1343,6 +1363,8 @@ pub struct RoomManager {
     /// in `save_dir`, plus rooms that lock while running). A save registered
     /// in one campaign cannot join another room.
     trainer_rooms: HashMap<u32, Vec<[u8; 6]>>,
+    /// Packets to send right away (link messages, `take_immediate`).
+    immediate: Vec<(SocketAddr, Vec<u8>)>,
 }
 
 impl RoomManager {
@@ -1363,6 +1385,7 @@ impl RoomManager {
             cookies: CookieJar::new(),
             failures: FailureLimiter::new(FAILURE_BURST, FAILURE_REFILL_PER_SEC),
             trainer_rooms: index_campaign_trainers(save_dir.as_ref()),
+            immediate: Vec::new(),
         }
     }
 
@@ -1415,10 +1438,29 @@ impl RoomManager {
         if !self.failures.allows(addr.ip(), now) {
             return Err(Rejection::Status(ROOM_STATUS_ERR_RATE_LIMITED));
         }
-        self.dispatch(addr, pkt).map_err(|status| {
+        let link_code = pkt
+            .link
+            .as_ref()
+            .is_some_and(|l| !l.msgs.is_empty())
+            .then_some(pkt.room_code);
+        let result = self.dispatch(addr, pkt).map_err(|status| {
             self.failures.record_failure(addr.ip(), now);
             Rejection::Status(status)
-        })
+        });
+        // Link messages go on at once instead of on the next tick.
+        if result.is_ok()
+            && let Some(code) = link_code
+            && let Some(room) = self.rooms.get_mut(&code)
+        {
+            let packets = room.build_link_flush();
+            self.immediate.extend(packets);
+        }
+        result
+    }
+
+    /// Packets built outside the tick (link messages), to send now.
+    pub fn take_immediate(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
+        std::mem::take(&mut self.immediate)
     }
 
     fn dispatch(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Result<u8, u8> {

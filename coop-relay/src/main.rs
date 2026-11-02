@@ -103,7 +103,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             Ok(pkt) => {
                                 // Both replies are smaller than the request (no amplification).
                                 match manager.handle_client_packet(peer_addr, pkt) {
-                                    Ok(_) => {}
+                                    Ok(_) => {
+                                        for (addr, payload) in manager.take_immediate() {
+                                            if let Err(err) = socket.send_to(&payload, addr).await {
+                                                debug!("Failed sending link packet to {addr}: {err}");
+                                            }
+                                        }
+                                    }
                                     Err(Rejection::Challenge(cookie)) => {
                                         let reply = ServerToClientPacket::create_challenge_response(cookie);
                                         let _ = socket.send_to(&reply, peer_addr).await;

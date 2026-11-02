@@ -187,6 +187,7 @@ SaveData *SaveData_New(void)
     {
         gCoopCommBlock.is_boot_done = 1;
         CreateSysTask(Coop_MainSysTask, NULL, 1000);
+        SysTask_CreateOnVWaitQueue(Coop_LinkSysTask, NULL, 1000);
     }
 
     return ret;

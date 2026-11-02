@@ -20,9 +20,34 @@ struct CoopDialog
     String *text;
     const u16 *args[COOP_TEXT_ARGS]; // what '@' '$' '&' '^' print (Coop_SetStringFromAscii)
     const char *pending; // queued by Coop_DialogPrint while a page is still printing
+    void *waitingIcon;   // the save spinner, NULL when not shown
     u8 printerId;        // 0xFF: nothing printed yet
     u8 textDelay;
 };
+
+// Vanilla's save spinner on the dialog frame's right edge (pret
+// WaitingIcon_New with the field message frame's tiles, as the Game Clear
+// save does). A VBlank-interrupt task turns it, so it keeps turning while
+// Field_SaveGameNormal blocks the CPU. Hide it while the dialog stays open:
+// the hide restores the frame on the next VBlank, which reads the window.
+#define COOP_DIALOG_FRAME_TILE 0x3E2
+void *LONG_CALL WaitingIcon_New(GF_BGL_BMPWIN *window, u32 frameTile);
+void LONG_CALL WaitingIcon_Delete(void *icon);
+
+static inline void Coop_DialogShowSpinner(struct CoopDialog *dialog)
+{
+    if (dialog->waitingIcon == NULL)
+        dialog->waitingIcon = WaitingIcon_New(&dialog->window, COOP_DIALOG_FRAME_TILE);
+}
+
+static inline void Coop_DialogHideSpinner(struct CoopDialog *dialog)
+{
+    if (dialog->waitingIcon != NULL)
+    {
+        WaitingIcon_Delete(dialog->waitingIcon);
+        dialog->waitingIcon = NULL;
+    }
+}
 
 // Plain ASCII to an HG-encoded String. Supports A-Z a-z 0-9, space,
 // ! ? , . - ' ( ) and \n, and UTF-8 'é' (for "Pokémon"); "..." becomes the

@@ -281,6 +281,12 @@ impl LobbyState {
 
     /// The link trailer for a recipient: its ack, the room's beacons, and the
     /// messages due (new, or unacked for LINK_RESEND), oldest first.
+    /// A link message for `slot` that was never sent.
+    pub(crate) fn link_has_unsent(&self, slot: usize) -> bool {
+        let peer = &self.links[slot];
+        peer.active && peer.out.iter().any(|o| o.sent.is_none())
+    }
+
     pub(crate) fn link_down_for(&mut self, slot: usize, now: Instant) -> Option<LinkDown> {
         if !self.links[slot].active {
             return None;

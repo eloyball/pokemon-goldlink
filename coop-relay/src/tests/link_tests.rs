@@ -384,3 +384,35 @@ fn test_link_multi_battle_seats_teammates_together() {
     let (_, got) = clients[0].recv(&mut lobby, 0);
     assert_eq!(got, vec![msg(LINK_MSG_CONNECT, 1, &[1, b'D', b'P', 0])]);
 }
+
+/// Link latency (rebalance plan §25): a link message goes out at once in a
+/// flush packet to its recipient only, and the next tick does not send it
+/// again (it is resent only after LINK_RESEND without an ack).
+#[test]
+fn test_link_flush_sends_new_messages_at_once() {
+    let (mut lobby, mut p, _c, _s) = linked_room();
+    // Nothing new: no flush packets.
+    let _ = lobby.build_broadcast_batch();
+    assert!(lobby.build_link_flush().is_empty(), "nothing unsent");
+
+    p.send(
+        &mut lobby,
+        0,
+        LINK_ROLE_PARENT,
+        Some(beacon()),
+        vec![msg(LINK_MSG_DATA, 0, &[7; 8])],
+    );
+    let flush = lobby.build_link_flush();
+    let to: Vec<_> = flush.iter().map(|(a, _)| *a).collect();
+    assert_eq!(to, vec![addr(1)], "only the child has the new message");
+    let d = flush[0]
+        .1
+        .get(SERVER_PACKET_SIZE..)
+        .and_then(LinkDown::decode)
+        .unwrap();
+    assert_eq!(d.msgs, vec![msg(LINK_MSG_DATA, 0, &[7; 8])]);
+
+    // The tick right after: the child's trailer has no messages to repeat.
+    assert!(down(&mut lobby, 1).unwrap().msgs.is_empty(), "already sent");
+    assert!(lobby.build_link_flush().is_empty());
+}

@@ -486,6 +486,10 @@ ST_ServerDir2ClientNoGet = 0x02257E98 | 1;
 CreateSysTask = 0x0200E320 | 1;
 DestroySysTask = 0x0200E390 | 1;
 SysTask_CreateOnVBlankQueue = 0x0200E33C | 1;
+/* pret asm/main.s sub_0200E374 (gSystem.vwaitTaskQueue): run at the end of each
+   main-loop pass, right before the next Comm_Update (link latency, rebalance
+   plan §25). */
+SysTask_CreateOnVWaitQueue = 0x0200E374 | 1;
 DebugTextBuf = 0x020741C4;
 
 BattleWorkClientParamGet = 0x0223A7E8 | 1;
@@ -783,6 +787,11 @@ FieldSystem_ApplicationIsRunning = 0x020505A0 | 1;
 /* Overlay 01 (field); only callable while the field map is running.
    Source: pret asm/overlay_01_021F3F50.s label "Field_SaveGameNormal: ; 0x021F43E8" */
 Field_SaveGameNormal = 0x021F43E8 | 1;
+/* Vanilla's save spinner (ARM9; pret WaitingIcon_New, was sub_0200F0AC in
+   asm/unk_0200E398.s; WaitingIcon_Delete is still sub_0200F450 there). It
+   spins from a VBlank-interrupt task, so it turns during a blocking save. */
+WaitingIcon_New = 0x0200F0AC | 1;
+WaitingIcon_Delete = 0x0200F450 | 1;
 /* Movement scripts (what ScrCmd_ApplyMovement uses).
    Source: pret asm/unk_02062108.s labels. */
 EventObjectMovementMan_Create = 0x02062214 | 1;
@@ -845,6 +854,14 @@ EvolutionScene_New = 0x02075A7C | 1;
 EvolutionScene_IsDone = 0x02075D3C | 1;
 EvolutionScene_Delete = 0x02075D4C | 1;
 PokemonSummary_GetDefaultUnk2C = 0x02088288 | 1;
+/* The summary screen app and the learn-or-forget setup (pret
+   asm/unk_02088288.s labels; LearnForgetMove_LaunchApp in
+   src/launch_application.c calls the two subs). */
+PokemonSummary_Init = 0x02088298 | 1;
+PokemonSummary_Main = 0x02088424 | 1;
+PokemonSummary_Exit = 0x0208856C | 1;
+sub_02089D40 = 0x02089D40 | 1;
+sub_0208AD34 = 0x0208AD34 | 1;
 Heap_Create = 0x0201A910 | 1;
 Heap_Destroy = 0x0201A9C4 | 1;
 /* The party screen in vanilla's NPC-trade context (pret

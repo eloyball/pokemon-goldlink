@@ -163,7 +163,8 @@ static u32 Coop_ExpFor(struct PartyPokemon *mon, u32 slot, u32 foe, u32 myId, u3
 }
 
 // Adds experience up to the level cap, one level at a time: each new level
-// recalculates the stats and learns that level's moves into a free slot.
+// recalculates the stats and learns that level's moves into a free slot; a
+// move that finds four already is kept for the forget-a-move prompt.
 static void Coop_GiveExp(struct PartyPokemon *mon, u32 slot, u32 exp, struct CoopRewards *out)
 {
     u32 species = GetMonData(mon, MON_DATA_SPECIES, NULL);
@@ -194,7 +195,15 @@ static void Coop_GiveExp(struct PartyPokemon *mon, u32 slot, u32 exp, struct Coo
         while ((result = MonTryLearnMoveOnLevelUp(mon, &last, &move)) != 0)
         {
             if (result == MOVE_APPEND_FULL)
+            {
                 out->couldNotLearn |= 1u << slot;
+                if (out->pendingCount < COOP_REWARD_PENDING_MAX)
+                {
+                    out->pendingMove[out->pendingCount] = move;
+                    out->pendingSlot[out->pendingCount] = (u8)slot;
+                    out->pendingCount++;
+                }
+            }
             else if (result != 0xFFFE)
                 out->learned |= 1u << slot;
         }

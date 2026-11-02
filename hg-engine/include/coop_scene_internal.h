@@ -92,16 +92,64 @@ struct CoopLevelEvolution
     int method;
 };
 
+// pret include/unk_02088288.h PokemonSummaryArgs (0x3C bytes): the summary
+// screen's arguments. Learn-or-forget mode (pret LearnForgetMove_LaunchApp,
+// what the move tutor's script command opens) writes the chosen move slot,
+// 0-3 or 4 for "give up", to selectedMoveSlot.
+struct CoopSummaryArgs
+{
+    void *party;
+    void *options;
+    u8 unk8[8];
+    u8 unk10;
+    u8 unk11;
+    u8 mode;             // pret unk12: 2 = learn or forget a move
+    u8 partyCount;
+    u8 partySlot;
+    u8 unk15;
+    u8 selectedMoveSlot; // pret unk16 (sub_0203E864)
+    u8 pad17;
+    u16 moveToLearn;
+    u8 unk1A[2];
+    BOOL natDexEnabled;
+    void *ribbons;
+    u8 unk24[4];
+    int unk28;
+    int unk2C;
+    void *menuInputStatePtr;
+    BOOL isFlag982Set;
+    u8 unk38[4];
+};
+_Static_assert(sizeof(struct CoopSummaryArgs) == 0x3C, "pret PokemonSummaryArgs");
+_Static_assert(__builtin_offsetof(struct CoopSummaryArgs, selectedMoveSlot) == 0x16, "pret PokemonSummaryArgs.unk16");
+_Static_assert(__builtin_offsetof(struct CoopSummaryArgs, moveToLearn) == 0x18, "pret PokemonSummaryArgs.moveToLearn");
+_Static_assert(__builtin_offsetof(struct CoopSummaryArgs, menuInputStatePtr) == 0x30, "pret PokemonSummaryArgs.menuInputStatePtr");
+
+#define COOP_SUMMARY_MODE_LEARN_FORGET 2
+#define COOP_SUMMARY_GIVE_UP           4 // selectedMoveSlot: no move forgotten
+
+// The summary screen (arm9; pret asm/unk_02088288.s labels).
+BOOL PokemonSummary_Init(void *man, int *state);
+BOOL PokemonSummary_Main(void *man, int *state);
+BOOL PokemonSummary_Exit(void *man, int *state);
+void LONG_CALL sub_02089D40(struct CoopSummaryArgs *args, const u8 *pages); // the pages shown
+void LONG_CALL sub_0208AD34(struct CoopSummaryArgs *args, void *profile);   // the trainer shown
+
 struct CoopSceneEnv
 {
     const struct CoopAppTemplate *app;
-    u8 *slotOut; // party screen: where the chosen slot goes
+    u8 *slotOut; // party screen / summary: where the chosen slot goes
     u8 *orderOut; // party screen, choosing entries: where the 6-byte order goes
+    // An app whose template is not resident points app here (the scene
+    // task launches it after Overlay 131, which built it, is gone).
+    struct CoopAppTemplate appCopy;
+    u8 slotOffset; // where in u the app leaves the slot for slotOut
     union
     {
         struct CoopTradeScene trade;
         PartyMenuArgs party;
         struct CoopLevelEvolution level;
+        struct CoopSummaryArgs summary;
     } u;
 };
 

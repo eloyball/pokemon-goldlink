@@ -51,7 +51,7 @@ BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 #define DIALOG_PLTT_TEXT    12
 #define DIALOG_PLTT_FRAME   10
 #define DIALOG_BASE_TILE    0x237
-#define DIALOG_FRAME_TILE   0x3E2
+#define DIALOG_FRAME_TILE   COOP_DIALOG_FRAME_TILE
 #define DIALOG_FONT         1
 #define DIALOG_BG_FILL      15
 
@@ -170,6 +170,7 @@ void LONG_CALL Coop_DialogOpen(FieldSystem *fsys, struct CoopDialog *dialog)
     dialog->textDelay = Coop_GetTextFrameDelay(fsys->savedata);
     dialog->printerId = 0xFF;
     dialog->pending = NULL;
+    dialog->waitingIcon = NULL;
 }
 
 // pret TextPrinter (include/font_types_def.h): the template the callback
@@ -359,6 +360,7 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
             break;
         }
         // Let the finished text reach VRAM before the save blocks the CPU.
+        Coop_DialogShowSpinner(&env->dialog);
         if (++env->frameWait < 2)
             break;
 
@@ -366,6 +368,7 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
             Coop_DialogPrint(&env->dialog, "Your adventure was saved!\nReturning to the Title Screen...");
         else
             Coop_DialogPrint(&env->dialog, "The save failed!\nReturning to the Title Screen...");
+        Coop_DialogHideSpinner(&env->dialog);
         taskman->state = COOP_TASK_WAIT_RESULT_TEXT;
         break;
 
@@ -601,7 +604,8 @@ struct CoopGatedBoss
 };
 
 // Bosses the player starts by talking to them (pret zone_event JSON object
-// positions). Lance is started by a map script, but only after the Elite
+// positions). The sixteen leaders come first, in badge order (row = badge:
+// src/field/coop_battle.c Coop_MateHasBossBadge relies on it). Lance is started by a map script, but only after the Elite
 // Four. Talking to a leader whose badge you already have is never blocked.
 static const struct CoopGatedBoss sGatedBosses[] = {
     { MAP_T22GYM0101, 15, 4, 0 },              // Falkner
@@ -742,9 +746,13 @@ static BOOL Coop_Task_AdventureStartSave(TaskManager *taskman)
 
     case COOP_START_SAVE:
         // Let the text finish and reach VRAM before the save blocks the CPU.
-        if (Coop_DialogIsPrinting(&env->dialog) || ++env->frameWait < 2)
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        Coop_DialogShowSpinner(&env->dialog);
+        if (++env->frameWait < 2)
             break;
         env->saved = Field_SaveGameNormal(fsys) ? 1 : 0;
+        Coop_DialogHideSpinner(&env->dialog);
         Coop_DialogPrint(&env->dialog, env->saved ? "Your adventure was saved!\nHave fun, everyone!"
                                                    : "The save failed!\nIt will be tried again.");
         taskman->state = COOP_START_WAIT_RESULT;

@@ -10,6 +10,8 @@ struct FieldSystem;
 // gives no experience, prize money or level-ups; after a win each game pays
 // them to its own save instead, from what the battle recorded in gCoopBoss.
 
+#define COOP_REWARD_PENDING_MAX 12
+
 struct CoopRewards
 {
     u32 money;         // prize money added
@@ -21,6 +23,12 @@ struct CoopRewards
     u8 newLevel[6];    // per slot, when leveled
     u8 evolveChecked;  // party slot bits already offered their evolution
     u8 pad[3];
+    // Moves a Pokemon with four moves could not learn, in the order the
+    // levels came (2026-11-02): offered afterwards with the tutor's screen.
+    u16 pendingMove[COOP_REWARD_PENDING_MAX];
+    u8 pendingSlot[COOP_REWARD_PENDING_MAX];
+    u8 pendingCount;
+    u8 pendingNext;    // the next one to offer
 };
 
 // Before a team boss battle: the party's HP and PP, and its lead (what

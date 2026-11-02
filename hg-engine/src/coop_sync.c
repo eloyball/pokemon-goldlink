@@ -455,6 +455,19 @@ static void Coop_RunFieldEntry(FieldSystem *fsys)
 // Main SysTask
 // ---------------------------------------------------------------------------
 
+// The virtual radio, in and out of the field (src/coop_link.c). On the
+// VWait queue: the end of each main-loop pass, right before the next
+// Comm_Update, so what the bridge wrote during the pass reaches the comm
+// core without waiting another pass (the main queue runs after
+// Comm_Update, and not at all while Comm_Update waits). Link latency,
+// docs/GAME_REBALANCE_UPDATE.md §25.
+void Coop_LinkSysTask(struct SysTask *task, void *param)
+{
+    (void)task;
+    (void)param;
+    Coop_LinkUpdate();
+}
+
 void Coop_MainSysTask(struct SysTask *task, void *param)
 {
     FieldSystem *fsys = gFieldSysPtr;
@@ -466,7 +479,6 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
 
     gCoopCommBlock.heartbeat_rom++;
     Coop_UpdateBridgeWatchdog();
-    Coop_LinkUpdate(); // the virtual radio: in and out of the field
     Coop_LinkBattleWatchdog(fsys);
 
     fieldActive = Coop_IsFieldMapActive(fsys);

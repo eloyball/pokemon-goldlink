@@ -1191,7 +1191,9 @@ BOOL LONG_CALL GrabAndRegisterUnownForm(EncounterInfo *encounterInfo);
 
 // shiny convenience macro
 #define SHINY_VALUE(otid, pid) (((otid & 0xffff0000) >> 16) ^ (otid & 0xffff) ^ ((pid & 0xffff0000) >> 16) ^ (pid & 0xffff))
-#define SHINY_CHECK(otid, pid) (SHINY_VALUE(otid, pid) <= SHINY_ODDS)
+// co-op (rebalance plan §22): < as in vanilla (pret: shinyValue < 8), so the odds are exactly
+// SHINY_ODDS / 65536; upstream's <= gave (SHINY_ODDS + 1) / 65536
+#define SHINY_CHECK(otid, pid) (SHINY_VALUE(otid, pid) < SHINY_ODDS)
 
 /**
  *  @brief check if PartyPokemon is shiny

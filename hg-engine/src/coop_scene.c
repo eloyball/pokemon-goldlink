@@ -23,8 +23,9 @@
 //   scene if the received Pokemon evolves by trade) -> restore the overworld
 //   -> fade in
 //
-// Apps: the TradeSequence (Overlay 71), and the party screen in vanilla's
-// NPC-trade context to choose the Pokemon to offer.
+// Apps: the TradeSequence (Overlay 71), the party screen in vanilla's
+// NPC-trade context to choose the Pokemon to offer, and the summary screen
+// that chooses a move to forget.
 //
 // Resident because leaving the overworld unloads Overlay 1, and Overlay 131
 // with it (src/overlay.c). The trade scenes run on copies; only the evolved
@@ -132,7 +133,7 @@ static BOOL Coop_Task_Scene(TaskManager *taskman)
         }
         else if (env->slotOut != NULL)
         {
-            *env->slotOut = env->u.party.partySlot;
+            *env->slotOut = ((const u8 *)&env->u)[env->slotOffset];
             taskman->state = COOP_SCENE_RESTORE;
         }
         else

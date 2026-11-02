@@ -143,15 +143,37 @@ namespace CoopBridge
                     _beacon = null;
                 }
 
-                // The relay's trailers since last frame.
+                DeliverIn(mem, domain, blk, myPlayer);
+            }
+        }
+
+        /// <summary>
+        /// Before a frame (link latency, docs/GAME_REBALANCE_UPDATE.md §25):
+        /// what the relay sent since the last frame goes into the in ring
+        /// now, so the game handles it in this frame instead of the next.
+        /// Only the receiving half, on the block Pump validated after the
+        /// last frame (the game has not run since).
+        /// </summary>
+        public void PumpIn(IMemoryApi mem, string domain, byte myPlayer)
+        {
+            lock (_lock)
+            {
+                if (_active && _received.Count > 0) DeliverIn(mem, domain, _blockOffset, myPlayer);
+            }
+        }
+
+        // The relay's trailers since the last call, then the in ring. Under _lock.
+        private void DeliverIn(IMemoryApi mem, string domain, uint blk, byte myPlayer)
+        {
+            {
                 byte[]? lastBeacons = null;
                 while (_received.Count > 0)
                     lastBeacons = Apply(_received.Dequeue()) ?? lastBeacons;
                 if (lastBeacons != null) WriteSeen(mem, domain, blk, lastBeacons, myPlayer);
 
                 // Into the in ring, as far as it has room.
-                head = (byte)mem.ReadU8(blk + OffInHead, domain);
-                tail = (byte)mem.ReadU8(blk + OffInTail, domain);
+                byte head = (byte)mem.ReadU8(blk + OffInHead, domain);
+                byte tail = (byte)mem.ReadU8(blk + OffInTail, domain);
                 while (_inbox.Count > 0 && (byte)(head - tail) < InSlots)
                 {
                     byte[] msg = _inbox.Dequeue();

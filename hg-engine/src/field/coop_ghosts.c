@@ -506,7 +506,7 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     struct PartyPokemon mon;
     u32 species, item = ITEM_NONE, otid, pidLow, pid, gender, level = 10, move = MOVE_NONE, pp = 0, i;
     BOOL alone = preset == 5 || preset == 6 || preset == 9; // the lead alone in the party
-    BOOL lead = (preset >= 3 && preset <= 7) || preset == 9;
+    BOOL lead = (preset >= 3 && preset <= 7) || preset == 9 || preset == 10;
 
     if (preset == 1)
         species = SPECIES_HAUNTER;
@@ -530,11 +530,14 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
         // 3 wins against Falkner (Rock Slide hits both foes), 4 loses.
         // 7 (§20 rewards): a level 24 Geodude one EXP point short of 25,
         // which wins too, then levels up and evolves into Graveler.
+        // 10 (§23 move prompt): a level 27 Geodude with four moves, one EXP
+        // point short of 28, where it learns Stealth Rock.
         BOOL golem = preset == 3 || preset == 5;
-        species = golem ? SPECIES_GOLEM : preset == 7 ? SPECIES_GEODUDE : SPECIES_MAGIKARP;
-        level = golem ? 40 : preset == 7 ? 24 : 5;
-        move = (golem || preset == 7) ? MOVE_ROCK_SLIDE : MOVE_SPLASH;
-        pp = (golem || preset == 7) ? 10 : 40;
+        BOOL geodude = preset == 7 || preset == 10;
+        species = golem ? SPECIES_GOLEM : geodude ? SPECIES_GEODUDE : SPECIES_MAGIKARP;
+        level = golem ? 40 : preset == 7 ? 24 : preset == 10 ? 27 : 5;
+        move = (golem || geodude) ? MOVE_ROCK_SLIDE : MOVE_SPLASH;
+        pp = (golem || geodude) ? 10 : 40;
     }
     else if (preset == 2)
     {
@@ -557,16 +560,17 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
         SetMonData(&mon, MON_DATA_HELD_ITEM, &item);
     if (lead && preset != 9)
     {
+        static const u16 sFullMoves[4] = { MOVE_ROCK_SLIDE, MOVE_DEFENSE_CURL, MOVE_ROCK_POLISH, MOVE_TACKLE };
         for (i = 0; i < 4; i++)
         {
-            u32 m = i == 0 ? move : MOVE_NONE, p = i == 0 ? pp : 0;
+            u32 m = preset == 10 ? sFullMoves[i] : i == 0 ? move : MOVE_NONE, p = (preset == 10 || i == 0) ? pp : 0;
             SetMonData(&mon, MON_DATA_MOVE1 + i, &m);
             SetMonData(&mon, MON_DATA_MOVE1PP + i, &p);
         }
     }
-    if (preset == 7)
+    if (preset == 7 || preset == 10)
     {
-        u32 exp = PokeLevelExpGet(SPECIES_GEODUDE, 25) - 1;
+        u32 exp = PokeLevelExpGet(SPECIES_GEODUDE, preset == 7 ? 25 : 28) - 1;
         SetMonData(&mon, MON_DATA_EXPERIENCE, &exp);
     }
     if (preset == 8)
@@ -1134,12 +1138,24 @@ static void Coop_PublishLocalPlayerState(FieldSystem *fsys, LocalMapObject *play
 // toward us gets their ghost just off screen, and it despawns beyond a
 // larger radius; a player who arrives in view (through a door, or by
 // connecting) appears like any NPC. An existing ghost never jumps on screen.
-#define COOP_SPAWN_RADIUS_X   10
-#define COOP_SPAWN_RADIUS_Z   8
-#define COOP_DESPAWN_RADIUS_X 13
-#define COOP_DESPAWN_RADIUS_Z 10
-#define COOP_SCREEN_RADIUS_X  9
-#define COOP_SCREEN_RADIUS_Z  7
+//
+// The visible area depends on the map's camera (pret map header cameraType,
+// ccd field_camera.c sFieldCameraPresets). Most maps use presets 0 and 4
+// (about 9 x 7 tiles around the player); a few look further north, and
+// Violet Gym's (preset 1) shows about 18 tiles north, so a fixed 10-tile
+// radius deleted ghosts in plain view there. CoopView is the screen
+// radius; spawn adds 1 tile, despawn 4 across and 3 north / south.
+struct CoopView
+{
+    u8 north;
+    u8 south;
+    u8 x;
+};
+
+#define COOP_SPAWN_MARGIN_X   1
+#define COOP_SPAWN_MARGIN_Z   1
+#define COOP_DESPAWN_MARGIN_X 4
+#define COOP_DESPAWN_MARGIN_Z 3
 #define COOP_CATCHUP_MAX      4 // farther behind than this: snap while the ghost is off screen
 
 // pret constants/movements.h groups (+ direction: north, south, west, east).
@@ -1200,9 +1216,51 @@ static BOOL Coop_IsSamePlace(FieldSystem *fsys, const struct CoopPlayerState *re
     return matrix == 0 || remote->map_id == (u16)fsys->location->mapId;
 }
 
-static BOOL Coop_IsWithin(s32 x, s32 z, const LocalMapObject *player, s32 radiusX, s32 radiusZ)
+// Screen radii of the maps whose camera sees further than the default,
+// rounded up from each preset's visible ground area (north is -z).
+static const struct
 {
-    return Coop_Abs(x - player->xCurr) <= radiusX && Coop_Abs(z - player->yCurr) <= radiusZ;
+    u16 mapId;
+    struct CoopView view;
+} sCoopWideViews[] = {
+    {  86, { 11, 7,  9 } }, // Ecruteak Dance Theater (camera 15)
+    { 135, { 19, 7, 13 } }, // Violet Gym (camera 1)
+    { 137, { 12, 8, 10 } }, // Goldenrod Gym (camera 2)
+    { 180, { 12, 7, 11 } }, // Azalea Gym (camera 5)
+    { 221, { 42, 9, 16 } }, // Olivine Lighthouse exterior (camera 3)
+    { 244, { 12, 7, 10 } }, // Whirl Islands, Lugia's cave (camera 12)
+    { 282, { 14, 7, 10 } }, // Pokeathlon Dome 2F (camera 7)
+    { 340, { 42, 8, 16 } }, // Bell Tower roof (camera 13)
+    { 379, { 42, 9, 16 } }, // Celadon Condominiums roof (camera 3)
+    { 486, { 17, 7, 13 } }, // Whirl Islands B3F (camera 10)
+};
+
+static void Coop_GetView(FieldSystem *fsys, struct CoopView *view)
+{
+    u32 mapId = fsys->location->mapId;
+    u32 i;
+
+    view->north = 7;
+    view->south = 7;
+    view->x = 9;
+    for (i = 0; i < NELEMS(sCoopWideViews); i++)
+    {
+        if (sCoopWideViews[i].mapId == mapId)
+        {
+            *view = sCoopWideViews[i].view;
+            return;
+        }
+    }
+}
+
+// Within the view plus a margin (0 = on screen).
+static BOOL Coop_IsWithin(s32 x, s32 z, const LocalMapObject *player, const struct CoopView *view, s32 marginX,
+                          s32 marginZ)
+{
+    s32 dz = z - player->yCurr;
+
+    return Coop_Abs(x - player->xCurr) <= view->x + marginX
+        && dz >= -(view->north + marginZ) && dz <= view->south + marginZ;
 }
 
 // ---------------------------------------------------------------------------
@@ -1549,10 +1607,11 @@ static u32 Coop_DriveGhost(LocalMapObject *ghost, const struct CoopGhostTarget *
 // recreated on the target's tile next frame. The target may be on screen:
 // the ghost then appears there like a player arriving, instead of trailing
 // unseen (it never jumps while visible).
-static BOOL Coop_ShouldSnap(LocalMapObject *ghost, const LocalMapObject *player, s32 x, s32 z)
+static BOOL Coop_ShouldSnap(LocalMapObject *ghost, const LocalMapObject *player, const struct CoopView *view, s32 x,
+                            s32 z)
 {
     return Coop_Abs(x - ghost->xCurr) + Coop_Abs(z - ghost->yCurr) > COOP_CATCHUP_MAX
-        && !Coop_IsWithin(ghost->xCurr, ghost->yCurr, player, COOP_SCREEN_RADIUS_X, COOP_SCREEN_RADIUS_Z)
+        && !Coop_IsWithin(ghost->xCurr, ghost->yCurr, player, view, 0, 0)
         && Coop_GhostIsIdle(ghost);
 }
 
@@ -1691,8 +1750,9 @@ static BOOL Coop_ShouldSnapOnReturn(BOOL returned, const LocalMapObject *ghost, 
     return returned && Coop_Abs(x - ghost->xCurr) + Coop_Abs(z - ghost->yCurr) >= COOP_RETURN_SNAP_MIN;
 }
 
-static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
-                             const struct CoopPlayerState *remote, BOOL valid, BOOL allowPoses, BOOL returned)
+static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, const struct CoopView *view,
+                             struct CoopBudget *budget, u32 slot, const struct CoopPlayerState *remote, BOOL valid,
+                             BOOL allowPoses, BOOL returned)
 {
     LocalMapObject *ghost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot);
     struct CoopGhostTarget target;
@@ -1704,8 +1764,8 @@ static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, stru
         // far behind off screen: remove (the next frame may recreate it).
         if (!valid
             || (u32)COOP_GHOST_TRAINER(ghost) != remote->trainer_id
-            || !Coop_IsWithin(remote->x, remote->z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
-            || Coop_ShouldSnap(ghost, player, remote->x, remote->z)
+            || !Coop_IsWithin(remote->x, remote->z, player, view, COOP_DESPAWN_MARGIN_X, COOP_DESPAWN_MARGIN_Z)
+            || Coop_ShouldSnap(ghost, player, view, remote->x, remote->z)
             || Coop_ShouldSnapOnReturn(returned, ghost, remote->x, remote->z)
             || !Coop_UpdateGhostSprite(budget, ghost, remote, allowPoses))
         {
@@ -1723,7 +1783,7 @@ static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, stru
         return;
     }
 
-    if (!valid || !Coop_IsWithin(remote->x, remote->z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z))
+    if (!valid || !Coop_IsWithin(remote->x, remote->z, player, view, COOP_SPAWN_MARGIN_X, COOP_SPAWN_MARGIN_Z))
         return;
     sprite = allowPoses ? Coop_WantedSprite(remote) : Coop_WalkingSprite(remote);
     if (!Coop_BudgetFits(budget, sprite))
@@ -1794,8 +1854,9 @@ static u32 Coop_FollowerSprite(const struct CoopPlayerState *remote)
 // goes away with it (another trainer in the slot, a snap) and the players
 // always get the budget first. Its last handled move_seq lives in the
 // mailbox: follower params belong to the follower draw code.
-static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, struct CoopBudget *budget, u32 slot,
-                                const struct CoopPlayerState *remote, BOOL valid, BOOL returned)
+static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, const struct CoopView *view,
+                                struct CoopBudget *budget, u32 slot, const struct CoopPlayerState *remote, BOOL valid,
+                                BOOL returned)
 {
     LocalMapObject *follower = Coop_FindObjectById(manager, COOP_FOLLOWER_ID_FIRST + slot);
     BOOL hasGhost = Coop_FindObjectById(manager, COOP_GHOST_ID_FIRST + slot) != NULL;
@@ -1807,8 +1868,9 @@ static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, s
         if (sprite == 0
             || (u32)follower->gfxId != sprite
             || (u32)(follower->param[2] & 1) != remote->follower_shiny
-            || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, COOP_DESPAWN_RADIUS_X, COOP_DESPAWN_RADIUS_Z)
-            || Coop_ShouldSnap(follower, player, remote->follower_x, remote->follower_z)
+            || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, view, COOP_DESPAWN_MARGIN_X,
+                              COOP_DESPAWN_MARGIN_Z)
+            || Coop_ShouldSnap(follower, player, view, remote->follower_x, remote->follower_z)
             || Coop_ShouldSnapOnReturn(returned, follower, remote->follower_x, remote->follower_z))
         {
             Coop_RemoveGhost(manager, follower);
@@ -1825,7 +1887,7 @@ static void Coop_UpdateFollower(MapObjectMan *manager, LocalMapObject *player, s
     }
 
     if (sprite == 0
-        || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, COOP_SPAWN_RADIUS_X, COOP_SPAWN_RADIUS_Z)
+        || !Coop_IsWithin(remote->follower_x, remote->follower_z, player, view, COOP_SPAWN_MARGIN_X, COOP_SPAWN_MARGIN_Z)
         || !Coop_BudgetFitsTexture(budget, sprite))
         return;
     follower = Coop_CreateGhostObject(manager, COOP_FOLLOWER_ID_FIRST + slot, remote->follower_x, remote->follower_z,
@@ -1992,10 +2054,12 @@ static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMap
     BOOL valid[COOP_REMOTE_SLOTS];
     u8 order[COOP_REMOTE_SLOTS];
     struct CoopBudget budget;
+    struct CoopView view;
     BOOL returned = gCoopCommBlock.track_field_hidden == 1;
     u32 i;
 
     gCoopCommBlock.track_field_hidden = 0;
+    Coop_GetView(fsys, &view);
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
         valid[i] = Coop_ReadRemotePlayer(i, &remotes[i]) && Coop_IsSamePlace(fsys, &remotes[i]);
     Coop_SortByDistance(order, remotes, valid, player);
@@ -2014,9 +2078,9 @@ static void Coop_UpdateGhosts(FieldSystem *fsys, MapObjectMan *manager, LocalMap
             Coop_BudgetInit(&budget, manager); // slots were freed
     }
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
-        Coop_UpdateGhost(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]], fsys->taskman == NULL, returned);
+        Coop_UpdateGhost(manager, player, &view, &budget, order[i], &remotes[order[i]], valid[order[i]], fsys->taskman == NULL, returned);
     for (i = 0; i < COOP_REMOTE_SLOTS; i++)
-        Coop_UpdateFollower(manager, player, &budget, order[i], &remotes[order[i]], valid[order[i]], returned);
+        Coop_UpdateFollower(manager, player, &view, &budget, order[i], &remotes[order[i]], valid[order[i]], returned);
 }
 
 // ---------------------------------------------------------------------------

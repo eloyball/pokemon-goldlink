@@ -351,6 +351,11 @@ namespace CoopBridge
         [RequiredApi]
         public IMemoryApi? _memoryApi { get; set; }
 
+        // Emergency backups (Backups.cs): savestates taken and loaded on frame
+        // boundaries. Optional: without it, the bridge works without backups.
+        [OptionalApi]
+        public ISaveStateApi? _saveStateApi { get; set; }
+
         // Used only to verify the domain exists: IMemoryApi silently falls back
         // to the "current" domain when a name is unknown.
         [OptionalService]
@@ -474,6 +479,11 @@ namespace CoopBridge
         private readonly SaveSlots _saveSlots = new SaveSlots(
             Path.Combine(Path.GetDirectoryName(ConfigFilePath) ?? ".", "coop_saves"));
         private SlotState _slotState = SlotState.None;
+        private readonly Backups _backups = new Backups(
+            Path.Combine(Path.GetDirectoryName(ConfigFilePath) ?? ".", "coop_backups"));
+        private DateTime _nextBackupUtc = DateTime.MaxValue; // set once the room's save is in place
+        private string? _pendingRestore; // a backup to load on the next frame boundary
+        private ThemedButton? _restoreButton;
         private string? _slotKey;
         private uint? _lastSaveCounter;
         private uint _lastRomHeartbeat;
@@ -696,6 +706,11 @@ namespace CoopBridge
                 _allowAheadButton.Text = Volatile.Read(ref _allowAhead) ? "Let others go ahead: on" : "Let others go ahead: off";
             };
             sessionCard.Controls.Add(_allowAheadButton);
+            _restoreButton = Theme.MakeButton("Restore a backup…", Theme.ButtonKind.Neutral);
+            _restoreButton.Height = 28;
+            _restoreButton.Margin = new Padding(0, 8, 0, 0);
+            _restoreButton.Click += (_, _) => ShowRestoreDialog();
+            sessionCard.Controls.Add(_restoreButton);
 
             // --- Server (set once, so it sits at the bottom) ---
             var serverCard = Theme.MakeCard();
@@ -870,8 +885,27 @@ namespace CoopBridge
         // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_AUTOJOIN="host:port|ROOM"
         // joins that room as soon as the tool is open, and again after a failed
         // attempt, until connected (scripts/run_link_e2e.sh). Never set by users.
+        // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_LEAVE_IN_BATTLE=seconds
+        // leaves the room (as the Leave room button does) once the game has
+        // been in a battle that long, once (docs/KNOWN_RISKS.md #52 repro).
+        private double _devLeaveInBattle = -1;
+        private DateTime? _devBattleSinceUtc;
+
+        private void DevMaybeLeaveInBattle()
+        {
+            if (_devLeaveInBattle < 0) return;
+            if (_localPlayer[Mailbox.PsActivity] != 2) { _devBattleSinceUtc = null; return; }
+            _devBattleSinceUtc ??= DateTime.UtcNow;
+            if ((DateTime.UtcNow - _devBattleSinceUtc.Value).TotalSeconds < _devLeaveInBattle) return;
+            _devLeaveInBattle = -1;
+            DisconnectFromServer("Left the room (COOP_BRIDGE_LEAVE_IN_BATTLE).", isError: false);
+        }
+
         private void StartDevAutoJoin()
         {
+            if (double.TryParse(Environment.GetEnvironmentVariable("COOP_BRIDGE_LEAVE_IN_BATTLE"),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double leave))
+                _devLeaveInBattle = leave;
             string? autoJoin = Environment.GetEnvironmentVariable("COOP_BRIDGE_AUTOJOIN");
             string[] parts = (autoJoin ?? string.Empty).Split('|');
             if (parts.Length != 2) return;
@@ -929,6 +963,7 @@ namespace CoopBridge
             }
             _hostOptions.Visible = offline && _hostMode;
 
+            if (_restoreButton != null) _restoreButton.Visible = offline && _saveStateApi != null;
             _primaryButton.Visible = _link != LinkState.Connected;
             _leaveButton.Visible = _link == LinkState.Connected;
             _primaryButton.Text = _link switch
@@ -1015,6 +1050,84 @@ namespace CoopBridge
             StartReceiveThread();
         }
 
+        // ------------------------------------------------------------------
+        // Emergency backups (Backups.cs, docs/GAME_REBALANCE_UPDATE.md §23)
+        // ------------------------------------------------------------------
+
+        // Every Backups.Interval in a room, only while the player stands in
+        // the overworld with nothing running: no field task or message, no
+        // trade or link session (exchange_ptr), past the bedroom.
+        private void TryTakeBackup(uint mb)
+        {
+            if (_saveStateApi == null || _slotKey == null || _slotState != SlotState.Ready) return;
+            DateTime now = DateTime.UtcNow;
+            if (_nextBackupUtc == DateTime.MaxValue) _nextBackupUtc = now + Backups.Interval;
+            if (now < _nextBackupUtc) return;
+            if (_localPlayer[Mailbox.PsActivity] != 1 || _localPlayer[Mailbox.PsIsActive] != 1
+                || _localPlayer[Mailbox.PsFieldBusy] != 0 || _localPlayer[Mailbox.PsSaveStatus] != 2
+                || _memoryApi!.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain) != 0)
+                return; // try again next frame
+            _nextBackupUtc = now + Backups.Interval;
+            string? path = _backups.NextPath(_slotKey);
+            if (path == null) return;
+            try
+            {
+                _saveStateApi.Save(path, suppressOSD: true);
+                _backups.Prune(_slotKey);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                SetStatus("Could not write a backup: " + ex.Message, isError: true);
+            }
+        }
+
+        // Outside a room only: the restored game still believes it is in the
+        // room, so the ROM's disconnect flow saves it and returns to the title
+        // screen, and joining the room again keeps that save (SaveSlots).
+        private void ShowRestoreDialog()
+        {
+            if (_link != LinkState.Offline || _saveStateApi == null) return;
+            string room = _saveSlots.Owner;
+            var files = room.Length > 0 ? _backups.List(room) : new List<FileInfo>();
+            if (files.Count == 0)
+            {
+                MessageBox.Show(this, "There are no backups of your last room yet. One is taken every few minutes while you play in a room.",
+                    "Restore a backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            using var dialog = new Form
+            {
+                Text = $"Restore a backup ({room.Split('-')[0]})",
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false,
+                MaximizeBox = false,
+                ClientSize = new Size(360, 300),
+            };
+            var list = new ListBox { Dock = DockStyle.Fill };
+            foreach (FileInfo f in files) list.Items.Add(f.LastWriteTime.ToString("ddd d MMM, HH:mm:ss"));
+            list.SelectedIndex = 0;
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 40 };
+            var restore = new Button { Text = "Restore", DialogResult = DialogResult.OK };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel };
+            buttons.Controls.Add(cancel);
+            buttons.Controls.Add(restore);
+            dialog.Controls.Add(list);
+            dialog.Controls.Add(buttons);
+            dialog.AcceptButton = restore;
+            dialog.CancelButton = cancel;
+            if (dialog.ShowDialog(this) != DialogResult.OK || list.SelectedIndex < 0) return;
+            FileInfo chosen = files[list.SelectedIndex];
+            string warning = $"Restore the backup from {chosen.LastWriteTime:HH:mm:ss}?\n\n"
+                + "Use this only after a crash or a game-breaking bug that your save can't fix. "
+                + "Your game goes back to that moment: everything since then is lost, and a trade "
+                + "made since then can leave the traded Pokémon in both games.\n\n"
+                + "The game then saves and returns to the title screen. Join your room again to continue.";
+            if (MessageBox.Show(this, warning, "Restore a backup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+            _pendingRestore = chosen.FullName;
+        }
+
         private void DisconnectFromServer(string reasonMessage, bool isError)
         {
             if (_link == LinkState.Connecting || _link == LinkState.Connected)
@@ -1024,6 +1137,7 @@ namespace CoopBridge
             }
 
             _link = LinkState.Offline;
+            _nextBackupUtc = DateTime.MaxValue;
             _assignedSlot = Mailbox.PlayerIdNone;
             _activeRoomString = string.Empty;
             _clearPayloadPending = true;
@@ -1206,13 +1320,32 @@ namespace CoopBridge
 
         public override void UpdateValues(ToolFormUpdateType type)
         {
-            // BizHawk calls this before AND after every frame; run once.
+            // BizHawk calls this before AND after every frame. Before: only the
+            // link's incoming messages (they reach the game a frame sooner).
+            if (type == ToolFormUpdateType.PreFrame || type == ToolFormUpdateType.FastPreFrame)
+            {
+                if (!_closing && _link == LinkState.Connected && _memoryApi != null)
+                {
+                    try { _linkCarrier.PumpIn(_memoryApi, MemoryDomain, _assignedSlot); }
+                    catch (NotImplementedException) { } // core closing
+                }
+                return;
+            }
             if (type != ToolFormUpdateType.PostFrame && type != ToolFormUpdateType.FastPostFrame) return;
             if (_closing) return;
             _lastFrameUtc = DateTime.UtcNow;
 
             try
             {
+                if (_pendingRestore != null)
+                {
+                    string path = _pendingRestore;
+                    _pendingRestore = null;
+                    bool loaded = _saveStateApi != null && _saveStateApi.Load(path, suppressOSD: true);
+                    SetStatus(loaded ? "Backup restored. The game saves it and returns to the title screen; then join your room again."
+                                     : "Could not load that backup.", isError: !loaded);
+                    return;
+                }
                 if (!TryValidateMailbox(out uint mb, out string waitReason))
                 {
                     RefreshSession(waitReason, mb: null);
@@ -1238,6 +1371,8 @@ namespace CoopBridge
                 if (_link == LinkState.Offline) return; // server rejected us
                 uint? linkBlock = CoopLink.Find(_memoryApi, MemoryDomain, _memoryApi.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain));
                 _linkCarrier.Pump(_memoryApi, MemoryDomain, linkBlock, _assignedSlot);
+                TryTakeBackup(mb);
+                DevMaybeLeaveInBattle();
 
                 DateTime now = DateTime.UtcNow;
                 DateTime lastChallenge = new DateTime(Interlocked.Read(ref _lastChallengeUtcTicks), DateTimeKind.Utc);

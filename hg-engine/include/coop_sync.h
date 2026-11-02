@@ -93,7 +93,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ARM_TEAM_BATTLE = 11, // Milestone 3 probe E: next trainer battle becomes player + AI partner vs the trainer twice
     COOP_DEBUG_LINK = 12,            // Milestone 3 Phase 3: debug_arg = enum CoopDebugLinkOp (vanilla CommState sessions)
     COOP_DEBUG_LINK_STATUS = 13,     // result COOP_DEBUG_LINK_STATUS_BASE | COOP_DEBUG_LINK_* flags; debug_arg: LinkSync value
-    COOP_DEBUG_GIVE_TEST_MON = 14,   // a shiny test Pokemon (debug_arg 1 Haunter, 2 Onix + Metal Coat: trade evolvers; 3 / 4 the lead for the boss probe: level 40 Golem, Rock Slide / level 5 Magikarp, Splash; 5 / 6 the same, alone in the party; 7 a level 24 Geodude with Rock Slide, one EXP point short of 25, in place of the first; 8 a fainted Rattata added to the party; 9 Milestone 4 Phase 0: gCoopDebugMonBuffer's species / held_item / level, alone in the party), then saves
+    COOP_DEBUG_GIVE_TEST_MON = 14,   // a shiny test Pokemon (debug_arg 1 Haunter, 2 Onix + Metal Coat: trade evolvers; 3 / 4 the lead for the boss probe: level 40 Golem, Rock Slide / level 5 Magikarp, Splash; 5 / 6 the same, alone in the party; 7 a level 24 Geodude with Rock Slide, one EXP point short of 25, in place of the first; 8 a fainted Rattata added to the party; 9 Milestone 4 Phase 0: gCoopDebugMonBuffer's species / held_item / level, alone in the party; 10 rebalance §23: a level 27 Geodude with four moves, one EXP point short of 28 (Stealth Rock), in place of the first), then saves
     COOP_DEBUG_WILD_BATTLE = 15,     // §20 EXP Share probe: a wild battle against a level debug_arg Rattata
     COOP_DEBUG_GIVE_HMS = 16,        // §21 HM probe: debug_arg bit 0 the eight HMs, bit 1 all sixteen badges, bit 2 the eight Kanto badges, bit 3 FLAG_GAME_CLEAR
     COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
@@ -729,5 +729,6 @@ BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out
 // 60 Hz background SysTask (created once in SaveData_New): heartbeat,
 // bridge watchdog, local player telemetry and the mid-game disconnect latch.
 void Coop_MainSysTask(struct SysTask *task, void *param);
+void Coop_LinkSysTask(struct SysTask *task, void *param); // VWait queue: the virtual radio
 
 #endif // COOP_SYNC_H

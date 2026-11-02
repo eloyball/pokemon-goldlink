@@ -57,6 +57,7 @@ enum CoopTradeTaskState
 {
     COOP_TRADE_WAIT_STILL,
     COOP_TRADE_OPEN,
+    COOP_TRADE_PRESAVE,       // save before anything is offered (crash or disconnect safety)
     COOP_TRADE_SYNC,          // wait for the relay's view of this trade
     COOP_TRADE_PICK_TEXT,     // "Which Pokémon will you trade?"
     COOP_TRADE_PICK_SCREEN,   // back from the party screen (overworld left meanwhile)
@@ -470,6 +471,21 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
         // fallthrough
     case COOP_TRADE_OPEN:
         Coop_TradeOpenDialog(fsys, env);
+        Coop_DialogPrint(&env->dialog, "Saving before the trade.\nDon't turn off the power.");
+        env->frames = 0;
+        taskman->state = COOP_TRADE_PRESAVE;
+        break;
+
+    case COOP_TRADE_PRESAVE:
+        // Nothing is offered yet: a failed save only means the last save
+        // stays, so the trade goes on either way.
+        if (Coop_DialogIsPrinting(&env->dialog))
+            break;
+        Coop_DialogShowSpinner(&env->dialog);
+        if (++env->frames < 2)
+            break; // let the message reach the screen first
+        (void)Field_SaveGameNormal(fsys);
+        Coop_DialogHideSpinner(&env->dialog);
         Coop_DialogPrint(&env->dialog, "Please wait...");
         env->frames = 0;
         taskman->state = COOP_TRADE_SYNC;
@@ -714,9 +730,12 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
         break;
 
     case COOP_TRADE_SAVE:
+        Coop_DialogShowSpinner(&env->dialog);
         if (++env->frames < 2)
             break; // let the message reach the screen first
-        if (!Field_SaveGameNormal(fsys))
+        value = Field_SaveGameNormal(fsys);
+        Coop_DialogHideSpinner(&env->dialog);
+        if (!value)
         {
             Coop_DialogPrint(&env->dialog, "The save failed. Press A\nto try again.");
             taskman->state = COOP_TRADE_SAVE_FAILED;
