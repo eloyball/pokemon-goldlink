@@ -934,10 +934,22 @@ BattleSetup_Delete = 0x02051BF8 | 1;
 BattleSetup_CopyPokedexToSaveData = 0x02052444 | 1;
 BattleSetup_SetAllySideBattlersToPlayer = 0x02052580 | 1;
 EnemyTrainerSet_Init = 0x020733C0 | 1;
-/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
 /* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
-   the name is the address): fade, load the map, set the player walking. */
+   the name is the address): fade, load the map, set the player walking.
+   Debug warps, and since Milestone 5 Phase 5 the spirit's warps (keep it). */
 sub_020538C0 = 0x020538C0 | 1;
+/* Milestone 5 Phase 5, the spirit walk and the team menu (docs/MILESTONE5_PLAN.md
+   §11.1). Source: pret asm labels sub_020549A8 (asm/unk_02054648.s) and
+   sub_02060BFC (asm/unk_0205FD20.s); history labels MapObject_GetPositionVec
+   (0x0205F944, now MapObject_CopyPositionVector), MetatileBehavior_IsSurfableWater
+   and sub_02068F98 (now MapID_GetLandmarkName, src/unk_02068F84.c: it loads
+   msg 279 and reads the map section's name). */
+sub_020549A8 = 0x020549A8 | 1;
+sub_02060BFC = 0x02060BFC | 1;
+MapObject_CopyPositionVector = 0x0205F944 | 1;
+MetatileBehavior_IsSurfableWater = 0x0205B778 | 1;
+MapID_GetLandmarkName = 0x02068F98 | 1;
+/* Co-op DEBUG TOOLS only (docs/DEBUG_TOOLS.md); remove with them. */
 /* Overlay 01 (field). Source: pret asm/overlay_01_021F1AFC.s and
    asm/overlay_01_021FC66C.s labels. */
 Field_PlayerAvatar_OrrTransitionFlags = 0x021F1AFC | 1;

@@ -19,6 +19,11 @@ BOOL Coop_StartSessionMenu(struct FieldSystem *fsys, u32 remoteSlot, const struc
 // request once the player is free (no task, message or step in progress).
 void Coop_UpdateSessionPrompt(struct FieldSystem *fsys);
 
+// Milestone 5 Ghost Mode: talking to a teammate's spirit. "NAME's spirit
+// lingers here..." with Revive / Cancel; Revive asks the relay to open a
+// one-sided trade (COOP_SESSION_KIND_REVIVE).
+BOOL Coop_StartSpiritTalk(struct FieldSystem *fsys, u32 remoteSlot, const struct CoopPlayerState *remote);
+
 // Every field frame (src/field/coop_trade.c): starts the trade task whenever
 // the relay holds a trade for this player (gates.trade_pending) and the
 // player is free, and reloads the map in place after the lead was traded.

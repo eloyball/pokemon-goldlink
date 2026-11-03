@@ -15,6 +15,9 @@
 #include "coop_session.h"
 #include "coop_choice.h"
 #include "coop_battle.h"
+#include "coop_challenge.h"
+
+struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 
 // ---------------------------------------------------------------------------
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1), Overlay 131.
@@ -49,6 +52,7 @@ enum CoopMenuValue // ghost menu rows (Yes / No: coop_choice.h)
     COOP_CHOICE_BATTLE = COOP_SESSION_KIND_BATTLE,
     COOP_CHOICE_TEAM_UP = COOP_SESSION_KIND_TEAM_UP,
     COOP_CHOICE_LEAVE_TEAM = COOP_SESSION_KIND_LEAVE_TEAM,
+    COOP_CHOICE_REVIVE = COOP_SESSION_KIND_REVIVE,
     COOP_CHOICE_CANCEL,
 };
 
@@ -149,6 +153,8 @@ static const char *Coop_AcceptedText(u32 kind)
         return "You and @ are now a team!";
     if (kind == COOP_SESSION_KIND_LEAVE_TEAM)
         return "You left your team with @.";
+    if (kind == COOP_SESSION_KIND_REVIVE)
+        return NULL; // the trade task opens next
     return "Let's trade with @!";
 }
 
@@ -200,6 +206,8 @@ static const char *Coop_ResultText(struct CoopSessionTaskEnv *env, u32 state, u3
         case COOP_SESSION_REASON_INVALID:
             if (env->kind == COOP_SESSION_KIND_LEAVE_TEAM)
                 return "You aren't on a team\nanymore.";
+            if (env->kind == COOP_SESSION_KIND_REVIVE)
+                return "@ can't be revived\nright now.";
             return "That isn't possible\nright now.";
         default:                                 return "That isn't possible\nright now.";
         }
@@ -301,7 +309,12 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
         env->dialog.args[0] = env->name;
-        if (!env->incoming)
+        if (!env->incoming && env->kind == COOP_SESSION_KIND_REVIVE)
+        {
+            Coop_DialogPrint(&env->dialog, "@'s spirit lingers here...");
+            taskman->state = COOP_SESSION_MENU_TEXT;
+        }
+        else if (!env->incoming)
         {
             Coop_DialogPrint(&env->dialog, "It's @!\nWhat would you like to do?");
             taskman->state = COOP_SESSION_MENU_TEXT;
@@ -344,7 +357,14 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
     case COOP_SESSION_MENU_TEXT:
         if (!Coop_DialogIsPrinting(&env->dialog))
         {
-            Coop_SessionOpenMainMenu(fsys, env);
+            if (env->kind == COOP_SESSION_KIND_REVIVE)
+            {
+                static const char *const labels[] = { "REVIVE", "CANCEL" };
+                static const u8 values[] = { COOP_CHOICE_REVIVE, COOP_CHOICE_CANCEL };
+                Coop_ChoiceOpen(fsys, &env->choice, labels, values, 2, 9);
+            }
+            else
+                Coop_SessionOpenMainMenu(fsys, env);
             taskman->state = COOP_SESSION_MENU;
         }
         break;
@@ -372,6 +392,19 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         {
             env->kind = COOP_SESSION_KIND_LEAVE_TEAM;
             Coop_DialogPrint(&env->dialog, "Leave your team with @?");
+            taskman->state = COOP_SESSION_CONFIRM_TEXT;
+            break;
+        }
+        if (value == COOP_CHOICE_REVIVE)
+        {
+            // Milestone 5 Ghost Mode: the donor's own checks first (§5.5.4).
+            msg = Coop_SpiritDonorRule(SaveArray_Party_Get(fsys->savedata), 0xFF);
+            if (msg != NULL)
+            {
+                Coop_SessionFinal(taskman, env, msg);
+                break;
+            }
+            Coop_DialogPrint(&env->dialog, "Give one of your Pokémon\nto revive @?");
             taskman->state = COOP_SESSION_CONFIRM_TEXT;
             break;
         }
@@ -421,7 +454,8 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
             // An accepted trade continues in its own task (coop_trade.c),
             // which starts as soon as this one is gone.
             msg = Coop_ResultText(env, state, reason);
-            if (msg == NULL || (state == COOP_SESSION_ACCEPTED && env->kind == COOP_SESSION_KIND_TRADE))
+            if (msg == NULL || (state == COOP_SESSION_ACCEPTED
+                                && (env->kind == COOP_SESSION_KIND_TRADE || env->kind == COOP_SESSION_KIND_REVIVE)))
             {
                 // Nothing more to say ("no" was mine, or a trade opens next);
                 // the window can only go once its text is done.
@@ -539,6 +573,11 @@ static BOOL Coop_StartSessionTask(FieldSystem *fsys, u32 remoteSlot, const struc
 BOOL Coop_StartSessionMenu(FieldSystem *fsys, u32 remoteSlot, const struct CoopPlayerState *remote)
 {
     return Coop_StartSessionTask(fsys, remoteSlot, remote, FALSE, COOP_SESSION_KIND_NONE);
+}
+
+BOOL Coop_StartSpiritTalk(FieldSystem *fsys, u32 remoteSlot, const struct CoopPlayerState *remote)
+{
+    return Coop_StartSessionTask(fsys, remoteSlot, remote, FALSE, COOP_SESSION_KIND_REVIVE);
 }
 
 #if COOP_DEBUG_TOOLS

@@ -9,11 +9,14 @@ use crate::lobby::LobbyState;
 use crate::protocol::{
     CHALLENGE_DOWN_SIZE, CHALLENGE_RULE_LEGENDS_WILD, CHALLENGE_RULE_MONOLOCKE,
     CHALLENGE_RULE_NUZLOCKE, CHALLENGE_RULE_RANDOM_ABILITIES, CHALLENGE_RULE_SOUL_LINK_SHIFT,
-    CHALLENGE_STATE_SPIRIT, CHALLENGE_UP_SIZE, ChallengeDown, ChallengeUp, ClientToServerPacket,
-    LINK_ROLE_PARENT, LinkUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, PLAYER_STATE_SIZE, REMOTE_SLOTS,
+    CHALLENGE_STATE_RUN_LOST, CHALLENGE_STATE_SPIRIT, CHALLENGE_UP_SIZE, ChallengeDown,
+    ChallengeUp, ClientToServerPacket, LINK_ROLE_PARENT, LinkUp, MONO_TYPE_COUNT, MONO_TYPE_NONE,
+    PLAYER_STATE_SIZE, REMOTE_SLOTS, ROOM_STATE_RUN_LOST, ROOM_STATUS_ERR_RUN_LOST,
+    SESSION_KIND_BATTLE, SESSION_KIND_REVIVE, SESSION_KIND_TRADE, SESSION_OP_REQUEST,
+    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_STATE_ACCEPTED, SESSION_STATE_REFUSED,
     SOUL_LINK_DUO, SOUL_LINK_ROOM_WIDE, SessionOut, sanitize_challenge_rules,
 };
-use crate::session_tests::{addr, packet};
+use crate::session_tests::{addr, gates, op, packet};
 
 const HOST_TOKEN: u32 = 0x00C0_FFEE;
 const RANDOM_SEMI: u16 = 1;
@@ -25,7 +28,12 @@ fn room_link(mode: u16) -> u16 {
 
 /// A forming room whose player 0 is the host; `rules` is what each packet
 /// carries (only the host's counts).
-fn room_with_rules(n: usize, rules: u16, start: bool, dir: Option<PathBuf>) -> LobbyState {
+pub(crate) fn room_with_rules(
+    n: usize,
+    rules: u16,
+    start: bool,
+    dir: Option<PathBuf>,
+) -> LobbyState {
     let mut lobby = LobbyState::with_room(
         *b"TEST01",
         HOST_TOKEN,
@@ -55,14 +63,14 @@ fn forming(i: usize, rules: u16, ready: bool) -> ClientToServerPacket {
     pkt
 }
 
-fn report(lobby: &mut LobbyState, i: usize, up: ChallengeUp) {
+pub(crate) fn report(lobby: &mut LobbyState, i: usize, up: ChallengeUp) {
     let mut pkt = packet(i, SessionOut::default(), true);
     pkt.challenge = Some(up);
     lobby.handle_client_packet(addr(i), pkt).unwrap();
 }
 
 /// The down trailer (always the last bytes) and gates +6 / +7 for player i.
-fn down(lobby: &mut LobbyState, i: usize) -> (ChallengeDown, u8, u8) {
+pub(crate) fn down(lobby: &mut LobbyState, i: usize) -> (ChallengeDown, u8, u8) {
     let batch = lobby.build_broadcast_batch();
     let (_, buf) = batch
         .iter()
@@ -106,8 +114,9 @@ fn test_trailers_round_trip_and_reject_damage() {
 
     let down = ChallengeDown {
         mono_type: 9,
-        room_state: 0,
+        room_state: ROOM_STATE_RUN_LOST,
         rules: CHALLENGE_RULE_MONOLOCKE,
+        team_deaths: 12,
         link_union: bits(&[1]),
         spent: bits(&[2]),
         failed: bits(&[3]),
@@ -297,4 +306,137 @@ fn test_room_wide_soul_link_shares_failures_and_duo_waits_for_phase_6() {
         },
     );
     assert_eq!(down(&mut lobby, 0).0.link_union, [0u8; 16]);
+}
+
+fn spirit(lobby: &mut LobbyState, i: usize, deaths: u16) {
+    report(
+        lobby,
+        i,
+        ChallengeUp {
+            state: CHALLENGE_STATE_SPIRIT,
+            rules: CHALLENGE_RULE_NUZLOCKE,
+            deaths,
+            ..ChallengeUp::default()
+        },
+    );
+}
+
+#[test]
+fn test_a_revive_needs_a_spirit_and_spirits_take_nothing_else() {
+    let mut lobby = room_with_rules(3, CHALLENGE_RULE_NUZLOCKE, true, None);
+    // Nobody is a spirit yet: a revive is invalid.
+    op(&mut lobby, 0, 1, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 1);
+    let g = gates(&mut lobby, 0);
+    assert_eq!(
+        (g[2], g[3], g[6]),
+        (
+            SESSION_STATE_REFUSED,
+            SESSION_KIND_REVIVE,
+            SESSION_REASON_INVALID
+        )
+    );
+
+    spirit(&mut lobby, 1, 6);
+    // A spirit can't be asked to trade or battle...
+    op(&mut lobby, 0, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
+    assert_eq!(gates(&mut lobby, 0)[6], SESSION_REASON_BUSY);
+    // ...nor ask anything itself.
+    op(&mut lobby, 1, 3, SESSION_OP_REQUEST, SESSION_KIND_BATTLE, 2);
+    assert_eq!(gates(&mut lobby, 1)[6], SESSION_REASON_INVALID);
+    op(&mut lobby, 1, 4, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 0);
+    assert_eq!(gates(&mut lobby, 1)[6], SESSION_REASON_INVALID);
+
+    // A living player's revive is accepted at once, for both, with a trade open.
+    op(&mut lobby, 0, 5, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 1);
+    let (g0, g1) = (gates(&mut lobby, 0), gates(&mut lobby, 1));
+    assert_eq!(
+        (g0[2], g0[3]),
+        (SESSION_STATE_ACCEPTED, SESSION_KIND_REVIVE)
+    );
+    assert_eq!(
+        (g1[2], g1[3]),
+        (SESSION_STATE_ACCEPTED, SESSION_KIND_REVIVE)
+    );
+    assert_eq!(lobby.active_trade_count(), 1);
+    // A second donor finds the spirit busy.
+    op(&mut lobby, 2, 6, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 1);
+    assert_eq!(gates(&mut lobby, 2)[6], SESSION_REASON_BUSY);
+
+    // Without Nuzlocke there are no spirits to revive.
+    let mut plain = room_with_rules(2, 0, true, None);
+    spirit(&mut plain, 1, 0);
+    op(&mut plain, 0, 1, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 1);
+    assert_eq!(gates(&mut plain, 0)[6], SESSION_REASON_INVALID);
+}
+
+#[test]
+fn test_the_run_is_lost_once_everyone_is_a_spirit() {
+    let dir = PathBuf::from("target/test_saves_challenge_run_lost");
+    let _ = fs::remove_dir_all(&dir);
+    let rules = CHALLENGE_RULE_NUZLOCKE;
+    let mut lobby = room_with_rules(2, rules, true, Some(dir.clone()));
+    spirit(&mut lobby, 0, 4);
+    assert!(
+        !lobby.is_run_lost(),
+        "one living player keeps the run going (Q8)"
+    );
+    let (d, _, room_state) = down(&mut lobby, 1);
+    assert_eq!((d.room_state, room_state, d.team_deaths), (0, 0, 4));
+
+    spirit(&mut lobby, 1, 3);
+    assert!(lobby.is_run_lost());
+    let (d, _, room_state) = down(&mut lobby, 0);
+    assert_eq!(
+        (d.room_state, room_state),
+        (ROOM_STATE_RUN_LOST, ROOM_STATE_RUN_LOST)
+    );
+    assert_eq!(d.team_deaths, 7);
+
+    // Players still connected keep syncing (they see the summary); a new
+    // join is turned away, also after a relay restart.
+    report(&mut lobby, 0, ChallengeUp::default());
+    assert!(lobby.is_run_lost(), "a lost run is never undone");
+    // A game that shows the end and saves it reports so, and is let go.
+    let mut seen = packet(0, SessionOut::default(), true);
+    seen.challenge = Some(ChallengeUp {
+        state: CHALLENGE_STATE_SPIRIT | CHALLENGE_STATE_RUN_LOST,
+        rules,
+        ..ChallengeUp::default()
+    });
+    assert_eq!(
+        lobby.handle_client_packet(addr(0), seen),
+        Err(ROOM_STATUS_ERR_RUN_LOST)
+    );
+    assert_eq!(
+        lobby.handle_client_packet(addr(0), packet(0, SessionOut::default(), true)),
+        Err(ROOM_STATUS_ERR_RUN_LOST),
+        "its reconnect from the title screen too"
+    );
+    let rejoin = packet(1, SessionOut::default(), true);
+    assert_eq!(
+        lobby.handle_client_packet(addr(4), rejoin.clone()),
+        Err(ROOM_STATUS_ERR_RUN_LOST)
+    );
+    let mut restarted = LobbyState::with_room(
+        *b"TEST01",
+        HOST_TOKEN,
+        None,
+        Duration::from_secs(60),
+        2,
+        false,
+        Some(dir.clone()),
+    )
+    .unwrap();
+    assert!(restarted.is_run_lost());
+    assert_eq!(
+        restarted.handle_client_packet(addr(1), rejoin),
+        Err(ROOM_STATUS_ERR_RUN_LOST)
+    );
+
+    // Without Nuzlocke the flag means nothing.
+    let mut plain = room_with_rules(2, 0, true, None);
+    spirit(&mut plain, 0, 0);
+    spirit(&mut plain, 1, 0);
+    assert!(!plain.is_run_lost());
+    let _ = fs::remove_dir_all(&dir);
 }

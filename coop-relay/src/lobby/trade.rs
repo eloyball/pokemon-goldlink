@@ -7,6 +7,11 @@
 //! DONE. A game that crashes or disconnects before saving gets the same
 //! commit again when it comes back, until it reports DONE. The ROM applies a
 //! commit idempotently (it looks the Pokemon up by personality value).
+//!
+//! Milestone 5 Ghost Mode adds the one-sided **revive** (docs/MILESTONE5_PLAN.md
+//! §5.5.4): side 0 (the donor) offers, side 1 (the spirit) only confirms that
+//! offer, and the commit gives the donor's Pokemon to the spirit with nothing
+//! coming back. The same journal makes it crash-safe.
 
 use std::time::{Duration, Instant};
 
@@ -16,9 +21,9 @@ use tracing::{info, warn};
 use super::{LobbyState, remote_slot_of};
 use crate::protocol::{
     MAX_PLAYERS, NO_SLOT, TRADE_ABORT_CANCELLED, TRADE_ABORT_LEFT, TRADE_ABORT_TIMEOUT,
-    TRADE_IN_ABORTED, TRADE_IN_COMMIT, TRADE_IN_OFFERED, TRADE_IN_WAITING, TRADE_MON_SIZE,
-    TRADE_OUT_CANCEL, TRADE_OUT_CONFIRMED, TRADE_OUT_DONE, TRADE_OUT_OFFERED, TradeIn, TradeOut,
-    mon_pid, room_code_to_string,
+    TRADE_FLAG_RECEIVER, TRADE_FLAG_REVIVE, TRADE_IN_ABORTED, TRADE_IN_COMMIT, TRADE_IN_OFFERED,
+    TRADE_IN_WAITING, TRADE_MON_SIZE, TRADE_OUT_CANCEL, TRADE_OUT_CONFIRMED, TRADE_OUT_DONE,
+    TRADE_OUT_OFFERED, TradeIn, TradeOut, mon_pid, room_code_to_string,
 };
 
 /// An open trade nobody finishes is cancelled after this long.
@@ -45,6 +50,8 @@ pub(super) struct ActiveTrade {
     confirmed: [Option<u8>; 2],
     last_heard: [Instant; 2],
     last_change: Instant,
+    /// A revive: side 0 gives, side 1 (the spirit) receives.
+    revive: bool,
 }
 
 impl ActiveTrade {
@@ -52,8 +59,12 @@ impl ActiveTrade {
         self.slots.iter().position(|&s| s == slot)
     }
 
-    /// Both confirmed the other's current offer.
+    /// Both confirmed the other's current offer (a revive: the spirit
+    /// confirmed the donor's).
     fn agreed(&self) -> bool {
+        if self.revive {
+            return matches!((&self.offers[0], self.confirmed[1]), (Some(a), Some(c)) if a.id == c);
+        }
         match (&self.offers, &self.confirmed) {
             ([Some(a), Some(b)], [Some(conf_a), Some(conf_b)]) => {
                 *conf_a == b.id && *conf_b == a.id
@@ -71,6 +82,9 @@ pub struct PendingTrade {
     pub trainers: [u32; 2],
     pub mons: [String; 2],
     pub done: [bool; 2],
+    /// Milestone 5: a revive; `mons[1]` is empty (zeros), the spirit gives nothing.
+    #[serde(default)]
+    pub revive: bool,
 }
 
 impl PendingTrade {
@@ -85,6 +99,14 @@ pub(super) struct TradeNotice {
     trainer: u32,
     reason: u8,
     created: Instant,
+}
+
+fn revive_flags(revive: bool, side: usize) -> u8 {
+    match (revive, side) {
+        (false, _) => 0,
+        (true, 0) => TRADE_FLAG_REVIVE,
+        (true, _) => TRADE_FLAG_REVIVE | TRADE_FLAG_RECEIVER,
+    }
 }
 
 fn to_hex(mon: &[u8; TRADE_MON_SIZE]) -> String {
@@ -130,13 +152,15 @@ impl LobbyState {
         })
     }
 
-    pub(super) fn start_trade(&mut self, a: usize, b: usize, now: Instant) {
+    /// Opens a trade between `a` and `b`; a revive has `a` give to the spirit `b`.
+    pub(super) fn start_trade(&mut self, a: usize, b: usize, revive: bool, now: Instant) {
         let (Some(ta), Some(tb)) = (self.trainer_at(a), self.trainer_at(b)) else {
             return;
         };
         info!(
-            "[Room {} | TRADE] P{a} and P{b} opened a trade",
-            room_code_to_string(&self.room_code)
+            "[Room {} | TRADE] P{a} and P{b} opened a {}",
+            room_code_to_string(&self.room_code),
+            if revive { "revive" } else { "trade" }
         );
         self.trades.push(ActiveTrade {
             slots: [a, b],
@@ -145,6 +169,7 @@ impl LobbyState {
             confirmed: [None, None],
             last_heard: [now, now],
             last_change: now,
+            revive,
         });
     }
 
@@ -205,7 +230,9 @@ impl LobbyState {
         let side = trade.side_of(slot).unwrap_or(0);
         trade.last_heard[side] = now;
 
+        // In a revive only the donor offers.
         if (out.state == TRADE_OUT_OFFERED || out.state == TRADE_OUT_CONFIRMED)
+            && !(trade.revive && side == 1)
             && out.offer_id != 0
             && mon_pid(&out.mon) != 0
             && trade.offers[side].is_none_or(|o| o.id != out.offer_id)
@@ -233,9 +260,15 @@ impl LobbyState {
     /// Journals the trade on disk, then tells both games to swap.
     fn commit_trade(&mut self, index: usize, now: Instant) {
         let trade = self.trades[index].clone();
-        let ([Some(a), Some(b)], room) = (trade.offers, room_code_to_string(&self.room_code))
-        else {
-            return;
+        let room = room_code_to_string(&self.room_code);
+        let nothing = Offer {
+            id: 0,
+            mon: [0; TRADE_MON_SIZE],
+        };
+        let (a, b) = match (trade.offers, trade.revive) {
+            ([Some(a), _], true) => (a, nothing),
+            ([Some(a), Some(b)], false) => (a, b),
+            _ => return,
         };
         let id = loop {
             let id = super::new_room_uid(self.room_code) ^ (a.id as u32) << 8 ^ (b.id as u32);
@@ -248,6 +281,7 @@ impl LobbyState {
             trainers: trade.trainers,
             mons: [to_hex(&a.mon), to_hex(&b.mon)],
             done: [false, false],
+            revive: trade.revive,
         });
         if !self.save_campaign_to_disk() {
             // Without the journal a crash could duplicate or lose a Pokemon:
@@ -363,6 +397,7 @@ impl LobbyState {
             t.give_pid = mon_pid(&give);
             t.mon = receive;
             t.peer_slot = peer_slot(pending.trainers[1 - side]);
+            t.flags = revive_flags(pending.revive, side);
             return Some(t);
         }
         if let Some(trade) = self.trades.iter().find(|t| t.side_of(slot).is_some()) {
@@ -382,6 +417,7 @@ impl LobbyState {
             t.partner_confirmed =
                 u8::from(mine.is_some() && trade.confirmed[1 - side] == mine.map(|o| o.id));
             t.peer_slot = remote_slot_of(slot, trade.slots[1 - side]);
+            t.flags = revive_flags(trade.revive, side);
             return Some(t);
         }
         self.trade_notices

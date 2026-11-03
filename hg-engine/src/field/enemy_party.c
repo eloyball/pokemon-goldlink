@@ -77,6 +77,9 @@ void MakeTrainerPokemonParty(struct BATTLE_PARAM *bp, int num, int heapID)
 
     seed_tmp = gf_get_seed();
 
+    if (num == 1)
+        Coop_ChallengeRecordPrebattle(gFieldSysPtr); // Milestone 5 Phase 5: the spirit's anchor
+
     PokeParty_Init(bp->poke_party[num], 6);
 
     buf = (u8 *)sys_AllocMemory(heapID, sizeof(struct FULL_TRAINER_MON_DATA_STRUCTURE) * 6);

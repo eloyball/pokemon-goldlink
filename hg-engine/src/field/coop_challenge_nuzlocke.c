@@ -57,6 +57,7 @@ _Static_assert(sizeof(MAP_EVENTS) == 0x920, "the wild encounter table follows MA
 static u8 sFamilies[COOP_FAMILY_BYTES];
 static u8 sFamiliesReady;
 static u8 sSweepBox; // next PC box to sweep; NUM_PC_BOXES: done since the overlay loaded
+static u8 sLivingChecked; // a spirit's PC was searched for a living Pokemon since the overlay loaded
 
 static BOOL Coop_Bit(const u8 *bits, u32 i)
 {
@@ -465,7 +466,7 @@ static BOOL Coop_WithdrawFirstLiving(FieldSystem *fsys, struct CoopChallengeSave
             return TRUE;
         }
     }
-    return FALSE; // no living Pokemon: Ghost Mode (Phase 5)
+    return FALSE; // no living Pokemon: Ghost Mode (src/field/coop_spirit.c)
 }
 
 void Coop_ChallengeNuzlockeFrame(FieldSystem *fsys, struct CoopChallengeSave *save)
@@ -504,13 +505,41 @@ void Coop_ChallengeNuzlockeFrame(FieldSystem *fsys, struct CoopChallengeSave *sa
         Coop_ChallengeResolvePending(fsys, save);
     if (Coop_BuryFromParty(fsys, save))
         return; // its message runs now
+    for (i = 0; i < (u32)party->count; i++)
+    {
+        // The battle didn't wipe the party: its anchor is no longer needed.
+        struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
+        if (!GetMonData(mon, MON_DATA_IS_EGG, NULL) && !(GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD))
+        {
+            save->prebattle_map = 0;
+            break;
+        }
+    }
     if (sSweepBox < NUM_PC_BOXES)
     {
         Coop_SweepBox(fsys, save, sSweepBox++);
         return;
     }
     if (party->count == 0 && (save->state & COOP_CHALLENGE_HAD_POKEMON))
-        Coop_WithdrawFirstLiving(fsys, save);
+    {
+        // Step 6: nothing living in the party or the PC (the Day Care doesn't
+        // count, E3) is Ghost Mode. A spirit's PC is searched once per load.
+        if (!(save->state & COOP_CHALLENGE_SPIRIT))
+        {
+            if (!Coop_WithdrawFirstLiving(fsys, save))
+                Coop_SpiritEnter(fsys, save);
+            return;
+        }
+        if (!sLivingChecked)
+        {
+            sLivingChecked = 1;
+            if (Coop_WithdrawFirstLiving(fsys, save))
+                return;
+        }
+    }
+    else
+        sLivingChecked = 0;
+    Coop_SpiritFieldFrame(fsys, save); // Phase 5: the warps, the spirit task, the run's end
 }
 
 BOOL Coop_ChallengeHidesItem(u16 item)

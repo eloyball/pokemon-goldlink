@@ -105,7 +105,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
     COOP_DEBUG_WILD_SPECIES = 18,    // Milestone 4 Phase 0: a wild battle against gCoopDebugMonBuffer.species (species | form << 11) at level debug_arg
     COOP_DEBUG_REBALANCE = 19,       // Milestone 4 Phase 1: debug_arg 0 = the lead's evolution with gCoopDebugMonBuffer.held_item (0: by level up) -> buffer.species (0: none); 1-4 = rebuild a department store list (Goldenrod 4F / 5F, Celadon 3F / 4F) from the save
-    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left; Phase 3: 7 gives three Master Balls; 7 / 8 -> buffer.held_item = Master Balls in the bag, party_count; 8 also buffer.species = the last party member's RESERVED_114 bits, level = its nickname flag; 9 deposits the last party member in box 1; Phase 4: 10 -> buffer.species = the level cap variable, level = GetLevelCap(), mon[0..3] = the lead's EXP; 11 -> buffer.species = 1 if a trade would refuse the last party member (Monolocke)
+    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left; Phase 3: 7 gives three Master Balls; 7 / 8 -> buffer.held_item = Master Balls in the bag, party_count; 8 also buffer.species = the last party member's RESERVED_114 bits, level = its nickname flag; 9 deposits the last party member in box 1; Phase 4: 10 -> buffer.species = the level cap variable, level = GetLevelCap(), mon[0..3] = the lead's EXP; 11 -> buffer.species = 1 if a trade would refuse the last party member (Monolocke); Phase 5: 12 marks every party Pokemon dead, 13 every PC Pokemon outside the Graveyard; 14 (any time, read only) -> buffer.species = save state | spirit_flags << 8, held_item = anchor_map, level = living party count, party_count, mon[0..13] = u16 anchor_x, anchor_z, return_map, return_x, return_z, prebattle_map, deaths, mon[14] = the published challenge_flags, mon[15] = field_busy, mon[16] = 1 while the spirit task roams
 };
 
 enum CoopDebugLinkOp
@@ -119,6 +119,7 @@ enum CoopDebugLinkOp
     COOP_DEBUG_LINK_BATTLE_CHILD = 7,  // Phase 4: the battle task as the child
     COOP_DEBUG_LINK_REQUEST_BATTLE = 8, // §19: a real Battle request (the session task) to remote slot op - 8 (8..12)
     COOP_DEBUG_LINK_REQUEST_TRADE = 13, // stress probe: a real Trade request to remote slot op - 13 (13..17)
+    COOP_DEBUG_LINK_REQUEST_REVIVE = 18, // Milestone 5 Phase 5: a Revive request to remote slot op - 18 (18..22), as the spirit's menu sends it
 };
 
 #define COOP_DEBUG_LINK_STATUS_BASE 0x40
@@ -347,6 +348,9 @@ enum CoopSessionKind
     // teamed players into this one and asks the other three. For the
     // requester's teammate, session_reason holds the opponent's remote slot.
     COOP_SESSION_KIND_TEAM_BATTLE = 5,
+    // Milestone 5 Ghost Mode: give a Pokemon to a spirit. No answer: the
+    // relay opens a one-sided trade at once (COOP_TRADE_FLAG_REVIVE).
+    COOP_SESSION_KIND_REVIVE = 6,
 };
 
 enum CoopSessionState
@@ -416,6 +420,11 @@ enum CoopTradeInState
     COOP_TRADE_IN_STATE_MAX = 4,
 };
 
+// CoopTradeIn.flags: a revive (Milestone 5 Ghost Mode) is one-sided: the
+// donor gives, the spirit (RECEIVER) only takes (docs/MILESTONE5_PLAN.md §5.5.4).
+#define COOP_TRADE_FLAG_REVIVE   0x01
+#define COOP_TRADE_FLAG_RECEIVER 0x02
+
 enum CoopTradeAbortReason
 {
     COOP_TRADE_ABORT_NONE = 0,
@@ -442,7 +451,8 @@ struct CoopTradeIn // relay -> ROM, 252 bytes
     u8  my_offer_id;      // 0x03 the offer of mine the relay holds
     u8  partner_confirmed;// 0x04 the partner accepted my current offer
     u8  peer_slot;        // 0x05 the partner's remote slot (COOP_SLOT_NONE: offline)
-    u8  pad[2];           // 0x06
+    u8  flags;            // 0x06 COOP_TRADE_FLAG_* (Milestone 5)
+    u8  pad;              // 0x07
     u32 trade_id;         // 0x08 COMMIT
     u32 give_pid;         // 0x0C COMMIT: personality of the Pokemon I give
     u8  mon[COOP_PARTY_MON_SIZE]; // 0x10 OFFERED: the partner's offer; COMMIT: what I receive

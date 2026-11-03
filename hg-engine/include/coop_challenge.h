@@ -54,6 +54,11 @@
 #define COOP_CHALLENGE_HAD_POKEMON 0x08
 #define COOP_CHALLENGE_GRAVE_NAMED 0x10 // box 30 renamed GRAVEYARD
 #define COOP_CHALLENGE_GRAVE2      0x20 // box 29 is the second Graveyard box (Q11)
+#define COOP_CHALLENGE_ANCHOR_WARP 0x40 // Phase 5: a new spirit still has to reach its anchor
+#define COOP_CHALLENGE_RETURN_WARP 0x80 // Phase 5: revived, still has to return to return_*
+
+// CoopChallengeSave.spirit_flags (Phase 5).
+#define COOP_SPIRIT_INTRO 0x01 // the spirit task's first page (and save) is still to come
 
 // CoopChallengeSave.pending_flags: the wild Pokemon of the battle in progress
 // (docs/MILESTONE5_PLAN.md §5.4.2). Resolved on the first quiet field frame after it.
@@ -97,7 +102,7 @@ struct CoopChallengeSave
     u8  state;                         // 0x03 COOP_CHALLENGE_*
     u16 rules;                         // 0x04 COOP_RULE_*
     u8  mono_type;                     // 0x06 0..17, COOP_MONO_TYPE_NONE
-    u8  pad07;                         // 0x07
+    u8  spirit_flags;                  // 0x07 COOP_SPIRIT_* (Phase 5)
     u32 seed;                          // 0x08 the room's room_uid at the adventure start
     u16 starters[3];                   // 0x0C species | form << 11 (Phase 2); 0 = vanilla
     u8  spent[COOP_LOCATION_BYTES];    // 0x12 first encounter used
@@ -115,7 +120,7 @@ struct CoopChallengeSave
     u16 return_map;                    // 0x76 the blackout spot to return to on revival
     s16 return_x;
     s16 return_z;
-    u16 prebattle_map;                 // 0x7C the last field tile before the current battle
+    u16 prebattle_map;                 // 0x7C the last field tile before the current battle (0: none)
     s16 prebattle_x;
     s16 prebattle_z;
 };                                     // 0x82
@@ -142,7 +147,7 @@ _Static_assert(COOP_CHALLENGE_SAVE_OFFSET + sizeof(struct CoopChallengeSave) <= 
 #define COOP_CHALLENGE_WIRE_VERSION 1
 #define COOP_CHALLENGE_UP_SIZE      48
 #define COOP_CHALLENGE_DOWN_SIZE    64
-#define COOP_LIVING_UNKNOWN         0xFF // Phase 1: counted from Phase 3 on
+#define COOP_LIVING_UNKNOWN         0xFF // not counted (the up trailer's living)
 
 // The up trailer as the ROM fills it (the bridge sets magic, version and the
 // checksum itself): coop-relay protocol.rs ChallengeUp.
@@ -171,7 +176,7 @@ struct CoopChallengeDown
     u8  room_state;                     // 0x06 COOP_ROOM_*
     u8  pad07;
     u16 rules;                          // 0x08
-    u16 pad0A;
+    u16 team_deaths;                    // 0x0A every roster trainer's deaths (the "Run lost" summary)
     u8  link_union[COOP_LOCATION_BYTES]; // 0x0C
     u8  spent[COOP_LOCATION_BYTES];     // 0x1C the relay's copy of mine
     u8  failed[COOP_LOCATION_BYTES];    // 0x2C the relay's copy of mine
@@ -264,6 +269,10 @@ struct CoopChallengeSave *Coop_ChallengeSave(void);
 
 // The latched rules (0 when the save has none).
 u16 Coop_ChallengeRules(void);
+
+// The relay's trailer as the bridge last wrote it, if its magic, version and
+// checksum check out (NULL otherwise).
+const struct CoopChallengeDown *Coop_ChallengeIn(void);
 
 // Once per field frame: latch the rules, take back the relay's copy of the
 // ledgers, and publish this player's report for the bridge.
@@ -364,6 +373,35 @@ void LONG_CALL Coop_ChallengeMarkBattleEnd(struct BattleSystem *bsys);
 // TRUE: the capture skips "Give a nickname?" and opens the naming screen
 // (asm/battle/battle_hooks.s, Coop_ForceNickname_hook).
 BOOL LONG_CALL Coop_ChallengeForceNickname(void);
+
+// ---------------------------------------------------------------------------
+// Phase 5: Ghost Mode, the spirit state (src/field/coop_spirit.c, Overlay 131;
+// docs/MILESTONE5_PLAN.md §5.5)
+// ---------------------------------------------------------------------------
+
+// A battle is being built (the wild hook, the trainer party): where the
+// player stands now is the spirit's anchor if the battle wipes the party.
+void Coop_ChallengeRecordPrebattle(struct FieldSystem *fsys);
+
+// The sweep found no living Pokemon anywhere (§5.4.5 step 6): become a spirit.
+void Coop_SpiritEnter(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// Once per field frame of a Nuzlocke run, after the sweep: the warps to the
+// anchor and back, the spirit task, the "Run lost" ending.
+void Coop_SpiritFieldFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// The spirit task is running and only roaming (not in its menu): teammates
+// can talk to this player.
+BOOL Coop_SpiritIsRoaming(struct FieldSystem *fsys);
+
+// This player is a spirit (the save's state).
+BOOL Coop_IsSpirit(void);
+
+// Revival by donation (§5.5.4). Why the donor can't give party `slot` (or,
+// with slot 0xFF, can't give at all), NULL when it can; and the spirit's
+// side once the donated Pokemon is in its party.
+const char *Coop_SpiritDonorRule(struct Party *party, u32 slot);
+void Coop_SpiritRevived(struct FieldSystem *fsys);
 
 
 #endif // COOP_CHALLENGE_H

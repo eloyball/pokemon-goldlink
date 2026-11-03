@@ -747,6 +747,70 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
         ResetPartyPokemonAbility(lead);
         return COOP_DEBUG_RESULT_OK;
     }
+    if (what >= 12 && what <= 14)
+    {
+        // Phase 5 (Ghost Mode): 12 marks every party Pokemon dead, 13 every PC
+        // Pokemon outside the Graveyard (the sweep buries them); 14 reports.
+        struct CoopChallengeSave *save = Coop_ChallengeSave();
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+        u32 i, b, s;
+
+        if (save == NULL)
+            return COOP_DEBUG_RESULT_FAILED;
+        if (what == 12)
+            for (i = 0; i < (u32)party->count; i++)
+            {
+                struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
+                u16 bits = GetMonData(mon, MON_DATA_RESERVED_114, NULL) | COOP_MON_DEAD;
+                SetMonData(mon, MON_DATA_RESERVED_114, &bits);
+            }
+        if (what == 13)
+        {
+            PCStorage *pc = SaveArray_Get(fsys->savedata, 41);
+            for (b = 0; b < NUM_PC_BOXES; b++)
+            {
+                if (b == COOP_GRAVEYARD_BOX || b == COOP_GRAVEYARD_BOX2)
+                    continue;
+                for (s = 0; s < MONS_PER_BOX; s++)
+                {
+                    struct BoxPokemon *mon = &pc->boxes[b].mons[s];
+                    if (GetBoxMonData(mon, MON_DATA_SPECIES_EXISTS, NULL))
+                    {
+                        u16 bits = GetBoxMonData(mon, MON_DATA_RESERVED_114, NULL) | COOP_MON_DEAD;
+                        SetBoxMonData(mon, MON_DATA_RESERVED_114, &bits);
+                    }
+                }
+            }
+        }
+        if (what == 14)
+        {
+            u16 words[7];
+            u8 living = 0;
+
+            words[0] = (u16)save->anchor_x;
+            words[1] = (u16)save->anchor_z;
+            words[2] = save->return_map;
+            words[3] = (u16)save->return_x;
+            words[4] = (u16)save->return_z;
+            words[5] = save->prebattle_map;
+            words[6] = save->deaths;
+            for (i = 0; i < (u32)party->count; i++)
+            {
+                struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
+                if (!GetMonData(mon, MON_DATA_IS_EGG, NULL) && !(GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD))
+                    living++;
+            }
+            gCoopDebugMonBuffer.species = (u16)(save->state | (save->spirit_flags << 8));
+            gCoopDebugMonBuffer.held_item = save->anchor_map;
+            gCoopDebugMonBuffer.level = living;
+            __builtin_memcpy(gCoopDebugMonBuffer.mon, words, sizeof(words));
+            gCoopDebugMonBuffer.mon[14] = gCoopCommBlock.local_player.challenge_flags;
+            gCoopDebugMonBuffer.mon[15] = gCoopCommBlock.local_player.field_busy;
+            gCoopDebugMonBuffer.mon[16] = (u8)Coop_SpiritIsRoaming(fsys);
+        }
+        gCoopDebugMonBuffer.party_count = (u8)party->count;
+        return COOP_DEBUG_RESULT_OK;
+    }
     if (what == 10 || what == 11)
     {
         // Phase 4: 10 = species <- the level cap variable, level <- GetLevelCap();
@@ -958,6 +1022,14 @@ static u8 Coop_DebugLink(FieldSystem *fsys, u32 op)
         if (fsys->taskman != NULL || CommState_Exists())
             return COOP_DEBUG_RESULT_NOT_NOW;
         return Coop_DebugRequestSession(fsys, op - COOP_DEBUG_LINK_REQUEST_TRADE, COOP_SESSION_KIND_TRADE) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+    case COOP_DEBUG_LINK_REQUEST_REVIVE + 0:
+    case COOP_DEBUG_LINK_REQUEST_REVIVE + 1:
+    case COOP_DEBUG_LINK_REQUEST_REVIVE + 2:
+    case COOP_DEBUG_LINK_REQUEST_REVIVE + 3:
+    case COOP_DEBUG_LINK_REQUEST_REVIVE + 4:
+        if (fsys->taskman != NULL || CommState_Exists())
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        return Coop_DebugRequestSession(fsys, op - COOP_DEBUG_LINK_REQUEST_REVIVE, COOP_SESSION_KIND_REVIVE) ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
     case COOP_DEBUG_LINK_CONNECT:
     case COOP_DEBUG_LINK_SYNC:
     case COOP_DEBUG_LINK_SHUTDOWN:
@@ -1047,7 +1119,8 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
             result = Coop_DebugRebalance(fsys, mb->debug_arg);
             break;
         case COOP_DEBUG_CHALLENGE:
-            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+            // 14 only reads (it must work while the spirit task runs).
+            if (mb->debug_arg != 14 && !Coop_CanRunFieldDebugCommand(fsys, player))
                 return;
             result = Coop_DebugChallenge(fsys, mb->debug_arg);
             break;
@@ -1191,8 +1264,10 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
                                     &gCoopCommBlock.track_player_step);
     ps->is_active = 1;
     ps->activity = COOP_ACTIVITY_FIELD;
-    // Others see "busy" instead of the session menu when they talk to us.
-    ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) ? 1 : 0;
+    // Others see "busy" instead of the session menu when they talk to us. A
+    // roaming spirit's task owns the input, but teammates may still revive it.
+    ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) && !Coop_SpiritIsRoaming(fsys) ? 1 : 0;
+    ps->challenge_flags = Coop_IsSpirit() ? COOP_PLAYER_FLAG_SPIRIT : 0; // Milestone 5 Ghost Mode
     ps->boss_wait = gCoopCommBlock.track_boss_wait; // a team boss we wait at (src/field/coop_battle.c)
     ps->badge_mask[0] = (u8)gCoopCommBlock.badge_mask_local; // for a team's badge-scaled bosses
     ps->badge_mask[1] = (u8)(gCoopCommBlock.badge_mask_local >> 8);
@@ -2233,6 +2308,13 @@ static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalM
             continue;
         if (!Coop_ReadRemotePlayer(slot, &remote) || remote.trainer_id != (u32)COOP_GHOST_TRAINER(ghost))
             continue;
+        // Milestone 5 Ghost Mode: a teammate's spirit can only be revived.
+        if (remote.is_active && (remote.challenge_flags & COOP_PLAYER_FLAG_SPIRIT) && Coop_IsAdventureStarted()
+            && Coop_IsConnectedToRoom())
+        {
+            (void)Coop_StartSpiritTalk(fsys, slot, &remote);
+            return;
+        }
         // Free in the field after the adventure started: Trade / Battle /
         // Team up. Otherwise just their name, and why they are busy (a
         // battle, an app, or a message / menu in the field).

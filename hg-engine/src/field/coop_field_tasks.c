@@ -316,6 +316,7 @@ struct CoopDisconnectTaskEnv
 // (coop-relay/src/protocol.rs).
 #define COOP_REJECT_MIDGAME_SAVE   6
 #define COOP_REJECT_SAVE_OTHER_ROOM 9
+#define COOP_REJECT_RUN_LOST       10 // Milestone 5: the room's Nuzlocke run is over
 
 // Never returns TRUE: the task ends in OS_ResetSystem, so the field task
 // manager never frees it. A rejected save (docs/MILESTONE2_PLAN.md 7.1)
@@ -333,6 +334,8 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
         Coop_DialogOpen(fsys, &env->dialog);
         if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
             Coop_DialogPrint(&env->dialog, "This save belongs to another\nCo-op Room.");
+        else if (env->rejection == COOP_REJECT_RUN_LOST)
+            Coop_DialogPrint(&env->dialog, "This room's run is over:\nthe whole team has fallen.");
         else if (env->rejection != 0)
             Coop_DialogPrint(&env->dialog, "This room hasn't started yet,\nso it only takes new saves.");
         else
@@ -355,6 +358,8 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
                 break;
             if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
                 Coop_DialogPrint(&env->dialog, "Load that room's save, or\nstart a New Game here.");
+            else if (env->rejection == COOP_REJECT_RUN_LOST)
+                Coop_DialogPrint(&env->dialog, "Host a new room for a new run.\nReturning to the Title Screen...");
             else
                 Coop_DialogPrint(&env->dialog, "Start a New Game to join.\nReturning to the Title Screen...");
             taskman->state = COOP_TASK_WAIT_RESULT_TEXT;

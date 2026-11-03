@@ -190,7 +190,7 @@ namespace CoopBridge
         public const int GateSessionSize = 7;
         public const int GateTradePending = 0x17;
         public const int MaxSessionState = 8; // 8: notice (a teammate left)
-        public const int MaxSessionKind = 5;  // 5: team battle (2v2)
+        public const int MaxSessionKind = 6;  // 5: team battle (2v2), 6: revive (Milestone 5 Ghost Mode)
         public const int MaxSessionReason = 6; // 6: a teammate is away (a team battle's teammate: the opponent's remote slot)
 
         // Layout of the 344-byte server payload (relative to ServerPayload)
@@ -291,6 +291,7 @@ namespace CoopBridge
         public const byte StatusRateLimited = 8;
         public const byte StatusMidgameSave = 6;   // forming room, save already in progress
         public const byte StatusSaveOtherRoom = 9; // trainer belongs to another locked campaign
+        public const byte StatusRunLost = 10;      // Milestone 5: every player of this Nuzlocke run is a spirit
 
         public const byte ActionCreate = 1;
         public const byte ActionJoin = 2;
@@ -1579,6 +1580,7 @@ namespace CoopBridge
                 Wire.StatusMidgameSave => $"Room {room} hasn't started yet, so it only takes a New Game (this save is already under way).",
                 Wire.StatusSaveOtherRoom => $"This save belongs to another room. Load that room's save, or start a New Game for {room}.",
                 Wire.StatusRateLimited => "Too many failed attempts. Wait a few seconds and try again.",
+                Wire.StatusRunLost => $"The run in room {room} is over: every player's Pokémon have fallen. Host a new room for a new run.",
                 _ => $"The server rejected the connection (code {code})."
             };
         }
@@ -1796,7 +1798,7 @@ namespace CoopBridge
                 // also tells the ROM why, so it shows the reason in game and
                 // returns to the title without saving (written in the same
                 // frame as the disconnect, so it wins over the disconnect save).
-                if (status == Wire.StatusMidgameSave || status == Wire.StatusSaveOtherRoom)
+                if (status == Wire.StatusMidgameSave || status == Wire.StatusSaveOtherRoom || status == Wire.StatusRunLost)
                     _memoryApi!.WriteU8(mb + Mailbox.RoomRejection, status, MemoryDomain);
                 DisconnectFromServer(MapServerStatusToError(status, _activeRoomString), isError: true);
                 ClearRomConnectionState(mb, clearPayload: true);

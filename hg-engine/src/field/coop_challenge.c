@@ -43,7 +43,7 @@ u16 Coop_ChallengeRules(void)
 
 // The relay's trailer as the bridge wrote it: only trusted with its magic,
 // version and checksum, and its values are clamped again here.
-static const struct CoopChallengeDown *Coop_ChallengeIn(void)
+const struct CoopChallengeDown *Coop_ChallengeIn(void)
 {
     const struct CoopChallengeDown *in = &gCoopChallengeSync.in;
     const u8 *bytes = (const u8 *)in;

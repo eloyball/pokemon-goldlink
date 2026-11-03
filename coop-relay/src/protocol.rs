@@ -28,6 +28,9 @@ pub const ROOM_STATUS_CHALLENGE: u8 = 7;
 pub const ROOM_STATUS_ERR_RATE_LIMITED: u8 = 8;
 /// The save's trainer ID is registered in another locked campaign on this relay.
 pub const ROOM_STATUS_ERR_SAVE_OTHER_ROOM: u8 = 9;
+/// Milestone 5: every roster player of this Nuzlocke run became a spirit, so
+/// the run is over and the room takes no more joins (docs/MILESTONE5_PLAN.md §5.5.5).
+pub const ROOM_STATUS_ERR_RUN_LOST: u8 = 10;
 
 // PlayerState.save_status, computed by the ROM (the relay never inspects maps).
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1). The client
@@ -48,6 +51,9 @@ pub const SESSION_KIND_LEAVE_TEAM: u8 = 4; // one-sided: applied at once, no ans
 /// two teamed players; all four must accept. For the requester's teammate,
 /// `session_reason` carries the opponent's remote slot while it is asked.
 pub const SESSION_KIND_TEAM_BATTLE: u8 = 5;
+/// Milestone 5 Ghost Mode: a living player gives a Pokemon to a spirit. No
+/// answer: the relay opens a one-sided trade at once (TRADE_FLAG_REVIVE).
+pub const SESSION_KIND_REVIVE: u8 = 6;
 
 pub const SESSION_STATE_NONE: u8 = 0;
 pub const SESSION_STATE_OUTGOING: u8 = 1; // my request, waiting for the answer
@@ -139,10 +145,17 @@ pub struct TradeIn {
     pub my_offer_id: u8,
     pub partner_confirmed: u8,
     pub peer_slot: u8,
+    /// Milestone 5: TRADE_FLAG_* (byte 6).
+    pub flags: u8,
     pub trade_id: u32,
     pub give_pid: u32,
     pub mon: [u8; TRADE_MON_SIZE],
 }
+
+/// TradeIn.flags: a revive (Ghost Mode donation, docs/MILESTONE5_PLAN.md
+/// §5.5.4) is one-sided: the donor gives, the spirit (RECEIVER) only takes.
+pub const TRADE_FLAG_REVIVE: u8 = 0x01;
+pub const TRADE_FLAG_RECEIVER: u8 = 0x02;
 
 impl TradeIn {
     pub fn empty(state: u8) -> Self {
@@ -153,6 +166,7 @@ impl TradeIn {
             my_offer_id: 0,
             partner_confirmed: 0,
             peer_slot: NO_SLOT,
+            flags: 0,
             trade_id: 0,
             give_pid: 0,
             mon: [0; TRADE_MON_SIZE],
@@ -166,7 +180,7 @@ impl TradeIn {
         out[3] = self.my_offer_id;
         out[4] = self.partner_confirmed;
         out[5] = self.peer_slot;
-        out[6] = 0;
+        out[6] = self.flags;
         out[7] = 0;
         out[8..12].copy_from_slice(&self.trade_id.to_le_bytes());
         out[12..16].copy_from_slice(&self.give_pid.to_le_bytes());
@@ -183,6 +197,7 @@ impl TradeIn {
             my_offer_id: buf[3],
             partner_confirmed: buf[4],
             peer_slot: buf[5],
+            flags: buf[6],
             trade_id: u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]),
             give_pid: u32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]),
             mon,
@@ -703,6 +718,9 @@ pub const CHALLENGE_STATE_SPIRIT: u8 = 0x02;
 pub const CHALLENGE_STATE_RUN_LOST: u8 = 0x04;
 pub const CHALLENGE_STATE_HAD_POKEMON: u8 = 0x08;
 
+/// ChallengeDown.room_state and gates `challenge_room_state` bits.
+pub const ROOM_STATE_RUN_LOST: u8 = 0x01;
+
 /// Drops what the bridge should never have sent: unknown bits, an unknown
 /// soul-link mode, and rules that need another one (soul-link needs Nuzlocke;
 /// legends and random abilities need the randomizer).
@@ -785,13 +803,15 @@ impl ChallengeUp {
 
 /// Relay -> client (64 bytes, written into the ROM's `CoopChallengeSync.in`):
 /// magic u32 @0, version u8 @4, mono_type u8 @5, room_state u8 @6, pad @7,
-/// rules u16 @8, pad u16 @10, link_union [16] @12, spent [16] @28 (the relay's
+/// rules u16 @8, team_deaths u16 @10, link_union [16] @12, spent [16] @28 (the relay's
 /// copy of this player's), failed [16] @44 (likewise), checksum u16 @60, pad @62.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChallengeDown {
     pub mono_type: u8,
     pub room_state: u8,
     pub rules: u16,
+    /// Every roster trainer's deaths, for the "Run lost" summary.
+    pub team_deaths: u16,
     pub link_union: [u8; CHALLENGE_LOCATION_BYTES],
     pub spent: [u8; CHALLENGE_LOCATION_BYTES],
     pub failed: [u8; CHALLENGE_LOCATION_BYTES],
@@ -805,6 +825,7 @@ impl ChallengeDown {
         out[5] = self.mono_type;
         out[6] = self.room_state;
         out[8..10].copy_from_slice(&self.rules.to_le_bytes());
+        out[10..12].copy_from_slice(&self.team_deaths.to_le_bytes());
         out[12..28].copy_from_slice(&self.link_union);
         out[28..44].copy_from_slice(&self.spent);
         out[44..60].copy_from_slice(&self.failed);
@@ -831,6 +852,7 @@ impl ChallengeDown {
             mono_type: buf[5],
             room_state: buf[6],
             rules: u16::from_le_bytes([buf[8], buf[9]]),
+            team_deaths: u16::from_le_bytes([buf[10], buf[11]]),
             link_union,
             spent,
             failed,

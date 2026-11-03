@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use crate::lobby::{CampaignLoadError, LobbyState, Rejection, RoomManager};
 use crate::protocol::{
-    AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS, PLAYER_STATE_SIZE,
-    PROTOCOL_VERSION, PlayerState, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN, ROOM_ACTION_LEAVE,
-    ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
+    AUTO_PLAYER_ID, CHALLENGE_FLAG_SPIRIT, COOP_MAGIC, ClientToServerPacket, MAX_PLAYERS,
+    PLAYER_STATE_SIZE, PROTOCOL_VERSION, PlayerState, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
+    ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
     ROOM_STATUS_ERR_INVALID_CODE, ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE,
     ROOM_STATUS_ERR_NOT_FOUND, ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM,
     SAVE_STATUS_FRESH, SAVE_STATUS_IN_PROGRESS, SAVE_STATUS_UNKNOWN, SessionOut,
@@ -1281,6 +1281,18 @@ fn test_gym_gate_lets_players_be_at_most_one_badge_ahead() {
     b.allow_ahead = 0;
     b.local_player.map_id = 135;
     b.sequence = 4;
+    lobby.handle_client_packet(p1, b.clone()).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!(gate_for(&batch, p0), 1);
+
+    // Milestone 5: a spirit (Ghost Mode) never holds the others back.
+    b.local_player.map_id = 33;
+    b.sequence = 5;
+    lobby.handle_client_packet(p1, b.clone()).unwrap();
+    let batch = lobby.build_broadcast_batch();
+    assert_eq!(gate_for(&batch, p0), 0);
+    b.local_player.challenge_flags = CHALLENGE_FLAG_SPIRIT;
+    b.sequence = 6;
     lobby.handle_client_packet(p1, b.clone()).unwrap();
     let batch = lobby.build_broadcast_batch();
     assert_eq!(gate_for(&batch, p0), 1);

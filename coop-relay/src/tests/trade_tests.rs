@@ -5,6 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use crate::challenge_tests::{report, room_with_rules};
 use crate::lobby::{LobbyState, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 use crate::protocol::{
     CHALLENGE_DOWN_SIZE, ChallengeDown, PLAYER_STATE_SIZE, REMOTE_SLOTS, SERVER_PACKET_SIZE,
@@ -12,6 +13,10 @@ use crate::protocol::{
     TRADE_ABORT_LEFT, TRADE_IN_ABORTED, TRADE_IN_COMMIT, TRADE_IN_OFFERED, TRADE_IN_SIZE,
     TRADE_IN_WAITING, TRADE_MON_SIZE, TRADE_OUT_CANCEL, TRADE_OUT_CONFIRMED, TRADE_OUT_DONE,
     TRADE_OUT_OFFERED, TradeIn, TradeOut, mon_pid,
+};
+use crate::protocol::{
+    CHALLENGE_RULE_NUZLOCKE, CHALLENGE_STATE_SPIRIT, ChallengeUp, SESSION_KIND_REVIVE,
+    TRADE_FLAG_RECEIVER, TRADE_FLAG_REVIVE,
 };
 use crate::session_tests::{addr, op, packet, room_in};
 
@@ -319,4 +324,75 @@ fn test_offer_without_personality_is_ignored() {
         [0; TRADE_MON_SIZE],
     );
     assert_eq!(trailer(&mut lobby, 1).unwrap().state, TRADE_IN_WAITING);
+}
+
+/// Milestone 5 Ghost Mode: player 0 gives a Pokemon to the spirit, player 1.
+#[test]
+fn test_a_revive_is_one_sided_and_journaled() {
+    let dir = PathBuf::from("target/test_saves_trade_revive");
+    let _ = fs::remove_dir_all(&dir);
+    let mut lobby = room_with_rules(2, CHALLENGE_RULE_NUZLOCKE, true, Some(dir.clone()));
+    report(
+        &mut lobby,
+        1,
+        ChallengeUp {
+            state: CHALLENGE_STATE_SPIRIT,
+            rules: CHALLENGE_RULE_NUZLOCKE,
+            ..ChallengeUp::default()
+        },
+    );
+    op(&mut lobby, 0, 1, SESSION_OP_REQUEST, SESSION_KIND_REVIVE, 1);
+    let (t0, t1) = (
+        trailer(&mut lobby, 0).unwrap(),
+        trailer(&mut lobby, 1).unwrap(),
+    );
+    assert_eq!((t0.state, t0.flags), (TRADE_IN_WAITING, TRADE_FLAG_REVIVE));
+    assert_eq!(
+        (t1.state, t1.flags),
+        (TRADE_IN_WAITING, TRADE_FLAG_REVIVE | TRADE_FLAG_RECEIVER)
+    );
+
+    // The spirit can't offer anything.
+    send(&mut lobby, 1, TRADE_OUT_OFFERED, 1, 0, 0, mon(PID_B, 0x22));
+    assert_eq!(trailer(&mut lobby, 0).unwrap().state, TRADE_IN_WAITING);
+    // The donor's offer reaches the spirit; the spirit's confirmation commits.
+    send(&mut lobby, 0, TRADE_OUT_OFFERED, 1, 0, 0, mon(PID_A, 0x11));
+    let t1 = trailer(&mut lobby, 1).unwrap();
+    assert_eq!((t1.state, t1.partner_offer_id), (TRADE_IN_OFFERED, 1));
+    send(
+        &mut lobby,
+        1,
+        TRADE_OUT_CONFIRMED,
+        0,
+        1,
+        0,
+        [0; TRADE_MON_SIZE],
+    );
+    assert_eq!(lobby.pending_trades().len(), 1);
+    assert!(lobby.pending_trades()[0].revive);
+    let journal = fs::read_to_string(dir.join("TEST01.json")).unwrap();
+    assert!(
+        journal.contains("\"revive\": true"),
+        "the revive is journaled"
+    );
+
+    // The donor gives its Pokemon and receives nothing; the spirit receives it.
+    let (t0, t1) = (
+        trailer(&mut lobby, 0).unwrap(),
+        trailer(&mut lobby, 1).unwrap(),
+    );
+    assert_eq!(
+        (t0.state, t0.give_pid, t0.flags),
+        (TRADE_IN_COMMIT, PID_A, TRADE_FLAG_REVIVE)
+    );
+    assert_eq!(mon_pid(&t0.mon), 0);
+    assert_eq!((t1.state, t1.give_pid), (TRADE_IN_COMMIT, 0));
+    assert_eq!(t1.flags, TRADE_FLAG_REVIVE | TRADE_FLAG_RECEIVER);
+    assert_eq!(t1.mon, mon(PID_A, 0x11));
+    let id = t0.trade_id;
+    send(&mut lobby, 0, TRADE_OUT_DONE, 0, 0, id, [0; TRADE_MON_SIZE]);
+    send(&mut lobby, 1, TRADE_OUT_DONE, 0, 0, id, [0; TRADE_MON_SIZE]);
+    assert!(lobby.pending_trades().is_empty());
+    assert!(trailer(&mut lobby, 1).is_none());
+    let _ = fs::remove_dir_all(&dir);
 }

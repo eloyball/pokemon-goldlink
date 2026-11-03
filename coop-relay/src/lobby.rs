@@ -15,20 +15,22 @@ use crate::protocol::{
     NO_SLOT, PROTOCOL_VERSION, PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
     ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
     ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND,
-    ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_SAVE_OTHER_ROOM, ROOM_STATUS_OK,
-    SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM,
-    SESSION_KIND_TEAM_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
-    SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST, SESSION_REASON_ALREADY_TEAMED,
-    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_REASON_NONE, SESSION_REASON_NOT_HERE,
-    SESSION_REASON_TEAM_RULE, SESSION_REASON_TEAMMATE_AWAY, SESSION_STATE_ACCEPTED,
-    SESSION_STATE_CANCELLED, SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE,
-    SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket,
-    SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
+    ROOM_STATUS_ERR_RATE_LIMITED, ROOM_STATUS_ERR_RUN_LOST, ROOM_STATUS_ERR_SAVE_OTHER_ROOM,
+    ROOM_STATUS_OK, SAVE_STATUS_IN_PROGRESS, SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM,
+    SESSION_KIND_REVIVE, SESSION_KIND_TEAM_BATTLE, SESSION_KIND_TEAM_UP, SESSION_KIND_TRADE,
+    SESSION_OP_ACCEPT, SESSION_OP_CANCEL, SESSION_OP_DECLINE, SESSION_OP_REQUEST,
+    SESSION_REASON_ALREADY_TEAMED, SESSION_REASON_BUSY, SESSION_REASON_INVALID,
+    SESSION_REASON_NONE, SESSION_REASON_NOT_HERE, SESSION_REASON_TEAM_RULE,
+    SESSION_REASON_TEAMMATE_AWAY, SESSION_STATE_ACCEPTED, SESSION_STATE_CANCELLED,
+    SESSION_STATE_DECLINED, SESSION_STATE_INCOMING, SESSION_STATE_NOTICE, SESSION_STATE_OUTGOING,
+    SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket, SessionOut,
+    TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
 };
 use crate::protocol::{
-    CHALLENGE_LOCATION_BYTES, CHALLENGE_RULE_MONOLOCKE, CHALLENGE_STATE_SPIRIT, ChallengeDown,
-    ChallengeUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, SOUL_LINK_ROOM_WIDE, sanitize_challenge_rules,
-    soul_link_mode,
+    CHALLENGE_FLAG_SPIRIT, CHALLENGE_LOCATION_BYTES, CHALLENGE_RULE_MONOLOCKE,
+    CHALLENGE_RULE_NUZLOCKE, CHALLENGE_STATE_RUN_LOST, CHALLENGE_STATE_SPIRIT, ChallengeDown,
+    ChallengeUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, ROOM_STATE_RUN_LOST, SOUL_LINK_ROOM_WIDE,
+    sanitize_challenge_rules, soul_link_mode,
 };
 
 mod link;
@@ -82,6 +84,10 @@ pub struct TrainerChallenge {
     pub living: u8,
     #[serde(default)]
     pub deaths: u16,
+    /// This trainer's game showed the "Run lost" summary and saved it: from
+    /// then on its bridge is turned away (ROOM_STATUS_ERR_RUN_LOST).
+    #[serde(default)]
+    pub run_lost_seen: bool,
 }
 
 impl TrainerChallenge {
@@ -100,6 +106,10 @@ impl TrainerChallenge {
         self.spirit = spirit;
         self.living = up.living;
         self.deaths = self.deaths.max(up.deaths);
+        if up.state & CHALLENGE_STATE_RUN_LOST != 0 && !self.run_lost_seen {
+            self.run_lost_seen = true;
+            changed = true;
+        }
         changed
     }
 }
@@ -124,6 +134,10 @@ pub struct CampaignSaveFile {
     /// Milestone 5 room rules (CHALLENGE_RULE_*), fixed once the roster locks.
     #[serde(default)]
     pub rules: u16,
+    /// Milestone 5 Ghost Mode: every roster trainer became a spirit. The run
+    /// is over: the room turns every join away (ROOM_STATUS_ERR_RUN_LOST).
+    #[serde(default)]
+    pub run_lost: bool,
 }
 
 /// What one player currently sees of their session, latched until the next
@@ -217,6 +231,8 @@ pub struct LobbyState {
     /// Milestone 5 room rules (CHALLENGE_RULE_*): set by the host while the
     /// room forms, fixed once the roster locks.
     rules: u16,
+    /// Every roster trainer is a spirit (docs/MILESTONE5_PLAN.md §5.5.5).
+    run_lost: bool,
 }
 
 impl LobbyState {
@@ -267,6 +283,7 @@ impl LobbyState {
             trade_notices: Vec::new(),
             links: Default::default(),
             rules: 0,
+            run_lost: false,
         };
         lobby.load_campaign_from_disk()?;
         Ok(lobby)
@@ -478,6 +495,18 @@ impl LobbyState {
         }
 
         self.apply_challenge_up(slot_idx, pkt.challenge.as_ref());
+        // A lost run: a game that has shown the end and saved it is done here
+        // (it resets to the title; its next join is refused too).
+        if self.run_lost
+            && self
+                .roster
+                .iter()
+                .any(|r| r.slot_id as usize == slot_idx && r.challenge.run_lost_seen)
+        {
+            info!("[Room {room_str} | CHALLENGE] P{slot_idx} saw the end of the run: turned away");
+            self.remove_client_by_addr(addr);
+            return Err(ROOM_STATUS_ERR_RUN_LOST);
+        }
         self.check_and_lock_start_gate();
         Ok(slot_idx as u8)
     }
@@ -500,12 +529,48 @@ impl LobbyState {
             .find(|r| r.trainer_id == trainer_id)
             .is_some_and(|r| r.challenge.merge(up));
         if changed {
+            self.check_run_lost();
             self.save_campaign_to_disk();
         }
     }
 
     pub fn rules(&self) -> u16 {
         self.rules
+    }
+
+    pub fn is_run_lost(&self) -> bool {
+        self.run_lost
+    }
+
+    /// Milestone 5 (Q7, Q8): a Nuzlocke run is lost once every roster
+    /// trainer is a spirit, offline ones by their last report. Never undone.
+    fn check_run_lost(&mut self) {
+        if self.run_lost
+            || !self.campaign_started
+            || self.rules & CHALLENGE_RULE_NUZLOCKE == 0
+            || self.roster.is_empty()
+            || !self.roster.iter().all(|r| r.challenge.spirit)
+        {
+            return;
+        }
+        self.run_lost = true;
+        warn!(
+            "[Room {} | CHALLENGE] every trainer is a spirit: the run is lost",
+            room_code_to_string(&self.room_code)
+        );
+    }
+
+    /// A spirit (Ghost Mode): from the roster's last challenge report, or the
+    /// live player state's flag.
+    fn is_spirit(&self, slot: usize) -> bool {
+        let Some(p) = self.slots[slot].as_ref() else {
+            return false;
+        };
+        p.state.challenge_flags & CHALLENGE_FLAG_SPIRIT != 0
+            || self
+                .roster
+                .iter()
+                .any(|r| r.trainer_id == p.state.trainer_id && r.challenge.spirit)
     }
 
     /// The recipient's Monolocke type from the roster (MONO_TYPE_NONE before
@@ -540,11 +605,23 @@ impl LobbyState {
             .unwrap_or_default();
         ChallengeDown {
             mono_type: self.mono_type_for(slot_idx),
-            room_state: 0,
+            room_state: self.room_state(),
             rules: self.rules,
+            team_deaths: self
+                .roster
+                .iter()
+                .fold(0u16, |n, r| n.saturating_add(r.challenge.deaths)),
             link_union: self.link_union_for(),
             spent: own.spent,
             failed: own.failed,
+        }
+    }
+
+    fn room_state(&self) -> u8 {
+        if self.run_lost {
+            ROOM_STATE_RUN_LOST
+        } else {
+            0
         }
     }
 
@@ -604,6 +681,17 @@ impl LobbyState {
         player_secret: u64,
     ) -> Result<usize, u8> {
         let room_str = room_code_to_string(&self.room_code);
+
+        // A lost run takes no joins; players still connected see the end.
+        if self.run_lost
+            && !self
+                .slots
+                .iter()
+                .any(|s| s.as_ref().is_some_and(|p| p.addr == addr))
+        {
+            warn!("[Room {room_str}] Rejected {addr}: this run is lost");
+            return Err(ROOM_STATUS_ERR_RUN_LOST);
+        }
 
         let reg_idx = if trainer_id != 0 {
             let Some(idx) = self.roster.iter().position(|r| r.trainer_id == trainer_id) else {
@@ -838,7 +926,7 @@ impl LobbyState {
                 flag_coop_sync_ready: u8::from(self.gym_gate_open_for(recipient)),
                 current_checkpoint: synced_badges.count_ones() as u8,
                 assigned_monolocke: self.mono_type_for(recipient_idx),
-                challenge_room_state: 0,
+                challenge_room_state: self.room_state(),
                 flag_campaign_started: u8::from(self.campaign_started),
                 expected_party_size: expected_size,
                 online_party_count: online_count,
@@ -904,10 +992,13 @@ impl LobbyState {
         self.roster
             .iter()
             .filter(|reg| reg.slot_id != recipient.slot_id)
+            // A spirit never holds the others back (docs/MILESTONE5_PLAN.md §4.4).
+            .filter(|reg| !reg.challenge.spirit)
             .all(|reg| match &self.slots[reg.slot_id as usize] {
                 Some(p) => {
                     p.badge_mask.count_ones() >= mine
                         || p.allow_ahead
+                        || p.state.challenge_flags & CHALLENGE_FLAG_SPIRIT != 0
                         || (p.state.map_id != 0 && p.state.map_id == recipient.state.map_id)
                 }
                 None => reg.last_badge_mask.count_ones() >= mine || reg.allow_ahead,
@@ -1051,6 +1142,16 @@ impl LobbyState {
                 if kind == SESSION_KIND_LEAVE_TEAM {
                     return self.leave_team(slot);
                 }
+                if kind == SESSION_KIND_REVIVE {
+                    return self.request_revive(slot, target, now);
+                }
+                // A spirit (Ghost Mode) only takes a revive.
+                if self.is_spirit(slot) {
+                    return refuse(self, SESSION_REASON_INVALID);
+                }
+                if target.is_some_and(|t| self.is_spirit(t)) {
+                    return refuse(self, SESSION_REASON_BUSY);
+                }
                 if !matches!(
                     kind,
                     SESSION_KIND_TRADE | SESSION_KIND_BATTLE | SESSION_KIND_TEAM_UP
@@ -1193,7 +1294,7 @@ impl LobbyState {
                     session.kind
                 );
                 if accepted && session.kind == SESSION_KIND_TRADE {
-                    self.start_trade(session.from, session.to, now);
+                    self.start_trade(session.from, session.to, false, now);
                 }
                 if accepted
                     && session.kind == SESSION_KIND_TEAM_UP
@@ -1230,6 +1331,63 @@ impl LobbyState {
             }
             _ => {}
         }
+    }
+
+    /// Milestone 5 Ghost Mode (docs/MILESTONE5_PLAN.md §5.5.4): `slot` gives a
+    /// Pokemon to the spirit `target`. The spirit doesn't answer: a one-sided
+    /// trade opens at once and both games see the request ACCEPTED.
+    fn request_revive(&mut self, slot: usize, target: Option<usize>, now: Instant) {
+        let kind = SESSION_KIND_REVIVE;
+        let Some(target) = target else {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                None,
+                SESSION_REASON_NOT_HERE,
+            );
+        };
+        if self.rules & CHALLENGE_RULE_NUZLOCKE == 0
+            || self.run_lost
+            || self.is_spirit(slot)
+            || !self.is_spirit(target)
+        {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                Some(target),
+                SESSION_REASON_INVALID,
+            );
+        }
+        if self.in_session(slot) || self.in_session(target) {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                Some(target),
+                SESSION_REASON_BUSY,
+            );
+        }
+        info!(
+            "[Room {} | SESSION] P{slot} revives P{target}",
+            room_code_to_string(&self.room_code)
+        );
+        self.start_trade(slot, target, true, now);
+        self.set_view(
+            slot,
+            SESSION_STATE_ACCEPTED,
+            kind,
+            Some(target),
+            SESSION_REASON_NONE,
+        );
+        self.set_view(
+            target,
+            SESSION_STATE_ACCEPTED,
+            kind,
+            Some(slot),
+            SESSION_REASON_NONE,
+        );
     }
 
     /// Leaves the team `slot` is in: no answer needed. The team is dropped
@@ -1366,6 +1524,7 @@ impl LobbyState {
             teams: self.teams.clone(),
             pending_trades: self.pending_trades.clone(),
             rules: self.rules,
+            run_lost: self.run_lost,
         };
         let json = match serde_json::to_string_pretty(&payload) {
             Ok(json) => json,
@@ -1408,6 +1567,7 @@ impl LobbyState {
         self.teams = saved.teams;
         self.pending_trades = saved.pending_trades;
         self.rules = sanitize_challenge_rules(saved.rules);
+        self.run_lost = saved.run_lost;
         self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
         info!(
             "[Room {}] Restored locked campaign from disk ({} registered trainers)",

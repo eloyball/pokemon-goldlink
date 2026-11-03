@@ -40,7 +40,14 @@
 // same commit again after reconnecting: the Pokemon to give is found by its
 // personality value, and one already swapped is recognized by the received
 // personality, so applying is idempotent.
+//
+// Milestone 5 Ghost Mode (docs/MILESTONE5_PLAN.md §5.5.4): a revive is the
+// same trade with one side. The donor picks and confirms first, then offers;
+// the spirit (COOP_TRADE_FLAG_RECEIVER) accepts that offer by itself; the
+// commit moves the donor's Pokemon into the spirit's empty party. No scenes.
 // ---------------------------------------------------------------------------
+
+void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
 
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
@@ -82,7 +89,15 @@ enum CoopTradeTaskState
     COOP_TRADE_WAIT_DONE,     // DONE sent; waiting for the relay to close the trade
     COOP_TRADE_FINAL_TEXT,
     COOP_TRADE_FINAL_BUTTON,
+    COOP_TRADE_REVIVE_WAIT,         // the spirit: waiting for the donor's Pokemon
+    COOP_TRADE_REVIVE_CONFIRM_TEXT, // the donor: "Give your MON to NAME's spirit?"
+    COOP_TRADE_REVIVE_CONFIRM,
 };
+
+// The donor gave its lead without a trade scene: the follower still shows
+// it, so the map reloads in place once the task is over. Overlay data: it
+// lasts until that reload.
+static u8 sReloadAfterGift;
 
 struct CoopTradeEnv
 {
@@ -106,6 +121,7 @@ struct CoopTradeEnv
     u8 evolved;
     u8 recovery;       // applying a commit this task never confirmed (after a reconnect)
     u8 swapped;        // the received Pokemon entered the party in this task
+    u8 flags;          // COOP_TRADE_FLAG_* of this trade (Milestone 5 revive)
 };
 
 // ---------------------------------------------------------------------------
@@ -281,6 +297,73 @@ static const char *Coop_TradeAbortText(u32 reason)
     }
 }
 
+static void Coop_TradeDoneAlready(TaskManager *taskman, struct CoopTradeEnv *env, const char *msg)
+{
+    env->ex.out.trade_id = env->tradeId;
+    env->ex.out.state = COOP_TRADE_OUT_DONE;
+    env->frames = 0;
+    Coop_DialogPrint(&env->dialog, msg);
+    taskman->state = COOP_TRADE_WAIT_DONE;
+}
+
+// A revive's commit (Milestone 5): the spirit takes the Pokemon into its
+// empty party, the donor lets it go. Idempotent like a trade: the Pokemon is
+// found by its personality value.
+static void Coop_TradeApplyRevive(FieldSystem *fsys, TaskManager *taskman, struct CoopTradeEnv *env)
+{
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    const struct CoopTradeIn *in = &env->ex.in;
+    u32 pid, i;
+
+    if (env->flags & COOP_TRADE_FLAG_RECEIVER)
+    {
+        if (!Coop_TradeLoadIncoming(env, in->mon))
+        {
+            Coop_TradeDoneAlready(taskman, env, "The gift couldn't be\nreceived.");
+            return;
+        }
+        pid = GetMonData(&env->incoming, MON_DATA_PERSONALITY, NULL);
+        for (i = 0; i < (u32)party->count; i++)
+            if (GetMonData(Party_GetMonByIndex(party, i), MON_DATA_PERSONALITY, NULL) == pid)
+            {
+                Coop_TradeDoneAlready(taskman, env, "You were revived by @!");
+                return;
+            }
+        if (!PokeParty_Add(party, &env->incoming))
+        {
+            Coop_TradeDoneAlready(taskman, env, "The gift couldn't be\nreceived.");
+            return;
+        }
+        Coop_ChallengeTradeReceived(Party_GetMonByIndex(party, party->count - 1));
+        UpdatePokedexWithReceivedSpecies(fsys->savedata, Party_GetMonByIndex(party, party->count - 1));
+        Coop_SpiritRevived(fsys);
+    }
+    else
+    {
+        for (i = 0; i < (u32)party->count; i++)
+            if (GetMonData(Party_GetMonByIndex(party, i), MON_DATA_PERSONALITY, NULL) == in->give_pid)
+                break;
+        if (i == (u32)party->count)
+        {
+            Coop_TradeDoneAlready(taskman, env, "Your gift reached @.");
+            return;
+        }
+        Coop_GetNickname(Party_GetMonByIndex(party, i), env->myNick);
+        PokeParty_Delete(party, i);
+        if (i == 0)
+            sReloadAfterGift = 1;
+    }
+    env->swapped = TRUE;
+    Coop_DialogPrint(&env->dialog, "Saving. Don't turn off\nthe power.");
+    taskman->state = COOP_TRADE_SAVE_TEXT;
+}
+
+static const char *Coop_TradePickText(const struct CoopTradeEnv *env)
+{
+    return (env->flags & COOP_TRADE_FLAG_REVIVE) ? "Which Pokémon will you give\nto @'s spirit?"
+                                                 : "Which Pokémon will you\ntrade with @?";
+}
+
 // Swaps the received Pokemon in and sets the state the task continues with:
 // the trade scene, after a page when finishing a trade from before a
 // reconnect.
@@ -293,6 +376,12 @@ static void Coop_TradeApply(FieldSystem *fsys, TaskManager *taskman, struct Coop
 
     env->tradeId = in->trade_id;
     Coop_ChoiceClose(&env->choice);
+    env->flags = in->flags;
+    if (env->flags & COOP_TRADE_FLAG_REVIVE)
+    {
+        Coop_TradeApplyRevive(fsys, taskman, env);
+        return;
+    }
     if (!Coop_TradeLoadIncoming(env, in->mon))
     {
         // Cannot happen for an offer this game validated; a damaged journal
@@ -441,7 +530,9 @@ static void Coop_TradePicked(TaskManager *taskman, struct CoopTradeEnv *env, str
 
     env->slot = (u8)slot;
     env->cursor = (u8)slot;
-    if (party->count < 2)
+    if (env->flags & COOP_TRADE_FLAG_REVIVE)
+        msg = Coop_SpiritDonorRule(party, slot); // Milestone 5: a gift to a spirit
+    else if (party->count < 2)
         msg = "You need at least two\nPokémon to trade.";
     else
         msg = Coop_TradePickRule(party, slot);
@@ -449,6 +540,13 @@ static void Coop_TradePicked(TaskManager *taskman, struct CoopTradeEnv *env, str
     {
         Coop_DialogPrint(&env->dialog, msg);
         taskman->state = COOP_TRADE_RULE_TEXT;
+        return;
+    }
+    if (env->flags & COOP_TRADE_FLAG_REVIVE)
+    {
+        Coop_GetNickname(Party_GetMonByIndex(party, slot), env->myNick);
+        Coop_DialogPrint(&env->dialog, "Give your ^ to\n@'s spirit?");
+        taskman->state = COOP_TRADE_REVIVE_CONFIRM_TEXT;
         return;
     }
     __builtin_memcpy(env->ex.out.mon, Party_GetMonByIndex(party, slot), COOP_PARTY_MON_SIZE);
@@ -507,8 +605,16 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
         }
         if (env->ex.in.state == COOP_TRADE_IN_WAITING || env->ex.in.state == COOP_TRADE_IN_OFFERED)
         {
+            env->flags = env->ex.in.flags;
+            if (env->flags & COOP_TRADE_FLAG_RECEIVER)
+            {
+                // A spirit asks for nothing: it waits for the donor's Pokemon.
+                Coop_DialogPrint(&env->dialog, "@ is choosing a Pokémon\nto revive you...");
+                taskman->state = COOP_TRADE_REVIVE_WAIT;
+                break;
+            }
             env->ex.out.state = COOP_TRADE_OUT_PICKING;
-            Coop_DialogPrint(&env->dialog, "Which Pokémon will you\ntrade with @?");
+            Coop_DialogPrint(&env->dialog, Coop_TradePickText(env));
             taskman->state = COOP_TRADE_PICK_TEXT;
             break;
         }
@@ -542,7 +648,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             }
             env->listOnly = TRUE;
             Coop_TradeOpenDialog(fsys, env);
-            Coop_DialogPrint(&env->dialog, "Which Pokémon will you\ntrade with @?");
+            Coop_DialogPrint(&env->dialog, Coop_TradePickText(env));
             break;
         }
         Coop_TradeOpenPartyList(fsys, env, party);
@@ -588,7 +694,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             break;
         if (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B))
         {
-            Coop_DialogPrint(&env->dialog, "Which Pokémon will you\ntrade with @?");
+            Coop_DialogPrint(&env->dialog, Coop_TradePickText(env));
             taskman->state = COOP_TRADE_PICK_TEXT;
         }
         break;
@@ -784,7 +890,68 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             taskman->state = COOP_TRADE_FINAL_BUTTON;
             break;
         }
-        Coop_TradeFinal(taskman, env, "Your trade with @\nis complete!");
+        if (env->flags & COOP_TRADE_FLAG_REVIVE)
+            Coop_TradeFinal(taskman, env, (env->flags & COOP_TRADE_FLAG_RECEIVER) ? "You were revived by @!"
+                                                                                : "@ was revived\nwith your ^!");
+        else
+            Coop_TradeFinal(taskman, env, "Your trade with @\nis complete!");
+        break;
+
+    // --- Milestone 5: a revive ----------------------------------------------
+
+    case COOP_TRADE_REVIVE_WAIT:
+        if (Coop_TradeCheckInterrupt(fsys, taskman, env))
+            break;
+        if (gSystem.newKeys & PAD_BUTTON_B)
+        {
+            Coop_TradeCancel(taskman, env);
+            break;
+        }
+        if (env->ex.in.state != COOP_TRADE_IN_OFFERED || env->ex.in.partner_offer_id == 0)
+            break;
+        env->partnerOfferId = env->ex.in.partner_offer_id;
+        if (!Coop_TradeLoadIncoming(env, env->ex.in.mon))
+        {
+            env->ex.out.state = COOP_TRADE_OUT_CANCEL;
+            Coop_TradeFinal(taskman, env, "Something is wrong with that\nPokémon. Trade cancelled.");
+            break;
+        }
+        // Accepted by itself (the spirit asked for nothing). Monolocke and
+        // Soul-Link don't apply to a gift (draft §6.3).
+        env->ex.out.confirm_id = env->partnerOfferId;
+        env->ex.out.state = COOP_TRADE_OUT_CONFIRMED;
+        Coop_DialogPrint(&env->dialog, "@ is giving you\n$ (Lv. &)!");
+        taskman->state = COOP_TRADE_WAIT_COMMIT;
+        break;
+
+    case COOP_TRADE_REVIVE_CONFIRM_TEXT:
+        if (Coop_TradeCheckInterrupt(fsys, taskman, env))
+            break;
+        if (!Coop_DialogIsPrinting(&env->dialog))
+        {
+            Coop_ChoiceOpenYesNo(fsys, &env->choice);
+            taskman->state = COOP_TRADE_REVIVE_CONFIRM;
+        }
+        break;
+
+    case COOP_TRADE_REVIVE_CONFIRM:
+        if (Coop_TradeCheckInterrupt(fsys, taskman, env))
+            break;
+        value = Coop_ChoiceInput(&env->choice);
+        if (value == COOP_CHOICE_NONE)
+            break;
+        Coop_ChoiceClose(&env->choice);
+        if (value == COOP_CHOICE_NO)
+        {
+            Coop_DialogPrint(&env->dialog, Coop_TradePickText(env));
+            taskman->state = COOP_TRADE_PICK_TEXT;
+            break;
+        }
+        __builtin_memcpy(env->ex.out.mon, Party_GetMonByIndex(party, env->slot), COOP_PARTY_MON_SIZE);
+        env->ex.out.offer_id = (u8)(env->ex.out.offer_id + 1);
+        env->ex.out.state = COOP_TRADE_OUT_OFFERED;
+        Coop_DialogPrint(&env->dialog, "Waiting for @...\nPress B to cancel.");
+        taskman->state = COOP_TRADE_WAIT_COMMIT;
         break;
 
     // --- Last page ----------------------------------------------------------
@@ -826,8 +993,19 @@ static BOOL Coop_StartTradeTask(FieldSystem *fsys)
 
 void Coop_UpdateTrade(FieldSystem *fsys)
 {
+    LocalMapObject *player;
+
     if (!Coop_IsFieldFree(fsys))
         return;
+    if (sReloadAfterGift)
+    {
+        // The lead was given away (a revive): rebuild the follower from the
+        // party by loading the map again where the player stands.
+        sReloadAfterGift = 0;
+        player = fsys->playerAvatar->mapObject;
+        sub_020538C0(fsys, fsys->location->mapId, -1, player->xCurr, player->yCurr, player->curFacing);
+        return;
+    }
     if (gCoopCommBlock.gates.trade_pending == 1 && Coop_IsConnectedToRoom())
         (void)Coop_StartTradeTask(fsys);
 }
