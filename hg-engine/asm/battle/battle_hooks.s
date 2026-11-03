@@ -769,6 +769,29 @@ bx r5
 
 .pool
 
+.global Coop_ForceNickname_hook
+Coop_ForceNickname_hook:
+// Task_GetPokemon case 18 (STATE_GET_POKEMON_ASK_FOR_NICKNAME, 0x02246CAA).
+// A co-op Nuzlocke skips the Yes / No: straight to case 19's "Yes" path
+// (0x02246D0A), which uses the same r4-r7 and stack frame. Otherwise replay
+// the five instructions the hook overwrote and continue at 0x02246CCC.
+bl Coop_ChallengeForceNickname
+cmp r0, #0
+beq _coopAskForNickname
+ldr r0, =0x02246D0A | 1
+bx r0
+
+_coopAskForNickname:
+ldr r1, [r4, #4]
+mov r0, #5
+str r0, [sp]
+mov r2, #0
+ldr r0, =0x219C
+ldr r3, =0x02246CCC | 1
+bx r3
+
+.pool
+
 .global PlayerTrainerVictoryBGM_hook
 PlayerTrainerVictoryBGM_hook:
 // No need to preserve original instructions since we are replicating the switch case in C.

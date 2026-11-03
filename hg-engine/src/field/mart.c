@@ -7,6 +7,7 @@
 #include "save.h"
 #include "script.h"
 #include "coop_marts.h"
+#include "coop_challenge.h"
 
 #ifdef MART_EXPANSION
 
@@ -186,7 +187,7 @@ BOOL ScrCmd_MartBuy(SCRIPTCONTEXT *ctx)
     }
 
     for (i = 0; i < NELEMS(sBadgeMart); i++) {
-        if (badgeCount >= sBadgeMart[i].required_badges) {
+        if (badgeCount >= sBadgeMart[i].required_badges && !Coop_ChallengeHidesItem(sBadgeMart[i].item_id)) {
             items[index] = sBadgeMart[i].item_id;
             index++;
         }
@@ -195,6 +196,26 @@ BOOL ScrCmd_MartBuy(SCRIPTCONTEXT *ctx)
     items[index] = 0xFFFF;
     InitMartUI(ctx->taskman, ctx->fsys, items, 0, 0, 0, 0); // this doesn't honor price overrides
     return TRUE;
+}
+
+// Nuzlocke: the specialty marts that sell revives drop them (docs/MILESTONE5_PLAN.md
+// §5.4.6). The lists are this overlay's data, reloaded with it, so this runs
+// on every Nuzlocke field frame (Coop_ChallengeNuzlockeFrame).
+void Coop_ChallengeFilterMarts(void)
+{
+    static u16 *const sLists[] = {
+        sGoldenrodDepartmentUpper2F, sGoldenrodHerbs, sCianwoodPharmacy, sIndigoPlateau, sCeladonDepartmentUpper2F, sMahoganyPostRocketHideout,
+    };
+    u32 l, i, n;
+
+    for (l = 0; l < NELEMS(sLists); l++)
+    {
+        u16 *list = sLists[l];
+        for (i = 0, n = 0; list[i] != 0xFFFF; i++)
+            if (!Coop_ChallengeHidesItem(list[i]))
+                list[n++] = list[i];
+        list[n] = 0xFFFF;
+    }
 }
 
 #endif // MART_EXPANSION

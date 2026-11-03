@@ -1,9 +1,13 @@
 /* Overlay 131 */
+/* 0x023C4000..0x023D8000, the battle extension's range (src/battle/linker.ld): the two are never
+   loaded together. LENGTH ends where the resident Overlay 129 starts (src/linker.ld), so an
+   overflow fails the link. The lowest 0x3C00 below it are hg-engine's individual overlays
+   (src/individual/linker/, 0x023C0400). Milestone 5 Phase 3 moved it down from 0x023C8000. */
 OUTPUT_ARCH(arm)
 MEMORY {
 
-        rom     : ORIGIN = 0x023C8000, LENGTH = 0x18000
-        ewram   : ORIGIN = 0x023C8000, LENGTH = 0x18000
+        rom     : ORIGIN = 0x023C4000, LENGTH = 0x14000
+        ewram   : ORIGIN = 0x023C4000, LENGTH = 0x14000
 }
 
 SECTIONS {
@@ -31,3 +35,5 @@ SECTIONS {
         __end__ = __bss_end__ ;
         } >rom = 0xff
 }
+
+ASSERT(gCoopFieldEntryHeader == 0x023C4000, "the co-op field header must sit at COOP_FIELD_ENTRY_ADDR (include/coop_sync.h)")

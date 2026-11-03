@@ -56,7 +56,7 @@
 // the field overlay. Overlay 129 links before it, so it cannot call 131 by
 // symbol: src/field/linker.ld pins this header at the start of Overlay 131
 // and Coop_MainSysTask calls through it.
-#define COOP_FIELD_ENTRY_ADDR  0x023C8000
+#define COOP_FIELD_ENTRY_ADDR  0x023C4000 // src/field/linker.ld asserts it
 #define COOP_FIELD_ENTRY_MAGIC 0x31464F43 // "COF1"
 
 struct FieldSystem;
@@ -105,7 +105,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
     COOP_DEBUG_WILD_SPECIES = 18,    // Milestone 4 Phase 0: a wild battle against gCoopDebugMonBuffer.species (species | form << 11) at level debug_arg
     COOP_DEBUG_REBALANCE = 19,       // Milestone 4 Phase 1: debug_arg 0 = the lead's evolution with gCoopDebugMonBuffer.held_item (0: by level up) -> buffer.species (0: none); 1-4 = rebuild a department store list (Goldenrod 4F / 5F, Celadon 3F / 4F) from the save
-    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left
+    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left; Phase 3: 7 gives three Master Balls; 7 / 8 -> buffer.held_item = Master Balls in the bag, party_count; 8 also buffer.species = the last party member's RESERVED_114 bits, level = its nickname flag; 9 deposits the last party member in box 1
 };
 
 enum CoopDebugLinkOp
@@ -158,7 +158,7 @@ struct CoopDebugMonBuffer
     u8  checksum_failed;
     u8  is_egg;
     u8  party_count; // after the command
-    u8  team_battle_armed; // one-shot, cleared when used: 1 probe E (multi with an AI partner); 2 Milestone 4 Phase 0: the trainer's first Pokemon becomes species holding held_item; 3 Phase 3: the trainer scales like a Kanto leader (+2 per Kanto badge)
+    u8  team_battle_armed; // one-shot, cleared when used: 1 probe E (multi with an AI partner); 2 Milestone 4 Phase 0: the trainer's first Pokemon becomes species holding held_item; 3 Phase 3: the trainer scales like a Kanto leader (+2 per Kanto badge); 4 Milestone 5 Phase 3: the next wild Pokemon becomes species at level (Coop_ChallengeWildMon)
     u8  team_battle_used;  // probe E: set when a battle was converted
     u8  pad[2];            // pad[0]: battle results; pad[1]: the Pokemon this player brought to a 2v2
     u8  auto_pick[3];      // probes: a 2v2's three (party slots, 1-based) instead of the party screen; 0: none

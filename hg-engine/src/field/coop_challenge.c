@@ -29,15 +29,7 @@ static const char *const sTypeNames[COOP_MONO_TYPE_COUNT] = {
 
 struct CoopChallengeSave *Coop_ChallengeSave(void)
 {
-    u8 *walker = SaveArray_Get(SaveBlock2_get(), COOP_SAVE_POKEWALKER);
-    struct CoopChallengeSave *save;
-
-    if (walker == NULL)
-        return NULL;
-    save = (struct CoopChallengeSave *)(walker + COOP_CHALLENGE_SAVE_OFFSET);
-    if (save->magic != COOP_CHALLENGE_SAVE_MAGIC || save->version != COOP_CHALLENGE_SAVE_VERSION)
-        return NULL;
-    return save;
+    return Coop_ChallengeSaveOf(SaveBlock2_get());
 }
 
 u16 Coop_ChallengeRules(void)
@@ -118,7 +110,8 @@ void Coop_ChallengeFieldFrame(struct FieldSystem *fsys)
     struct CoopChallengeUp *out = &gCoopChallengeSync.out;
     u32 i;
 
-    (void)fsys;
+    if (save != NULL && (save->rules & COOP_RULE_NUZLOCKE))
+        Coop_ChallengeNuzlockeFrame(fsys, save); // Phase 3
     if (save != NULL && in != NULL)
     {
         // The relay's ledgers only ever gain bits: OR them back, so a restored

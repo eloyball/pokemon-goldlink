@@ -69,4 +69,10 @@ void LONG_CALL Coop_DialogPrint(struct CoopDialog *dialog, const char *msg);
 BOOL LONG_CALL Coop_DialogIsPrinting(struct CoopDialog *dialog);
 void LONG_CALL Coop_DialogClose(struct FieldSystem *fsys, struct CoopDialog *dialog);
 
+// Overlay 131 (src/field/coop_field_tasks.c): A or B pressed this frame; and the
+// field is quiet (map running, no task, message, banner or step), so a co-op
+// task may start.
+BOOL Coop_DialogButtonPressed(void);
+BOOL Coop_IsSafeOverworldWindow(struct FieldSystem *fsys);
+
 #endif // COOP_DIALOG_H

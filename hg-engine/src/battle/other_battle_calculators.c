@@ -13,6 +13,7 @@
 #include "constants/species.h"
 
 #include "battle.h"
+#include "coop_challenge.h"
 #include "overlay.h"
 #include "pokemon.h"
 #include "q412.h"
@@ -4530,7 +4531,8 @@ void LONG_CALL HandleTransform(struct BattleStruct *sp)
 
 BOOL LONG_CALL ShouldPreventMonCapture(struct BattleSystem *bsys)
 {
-    return BattleTypeGet(bsys) & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_TOTEM);
+    // Co-op Nuzlocke: not this location's first encounter (src/battle/coop_challenge_battle.c).
+    return (BattleTypeGet(bsys) & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_TOTEM)) || Coop_ChallengeBallBlocked(bsys);
 }
 
 BOOL LONG_CALL ov07_02232F60(void *ballData, s32 ballAnim_Unused);

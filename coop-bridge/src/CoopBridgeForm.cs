@@ -79,11 +79,11 @@ namespace CoopBridge
         // through the overlay's pinned header, so it exists only while the
         // field runs: the header magic and the block header are checked
         // every frame before anything is read or written.
-        public const uint FieldEntryHeader = 0x003C8000;  // Main RAM offset of COOP_FIELD_ENTRY_ADDR
+        public const uint FieldEntryHeader = 0x003C4000;  // Main RAM offset of COOP_FIELD_ENTRY_ADDR
         public const uint FieldEntryMagic = 0x31464F43;   // "COF1"
         public const int FieldEntryChallenge = 0x0C;      // u32 pointer to the CoopChallengeSync
-        public const uint Overlay131Start = 0x023C8000;
-        public const uint Overlay131End = 0x023E0000;
+        public const uint Overlay131Start = 0x023C4000;
+        public const uint Overlay131End = 0x023D8000;   // Overlay 129 starts here
         public const uint ChallengeSyncMagic = 0x31534843; // "CHS1"
         public const ushort ChallengeSyncVersion = 1;
         public const int ChallengeSyncSize = 0x78;

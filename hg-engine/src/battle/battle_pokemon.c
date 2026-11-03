@@ -11,6 +11,7 @@
 
 #include "bag.h"
 #include "battle.h"
+#include "coop_challenge.h"
 #include "overlay.h"
 #include "pokemon.h"
 
@@ -1055,6 +1056,8 @@ void BattleEndRevertFormChange(struct BattleSystem *bw)
 
         RevertFormChange(pp, monsno, form);
     }
+
+    Coop_ChallengeMarkBattleEnd(bw); // co-op Nuzlocke: every own Pokemon at 0 HP is dead
 
 #ifdef RESTORE_ITEMS_AT_BATTLE_END
     // grab newItems array for use later

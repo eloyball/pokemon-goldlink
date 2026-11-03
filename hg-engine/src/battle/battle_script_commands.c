@@ -15,6 +15,7 @@
 #include "constants/weather_numbers.h"
 
 #include "battle.h"
+#include "coop_challenge.h"
 #include "mega.h"
 #include "message.h"
 #include "nitro.h"
@@ -5345,6 +5346,7 @@ BOOL BtlCmd_TryFaintMon(struct BattleSystem *bsys, struct BattleStruct *ctx)
         ctx->server_status_flag |= MaskOfFlagNo(battlerId) << BATTLE_STATUS_FAINTED_SHIFT;
         ctx->total_hinshi[battlerId]++;
         UpdateFriendshipFainted(bsys, ctx, battlerId);
+        Coop_ChallengeMarkFainted(bsys, ctx, battlerId); // co-op Nuzlocke: dead
     }
 
     return FALSE;

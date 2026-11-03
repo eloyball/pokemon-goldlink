@@ -116,7 +116,7 @@ BOOL LONG_CALL Coop_IsMapNameBannerShowing(FieldSystem *fsys)
     return task != NULL;
 }
 
-static BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
+BOOL Coop_IsSafeOverworldWindow(FieldSystem *fsys)
 {
     LocalMapObject *player;
 
@@ -236,7 +236,7 @@ void LONG_CALL Coop_DialogClose(FieldSystem *fsys, struct CoopDialog *dialog)
 }
 
 // A or B, like every vanilla overworld message (ScrCmd_WaitButton).
-static BOOL Coop_DialogButtonPressed(void)
+BOOL Coop_DialogButtonPressed(void)
 {
     return (gSystem.newKeys & (PAD_BUTTON_A | PAD_BUTTON_B)) != 0;
 }

@@ -44,7 +44,7 @@ str r0, [sp, #0x10]
 push {r0, r2, r3}
 mov r0, r1
 // through Overlay 131's pinned header (COOP_FIELD_ENTRY_ADDR, include/coop_sync.h): magic, entry, wildLevel
-ldr r3, =0x023C8000
+ldr r3, =0x023C4000
 ldr r2, [r3]
 ldr r1, =0x31464F43 // COOP_FIELD_ENTRY_MAGIC
 cmp r2, r1
@@ -210,7 +210,7 @@ and r0, r4 // make r0 solely the species
 push {r0, r2, r3}
 mov r0, r1
 // through Overlay 131's pinned header (COOP_FIELD_ENTRY_ADDR, include/coop_sync.h): magic, entry, wildLevel
-ldr r3, =0x023C8000
+ldr r3, =0x023C4000
 ldr r2, [r3]
 ldr r1, =0x31464F43 // COOP_FIELD_ENTRY_MAGIC
 cmp r2, r1

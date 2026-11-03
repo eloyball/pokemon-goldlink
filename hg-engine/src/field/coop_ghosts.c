@@ -21,6 +21,9 @@
 #include "coop_hm.h"
 #include "coop_marts.h"
 #include "coop_wild.h"
+#pragma long_calls // Overlay 129 functions: see src/field/coop_challenge_nuzlocke.c
+#include "pokemon_storage_system.h"
+#pragma long_calls_off
 #include "coop_challenge.h"
 #include "roamer.h"
 #include "bag.h"
@@ -742,6 +745,48 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
         bits &= ~COOP_MON_ABILITY_LOCKED; // leave the lead as it was found
         SetMonData(lead, MON_DATA_RESERVED_114, &bits);
         ResetPartyPokemonAbility(lead);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what >= 7 && what <= 9)
+    {
+        // Phase 3 (Nuzlocke): 7 gives three Master Balls; 8 reports the last
+        // party member: species = its RESERVED_114 bits, level = its nickname
+        // flag, party_count; and held_item = the Master Balls in the bag.
+        // 9 deposits the last party member in box 1.
+        void *bag = Sav2_Bag_get(fsys->savedata);
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+
+        if (what == 7 && !Bag_AddItem(bag, ITEM_MASTER_BALL, 3, 11))
+            return COOP_DEBUG_RESULT_FAILED;
+        if (what == 9)
+        {
+            // The last party member goes to box 1 (the PC's first box).
+            if (party->count < 2 || !PCStorage_PlaceMonInBoxFirstEmptySlot(SaveArray_Get(fsys->savedata, 41), 0, &Party_GetMonByIndex(party, party->count - 1)->box))
+                return COOP_DEBUG_RESULT_FAILED;
+            PokeParty_Delete(party, party->count - 1);
+        }
+        if (what == 8 && party->count > 0)
+        {
+            struct PartyPokemon *mon = Party_GetMonByIndex(party, party->count - 1);
+            gCoopDebugMonBuffer.species = (u16)GetMonData(mon, MON_DATA_RESERVED_114, NULL);
+            gCoopDebugMonBuffer.level = (u8)GetMonData(mon, MON_DATA_HAS_NICKNAME, NULL);
+        }
+        gCoopDebugMonBuffer.party_count = (u8)party->count;
+        // Bag_GetQuantity is in Overlay 129 and not LONG_CALL: count with Bag_HasItem.
+        // held_item = Master Balls; mon[0..7] = u16 counts of items 1-4 (Master, Ultra, Great, Poke Ball).
+        {
+            u32 item;
+            u16 n;
+
+            for (item = ITEM_MASTER_BALL; item <= ITEM_POKE_BALL; item++)
+            {
+                for (n = 0; n < 999 && Bag_HasItem(bag, (u16)item, n + 1, 11); n++)
+                    ;
+                __builtin_memcpy(&gCoopDebugMonBuffer.mon[(item - ITEM_MASTER_BALL) * 2], &n, sizeof(n));
+                if (item == ITEM_MASTER_BALL)
+                    gCoopDebugMonBuffer.held_item = n;
+            }
+        }
         return COOP_DEBUG_RESULT_OK;
     }
     return COOP_DEBUG_RESULT_BAD_ARG;

@@ -52,6 +52,19 @@
 #define COOP_CHALLENGE_SPIRIT      0x02
 #define COOP_CHALLENGE_RUN_LOST    0x04
 #define COOP_CHALLENGE_HAD_POKEMON 0x08
+#define COOP_CHALLENGE_GRAVE_NAMED 0x10 // box 30 renamed GRAVEYARD
+#define COOP_CHALLENGE_GRAVE2      0x20 // box 29 is the second Graveyard box (Q11)
+
+// CoopChallengeSave.pending_flags: the wild Pokemon of the battle in progress
+// (docs/MILESTONE5_PLAN.md §5.4.2). Resolved on the first quiet field frame after it.
+#define COOP_PENDING_FIRST          0x01 // this location's first encounter: catchable
+#define COOP_PENDING_EXEMPT         0x02 // a static (no location): catchable
+#define COOP_PENDING_PARTNER_FAILED 0x04 // Soul-Link: the group already lost this place (Phase 6)
+#define COOP_PENDING_OPEN           0x80 // a battle to resolve
+
+// PC boxes (0-based): the Graveyard is box 30, then box 29 (Q11).
+#define COOP_GRAVEYARD_BOX  29
+#define COOP_GRAVEYARD_BOX2 28
 
 // gates.challenge_room_state bits.
 #define COOP_ROOM_RUN_LOST 0x01
@@ -222,6 +235,20 @@ extern const u16 gCoopAbilityPoolCount;
 
 // hg-engine's SaveArray_Get (src/save.c, Overlay 129); no header declares it.
 void *LONG_CALL SaveArray_Get(void *saveData, int id);
+void *LONG_CALL SaveBlock2_get(void);
+
+// The challenge block of the loaded save, or NULL. Inline so the battle
+// extension and Overlay 131 each have it (neither can call the other).
+static inline struct CoopChallengeSave *Coop_ChallengeSaveOf(void *saveData)
+{
+    u8 *walker = saveData != NULL ? SaveArray_Get(saveData, COOP_SAVE_POKEWALKER) : NULL;
+    struct CoopChallengeSave *save;
+
+    if (walker == NULL)
+        return NULL;
+    save = (struct CoopChallengeSave *)(walker + COOP_CHALLENGE_SAVE_OFFSET);
+    return save->magic == COOP_CHALLENGE_SAVE_MAGIC && save->version == COOP_CHALLENGE_SAVE_VERSION ? save : NULL;
+}
 
 // ---------------------------------------------------------------------------
 // Overlay 131 (src/field/coop_challenge.c)
@@ -268,6 +295,56 @@ void Coop_ChallengeStarters(struct CoopChallengeSave *save);
 // species | form << 11 in, the room's replacement out (or the same value).
 u32 Coop_ChallengeGiftSpecies(u32 value);
 u32 Coop_ChallengeRoamerSpecies(u32 roamerIdx, u32 vanilla);
+
+// The pool entry for an encounter value (or its base species), NULL if none.
+const struct CoopPoolEntry *Coop_PoolFind(u32 value);
+
+// ---------------------------------------------------------------------------
+// Phase 3: Nuzlocke (src/field/coop_challenge_nuzlocke.c, Overlay 131)
+// ---------------------------------------------------------------------------
+
+// The location of a wild battle (docs/MILESTONE5_PLAN.md §4.3), 0xFF none.
+u32 Coop_ChallengeLocation(struct FieldSystem *fsys, u32 fightType, u32 map);
+
+// TRUE when this player already caught the family of `value` (dupes clause).
+BOOL Coop_ChallengeFamilyCaught(u32 value);
+const u8 *Coop_ChallengeFamilyMask(void); // the same list as a bitmask (pool family index)
+
+// Dupes clause with the randomizer off: another species from the same table
+// section of the current map, whose family isn't caught yet; 0 = none.
+u32 Coop_ChallengeTableReroll(struct FieldSystem *fsys, u32 original);
+
+// The wild battle recorded in pending_*: caught or failed. Once the field is
+// quiet after it, or by the next wild hook if another battle came first.
+void Coop_ChallengeResolvePending(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// Once per field frame (from Coop_ChallengeFieldFrame): deaths, the Graveyard,
+// the battle just ended, Day Care eggs.
+void Coop_ChallengeNuzlockeFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// Poke Marts leave revives out in a Nuzlocke (src/field/mart.c).
+BOOL Coop_ChallengeHidesItem(u16 item);
+void Coop_ChallengeFilterMarts(void); // src/field/mart.c
+
+// ---------------------------------------------------------------------------
+// Phase 3: battle side (src/battle/coop_challenge_battle.c, battle extension)
+// ---------------------------------------------------------------------------
+
+struct BattleSystem;
+struct BattleStruct;
+
+// The ball the player just threw may not catch this wild Pokemon (it is
+// refunded). Called by hg-engine's ShouldPreventMonCapture.
+BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys);
+
+// A player Pokemon fainted (host / local battles: the faint command) or the
+// battle ended (every machine, link battles included): mark it dead.
+void LONG_CALL Coop_ChallengeMarkFainted(struct BattleSystem *bsys, struct BattleStruct *ctx, int battlerId);
+void LONG_CALL Coop_ChallengeMarkBattleEnd(struct BattleSystem *bsys);
+
+// TRUE: the capture skips "Give a nickname?" and opens the naming screen
+// (asm/battle/battle_hooks.s, Coop_ForceNickname_hook).
+BOOL LONG_CALL Coop_ChallengeForceNickname(void);
 
 
 #endif // COOP_CHALLENGE_H
