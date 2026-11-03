@@ -1,6 +1,8 @@
 #include "../include/constants/species.h"
 #include "../include/pokemon.h"
 #include "../include/types.h"
+#include "../include/save.h"
+#include "../include/coop_challenge.h"
 
 extern u32 space_for_setmondata;
 extern u32 sStarterChoiceCries[];
@@ -27,11 +29,26 @@ static const u16 sStarterChoices[3] = {
  *
  *  @param species pointer to the species array
  */
+// co-op Milestone 5: a challenge room's starters, chosen at the adventure
+// start (docs/MILESTONE5_PLAN.md §5.3) and read from the save, because the
+// starter app runs without Overlay 131. 0 or no block: Elm's own.
+static u32 Coop_StarterChoice(int slot)
+{
+    u8 *walker = SaveArray_Get(SaveBlock2_get(), COOP_SAVE_POKEWALKER);
+
+    if (walker != NULL) {
+        const struct CoopChallengeSave *save = (const struct CoopChallengeSave *)(walker + COOP_CHALLENGE_SAVE_OFFSET);
+        if (save->magic == COOP_CHALLENGE_SAVE_MAGIC && save->starters[slot] != 0)
+            return save->starters[slot];
+    }
+    return sStarterChoices[slot];
+}
+
 void LONG_CALL CreateStarter_SetStarterSpecies(int *species)
 {
     for (int i = 0; i < 3; i++) {
         // strip off form
-        species[i] = sStarterChoices[i] & 0x7FF;
+        species[i] = Coop_StarterChoice(i) & 0x7FF;
     }
 }
 
@@ -47,7 +64,7 @@ void LONG_CALL CreateStarter_CreateMon(struct PartyPokemon *mon, int species, in
     u32 form = 0;
 
     if (slot >= 0 && slot < 3) {
-        form = sStarterChoices[slot] >> 11;
+        form = Coop_StarterChoice(slot) >> 11;
     }
 
     space_for_setmondata = form;
@@ -70,7 +87,7 @@ void LONG_CALL CreateMonSprites_HandleForm(MON_PIC *pic, u16 species, u8 gender,
     u32 form = 0;
 
     if (slot >= 0 && slot < 3) {
-        form = sStarterChoices[slot] >> 11;
+        form = Coop_StarterChoice(slot) >> 11;
         sStarterChoiceCries[slot] = (form == 0) ? species : PokeOtherFormMonsNoGet(species, form);
     }
 

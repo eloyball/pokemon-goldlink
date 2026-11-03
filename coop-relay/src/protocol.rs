@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
@@ -296,7 +296,7 @@ pub struct PlayerState {
     pub avatar_id: u8,       // 0x3C
     pub anim: u8,            // 0x3D pose animation index (forwarded untouched)
     pub field_busy: u8,      // 0x3E (a field task or message is running; forwarded as is)
-    pub pad3f: u8,           // 0x3F
+    pub challenge_flags: u8, // 0x3F (Milestone 5: bit 0 spirit / Ghost Mode; forwarded as is)
 }
 
 fn put16(out: &mut [u8], at: usize, v: [u8; 2]) {
@@ -350,7 +350,7 @@ impl PlayerState {
         out[0x3C] = self.avatar_id;
         out[0x3D] = self.anim;
         out[0x3E] = self.field_busy;
-        out[0x3F] = self.pad3f;
+        out[0x3F] = self.challenge_flags;
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
@@ -399,7 +399,7 @@ impl PlayerState {
             avatar_id: buf[0x3C],
             anim: buf[0x3D],
             field_busy: buf[0x3E],
-            pad3f: buf[0x3F],
+            challenge_flags: buf[0x3F],
         })
     }
 }
@@ -420,8 +420,9 @@ pub const LINK_MAX_MSGS: usize = 16; // per trailer
 pub const LINK_SEND_BUDGET: usize = 1000;
 /// The largest link trailer up: header, a full beacon, a full budget.
 pub const LINK_UP_MAX: usize = 12 + 8 + LINK_BEACON_MAX + LINK_SEND_BUDGET;
-/// The largest client packet: fixed part, trade trailer, link trailer.
-pub const CLIENT_PACKET_MAX: usize = CLIENT_PACKET_SIZE + TRADE_OUT_SIZE + LINK_UP_MAX;
+/// The largest client packet: fixed part, trade, link and challenge trailers.
+pub const CLIENT_PACKET_MAX: usize =
+    CLIENT_PACKET_SIZE + TRADE_OUT_SIZE + LINK_UP_MAX + CHALLENGE_UP_SIZE;
 
 /// The ROM's 4-player multi battle link modes (ccd COMM_TYPE_MULTI_BATTLE_1 / _2):
 /// a CONNECT's first data byte. Teams sit on opposite sides by aid.
@@ -656,6 +657,187 @@ fn starts_with_link_magic(buf: &[u8]) -> bool {
     buf.len() >= 4 && u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) == LINK_MAGIC
 }
 
+// --- Milestone 5: challenge rules and ledgers (docs/MILESTONE5_PLAN.md §4.2, §4.4) ---
+//
+// The host's rules travel in client bytes 30..32 (honored only while the room
+// forms). Each ROM reports its challenge state in a fixed-size trailer that is
+// always the last part of its packet; the relay answers with one, always the
+// last part of the server packet. Both end with a checksum, so a link trailer
+// whose tail happens to spell the magic is not mistaken for one.
+
+pub const CHALLENGE_RULE_RANDOM_MASK: u16 = 0x0003; // 0 none, 1 semi-random, 2 preserve difficulty, 3 fully random
+pub const CHALLENGE_RULE_LEGENDS_WILD: u16 = 0x0004;
+pub const CHALLENGE_RULE_RANDOM_ABILITIES: u16 = 0x0008;
+pub const CHALLENGE_RULE_NUZLOCKE: u16 = 0x0010;
+pub const CHALLENGE_RULE_SOUL_LINK_SHIFT: u16 = 5; // 0 off, 1 room-wide, 2 duo
+pub const CHALLENGE_RULE_SOUL_LINK_MASK: u16 = 0x0060;
+pub const CHALLENGE_RULE_MONOLOCKE: u16 = 0x0080;
+pub const CHALLENGE_RULE_LEVEL_CAP: u16 = 0x0100;
+pub const CHALLENGE_RULES_VALID: u16 = 0x01FF;
+
+pub const SOUL_LINK_OFF: u16 = 0;
+pub const SOUL_LINK_ROOM_WIDE: u16 = 1;
+pub const SOUL_LINK_DUO: u16 = 2;
+
+/// Monolocke types are 0..17 (type 9 is Fairy in hg-engine); 18 means none.
+pub const MONO_TYPE_COUNT: u8 = 18;
+pub const MONO_TYPE_NONE: u8 = 18;
+
+/// Room state bits (gates +7 and the down trailer).
+pub const CHALLENGE_ROOM_RUN_LOST: u8 = 0x01;
+
+/// Player state 0x3F bits.
+pub const CHALLENGE_FLAG_SPIRIT: u8 = 0x01;
+
+/// Location bitmaps: 128 places (docs/MILESTONE5_PLAN.md §4.3).
+pub const CHALLENGE_LOCATION_BYTES: usize = 16;
+
+pub const CHALLENGE_MAGIC: u32 = 0x314C_4843; // "CHL1"
+pub const CHALLENGE_VERSION: u8 = 1;
+pub const CHALLENGE_UP_SIZE: usize = 48;
+pub const CHALLENGE_DOWN_SIZE: usize = 64;
+
+/// The ROM's challenge state bits (up trailer `state`).
+pub const CHALLENGE_STATE_LATCHED: u8 = 0x01;
+pub const CHALLENGE_STATE_SPIRIT: u8 = 0x02;
+pub const CHALLENGE_STATE_RUN_LOST: u8 = 0x04;
+pub const CHALLENGE_STATE_HAD_POKEMON: u8 = 0x08;
+
+/// Drops what the bridge should never have sent: unknown bits, an unknown
+/// soul-link mode, and rules that need another one (soul-link needs Nuzlocke;
+/// legends and random abilities need the randomizer).
+pub fn sanitize_challenge_rules(raw: u16) -> u16 {
+    let mut rules = raw & CHALLENGE_RULES_VALID;
+    let soul_link = (rules & CHALLENGE_RULE_SOUL_LINK_MASK) >> CHALLENGE_RULE_SOUL_LINK_SHIFT;
+    if soul_link > SOUL_LINK_DUO || rules & CHALLENGE_RULE_NUZLOCKE == 0 {
+        rules &= !CHALLENGE_RULE_SOUL_LINK_MASK;
+    }
+    if rules & CHALLENGE_RULE_RANDOM_MASK == 0 {
+        rules &= !(CHALLENGE_RULE_LEGENDS_WILD | CHALLENGE_RULE_RANDOM_ABILITIES);
+    }
+    rules
+}
+
+pub fn soul_link_mode(rules: u16) -> u16 {
+    (rules & CHALLENGE_RULE_SOUL_LINK_MASK) >> CHALLENGE_RULE_SOUL_LINK_SHIFT
+}
+
+/// 16-bit sum of the bytes before the checksum field.
+fn challenge_checksum(bytes: &[u8]) -> u16 {
+    bytes
+        .iter()
+        .fold(0u16, |acc, &b| acc.wrapping_add(u16::from(b)))
+}
+
+/// Client -> relay (48 bytes, the ROM's `CoopChallengeSync.out`):
+/// magic u32 @0, version u8 @4, state u8 @5, living u8 @6, pad @7,
+/// rules u16 @8 (what the save latched), deaths u16 @10, spent [16] @12,
+/// failed [16] @28, checksum u16 @44, pad u16 @46.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ChallengeUp {
+    pub state: u8,
+    pub living: u8,
+    pub rules: u16,
+    pub deaths: u16,
+    pub spent: [u8; CHALLENGE_LOCATION_BYTES],
+    pub failed: [u8; CHALLENGE_LOCATION_BYTES],
+}
+
+impl ChallengeUp {
+    pub fn encode(&self) -> [u8; CHALLENGE_UP_SIZE] {
+        let mut out = [0u8; CHALLENGE_UP_SIZE];
+        out[0..4].copy_from_slice(&CHALLENGE_MAGIC.to_le_bytes());
+        out[4] = CHALLENGE_VERSION;
+        out[5] = self.state;
+        out[6] = self.living;
+        out[8..10].copy_from_slice(&self.rules.to_le_bytes());
+        out[10..12].copy_from_slice(&self.deaths.to_le_bytes());
+        out[12..28].copy_from_slice(&self.spent);
+        out[28..44].copy_from_slice(&self.failed);
+        let sum = challenge_checksum(&out[..44]);
+        out[44..46].copy_from_slice(&sum.to_le_bytes());
+        out
+    }
+
+    /// None unless `buf` is exactly a well-formed trailer.
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        if buf.len() != CHALLENGE_UP_SIZE
+            || u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) != CHALLENGE_MAGIC
+            || buf[4] != CHALLENGE_VERSION
+            || u16::from_le_bytes([buf[44], buf[45]]) != challenge_checksum(&buf[..44])
+        {
+            return None;
+        }
+        let mut spent = [0u8; CHALLENGE_LOCATION_BYTES];
+        let mut failed = [0u8; CHALLENGE_LOCATION_BYTES];
+        spent.copy_from_slice(&buf[12..28]);
+        failed.copy_from_slice(&buf[28..44]);
+        Some(Self {
+            state: buf[5],
+            living: buf[6],
+            rules: u16::from_le_bytes([buf[8], buf[9]]),
+            deaths: u16::from_le_bytes([buf[10], buf[11]]),
+            spent,
+            failed,
+        })
+    }
+}
+
+/// Relay -> client (64 bytes, written into the ROM's `CoopChallengeSync.in`):
+/// magic u32 @0, version u8 @4, mono_type u8 @5, room_state u8 @6, pad @7,
+/// rules u16 @8, pad u16 @10, link_union [16] @12, spent [16] @28 (the relay's
+/// copy of this player's), failed [16] @44 (likewise), checksum u16 @60, pad @62.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChallengeDown {
+    pub mono_type: u8,
+    pub room_state: u8,
+    pub rules: u16,
+    pub link_union: [u8; CHALLENGE_LOCATION_BYTES],
+    pub spent: [u8; CHALLENGE_LOCATION_BYTES],
+    pub failed: [u8; CHALLENGE_LOCATION_BYTES],
+}
+
+impl ChallengeDown {
+    pub fn encode(&self) -> [u8; CHALLENGE_DOWN_SIZE] {
+        let mut out = [0u8; CHALLENGE_DOWN_SIZE];
+        out[0..4].copy_from_slice(&CHALLENGE_MAGIC.to_le_bytes());
+        out[4] = CHALLENGE_VERSION;
+        out[5] = self.mono_type;
+        out[6] = self.room_state;
+        out[8..10].copy_from_slice(&self.rules.to_le_bytes());
+        out[12..28].copy_from_slice(&self.link_union);
+        out[28..44].copy_from_slice(&self.spent);
+        out[44..60].copy_from_slice(&self.failed);
+        let sum = challenge_checksum(&out[..60]);
+        out[60..62].copy_from_slice(&sum.to_le_bytes());
+        out
+    }
+
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        if buf.len() != CHALLENGE_DOWN_SIZE
+            || u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) != CHALLENGE_MAGIC
+            || buf[4] != CHALLENGE_VERSION
+            || u16::from_le_bytes([buf[60], buf[61]]) != challenge_checksum(&buf[..60])
+        {
+            return None;
+        }
+        let mut link_union = [0u8; CHALLENGE_LOCATION_BYTES];
+        let mut spent = [0u8; CHALLENGE_LOCATION_BYTES];
+        let mut failed = [0u8; CHALLENGE_LOCATION_BYTES];
+        link_union.copy_from_slice(&buf[12..28]);
+        spent.copy_from_slice(&buf[28..44]);
+        failed.copy_from_slice(&buf[44..60]);
+        Some(Self {
+            mono_type: buf[5],
+            room_state: buf[6],
+            rules: u16::from_le_bytes([buf[8], buf[9]]),
+            link_union,
+            spent,
+            failed,
+        })
+    }
+}
+
 /// The client's latched session operation (bytes 112..120 of its packet).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SessionOut {
@@ -668,24 +850,25 @@ pub struct SessionOut {
 /// Sent by BizHawk C# Plugin -> Rust Relay Server (120 bytes, plus trailers)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientToServerPacket {
-    pub magic: u32,                // 0..4
-    pub version: u16,              // 4..6
-    pub room_code: [u8; 6],        // 6..12
-    pub room_action: u8,           // 12 (1 = Create, 2 = Join, 3 = Sync, 4 = Leave)
-    pub requested_player_id: u8,   // 13 (0..5 or 0xFF)
-    pub allow_ahead: u8,           // 14 (1 = this player lets teammates go ahead past the gym gate)
-    pub target_party_size: u8,     // 15 (host's room size, 2..6; only honored from the host)
-    pub host_token: u32,           // 16..20
-    pub badge_mask_local: u16,     // 20..22
-    pub sequence: u32,             // 22..26
-    pub heartbeat_rom: u32,        // 26..30
-    pub reserved: u16,             // 30..32
+    pub magic: u32,                     // 0..4
+    pub version: u16,                   // 4..6
+    pub room_code: [u8; 6],             // 6..12
+    pub room_action: u8,                // 12 (1 = Create, 2 = Join, 3 = Sync, 4 = Leave)
+    pub requested_player_id: u8,        // 13 (0..5 or 0xFF)
+    pub allow_ahead: u8, // 14 (1 = this player lets teammates go ahead past the gym gate)
+    pub target_party_size: u8, // 15 (host's room size, 2..6; only honored from the host)
+    pub host_token: u32, // 16..20
+    pub badge_mask_local: u16, // 20..22
+    pub sequence: u32,   // 22..26
+    pub heartbeat_rom: u32, // 26..30
+    pub challenge_rules: u16, // 30..32 (Milestone 5 room rules, CHALLENGE_RULE_*; only honored from the host while the room forms)
     pub local_player: PlayerState, // 32..96 (64 bytes)
-    pub cookie: u64,               // 96..104 (0 until the relay issues one)
-    pub player_secret: u64,        // 104..112 (random per bridge install, never 0)
-    pub session: SessionOut,       // 112..120 (seq, op, kind, pad, u32 target trainer ID)
-    pub trade: Option<TradeOut>,   // 120..364 while the ROM has a trade open
-    pub link: Option<LinkUp>,      // after the trade trailer (or at 120) while a link block exists
+    pub cookie: u64,          // 96..104 (0 until the relay issues one)
+    pub player_secret: u64,   // 104..112 (random per bridge install, never 0)
+    pub session: SessionOut,  // 112..120 (seq, op, kind, pad, u32 target trainer ID)
+    pub trade: Option<TradeOut>, // 120..364 while the ROM has a trade open
+    pub link: Option<LinkUp>, // after the trade trailer (or at 120) while a link block exists
+    pub challenge: Option<ChallengeUp>, // the last CHALLENGE_UP_SIZE bytes while the ROM's field code runs (Milestone 5)
 }
 
 impl ClientToServerPacket {
@@ -702,7 +885,7 @@ impl ClientToServerPacket {
         buf[20..22].copy_from_slice(&self.badge_mask_local.to_le_bytes());
         buf[22..26].copy_from_slice(&self.sequence.to_le_bytes());
         buf[26..30].copy_from_slice(&self.heartbeat_rom.to_le_bytes());
-        buf[30..32].copy_from_slice(&self.reserved.to_le_bytes());
+        buf[30..32].copy_from_slice(&self.challenge_rules.to_le_bytes());
         self.local_player.encode_le(&mut buf[32..96]);
         buf[96..104].copy_from_slice(&self.cookie.to_le_bytes());
         buf[104..112].copy_from_slice(&self.player_secret.to_le_bytes());
@@ -723,6 +906,9 @@ impl ClientToServerPacket {
         }
         if let Some(link) = &self.link {
             link.encode(&mut buf);
+        }
+        if let Some(challenge) = &self.challenge {
+            buf.extend_from_slice(&challenge.encode());
         }
         buf
     }
@@ -748,9 +934,17 @@ impl ClientToServerPacket {
 
         let local_player = PlayerState::decode_le(&buf[32..96])?;
 
-        // Trailers: the trade's (fixed size) unless a link trailer starts
-        // right away, then the link's (starts with LINK_MAGIC).
-        let rest = &buf[CLIENT_PACKET_SIZE..];
+        // Trailers: the challenge trailer (fixed size, always last, found from
+        // the end by its magic and checksum), then, in what remains, the
+        // trade's (fixed size) unless a link trailer starts right away, then
+        // the link's (starts with LINK_MAGIC).
+        let mut rest = &buf[CLIENT_PACKET_SIZE..];
+        let challenge = (rest.len() >= CHALLENGE_UP_SIZE)
+            .then(|| ChallengeUp::decode(&rest[rest.len() - CHALLENGE_UP_SIZE..]))
+            .flatten();
+        if challenge.is_some() {
+            rest = &rest[..rest.len() - CHALLENGE_UP_SIZE];
+        }
         let trade = (rest.len() >= TRADE_OUT_SIZE && !starts_with_link_magic(rest))
             .then(|| TradeOut::decode_le(rest));
         let link_at = if trade.is_some() { TRADE_OUT_SIZE } else { 0 };
@@ -768,7 +962,7 @@ impl ClientToServerPacket {
             badge_mask_local: u16::from_le_bytes([buf[20], buf[21]]),
             sequence: u32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]),
             heartbeat_rom: u32::from_le_bytes([buf[26], buf[27], buf[28], buf[29]]),
-            reserved: u16::from_le_bytes([buf[30], buf[31]]),
+            challenge_rules: u16::from_le_bytes([buf[30], buf[31]]),
             local_player,
             cookie: u64::from_le_bytes(buf[96..104].try_into().expect("8 bytes")),
             player_secret: u64::from_le_bytes(buf[104..112].try_into().expect("8 bytes")),
@@ -780,6 +974,7 @@ impl ClientToServerPacket {
             },
             trade,
             link,
+            challenge,
         })
     }
 }
@@ -801,7 +996,7 @@ pub struct ServerToClientPacket {
     pub flag_coop_sync_ready: u8,
     pub current_checkpoint: u8,
     pub assigned_monolocke: u8,
-    pub nuzlocke_failed: u8,
+    pub challenge_room_state: u8, // gates +7 (Milestone 5): bit 0 run lost
     pub flag_campaign_started: u8,
     pub expected_party_size: u8,
     pub online_party_count: u8,
@@ -839,7 +1034,7 @@ impl ServerToClientPacket {
         buf[gates_base + 4] = self.flag_coop_sync_ready;
         buf[gates_base + 5] = self.current_checkpoint;
         buf[gates_base + 6] = self.assigned_monolocke;
-        buf[gates_base + 7] = self.nuzlocke_failed;
+        buf[gates_base + 7] = self.challenge_room_state;
         buf[gates_base + 8] = self.flag_campaign_started;
         buf[gates_base + 9] = self.expected_party_size;
         buf[gates_base + 10] = self.online_party_count;
@@ -859,11 +1054,17 @@ impl ServerToClientPacket {
 
     /// The fixed packet plus the recipient's trade trailer when there is one.
     pub fn encode_with_trade(&self, trade: Option<&TradeIn>) -> Vec<u8> {
-        self.encode_full(trade, None)
+        self.encode_full(trade, None, None)
     }
 
-    /// The fixed packet plus the recipient's trade and link trailers.
-    pub fn encode_full(&self, trade: Option<&TradeIn>, link: Option<&LinkDown>) -> Vec<u8> {
+    /// The fixed packet plus the recipient's trade, link and challenge
+    /// trailers (the challenge trailer is always last).
+    pub fn encode_full(
+        &self,
+        trade: Option<&TradeIn>,
+        link: Option<&LinkDown>,
+        challenge: Option<&ChallengeDown>,
+    ) -> Vec<u8> {
         let mut buf = self.encode_le().to_vec();
         if let Some(trade) = trade {
             let mut trailer = [0u8; TRADE_IN_SIZE];
@@ -872,6 +1073,9 @@ impl ServerToClientPacket {
         }
         if let Some(link) = link {
             link.encode(&mut buf);
+        }
+        if let Some(challenge) = challenge {
+            buf.extend_from_slice(&challenge.encode());
         }
         buf
     }
@@ -937,7 +1141,7 @@ mod tests {
             avatar_id: 2,
             anim: 3,
             field_busy: 1,
-            pad3f: 0,
+            challenge_flags: 0,
         }
     }
 
@@ -955,7 +1159,7 @@ mod tests {
             badge_mask_local: 0b0000_0011,
             sequence: 512,
             heartbeat_rom: 1024,
-            reserved: 0,
+            challenge_rules: 0,
             local_player: sample_state(),
             cookie: 0x0102_0304_0506_0708,
             player_secret: 0x1122_3344_5566_7788,
@@ -967,6 +1171,7 @@ mod tests {
             },
             trade: None,
             link: None,
+            challenge: None,
         };
 
         let bytes = pkt.encode_le();
@@ -1119,7 +1324,7 @@ mod tests {
             flag_coop_sync_ready: 0,
             current_checkpoint: 0,
             assigned_monolocke: 0,
-            nuzlocke_failed: 0,
+            challenge_room_state: 0,
             flag_campaign_started: 1,
             expected_party_size: 2,
             online_party_count: 1,

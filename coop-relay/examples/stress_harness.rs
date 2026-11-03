@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         badge_mask_local: 0,
         sequence: 1,
         heartbeat_rom: 1,
-        reserved: 0,
+        challenge_rules: 0,
         local_player: PlayerState {
             map_id: 4,
             x: 10,
@@ -86,6 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         session: Default::default(),
         trade: None,
         link: None,
+        challenge: None,
     };
     // Cookie handshake: the first send is challenged, the echo creates the room.
     let mut reply = [0u8; 512];
@@ -143,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             badge_mask_local: 0,
                             sequence: seq,
                             heartbeat_rom: seq * 2,
-                            reserved: 0,
+                            challenge_rules: 0,
                             local_player: PlayerState {
                                 map_id: 4,
                                 x: 10 + (seq % 16) as i16,
@@ -165,6 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             session: Default::default(),
                             trade: None,
                             link: None,
+                            challenge: None,
                         };
 
                         let bytes = pkt.encode_le();

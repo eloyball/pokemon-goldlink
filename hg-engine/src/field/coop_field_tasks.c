@@ -17,6 +17,7 @@
 #include "coop_dialog.h"
 #include "coop_battle.h"
 #include "coop_boss.h"
+#include "coop_challenge.h"
 
 // ---------------------------------------------------------------------------
 // Co-op field tasks and the native dialog box, Overlay 131.
@@ -718,6 +719,8 @@ struct CoopStartSaveTaskEnv
     struct CoopDialog dialog;
     u8 frameWait;
     u8 saved;
+    u8 rulePage; // Milestone 5: the next rules page (Coop_ChallengeStartPage)
+    char ruleText[64];
 };
 
 // Returns TRUE when done; the env is freed here, the task by the manager.
@@ -738,6 +741,14 @@ static BOOL Coop_Task_AdventureStartSave(TaskManager *taskman)
     case COOP_START_WAIT_PAGE1:
         if (!Coop_DialogIsPrinting(&env->dialog) && Coop_DialogButtonPressed())
         {
+            // Milestone 5: one page per challenge rule, before the save
+            // (which then carries the rules latched by the first call).
+            if (Coop_ChallengeStartPage(env->rulePage, env->ruleText, sizeof(env->ruleText)))
+            {
+                env->rulePage++;
+                Coop_DialogPrint(&env->dialog, env->ruleText);
+                break;
+            }
             Coop_DialogPrint(&env->dialog, "The game will now be saved.\nDon't turn off the power.");
             env->frameWait = 0;
             taskman->state = COOP_START_SAVE;

@@ -54,5 +54,6 @@ u32 LONG_CALL PlayerLocationHistoryGetBack(void *roamerSave);
 u8 LONG_CALL Roamer_GetLocation(void *roamerSave, u8 roamerId);
 
 void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx);
+u8 LONG_CALL SpeciesToRoamerIdx(u16 species);
 
 #endif // POKEHEARTGOLD_ROAMER_H

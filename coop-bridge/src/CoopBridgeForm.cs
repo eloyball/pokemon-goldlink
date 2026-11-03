@@ -74,6 +74,23 @@ namespace CoopBridge
         public const uint MainRamBase = 0x02000000;  // ARM9 address of Main RAM offset 0
         public const uint MainRamSize = 0x00400000;
 
+        // Milestone 5 challenge sync (hg-engine coop_sync.h CoopChallengeSync,
+        // docs/MILESTONE5_PLAN.md §4.4). It lives in Overlay 131, reached
+        // through the overlay's pinned header, so it exists only while the
+        // field runs: the header magic and the block header are checked
+        // every frame before anything is read or written.
+        public const uint FieldEntryHeader = 0x003C8000;  // Main RAM offset of COOP_FIELD_ENTRY_ADDR
+        public const uint FieldEntryMagic = 0x31464F43;   // "COF1"
+        public const int FieldEntryChallenge = 0x0C;      // u32 pointer to the CoopChallengeSync
+        public const uint Overlay131Start = 0x023C8000;
+        public const uint Overlay131End = 0x023E0000;
+        public const uint ChallengeSyncMagic = 0x31534843; // "CHS1"
+        public const ushort ChallengeSyncVersion = 1;
+        public const int ChallengeSyncSize = 0x78;
+        public const int ChallengeSyncOut = 0x08;          // the up trailer as the ROM fills it (48 B)
+        public const int ChallengeSyncIn = 0x38;           // the relay's down trailer, verbatim (64 B)
+        public const byte ChallengeFlagsMask = 0x01;       // player state 0x3F: bit 0 spirit
+
         // CoopDiagnostics field offsets (relative to Diag)
         public const int DgFieldEntryCalls = 0x00;   // u32
         public const int DgRenderReady = 0x04;
@@ -144,7 +161,8 @@ namespace CoopBridge
         public const int PsFollowerMoveAction = 0x37;
         public const int PsAvatarId = 0x3C;          // follower block ends here
         public const int PsAnim = 0x3D;              // pose animation index
-        public const int PsFieldBusy = 0x3E;         // field task or message running (0/1)
+        public const int PsFieldBusy = 0x3E;
+        public const int PsChallengeFlags = 0x3F;    // Milestone 5: bit 0 spirit (Ghost Mode)         // field task or message running (0/1)
         public const int MaxAnim = 15;
         public const int MaxHeldMovement = 0x71;     // MapObject_SetHeldMovement limit
         public const byte MoveActionNone = 0xFF;     // no action since the map loaded
@@ -156,7 +174,7 @@ namespace CoopBridge
         public const int GateSyncReady = 0x04;
         public const int GateCheckpoint = 0x05;
         public const int GateMonolocke = 0x06;
-        public const int GateNuzlockeFailed = 0x07;
+        public const int GateChallengeRoomState = 0x07; // Milestone 5: bit 0 run lost
         public const int GateCampaignStarted = 0x08;
         public const int GateExpectedParty = 0x09;
         public const int GateOnlineParty = 0x0A;
@@ -183,15 +201,90 @@ namespace CoopBridge
         public const int MaxPlayers = 6;
     }
 
+    /// <summary>
+    /// Milestone 5 room rules (docs/MILESTONE5_PLAN.md §1, §4.2). Bits must
+    /// match coop-relay/src/protocol.rs CHALLENGE_RULE_* and hg-engine's
+    /// coop_challenge.h.
+    /// </summary>
+    internal static class ChallengeRules
+    {
+        public const ushort RandomMask = 0x0003;     // 0 none, 1 semi-random, 2 preserve difficulty, 3 fully random
+        public const ushort LegendsWild = 0x0004;
+        public const ushort RandomAbilities = 0x0008;
+        public const ushort Nuzlocke = 0x0010;
+        public const int SoulLinkShift = 5;           // 0 off, 1 room-wide, 2 duo
+        public const ushort SoulLinkMask = 0x0060;
+        public const ushort Monolocke = 0x0080;
+        public const ushort LevelCap = 0x0100;
+        public const byte MonoNone = 18;
+
+        public static readonly string[] RandomModes = { "None", "Semi-random", "Preserve difficulty", "Fully random" };
+        public static readonly string[] SoulLinkModes = { "Off", "Room-wide", "Duo" };
+
+        // hg-engine type order (constants/battle_constants.h): Fairy took the "???" slot 9.
+        public static readonly string[] TypeNames =
+        {
+            "Normal", "Fighting", "Flying", "Poison", "Ground", "Rock", "Bug", "Ghost", "Steel",
+            "Fairy", "Fire", "Water", "Grass", "Electric", "Psychic", "Ice", "Dragon", "Dark",
+        };
+
+        /// <summary>Same rule as the relay: drop unknown bits and rules whose prerequisite is off.</summary>
+        public static ushort Sanitize(ushort raw)
+        {
+            ushort rules = (ushort)(raw & Wire.ChallengeRulesValid);
+            int soulLink = (rules & SoulLinkMask) >> SoulLinkShift;
+            if (soulLink > 2 || (rules & Nuzlocke) == 0) rules = (ushort)(rules & ~SoulLinkMask);
+            if ((rules & RandomMask) == 0) rules = (ushort)(rules & ~(LegendsWild | RandomAbilities));
+            return rules;
+        }
+
+        public static ushort Checksum(byte[] buf, int length, int start = 0)
+        {
+            ushort sum = 0;
+            for (int i = 0; i < length; i++) sum = (ushort)(sum + buf[start + i]);
+            return sum;
+        }
+
+        public static string Describe(ushort rules, byte monoType)
+        {
+            var parts = new List<string>();
+            int random = rules & RandomMask;
+            if (random != 0)
+            {
+                string r = "Random encounters: " + RandomModes[random];
+                if ((rules & LegendsWild) != 0) r += ", legends in the wild";
+                if ((rules & RandomAbilities) != 0) r += ", random abilities";
+                parts.Add(r);
+            }
+            if ((rules & Nuzlocke) != 0)
+            {
+                int soulLink = (rules & SoulLinkMask) >> SoulLinkShift;
+                parts.Add(soulLink == 0 ? "Nuzlocke" : $"Nuzlocke, Soul-Link {SoulLinkModes[soulLink].ToLowerInvariant()}");
+            }
+            if ((rules & Monolocke) != 0)
+                parts.Add(monoType < TypeNames.Length ? $"Monolocke ({TypeNames[monoType]})" : "Monolocke");
+            if ((rules & LevelCap) != 0) parts.Add("Level cap");
+            return parts.Count == 0 ? "None" : string.Join("; ", parts);
+        }
+    }
+
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 6;
-        public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open, + a link trailer (CoopLink)
+        public const ushort ProtocolVersion = 7;
+        public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open, + a link trailer (CoopLink), + the challenge trailer (always last)
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
         public const int ChallengePacketSize = 24; // header + cookie (u64 @16)
         public const int ServerPayloadOffset = 16; // packet[16..360] -> mailbox 0x050..0x1A7
+
+        // Milestone 5 challenge trailers (protocol.rs ChallengeUp / ChallengeDown):
+        // fixed size, always the last bytes of a packet, ending in a checksum.
+        public const uint ChallengeMagic = 0x314C4843;   // "CHL1"
+        public const byte ChallengeVersion = 1;
+        public const int ChallengeUpSize = 48;
+        public const int ChallengeDownSize = 64;
+        public const ushort ChallengeRulesValid = 0x01FF;
 
         public const byte StatusOk = 0;
         public const byte StatusChallenge = 7;   // not an error: echo the cookie
@@ -426,6 +519,17 @@ namespace CoopBridge
         // _tradeOutValid; read on the emulator thread, sent from either thread.
         private readonly object _tradeLock = new object();
         private readonly byte[] _tradeOut = new byte[Mailbox.TradeOutSize];
+
+        // Milestone 5 challenge rules (docs/MILESTONE5_PLAN.md §4.2): the
+        // host's choice (persisted), the ROM's report (up trailer) and the
+        // relay's answer (down trailer, also shown in the session card).
+        private ushort _challengeRules;
+        private readonly object _challengeLock = new object();
+        private readonly byte[] _challengeUp = new byte[Wire.ChallengeUpSize];
+        private bool _challengeUpValid;
+        private ushort _roomRules;
+        private byte _roomMonoType = ChallengeRules.MonoNone;
+        private bool _roomRulesKnown;
         private bool _tradeOutValid;
         // Virtual link (Milestone 3 Phase 3): carries the ROM's link block.
         private readonly CoopLink _linkCarrier = new CoopLink();
@@ -453,6 +557,14 @@ namespace CoopBridge
         private readonly Label _bedroomValue;
         private readonly Label _playersValue;
         private readonly Label _adventureValue;
+        private readonly Label _rulesValue;
+        private readonly ComboBox _randomPicker;
+        private readonly ComboBox _soulLinkPicker;
+        private readonly CheckBox _legendsCheck;
+        private readonly CheckBox _abilitiesCheck;
+        private readonly CheckBox _nuzlockeCheck;
+        private readonly CheckBox _monolockeCheck;
+        private readonly CheckBox _levelCapCheck;
         private readonly Label _gymValue;
         private readonly Label _saveValue;
         private readonly ThemedButton _allowAheadButton;
@@ -515,9 +627,10 @@ namespace CoopBridge
         public CoopBridgeForm()
         {
             LoadOffsetsFromJson();
-            (string savedHost, int savedParty, ulong savedSecret) = LoadNetConfig();
+            (string savedHost, int savedParty, ulong savedSecret, ushort savedRules) = LoadNetConfig();
             _playerSecret = savedSecret != 0 ? savedSecret : GenerateCryptoSecret();
-            if (savedSecret == 0) SaveNetConfig(savedHost, savedParty, _playerSecret);
+            _challengeRules = ChallengeRules.Sanitize(savedRules);
+            if (savedSecret == 0) SaveNetConfig(savedHost, savedParty, _playerSecret, _challengeRules);
 
             BackColor = Theme.Window;
             ForeColor = Theme.TextPrimary;
@@ -651,6 +764,65 @@ namespace CoopBridge
             playersHint.Margin = new Padding(0);
             _hostOptions.Controls.Add(playersHint);
 
+            // Milestone 5 challenge rules (docs/MILESTONE5_PLAN.md §1): set
+            // here by the host, fixed once the adventure starts.
+            var rulesCaption = Theme.MakeLabel("Challenge rules", Theme.Caption, Theme.TextSecondary);
+            rulesCaption.Margin = new Padding(0, 12, 0, 2);
+            _hostOptions.Controls.Add(rulesCaption);
+            ComboBox MakePicker(string[] items)
+            {
+                var c = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Theme.Input,
+                    ForeColor = Theme.TextPrimary,
+                    Font = Theme.Body,
+                    Dock = DockStyle.Fill,
+                    Margin = new Padding(0, 0, 0, 4)
+                };
+                c.Items.AddRange(items);
+                return c;
+            }
+            CheckBox MakeCheck(string text)
+            {
+                return new CheckBox
+                {
+                    Text = text,
+                    AutoSize = true,
+                    ForeColor = Theme.TextPrimary,
+                    Font = Theme.Body,
+                    Margin = new Padding(0, 0, 0, 2)
+                };
+            }
+            _hostOptions.Controls.Add(Theme.MakeLabel("Random encounters", Theme.Caption, Theme.TextSecondary));
+            _randomPicker = MakePicker(ChallengeRules.RandomModes);
+            _hostOptions.Controls.Add(_randomPicker);
+            _legendsCheck = MakeCheck("Legendaries in the wild");
+            _abilitiesCheck = MakeCheck("Random abilities");
+            _nuzlockeCheck = MakeCheck("Nuzlocke (with Ghost Mode)");
+            _hostOptions.Controls.Add(_legendsCheck);
+            _hostOptions.Controls.Add(_abilitiesCheck);
+            _hostOptions.Controls.Add(_nuzlockeCheck);
+            _hostOptions.Controls.Add(Theme.MakeLabel("Soul-Link", Theme.Caption, Theme.TextSecondary));
+            _soulLinkPicker = MakePicker(ChallengeRules.SoulLinkModes);
+            _hostOptions.Controls.Add(_soulLinkPicker);
+            _monolockeCheck = MakeCheck("Monolocke");
+            _levelCapCheck = MakeCheck("Level cap (next boss's ace)");
+            _hostOptions.Controls.Add(_monolockeCheck);
+            _hostOptions.Controls.Add(_levelCapCheck);
+            var rulesHint = Theme.MakeLabel(
+                "Everyone in the room plays with these rules. They can't change once the adventure starts.",
+                Theme.Caption, Theme.TextSecondary);
+            rulesHint.MaximumSize = new Size(contentWidth - 28, 0);
+            rulesHint.Margin = new Padding(0);
+            _hostOptions.Controls.Add(rulesHint);
+            ShowRules(_challengeRules);
+            _randomPicker.SelectedIndexChanged += (_, _) => OnRulesEdited();
+            _soulLinkPicker.SelectedIndexChanged += (_, _) => OnRulesEdited();
+            foreach (var c in new[] { _legendsCheck, _abilitiesCheck, _nuzlockeCheck, _monolockeCheck, _levelCapCheck })
+                c.CheckedChanged += (_, _) => OnRulesEdited();
+
             _primaryButton = Theme.MakeButton("Join room", Theme.ButtonKind.Primary);
             _primaryButton.Click += (_, _) => StartConnection(_hostMode ? Wire.ActionCreate : Wire.ActionJoin);
             _leaveButton = Theme.MakeButton("Leave room", Theme.ButtonKind.Danger);
@@ -691,6 +863,7 @@ namespace CoopBridge
             _bedroomValue = AddRow("Ready in bedroom");
             _playersValue = AddRow("Players online");
             _adventureValue = AddRow("Adventure");
+            _rulesValue = AddRow("Rules");
             _gymValue = AddRow("Gym gate");
             _saveValue = AddRow("Save");
             _locationValue = AddRow("You");
@@ -961,6 +1134,14 @@ namespace CoopBridge
                 _partySizeButtons[i].Kind = i + 2 == _partySize ? Theme.ButtonKind.SegmentOn : Theme.ButtonKind.SegmentOff;
                 _partySizeButtons[i].Enabled = offline;
             }
+            if (_randomPicker != null) // UpdateControls can run while the form is still being built
+            {
+                bool random = (_challengeRules & ChallengeRules.RandomMask) != 0;
+                bool nuzlocke = (_challengeRules & ChallengeRules.Nuzlocke) != 0;
+                _randomPicker.Enabled = _nuzlockeCheck.Enabled = _monolockeCheck.Enabled = _levelCapCheck.Enabled = offline;
+                _legendsCheck.Enabled = _abilitiesCheck.Enabled = offline && random;
+                _soulLinkPicker.Enabled = offline && nuzlocke;
+            }
             _hostOptions.Visible = offline && _hostMode;
 
             if (_restoreButton != null) _restoreButton.Visible = offline && _saveStateApi != null;
@@ -1046,7 +1227,7 @@ namespace CoopBridge
                 ? $"Creating room {roomText}…"
                 : $"Joining room {roomText}…", isError: false);
 
-            SaveNetConfig(hostText, _partySize, _playerSecret);
+            SaveNetConfig(hostText, _partySize, _playerSecret, _challengeRules);
             StartReceiveThread();
         }
 
@@ -1278,24 +1459,112 @@ namespace CoopBridge
             Buffer.BlockCopy(BitConverter.GetBytes(_badgeMaskLocal), 0, tx, 20, 2);
             Buffer.BlockCopy(BitConverter.GetBytes(++_sequence), 0, tx, 22, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(_heartbeatRom), 0, tx, 26, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(_challengeRules), 0, tx, 30, 2); // honored only from the host
             Buffer.BlockCopy(_localPlayer, 0, tx, 32, Mailbox.PlayerStateSize);
             Buffer.BlockCopy(BitConverter.GetBytes(Interlocked.Read(ref _cookie)), 0, tx, 96, 8);
             Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
             Buffer.BlockCopy(_sessionOut, 0, tx, 112, Mailbox.SessionOutSize);
 
             byte[]? link = _linkCarrier.BuildTrailer();
+            byte[]? challenge = null;
+            lock (_challengeLock)
+            {
+                if (_challengeUpValid) challenge = (byte[])_challengeUp.Clone();
+            }
             lock (_tradeLock)
             {
-                if (!_tradeOutValid && link == null) return tx;
+                if (!_tradeOutValid && link == null && challenge == null) return tx;
                 int tradeSize = _tradeOutValid ? Mailbox.TradeOutSize : 0;
-                byte[] full = new byte[Wire.ClientPacketSize + tradeSize + (link?.Length ?? 0)];
+                int linkSize = link?.Length ?? 0;
+                byte[] full = new byte[Wire.ClientPacketSize + tradeSize + linkSize + (challenge?.Length ?? 0)];
                 Buffer.BlockCopy(tx, 0, full, 0, Wire.ClientPacketSize);
                 if (_tradeOutValid)
                     Buffer.BlockCopy(_tradeOut, 0, full, Wire.ClientPacketSize, Mailbox.TradeOutSize);
                 if (link != null)
-                    Buffer.BlockCopy(link, 0, full, Wire.ClientPacketSize + tradeSize, link.Length);
+                    Buffer.BlockCopy(link, 0, full, Wire.ClientPacketSize + tradeSize, linkSize);
+                if (challenge != null) // always last: the relay finds it from the end
+                    Buffer.BlockCopy(challenge, 0, full, Wire.ClientPacketSize + tradeSize + linkSize, challenge.Length);
                 return full;
             }
+        }
+
+        /// <summary>
+        /// Main RAM offset of the ROM's CoopChallengeSync (Milestone 5), or
+        /// null outside the field. Overlay 131's pinned header holds the
+        /// pointer; the header magic, the range and the block's own header are
+        /// all checked, since that memory belongs to other overlays in battles
+        /// and menus.
+        /// </summary>
+        private uint? FindChallengeSync()
+        {
+            if (_localPlayer[Mailbox.PsIsActive] != 1) return null;
+            if (_memoryApi!.ReadU32(Mailbox.FieldEntryHeader, MemoryDomain) != Mailbox.FieldEntryMagic) return null;
+            uint ptr = _memoryApi.ReadU32(Mailbox.FieldEntryHeader + Mailbox.FieldEntryChallenge, MemoryDomain);
+            if (ptr < Mailbox.Overlay131Start || ptr > Mailbox.Overlay131End - Mailbox.ChallengeSyncSize || (ptr & 3) != 0)
+                return null;
+            uint offset = ptr - Mailbox.MainRamBase;
+            if (_memoryApi.ReadU32(offset, MemoryDomain) != Mailbox.ChallengeSyncMagic
+                || _memoryApi.ReadU16(offset + 4, MemoryDomain) != Mailbox.ChallengeSyncVersion
+                || _memoryApi.ReadU16(offset + 6, MemoryDomain) != Mailbox.ChallengeSyncSize)
+                return null;
+            return offset;
+        }
+
+        /// <summary>
+        /// The ROM's challenge report, re-framed by the bridge (magic, version,
+        /// checksum), so a stale or half-written block never reaches the relay
+        /// looking valid. The previous report stays in use outside the field.
+        /// </summary>
+        private void ReadChallengeOut()
+        {
+            if (FindChallengeSync() is not uint sync) return;
+            var block = _memoryApi!.ReadByteRange(sync + Mailbox.ChallengeSyncOut, Wire.ChallengeUpSize, MemoryDomain);
+            if (block.Count != Wire.ChallengeUpSize) return;
+            byte[] up = new byte[Wire.ChallengeUpSize];
+            for (int i = 0; i < up.Length; i++) up[i] = block[i];
+            Buffer.BlockCopy(BitConverter.GetBytes(Wire.ChallengeMagic), 0, up, 0, 4);
+            up[4] = Wire.ChallengeVersion;
+            ushort sum = ChallengeRules.Checksum(up, 44);
+            Buffer.BlockCopy(BitConverter.GetBytes(sum), 0, up, 44, 2);
+            up[46] = up[47] = 0;
+            lock (_challengeLock)
+            {
+                Buffer.BlockCopy(up, 0, _challengeUp, 0, up.Length);
+                _challengeUpValid = true;
+            }
+        }
+
+        /// <summary>
+        /// Splits the relay's challenge trailer off the end of a server packet
+        /// (it is always last), checks it and remembers it; returns the packet
+        /// without it, so the trade and link trailers parse as before.
+        /// </summary>
+        private byte[] TakeChallengeDown(byte[] pkt, out byte[]? down)
+        {
+            down = null;
+            if (pkt.Length < Wire.ServerPacketSize + Wire.ChallengeDownSize) return pkt;
+            int at = pkt.Length - Wire.ChallengeDownSize;
+            if (BitConverter.ToUInt32(pkt, at) != Wire.ChallengeMagic
+                || pkt[at + 4] != Wire.ChallengeVersion
+                || BitConverter.ToUInt16(pkt, at + 60) != ChallengeRules.Checksum(pkt, 60, at))
+                return pkt;
+            down = new byte[Wire.ChallengeDownSize];
+            Buffer.BlockCopy(pkt, at, down, 0, down.Length);
+            // Sanitize: unknown rule bits, a type out of range, unknown room state.
+            ushort rules = (ushort)(BitConverter.ToUInt16(down, 8) & Wire.ChallengeRulesValid);
+            if (down[5] > ChallengeRules.MonoNone) down[5] = ChallengeRules.MonoNone;
+            down[6] &= 0x01;
+            Buffer.BlockCopy(BitConverter.GetBytes(rules), 0, down, 8, 2);
+            Buffer.BlockCopy(BitConverter.GetBytes(ChallengeRules.Checksum(down, 60)), 0, down, 60, 2);
+            byte[] rest = new byte[at];
+            Buffer.BlockCopy(pkt, 0, rest, 0, at);
+            return rest;
+        }
+
+        private void WriteChallengeIn(byte[] down)
+        {
+            if (FindChallengeSync() is not uint sync) return;
+            _memoryApi!.WriteByteRange(sync + Mailbox.ChallengeSyncIn, down, MemoryDomain);
         }
 
         private static string MapServerStatusToError(byte code, string room)
@@ -1458,6 +1727,8 @@ namespace CoopBridge
             if (session.Count == Mailbox.SessionOutSize)
                 for (int i = 0; i < Mailbox.SessionOutSize; i++) _sessionOut[i] = session[i];
 
+            ReadChallengeOut();
+
             uint? exchange = FindExchange(mb);
             var tradeOut = exchange is uint ex
                 ? _memoryApi.ReadByteRange(ex + Mailbox.ExchangeOut, Mailbox.TradeOutSize, MemoryDomain)
@@ -1535,6 +1806,15 @@ namespace CoopBridge
             byte assigned = pkt[6];
             if (assigned >= Mailbox.MaxPlayers) return; // malformed: ignore the packet
 
+            pkt = TakeChallengeDown(pkt, out byte[]? challengeDown);
+            if (challengeDown != null)
+            {
+                _roomRules = BitConverter.ToUInt16(challengeDown, 8);
+                _roomMonoType = challengeDown[5];
+                _roomRulesKnown = true;
+                WriteChallengeIn(challengeDown);
+            }
+
             uint roomUid = BitConverter.ToUInt32(pkt, Wire.ServerPayloadOffset + Mailbox.PayloadGates + Mailbox.GateRoomUid);
             if (roomUid != 0 && _slotKey == null)
                 _slotKey = SaveSlots.RoomKey(_activeRoomString, roomUid);
@@ -1592,6 +1872,7 @@ namespace CoopBridge
                 }
                 if (p[o + Mailbox.PsAnim] > Mailbox.MaxAnim) p[o + Mailbox.PsAnim] = 0; // cosmetic only
                 if (p[o + Mailbox.PsFieldBusy] > 1) p[o + Mailbox.PsFieldBusy] = 1;
+                p[o + Mailbox.PsChallengeFlags] &= Mailbox.ChallengeFlagsMask;
                 // A bad follower hides only the follower, not the player.
                 bool followerOk = BitConverter.ToUInt16(p, o + Mailbox.PsFollowerSpecies) <= _limitSpecies
                     && p[o + Mailbox.PsFollowerShiny] <= 1
@@ -1607,7 +1888,7 @@ namespace CoopBridge
             bool gatesOk = p[g + Mailbox.GateSyncReady] <= 1
                 && p[g + Mailbox.GateCheckpoint] <= 16
                 && p[g + Mailbox.GateMonolocke] <= 18
-                && p[g + Mailbox.GateNuzlockeFailed] <= 1
+                && p[g + Mailbox.GateChallengeRoomState] <= 1
                 && p[g + Mailbox.GateCampaignStarted] <= 1
                 && p[g + Mailbox.GateExpectedParty] <= Mailbox.MaxPlayers
                 && p[g + Mailbox.GateOnlineParty] <= Mailbox.MaxPlayers
@@ -1893,7 +2174,7 @@ namespace CoopBridge
             if (mb is not uint box)
             {
                 SetValue(_gameValue, waitReason ?? none, Theme.Connecting);
-                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _gymValue, _locationValue, _othersValue, _saveValue })
+                foreach (Label l in new[] { _trainerValue, _bedroomValue, _playersValue, _adventureValue, _rulesValue, _gymValue, _locationValue, _othersValue, _saveValue })
                     SetValue(l, none, Theme.TextSecondary);
                 return;
             }
@@ -1929,6 +2210,7 @@ namespace CoopBridge
                 SetValue(_othersValue, none, Theme.TextSecondary);
                 SetValue(_playersValue, none, Theme.TextSecondary);
                 SetValue(_adventureValue, none, Theme.TextSecondary);
+                SetValue(_rulesValue, none, Theme.TextSecondary);
                 SetValue(_gymValue, none, Theme.TextSecondary);
                 return;
             }
@@ -1962,6 +2244,42 @@ namespace CoopBridge
                 started == 1 ? Theme.Connected : Theme.Connecting);
             SetValue(_gymValue, syncReady == 1 ? "Open for you" : "Closed · a teammate is behind on badges",
                 syncReady == 1 ? Theme.Connected : Theme.TextSecondary);
+            SetValue(_rulesValue, _roomRulesKnown ? ChallengeRules.Describe(_roomRules, _roomMonoType) : "Waiting for the server…",
+                _roomRulesKnown ? (Color?)null : Theme.TextSecondary);
+        }
+
+        /// <summary>Puts a rules word into the host's pickers.</summary>
+        private void ShowRules(ushort rules)
+        {
+            _randomPicker.SelectedIndex = rules & ChallengeRules.RandomMask;
+            _soulLinkPicker.SelectedIndex = (rules & ChallengeRules.SoulLinkMask) >> ChallengeRules.SoulLinkShift;
+            _legendsCheck.Checked = (rules & ChallengeRules.LegendsWild) != 0;
+            _abilitiesCheck.Checked = (rules & ChallengeRules.RandomAbilities) != 0;
+            _nuzlockeCheck.Checked = (rules & ChallengeRules.Nuzlocke) != 0;
+            _monolockeCheck.Checked = (rules & ChallengeRules.Monolocke) != 0;
+            _levelCapCheck.Checked = (rules & ChallengeRules.LevelCap) != 0;
+        }
+
+        private bool _showingRules;
+
+        /// <summary>Reads the pickers, drops what a prerequisite rules out, and shows the result.</summary>
+        private void OnRulesEdited()
+        {
+            if (_showingRules) return;
+            int random = Math.Max(0, _randomPicker.SelectedIndex);
+            int soulLink = Math.Max(0, _soulLinkPicker.SelectedIndex);
+            ushort raw = (ushort)(random
+                | (_legendsCheck.Checked ? ChallengeRules.LegendsWild : 0)
+                | (_abilitiesCheck.Checked ? ChallengeRules.RandomAbilities : 0)
+                | (_nuzlockeCheck.Checked ? ChallengeRules.Nuzlocke : 0)
+                | (soulLink << ChallengeRules.SoulLinkShift)
+                | (_monolockeCheck.Checked ? ChallengeRules.Monolocke : 0)
+                | (_levelCapCheck.Checked ? ChallengeRules.LevelCap : 0));
+            _challengeRules = ChallengeRules.Sanitize(raw);
+            _showingRules = true;
+            ShowRules(_challengeRules);
+            _showingRules = false;
+            UpdateControls();
         }
 
         // ------------------------------------------------------------------
@@ -2012,13 +2330,14 @@ namespace CoopBridge
 
         // player_secret identifies this install to locked campaigns: losing it
         // means the relay operator must reset that roster entry's secret to 0.
-        private static void SaveNetConfig(string host, int partySize, ulong playerSecret)
+        private static void SaveNetConfig(string host, int partySize, ulong playerSecret, ushort challengeRules)
         {
             try
             {
                 string json = "{\n" +
                     $"  \"server\": \"{JsonEscape(host)}\",\n" +
                     $"  \"party_size\": {partySize},\n" +
+                    $"  \"challenge_rules\": {challengeRules},\n" +
                     $"  \"player_secret\": \"{playerSecret:X16}\"\n" +
                     "}\n";
                 File.WriteAllText(ConfigFilePath, json);
@@ -2027,7 +2346,7 @@ namespace CoopBridge
             catch (UnauthorizedAccessException) { }
         }
 
-        private static (string host, int party, ulong secret) LoadNetConfig()
+        private static (string host, int party, ulong secret, ushort rules) LoadNetConfig()
         {
             try
             {
@@ -2037,16 +2356,18 @@ namespace CoopBridge
                     Match mH = Regex.Match(json, @"""server""\s*:\s*""([^""]+)""");
                     Match mP = Regex.Match(json, @"""party_size""\s*:\s*(\d+)");
                     Match mS = Regex.Match(json, @"""player_secret""\s*:\s*""([0-9A-Fa-f]{1,16})""");
+                    Match mR = Regex.Match(json, @"""challenge_rules""\s*:\s*(\d+)");
 
                     string h = mH.Success ? mH.Groups[1].Value : "127.0.0.1:7777";
                     int p = mP.Success && int.TryParse(mP.Groups[1].Value, out int pv) ? pv : 2;
                     ulong secret = mS.Success ? Convert.ToUInt64(mS.Groups[1].Value, 16) : 0;
-                    return (h, p, secret);
+                    ushort rules = mR.Success && ushort.TryParse(mR.Groups[1].Value, out ushort rv) ? rv : (ushort)0;
+                    return (h, p, secret, rules);
                 }
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return ("127.0.0.1:7777", 2, 0);
+            return ("127.0.0.1:7777", 2, 0, 0);
         }
 
         private static IPEndPoint? TryResolveServerEndpoint(string hostPort)

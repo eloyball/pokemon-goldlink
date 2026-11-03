@@ -24,6 +24,7 @@
 #endif // DEBUG_BATTLE_SCENARIOS
 #include "coop_boss.h"
 #include "coop_sync.h"
+#include "coop_challenge.h"
 
 struct BattleSetup LONG_CALL *BattleSetup_New_Tutorial(u32 heapID, FieldSystem *fieldSystem);
 int LONG_CALL BattleSetup_GetWildTransitionEffect(struct BattleSetup *setup);
@@ -450,6 +451,11 @@ BOOL LONG_CALL AddWildPartyPokemon(int inTarget, EncounterInfo *encounterInfo, s
     if (encounterInfo->isEgg == 0 && encounterInfo->ability == ABILITY_COMPOUND_EYES) {
         range = 1;
     }
+
+    // co-op Milestone 5: the room's randomizer replaces the wild Pokemon (and
+    // its form, through space_for_setmondata) before hg-engine's own handling
+    // below (src/field/coop_challenge_random.c, docs/MILESTONE5_PLAN.md §5.1).
+    Coop_ChallengeWildMon(encounterPartyPokemon, encounterBattleParam);
 
     species = GetMonData(encounterPartyPokemon, MON_DATA_SPECIES, NULL);
 

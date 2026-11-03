@@ -68,7 +68,7 @@ pub(crate) fn make_packet(
         badge_mask_local: badges,
         sequence: 1,
         heartbeat_rom: 100,
-        reserved: 0,
+        challenge_rules: 0,
         local_player: PlayerState {
             map_id,
             x,
@@ -92,6 +92,7 @@ pub(crate) fn make_packet(
         session: SessionOut::default(),
         trade: None,
         link: None,
+        challenge: None,
     }
 }
 

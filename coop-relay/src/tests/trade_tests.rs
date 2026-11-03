@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use crate::lobby::{LobbyState, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 use crate::protocol::{
-    PLAYER_STATE_SIZE, REMOTE_SLOTS, SERVER_PACKET_SIZE, SESSION_KIND_TRADE, SESSION_OP_ACCEPT,
-    SESSION_OP_REQUEST, SessionOut, TRADE_ABORT_CANCELLED, TRADE_ABORT_LEFT, TRADE_IN_ABORTED,
-    TRADE_IN_COMMIT, TRADE_IN_OFFERED, TRADE_IN_SIZE, TRADE_IN_WAITING, TRADE_MON_SIZE,
-    TRADE_OUT_CANCEL, TRADE_OUT_CONFIRMED, TRADE_OUT_DONE, TRADE_OUT_OFFERED, TradeIn, TradeOut,
-    mon_pid,
+    CHALLENGE_DOWN_SIZE, ChallengeDown, PLAYER_STATE_SIZE, REMOTE_SLOTS, SERVER_PACKET_SIZE,
+    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_REQUEST, SessionOut, TRADE_ABORT_CANCELLED,
+    TRADE_ABORT_LEFT, TRADE_IN_ABORTED, TRADE_IN_COMMIT, TRADE_IN_OFFERED, TRADE_IN_SIZE,
+    TRADE_IN_WAITING, TRADE_MON_SIZE, TRADE_OUT_CANCEL, TRADE_OUT_CONFIRMED, TRADE_OUT_DONE,
+    TRADE_OUT_OFFERED, TradeIn, TradeOut, mon_pid,
 };
 use crate::session_tests::{addr, op, packet, room_in};
 
@@ -69,6 +69,13 @@ fn view(lobby: &mut LobbyState, i: usize) -> (u8, Option<TradeIn>) {
         .find(|(a, _)| *a == addr(i))
         .expect("player in the batch");
     let pending = buf[16 + REMOTE_SLOTS * PLAYER_STATE_SIZE + 23];
+    // Milestone 5: the challenge trailer always ends the packet.
+    let tail = buf.len() - CHALLENGE_DOWN_SIZE;
+    assert!(
+        ChallengeDown::decode(&buf[tail..]).is_some(),
+        "challenge trailer last"
+    );
+    let buf = &buf[..tail];
     let trailer = (buf.len() == SERVER_PACKET_SIZE + TRADE_IN_SIZE)
         .then(|| TradeIn::decode_le(&buf[SERVER_PACKET_SIZE..]));
     assert!(

@@ -21,6 +21,8 @@
 #include "coop_hm.h"
 #include "coop_marts.h"
 #include "coop_wild.h"
+#include "coop_challenge.h"
+#include "roamer.h"
 #include "bag.h"
 #include "script.h"
 
@@ -128,6 +130,9 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .magic = COOP_FIELD_ENTRY_MAGIC,
     .entry = Coop_FieldEntry,
     .wildLevel = Coop_WildLevelAdjust,
+    .challenge = &gCoopChallengeSync,
+    .giftSpecies = Coop_ChallengeGiftSpecies,
+    .roamerSpecies = Coop_ChallengeRoamerSpecies,
 };
 
 // ---------------------------------------------------------------------------
@@ -694,6 +699,54 @@ static u8 Coop_DebugWildBattle(FieldSystem *fsys, u16 species, u8 level)
     return COOP_DEBUG_RESULT_OK;
 }
 
+// Milestone 5 Phase 2: the gift and roamer randomizers through the real
+// vanilla entry points (debug command 20).
+static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
+{
+    if (what < 4)
+    {
+        void *roamerSave = EncDataSave_GetSaveDataPtr(fsys->savedata);
+        u16 species;
+
+        Save_CreateRoamerByID(fsys->savedata, what);
+        species = Roamers_GetRoamMonStats(roamerSave, what)->species;
+        gCoopDebugMonBuffer.species = species;
+        gCoopDebugMonBuffer.level = SpeciesToRoamerIdx(species);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what == 4)
+    {
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+        struct PartyPokemon *mon;
+
+        if (party->count >= 6 || !GiveMon(11, fsys->savedata, SPECIES_EEVEE, 5, 0, 0, 0, 0, 0))
+            return COOP_DEBUG_RESULT_FAILED;
+        mon = Party_GetMonByIndex(party, party->count - 1);
+        gCoopDebugMonBuffer.species = (u16)(GetMonData(mon, MON_DATA_SPECIES, NULL) | (GetMonData(mon, MON_DATA_FORM, NULL) << 11));
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what == 5 || what == 6)
+    {
+        // The lead gets ability ABILITY_DROUGHT (5: locked, 6: not), then the
+        // game's own reset runs, as evolution, form changes and Mega reverts do.
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+        struct PartyPokemon *lead = Party_GetMonByIndex(party, 0);
+        u16 ability = ABILITY_DROUGHT;
+        u16 bits = GetMonData(lead, MON_DATA_RESERVED_114, NULL);
+
+        bits = what == 5 ? (bits | COOP_MON_ABILITY_LOCKED) : (bits & ~COOP_MON_ABILITY_LOCKED);
+        SetMonData(lead, MON_DATA_RESERVED_114, &bits);
+        SetMonData(lead, MON_DATA_ABILITY, &ability);
+        ResetPartyPokemonAbility(lead);
+        gCoopDebugMonBuffer.species = (u16)GetMonData(lead, MON_DATA_ABILITY, NULL);
+        bits &= ~COOP_MON_ABILITY_LOCKED; // leave the lead as it was found
+        SetMonData(lead, MON_DATA_RESERVED_114, &bits);
+        ResetPartyPokemonAbility(lead);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    return COOP_DEBUG_RESULT_BAD_ARG;
+}
+
 // Milestone 4 Phase 1 (rebalance plan §8): hg-engine's own evolution check on
 // the lead with the probe's item (EVOCTX_ITEM_CHECK, as the bag does) or by a
 // level up (EVOCTX_LEVELUP); or one gated department store list rebuilt.
@@ -929,6 +982,11 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
             break;
         case COOP_DEBUG_REBALANCE:
             result = Coop_DebugRebalance(fsys, mb->debug_arg);
+            break;
+        case COOP_DEBUG_CHALLENGE:
+            if (!Coop_CanRunFieldDebugCommand(fsys, player))
+                return;
+            result = Coop_DebugChallenge(fsys, mb->debug_arg);
             break;
         case COOP_DEBUG_WILD_SPECIES:
             if (!Coop_CanRunFieldDebugCommand(fsys, player))
@@ -2153,5 +2211,6 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_RefreshGatedMarts(fsys); // badge-gated department store counters (rebalance plan §8.2)
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
+    Coop_ChallengeFieldFrame(fsys); // Milestone 5 rules and ledgers (src/field/coop_challenge.c)
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry
 }

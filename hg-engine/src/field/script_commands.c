@@ -19,6 +19,7 @@
 #include "rtc.h"
 #include "save.h"
 #include "script.h"
+#include "coop_challenge.h"
 
 void SetupAndStartTotemBattle(TaskManager *taskManager, u16 species, u8 level, u32 *winFlag, BOOL shiny);
 
@@ -37,6 +38,13 @@ BOOL ScrCmd_GiveEgg(SCRIPTCONTEXT *ctx)
 
     u32 form = (species & 0xF800) >> 11; // extract form from egg
     species = species & 0x7FF;
+
+    // co-op Milestone 5: the room's randomizer replaces gift eggs with base
+    // forms (src/field/coop_challenge_random.c). The Togepi egg below stays:
+    // Elm checks the Togepi that hatches from it.
+    u32 coopValue = Coop_ChallengeGiftSpecies(species | (form << 11));
+    species = coopValue & 0x7FF;
+    form = coopValue >> 11;
 
     u16 offset = ScriptGetVar(ctx);
 

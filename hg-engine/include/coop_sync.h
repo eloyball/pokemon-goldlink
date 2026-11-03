@@ -60,12 +60,18 @@
 #define COOP_FIELD_ENTRY_MAGIC 0x31464F43 // "COF1"
 
 struct FieldSystem;
+struct CoopChallengeSync;
 struct CoopFieldEntryHeader
 {
     u32 magic;
     void (*entry)(struct FieldSystem *fsys); // runs once per frame while the field map is active
     u32 (*wildLevel)(u32 level);             // 0x08: Kanto wild levels (src/field/coop_wild.c), called by asm/other_hook.s
+    struct CoopChallengeSync *challenge;     // 0x0C: Milestone 5 sync block (coop_challenge.h), read by the bridge
+    u32 (*giftSpecies)(u32 value);           // 0x10: Milestone 5 gift randomizer, called by GiveMon (src/pokemon.c)
+    u32 (*roamerSpecies)(u32 idx, u32 vanilla); // 0x14: Milestone 5 roamer randomizer (src/field_roamer.c)
 };
+_Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, challenge) == 0x0C,
+               "the bridge reads the challenge pointer at 0x0C (Mailbox.FieldEntryChallenge)");
 
 // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): the bridge's debug commands below
 // (test ghost, warp, bike / surf / fishing). Set to 0 before shipping: the
@@ -99,6 +105,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
     COOP_DEBUG_WILD_SPECIES = 18,    // Milestone 4 Phase 0: a wild battle against gCoopDebugMonBuffer.species (species | form << 11) at level debug_arg
     COOP_DEBUG_REBALANCE = 19,       // Milestone 4 Phase 1: debug_arg 0 = the lead's evolution with gCoopDebugMonBuffer.held_item (0: by level up) -> buffer.species (0: none); 1-4 = rebuild a department store list (Goldenrod 4F / 5F, Celadon 3F / 4F) from the save
+    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left
 };
 
 enum CoopDebugLinkOp
@@ -156,7 +163,17 @@ struct CoopDebugMonBuffer
     u8  pad[2];            // pad[0]: battle results; pad[1]: the Pokemon this player brought to a 2v2
     u8  auto_pick[3];      // probes: a 2v2's three (party slots, 1-based) instead of the party screen; 0: none
     u8  pad2;
+    // Milestone 5 (m5_probe.lua wild, at +0xFC): what the last wild hook saw and did. Here,
+    // resident, because Overlay 131's data is reloaded after every battle.
+    u16 wild_original;     // species | form << 11 from the slot or script
+    u16 wild_result;       // what joined the battle
+    u16 wild_map;
+    u8  wild_kind;         // 0 regular, 1 static, 2 safari / contest
+    u8  wild_task;         // a field task or script was running (statics need one)
+    u16 wild_ability;      // the random ability given (0 none)
+    u16 wild_count;        // wild hooks seen since boot
 };
+_Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, wild_original) == 0xFC, "m5_probe.lua reads the wild log at +0xFC");
 extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;
 struct BATTLE_PARAM;
 void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num); // Overlay 131, called by hg-engine MakeTrainerPokemonParty
@@ -303,7 +320,7 @@ struct CoopPlayerState
     u8  avatar_id;           // 0x3C custom player sprite set (later milestone; 0 = vanilla)
     u8  anim;                // 0x3D map object animation (pret MapObject_SetAnimation): pose frames (fishing cast / bite / reel...)
     u8  field_busy;          // 0x3E 1 while a field task or message runs (NPC talk, start menu, co-op menus)
-    u8  pad3F;               // 0x3F
+    u8  challenge_flags;     // 0x3F Milestone 5: COOP_PLAYER_FLAG_* (coop_challenge.h)
 };
 
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1). Must match
@@ -536,7 +553,7 @@ struct CoopProgressionGates
     u8  flag_coop_sync_ready;  // 0x04
     u8  current_checkpoint;    // 0x05
     u8  assigned_monolocke;    // 0x06
-    u8  nuzlocke_failed;       // 0x07
+    u8  challenge_room_state;  // 0x07 Milestone 5: COOP_ROOM_* bits (coop_challenge.h)
     u8  flag_campaign_started; // 0x08
     u8  expected_party_size;   // 0x09
     u8  online_party_count;    // 0x0A
@@ -724,6 +741,10 @@ void LONG_CALL Coop_UpdateFieldConnection(struct FieldSystem *fsys);
 // zeroed alone when only they are invalid. A player outside the field
 // (is_active 0: battle, menu) is still returned, so the ghost can freeze.
 // Never read remote_players directly: the bridge and relay are untrusted.
+// Overlay 131's pinned header while that overlay is loaded (magic checked), else NULL.
+const struct CoopFieldEntryHeader *LONG_CALL Coop_FieldHeader(void);
+
+// Overlay 131 (src/field/coop_remote.c): callable from field code only.
 BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out);
 
 // 60 Hz background SysTask (created once in SaveData_New): heartbeat,

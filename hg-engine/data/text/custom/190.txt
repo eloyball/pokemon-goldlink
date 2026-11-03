@@ -1,0 +1,9 @@
+Professor Elm: Touch a Poké Ball to\nsee what Pokémon is inside!
+Professor Elm: So, you like this\nPokémon?
+Professor Elm: You’ll take this\nPokémon?
+Professor Elm: Do you want this\nPokémon?
+This Poké Ball holds the Pokémon\nyou see here!
+This Poké Ball holds the Pokémon\nyou see here!
+This Poké Ball holds the Pokémon\nyou see here!
+Once you’ve decided, touch a Poké Ball!
+Touch the Poké Ball button to select.\nTouch elsewhere to change your selection.

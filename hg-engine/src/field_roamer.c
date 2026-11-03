@@ -10,6 +10,7 @@
 #include "../include/save.h"
 #include "../include/script.h"
 #include "../include/types.h"
+#include "../include/coop_sync.h"
 
 /* In order to change the adjacent routes we would need to hook
  * https://github.com/pret/pokeheartgold/blob/d72700a52ad27ddf47847009a85b4bc9c85fa283/src/field_roamer.c#L256
@@ -114,6 +115,12 @@ void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx)
         return;
     }
 
+    // co-op Milestone 5: the room's randomizer (src/field/coop_challenge_random.c);
+    // create_roamer runs from field scripts
+    const struct CoopFieldEntryHeader *coop = Coop_FieldHeader();
+    if (coop != NULL && coop->roamerSpecies != NULL)
+        species = coop->roamerSpecies(idx, species);
+
     SetRoamerData(roamerStats, ROAMER_DATA_SPECIES, species);
     SetRoamerData(roamerStats, ROAMER_DATA_LEVEL, level);
 
@@ -132,6 +139,14 @@ void LONG_CALL Save_CreateRoamerByID(SaveData *saveData, u8 idx)
 
 u8 LONG_CALL SpeciesToRoamerIdx(u16 species)
 {
+    // co-op Milestone 5: randomized roamers keep other species, so find the
+    // roamer holding this one (the four are always different species)
+    void *roamerSave = EncDataSave_GetSaveDataPtr(SaveBlock2_get());
+    for (u8 i = 0; i < ROAMER_MAX; i++) {
+        if (Roamers_GetRoamMonStats(roamerSave, i)->species == species)
+            return i;
+    }
+
     switch (species) {
     case SPECIES_RAIKOU:
         return ROAMER_RAIKOU;

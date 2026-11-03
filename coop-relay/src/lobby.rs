@@ -25,6 +25,11 @@ use crate::protocol::{
     SESSION_STATE_OUTGOING, SESSION_STATE_REFUSED, SESSION_STATE_TIMEOUT, ServerToClientPacket,
     SessionOut, TEAMED_SELF_BIT, room_code_to_string, validate_room_code,
 };
+use crate::protocol::{
+    CHALLENGE_LOCATION_BYTES, CHALLENGE_RULE_MONOLOCKE, CHALLENGE_STATE_SPIRIT, ChallengeDown,
+    ChallengeUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, SOUL_LINK_ROOM_WIDE, sanitize_challenge_rules,
+    soul_link_mode,
+};
 
 mod link;
 mod trade;
@@ -57,6 +62,46 @@ pub struct RegisteredTrainer {
     /// absent teammate can still let the others through the gym gate.
     #[serde(default)]
     pub allow_ahead: bool,
+    /// Milestone 5 challenge ledger (docs/MILESTONE5_PLAN.md §4.4).
+    #[serde(default)]
+    pub challenge: TrainerChallenge,
+}
+
+/// What the relay keeps of a trainer's challenge run. The location bitmaps
+/// only ever gain bits (OR-merged from the ROM's reports), so a restored
+/// backup or a re-sent packet can never reopen a route or undo a failure.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrainerChallenge {
+    #[serde(default)]
+    pub spent: [u8; CHALLENGE_LOCATION_BYTES],
+    #[serde(default)]
+    pub failed: [u8; CHALLENGE_LOCATION_BYTES],
+    #[serde(default)]
+    pub spirit: bool,
+    #[serde(default)]
+    pub living: u8,
+    #[serde(default)]
+    pub deaths: u16,
+}
+
+impl TrainerChallenge {
+    /// Merges a ROM report; TRUE when something worth saving changed.
+    fn merge(&mut self, up: &ChallengeUp) -> bool {
+        let mut changed = false;
+        for i in 0..CHALLENGE_LOCATION_BYTES {
+            let spent = self.spent[i] | up.spent[i];
+            let failed = self.failed[i] | up.failed[i];
+            changed |= spent != self.spent[i] || failed != self.failed[i];
+            self.spent[i] = spent;
+            self.failed[i] = failed;
+        }
+        let spirit = up.state & CHALLENGE_STATE_SPIRIT != 0;
+        changed |= spirit != self.spirit || up.living != self.living || up.deaths > self.deaths;
+        self.spirit = spirit;
+        self.living = up.living;
+        self.deaths = self.deaths.max(up.deaths);
+        changed
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +121,9 @@ pub struct CampaignSaveFile {
     /// Committed trades not yet saved by both games (Milestone 3 Phase 2).
     #[serde(default)]
     pub pending_trades: Vec<PendingTrade>,
+    /// Milestone 5 room rules (CHALLENGE_RULE_*), fixed once the roster locks.
+    #[serde(default)]
+    pub rules: u16,
 }
 
 /// What one player currently sees of their session, latched until the next
@@ -166,6 +214,9 @@ pub struct LobbyState {
     trade_notices: Vec<trade::TradeNotice>,
     /// Virtual link state per slot (Milestone 3 Phase 3).
     links: [link::LinkPeer; MAX_PLAYERS],
+    /// Milestone 5 room rules (CHALLENGE_RULE_*): set by the host while the
+    /// room forms, fixed once the roster locks.
+    rules: u16,
 }
 
 impl LobbyState {
@@ -215,6 +266,7 @@ impl LobbyState {
             pending_trades: Vec::new(),
             trade_notices: Vec::new(),
             links: Default::default(),
+            rules: 0,
         };
         lobby.load_campaign_from_disk()?;
         Ok(lobby)
@@ -281,13 +333,14 @@ impl LobbyState {
         // Game-agnostic admission: the relay never inspects map numbers or badge
         // masks during lobby formation. Readiness is computed by the ROM and
         // carried in local_player.client_ready.
-        // Only the room creator can configure target_party_size while forming
-        if !self.campaign_started
-            && pkt.target_party_size >= 2
-            && pkt.host_token != 0
-            && pkt.host_token == self.host_token
-        {
-            self.target_party_size = (pkt.target_party_size as usize).clamp(2, MAX_PLAYERS);
+        // Only the room creator can configure the room while forming: its
+        // size and (Milestone 5) the challenge rules.
+        let from_host = pkt.host_token != 0 && pkt.host_token == self.host_token;
+        if !self.campaign_started && from_host {
+            if pkt.target_party_size >= 2 {
+                self.target_party_size = (pkt.target_party_size as usize).clamp(2, MAX_PLAYERS);
+            }
+            self.rules = sanitize_challenge_rules(pkt.challenge_rules);
         }
 
         // Save admission (docs/MILESTONE2_PLAN.md 7.1): a room that has not
@@ -424,8 +477,75 @@ impl LobbyState {
             });
         }
 
+        self.apply_challenge_up(slot_idx, pkt.challenge.as_ref());
         self.check_and_lock_start_gate();
         Ok(slot_idx as u8)
+    }
+
+    /// Milestone 5: merges a ROM's challenge report into its roster entry
+    /// (only once the roster is locked: before that there is no run).
+    fn apply_challenge_up(&mut self, slot_idx: usize, up: Option<&ChallengeUp>) {
+        let Some(up) = up else {
+            return;
+        };
+        if !self.campaign_started {
+            return;
+        }
+        let Some(trainer_id) = self.trainer_at(slot_idx) else {
+            return;
+        };
+        let changed = self
+            .roster
+            .iter_mut()
+            .find(|r| r.trainer_id == trainer_id)
+            .is_some_and(|r| r.challenge.merge(up));
+        if changed {
+            self.save_campaign_to_disk();
+        }
+    }
+
+    pub fn rules(&self) -> u16 {
+        self.rules
+    }
+
+    /// The recipient's Monolocke type from the roster (MONO_TYPE_NONE before
+    /// the lock, or without Monolocke).
+    fn mono_type_for(&self, slot_idx: usize) -> u8 {
+        self.roster
+            .iter()
+            .find(|r| r.slot_id as usize == slot_idx)
+            .map_or(MONO_TYPE_NONE, |r| r.assigned_monolocke)
+    }
+
+    /// Milestone 5 soul-link: the failed locations of the recipient's link
+    /// group. Room-wide: every roster trainer's. Duo pairs come with
+    /// Phase 6 (docs/MILESTONE5_PLAN.md §5.6); until then they get none.
+    fn link_union_for(&self) -> [u8; CHALLENGE_LOCATION_BYTES] {
+        let mut union = [0u8; CHALLENGE_LOCATION_BYTES];
+        if soul_link_mode(self.rules) == SOUL_LINK_ROOM_WIDE {
+            for r in &self.roster {
+                for (u, f) in union.iter_mut().zip(r.challenge.failed.iter()) {
+                    *u |= f;
+                }
+            }
+        }
+        union
+    }
+
+    fn challenge_down_for(&self, slot_idx: usize) -> ChallengeDown {
+        let own = self
+            .trainer_at(slot_idx)
+            .and_then(|t| self.roster.iter().find(|r| r.trainer_id == t))
+            .map(|r| r.challenge.clone())
+            .unwrap_or_default();
+        ChallengeDown {
+            mono_type: self.mono_type_for(slot_idx),
+            room_state: 0,
+            rules: self.rules,
+            link_union: self.link_union_for(),
+            spent: own.spent,
+            failed: own.failed,
+        }
     }
 
     fn resolve_or_assign_slot(
@@ -592,14 +712,23 @@ impl LobbyState {
         self.campaign_started = true;
         self.roster.clear();
 
-        for p in &active {
+        // Monolocke: one type per player, without replacement (18 types,
+        // at most 6 players), so no two players share one.
+        let mono_types = if self.rules & CHALLENGE_RULE_MONOLOCKE != 0 {
+            shuffled_mono_types(self.room_uid)
+        } else {
+            [MONO_TYPE_NONE; MONO_TYPE_COUNT as usize]
+        };
+
+        for (i, p) in active.iter().enumerate() {
             self.roster.push(RegisteredTrainer {
                 slot_id: p.slot_id,
                 trainer_id: p.state.trainer_id,
                 last_badge_mask: p.badge_mask,
-                assigned_monolocke: p.assigned_monolocke,
+                assigned_monolocke: mono_types[i],
                 player_secret: p.player_secret,
                 allow_ahead: p.allow_ahead,
+                challenge: TrainerChallenge::default(),
             });
         }
 
@@ -708,8 +837,8 @@ impl LobbyState {
                 badge_mask_synced: synced_badges,
                 flag_coop_sync_ready: u8::from(self.gym_gate_open_for(recipient)),
                 current_checkpoint: synced_badges.count_ones() as u8,
-                assigned_monolocke: recipient.assigned_monolocke,
-                nuzlocke_failed: 0,
+                assigned_monolocke: self.mono_type_for(recipient_idx),
+                challenge_room_state: 0,
                 flag_campaign_started: u8::from(self.campaign_started),
                 expected_party_size: expected_size,
                 online_party_count: online_count,
@@ -734,6 +863,7 @@ impl LobbyState {
                 pkt.encode_full(
                     trade.as_ref(),
                     links.get(recipient_idx).and_then(Option::as_ref),
+                    Some(&self.challenge_down_for(recipient_idx)),
                 ),
             ));
         }
@@ -1235,6 +1365,7 @@ impl LobbyState {
             roster: self.roster.clone(),
             teams: self.teams.clone(),
             pending_trades: self.pending_trades.clone(),
+            rules: self.rules,
         };
         let json = match serde_json::to_string_pretty(&payload) {
             Ok(json) => json,
@@ -1276,6 +1407,7 @@ impl LobbyState {
         self.roster = saved.roster;
         self.teams = saved.teams;
         self.pending_trades = saved.pending_trades;
+        self.rules = sanitize_challenge_rules(saved.rules);
         self.target_party_size = (saved.expected_party_size as usize).clamp(2, MAX_PLAYERS);
         info!(
             "[Room {}] Restored locked campaign from disk ({} registered trainers)",
@@ -1312,6 +1444,21 @@ pub(crate) fn new_room_uid(room_code: [u8; 6]) -> u32 {
         .unwrap_or(0);
     let uid = RandomState::new().hash_one((room_code, nanos)) as u32;
     uid.max(1)
+}
+
+/// The 18 Monolocke types in a random order (seeded like the room UID).
+pub(crate) fn shuffled_mono_types(room_uid: u32) -> [u8; MONO_TYPE_COUNT as usize] {
+    let mut types: [u8; MONO_TYPE_COUNT as usize] = core::array::from_fn(|i| i as u8);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let state = RandomState::new();
+    for i in (1..types.len()).rev() {
+        let j = (state.hash_one((room_uid, nanos, i)) % (i as u64 + 1)) as usize;
+        types.swap(i, j);
+    }
+    types
 }
 
 /// Writes a file readable only by the relay's user on Unix: campaign files

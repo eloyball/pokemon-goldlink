@@ -17,3 +17,7 @@ mod trade_tests;
 #[cfg(test)]
 #[path = "tests/link_tests.rs"]
 mod link_tests;
+
+#[cfg(test)]
+#[path = "tests/challenge_tests.rs"]
+mod challenge_tests;

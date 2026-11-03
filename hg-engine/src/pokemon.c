@@ -22,6 +22,8 @@
 #include "save.h"
 #include "script.h"
 #include "sound.h"
+#include "coop_sync.h"
+#include "coop_challenge.h"
 
 extern u32 word_to_store_form_at;
 struct OVERWORLD_TAG *LONG_CALL ObjectEvent_GetGraphicsInfo(u32 spriteId);
@@ -342,6 +344,11 @@ void LONG_CALL SetBoxMonAbility(struct BoxPokemon *boxmon) // actually takes box
     u32 ability1, ability2, hiddenability;
     u32 pid;
     u32 has_hidden_ability, ability_swapped;
+
+    // co-op Milestone 5: a random ability (docs/MILESTONE5_PLAN.md §5.2) stays
+    // through evolution, form changes, a Mega's revert and Ability Capsules.
+    if (GetBoxMonData(boxmon, MON_DATA_RESERVED_114, NULL) & COOP_MON_ABILITY_LOCKED)
+        return;
 
     fastMode = BoxMonSetFastModeOn(boxmon);
 
@@ -1217,6 +1224,15 @@ BOOL LONG_CALL GiveMon(int heapId, void *saveData, int species, int level, int f
 
     profile = Sav2_PlayerData_GetProfileAddr(saveData);
     party = SaveData_GetPlayerPartyPtr(saveData);
+
+    // co-op Milestone 5: the room's randomizer replaces script gifts
+    // (src/field/coop_challenge_random.c; scripts run in the field)
+    const struct CoopFieldEntryHeader *coop = Coop_FieldHeader();
+    if (coop != NULL && coop->giftSpecies != NULL) {
+        u32 value = coop->giftSpecies((u32)species | ((u32)forme << 11));
+        species = value & 0x7FF;
+        forme = value >> 11;
+    }
 
     pokemon = AllocMonZeroed(heapId);
     ZeroMonData(pokemon);
