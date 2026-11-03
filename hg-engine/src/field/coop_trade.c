@@ -17,6 +17,7 @@
 #include "coop_choice.h"
 #include "coop_session.h"
 #include "coop_scene.h"
+#include "coop_challenge.h"
 
 // ---------------------------------------------------------------------------
 // Trading (docs/MILESTONE3_PLAN.md, Phase 2), Overlay 131.
@@ -187,6 +188,8 @@ static const char *Coop_TradePickRule(struct Party *party, u32 slot)
         return "Eggs can't be traded.";
     if (IS_ITEM_MAIL(GetMonData(mon, MON_DATA_HELD_ITEM, NULL)))
         return "It's holding Mail. Take\nthe Mail first.";
+    if (Coop_ChallengeTradeOfferRule(mon) != NULL)
+        return Coop_ChallengeTradeOfferRule(mon); // Milestone 5: a dead Pokemon
     for (i = 0; i < (u32)party->count; i++)
     {
         struct PartyPokemon *other = Party_GetMonByIndex(party, i);
@@ -326,6 +329,7 @@ static void Coop_TradeApply(FieldSystem *fsys, TaskManager *taskman, struct Coop
     Coop_GetNickname(Party_GetMonByIndex(party, slot), env->myNick);
     PokeCopyPPtoPP(Party_GetMonByIndex(party, slot), &env->outgoing);
     PokeCopyPPtoPP(&env->incoming, Party_GetMonByIndex(party, slot));
+    Coop_ChallengeTradeReceived(Party_GetMonByIndex(party, slot)); // Milestone 5
     env->swapped = TRUE;
     UpdatePokedexWithReceivedSpecies(fsys->savedata, Party_GetMonByIndex(party, slot));
     if (env->recovery)
@@ -607,6 +611,16 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             env->ex.out.state = COOP_TRADE_OUT_CANCEL;
             Coop_TradeFinal(taskman, env, "Something is wrong with that\nPokémon. Trade cancelled.");
             break;
+        }
+        {
+            // Milestone 5 Monolocke: this game can't receive it (the partner sees a cancel).
+            const char *refusal = Coop_ChallengeTradeRefusal(SaveArray_Party_Get(fsys->savedata), &env->incoming);
+            if (refusal != NULL)
+            {
+                env->ex.out.state = COOP_TRADE_OUT_CANCEL;
+                Coop_TradeFinal(taskman, env, refusal);
+                break;
+            }
         }
         Coop_DialogPrint(&env->dialog, "@ offers\n$ (Lv. &).");
         taskman->state = COOP_TRADE_SHOW_OFFER;

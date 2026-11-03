@@ -1796,3 +1796,5 @@ Magic Room wore off, and held items’\neffects returned to normal!
 {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}\nwas taken over!
 The wild {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}\nwas taken over!
 The opposing {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}\nwas taken over!
+You can only catch {STRVAR_1 15, 1, 0}-type\nPokémon!
+You can only catch the first\nPokémon you find in each area!

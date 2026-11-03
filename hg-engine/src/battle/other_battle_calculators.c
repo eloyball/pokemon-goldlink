@@ -4545,9 +4545,21 @@ void LONG_CALL PrintBallBlockedMessage(struct tcb_skill_intp_work *data)
         ov07_02233ECC(data->bms);
         BattleMessage msg;
         BOOL isTrainerBattle = BattleTypeGet(data->bw) & BATTLE_TYPE_TRAINER;
+        u32 monoType, reason = isTrainerBattle ? COOP_BALL_ALLOWED : Coop_ChallengeBallReason(&monoType);
         // It dodged your thrown Poké Ball! This Pokémon can’t be caught!
         msg.id = isTrainerBattle ? BATTLE_MSG_TRAINER_BLOCKED_BALL : BATTLE_MSG_DODGED_THROWN_BALL;
         msg.tag = TAG_NONE;
+        if (reason == COOP_BALL_MONOLOCKE)
+        {
+            // Co-op Monolocke: "You can only catch FIRE-type Pokémon!" (buffer 0, the
+            // nickname, is unused; battler 0 keeps the message id unshifted).
+            msg.id = BATTLE_MSG_COOP_MONOLOCKE_BALL;
+            msg.tag = TAG_NICKNAME_TYPE;
+            msg.param[0] = 0;
+            msg.param[1] = (int)monoType;
+        }
+        else if (reason == COOP_BALL_NUZLOCKE)
+            msg.id = BATTLE_MSG_COOP_NUZLOCKE_BALL;
         data->work[0] = BattleMSG_Print(data->bw, BattleWorkFightMsgGet(data->bw), &msg, BattleWorkConfigMsgSpeedGet(data->bw));
         data->work[1] = 30;
         data->seq_no = isTrainerBattle ? 27 : 28; // STATE_GET_POKEMON_DONE_NO_STEALING

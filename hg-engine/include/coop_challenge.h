@@ -296,6 +296,18 @@ void Coop_ChallengeStarters(struct CoopChallengeSave *save);
 u32 Coop_ChallengeGiftSpecies(u32 value);
 u32 Coop_ChallengeRoamerSpecies(u32 roamerIdx, u32 vanilla);
 
+// Phase 4: trades (src/field/coop_trade.c). Why this party Pokemon can't be
+// offered (NULL: it can); why an offered one can't be received (Monolocke:
+// neither it nor its trade evolution has the type; NULL: it can); and the
+// bits a received Pokemon drops.
+struct Party;
+const char *Coop_ChallengeTradeOfferRule(struct PartyPokemon *mon);
+const char *Coop_ChallengeTradeRefusal(struct Party *party, struct PartyPokemon *incoming);
+void Coop_ChallengeTradeReceived(struct PartyPokemon *mon);
+
+// Phase 4: the level cap for this progress (docs/MILESTONE5_PLAN.md §5.8).
+u32 Coop_ChallengeLevelCapFor(u32 johto, u32 kanto, BOOL gameClear, BOOL round2Beaten);
+
 // The pool entry for an encounter value (or its base species), NULL if none.
 const struct CoopPoolEntry *Coop_PoolFind(u32 value);
 
@@ -336,6 +348,13 @@ struct BattleStruct;
 // The ball the player just threw may not catch this wild Pokemon (it is
 // refunded). Called by hg-engine's ShouldPreventMonCapture.
 BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys);
+
+// Why Coop_ChallengeBallBlocked last blocked a ball (PrintBallBlockedMessage),
+// and the Monolocke type for its message.
+#define COOP_BALL_ALLOWED   0
+#define COOP_BALL_MONOLOCKE 1
+#define COOP_BALL_NUZLOCKE  2
+u32 LONG_CALL Coop_ChallengeBallReason(u32 *monoType);
 
 // A player Pokemon fainted (host / local battles: the faint command) or the
 // battle ended (every machine, link battles included): mark it dead.

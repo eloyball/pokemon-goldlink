@@ -747,6 +747,24 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
         ResetPartyPokemonAbility(lead);
         return COOP_DEBUG_RESULT_OK;
     }
+    if (what == 10 || what == 11)
+    {
+        // Phase 4: 10 = species <- the level cap variable, level <- GetLevelCap();
+        // 11 = species <- 1 if this game would refuse the last party member in a trade.
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+
+        if (what == 10)
+        {
+            u32 exp = party->count > 0 ? GetMonData(Party_GetMonByIndex(party, 0), MON_DATA_EXPERIENCE, NULL) : 0;
+
+            gCoopDebugMonBuffer.species = VarGet(fsys, LEVEL_CAP_VARIABLE);
+            gCoopDebugMonBuffer.level = (u8)GetLevelCap();
+            __builtin_memcpy(gCoopDebugMonBuffer.mon, &exp, sizeof(exp)); // the lead's EXP
+        }
+        else if (party->count > 0)
+            gCoopDebugMonBuffer.species = Coop_ChallengeTradeRefusal(party, Party_GetMonByIndex(party, party->count - 1)) != NULL;
+        return COOP_DEBUG_RESULT_OK;
+    }
     if (what >= 7 && what <= 9)
     {
         // Phase 3 (Nuzlocke): 7 gives three Master Balls; 8 reports the last

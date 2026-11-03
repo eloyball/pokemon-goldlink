@@ -219,4 +219,8 @@
 #define BATTLE_MSG_LUNAR_DANCE  (1787)
 #define BATTLE_MSG_HEALING_WISH (1790)
 
+// Co-op Milestone 5 (appended to data/text/197.txt)
+#define BATTLE_MSG_COOP_MONOLOCKE_BALL (1798)
+#define BATTLE_MSG_COOP_NUZLOCKE_BALL  (1799)
+
 #endif
