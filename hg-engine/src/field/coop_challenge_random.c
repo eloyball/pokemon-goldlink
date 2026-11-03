@@ -239,11 +239,21 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
     BOOL first = FALSE;
     u32 species, original, result, map, key, level, pid, otid, kind, loc = 0xFF;
     u32 forceLevel = 0;
+    BOOL forceShiny = FALSE, forceOriginal = FALSE;
     u16 ability = 0;
 
     Coop_ChallengeRecordPrebattle(fsys); // Phase 5: the spirit's anchor if this battle wipes the party
     species = GetMonData(pp, MON_DATA_SPECIES, NULL);
     original = species | (space_for_setmondata << 11);
+#if COOP_DEBUG_TOOLS
+    if (gCoopDebugMonBuffer.team_battle_armed == 6) // probes: the slot rolled buffer.species (the dupes clause runs on it)
+    {
+        gCoopDebugMonBuffer.team_battle_armed = 0;
+        original = gCoopDebugMonBuffer.species;
+        species = original & 0x7FF;
+        forceOriginal = TRUE;
+    }
+#endif
     map = Coop_CurrentMap();
     kind = (bp->fight_type & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_BUG_CONTEST)) ? 2
          : Coop_IsStatic(task, map, original)                                ? 1
@@ -255,8 +265,10 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
         Coop_ChallengeResolvePending(fsys, save);
 
     // Nuzlocke (§5.4.2): a static has no location; elsewhere the first
-    // encounter of an unspent location brings the dupes clause along.
-    if (nuzlocke && kind != 1)
+    // encounter of an unspent location brings the dupes clause along. Before
+    // the catching tutorial gives the first Poke Balls, no encounter has a
+    // location: nothing is spent or failed on the way to Mr. Pokemon.
+    if (nuzlocke && kind != 1 && CheckScriptFlag(COOP_FLAG_CATCHING_TUTORIAL))
     {
         loc = Coop_ChallengeLocation(fsys, bp->fight_type, map);
         first = loc < COOP_LOCATION_BYTES * 8 && !((save->spent[loc >> 3] >> (loc & 7)) & 1);
@@ -278,15 +290,17 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
     }
 
 #if COOP_DEBUG_TOOLS
-    if (gCoopDebugMonBuffer.team_battle_armed == 4) // probes: this one becomes buffer.species at buffer.level (docs/DEBUG_TOOLS.md)
+    // probes: this one becomes buffer.species at buffer.level (docs/DEBUG_TOOLS.md); 5: shiny too
+    if (gCoopDebugMonBuffer.team_battle_armed == 4 || gCoopDebugMonBuffer.team_battle_armed == 5)
     {
+        forceShiny = gCoopDebugMonBuffer.team_battle_armed == 5;
         gCoopDebugMonBuffer.team_battle_armed = 0;
         result = gCoopDebugMonBuffer.species;
         forceLevel = gCoopDebugMonBuffer.level;
     }
 #endif
 
-    if (result != original || forceLevel != 0)
+    if (result != original || forceLevel != 0 || forceShiny || forceOriginal)
     {
         // Same level, personality and trainer ID: shininess, nature and
         // gender bits stay; hg-engine's hook then applies the new form
@@ -294,6 +308,8 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
         level = forceLevel != 0 ? forceLevel : GetMonData(pp, MON_DATA_LEVEL, NULL);
         pid = GetMonData(pp, MON_DATA_PERSONALITY, NULL);
         otid = GetMonData(pp, MON_DATA_OTID, NULL);
+        if (forceShiny) // the upper half makes (otid ^ pid) halves cancel: shiny
+            pid = (pid & 0xFFFF) | ((((otid >> 16) ^ otid ^ pid) & 0xFFFF) << 16);
         space_for_setmondata = result >> 11;
         PokeParaSet(pp, result & 0x7FF, level, 32, TRUE, pid, OT_ID_PRESET, otid);
     }
@@ -326,7 +342,12 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
             if (valid)
             {
                 save->spent[loc >> 3] |= (u8)(1 << (loc & 7));
-                flags |= COOP_PENDING_FIRST;
+                // Soul-Link (Phase 6): the group already lost this place, so
+                // its first encounter can't be caught (no doomed catch).
+                if (Coop_ChallengeSoulLinkOn(save) && ((save->failed[loc >> 3] >> (loc & 7)) & 1))
+                    flags |= COOP_PENDING_PARTNER_FAILED;
+                else
+                    flags |= COOP_PENDING_FIRST;
             }
         }
         save->pending_pid = GetMonData(pp, MON_DATA_PERSONALITY, NULL);

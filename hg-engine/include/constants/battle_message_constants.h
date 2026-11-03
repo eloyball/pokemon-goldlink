@@ -222,5 +222,6 @@
 // Co-op Milestone 5 (appended to data/text/197.txt)
 #define BATTLE_MSG_COOP_MONOLOCKE_BALL (1798)
 #define BATTLE_MSG_COOP_NUZLOCKE_BALL  (1799)
+#define BATTLE_MSG_COOP_SOUL_LINK_BALL (1800)
 
 #endif

@@ -101,6 +101,15 @@ static void Coop_SessionSend(u32 op, u32 kind, u32 target)
     out->seq = (u8)(out->seq + 1); // last: the bridge forwards the block as is
 }
 
+// Milestone 5 Phase 6: Duo Soul-Link links each team (docs/MILESTONE5_PLAN.md §5.6).
+static BOOL Coop_IsDuoLink(void)
+{
+    u16 rules = Coop_ChallengeRules();
+
+    return (rules & COOP_RULE_NUZLOCKE)
+        && ((rules & COOP_RULE_SOUL_LINK_MASK) >> COOP_RULE_SOUL_LINK_SHIFT) == COOP_SOUL_LINK_DUO;
+}
+
 static BOOL Coop_IsSelfTeamed(void)
 {
     return (gCoopCommBlock.gates.teamed_mask & COOP_TEAMED_SELF_BIT) != 0;
@@ -260,13 +269,14 @@ static void Coop_SessionOpenMainMenu(FieldSystem *fsys, struct CoopSessionTaskEn
     values[n++] = COOP_CHOICE_TRADE;
     labels[n] = "BATTLE";
     values[n++] = COOP_CHOICE_BATTLE;
-    // Team up while neither player is in a team; leave it from my teammate.
+    // Team up while neither player is in a team; leave it from my teammate
+    // (never under Duo Soul-Link: the team is the link, for the whole run).
     if (!Coop_IsSelfTeamed() && !Coop_IsSlotTeamed(env->peerSlot))
     {
         labels[n] = "TEAM UP";
         values[n++] = COOP_CHOICE_TEAM_UP;
     }
-    else if (gCoopCommBlock.gates.team_partner_slot == env->peerSlot)
+    else if (gCoopCommBlock.gates.team_partner_slot == env->peerSlot && !Coop_IsDuoLink())
     {
         labels[n] = "LEAVE TEAM";
         values[n++] = COOP_CHOICE_LEAVE_TEAM;
@@ -326,7 +336,8 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         }
         else if (env->kind == COOP_SESSION_KIND_TEAM_UP)
         {
-            Coop_DialogPrint(&env->dialog, "@ wants to team up!\nYou'd battle as a team.");
+            Coop_DialogPrint(&env->dialog, Coop_IsDuoLink() ? "@ wants to team up! Your\nfates would be linked for good."
+                                                            : "@ wants to team up!\nYou'd battle as a team.");
             taskman->state = COOP_SESSION_PROMPT_PAGE;
         }
         else if (env->kind == COOP_SESSION_KIND_TEAM_BATTLE)
@@ -384,7 +395,8 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         if (value == COOP_CHOICE_TEAM_UP)
         {
             env->kind = COOP_SESSION_KIND_TEAM_UP;
-            Coop_DialogPrint(&env->dialog, "Team up with @?\nYou'd battle as a team.");
+            Coop_DialogPrint(&env->dialog, Coop_IsDuoLink() ? "Team up with @? Your fates\nwould be linked for good."
+                                                            : "Team up with @?\nYou'd battle as a team.");
             taskman->state = COOP_SESSION_CONFIRM_TEXT;
             break;
         }

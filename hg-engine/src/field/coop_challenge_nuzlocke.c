@@ -58,6 +58,10 @@ static u8 sFamilies[COOP_FAMILY_BYTES];
 static u8 sFamiliesReady;
 static u8 sSweepBox; // next PC box to sweep; NUM_PC_BOXES: done since the overlay loaded
 static u8 sLivingChecked; // a spirit's PC was searched for a living Pokemon since the overlay loaded
+// Phase 6: party Pokemon the Soul-Link just marked, for their burial message.
+#define COOP_LINK_KILLED_MAX 6
+static u32 sLinkKilled[COOP_LINK_KILLED_MAX];
+static u8 sLinkKilledCount;
 
 static BOOL Coop_Bit(const u8 *bits, u32 i)
 {
@@ -212,6 +216,87 @@ u32 Coop_ChallengeTableReroll(FieldSystem *fsys, u32 original)
 }
 
 // ---------------------------------------------------------------------------
+// Soul-Link (Phase 6, docs/MILESTONE5_PLAN.md §5.6)
+// ---------------------------------------------------------------------------
+
+// The location a linked Pokemon came from (its first encounter), 0xFF none:
+// the Safari areas and the contest by the personality value kept for them,
+// elsewhere its met location (the map section it was caught in).
+static u32 Coop_LinkedLocation(const struct CoopChallengeSave *save, struct BoxPokemon *mon)
+{
+    u32 pid = GetBoxMonData(mon, MON_DATA_PERSONALITY, NULL);
+    u32 met, i;
+
+    for (i = 0; i < COOP_SAFARI_AREAS; i++)
+        if (save->safari_pid[i] == pid && pid != 0)
+            return COOP_LOCATION_SAFARI + i;
+    if (save->contest_pid == pid && pid != 0)
+        return COOP_LOCATION_CONTEST;
+    met = GetBoxMonData(mon, MON_DATA_MET_LOCATION, NULL);
+    return met >= COOP_MAPSEC_FIRST && met < COOP_MAPSEC_FIRST + COOP_LOCATION_SAFARI ? met - COOP_MAPSEC_FIRST : 0xFF;
+}
+
+// A living linked Pokemon whose place failed in the link group: TRUE when it
+// must die now.
+static BOOL Coop_LinkDoomed(const struct CoopChallengeSave *save, struct BoxPokemon *mon)
+{
+    u16 bits = GetBoxMonData(mon, MON_DATA_RESERVED_114, NULL);
+    u32 loc;
+
+    if (!(bits & COOP_MON_LINKED) || (bits & COOP_MON_DEAD) || GetBoxMonData(mon, MON_DATA_IS_EGG, NULL))
+        return FALSE;
+    loc = Coop_LinkedLocation(save, mon);
+    return loc < COOP_LOCATION_BYTES * 8 && Coop_Bit(save->failed, loc);
+}
+
+// The relay's union becomes this save's failed places (the save keeps them,
+// and a first encounter there is blocked), and every linked Pokemon of those
+// places dies: the party now (buried next), the PC by the sweep, which runs
+// again when new places arrive. A Pokemon back from the Day Care is caught by
+// the party check (E14).
+static void Coop_ApplySoulLink(FieldSystem *fsys, struct CoopChallengeSave *save)
+{
+    const struct CoopChallengeDown *in = Coop_ChallengeIn();
+    struct Party *party = SaveArray_Party_Get(fsys->savedata);
+    BOOL fresh = FALSE;
+    u32 i;
+
+    if (!Coop_ChallengeSoulLinkOn(save))
+        return;
+    if (in != NULL)
+        for (i = 0; i < COOP_LOCATION_BYTES; i++)
+            if (in->link_union[i] & ~save->failed[i])
+            {
+                save->failed[i] |= in->link_union[i];
+                fresh = TRUE;
+            }
+    if (fresh)
+        sSweepBox = 0;
+    for (i = 0; i < (u32)party->count; i++)
+    {
+        struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
+        u16 bits;
+
+        if (!Coop_LinkDoomed(save, &mon->box))
+            continue;
+        bits = GetMonData(mon, MON_DATA_RESERVED_114, NULL) | COOP_MON_DEAD;
+        SetMonData(mon, MON_DATA_RESERVED_114, &bits);
+        if (sLinkKilledCount < COOP_LINK_KILLED_MAX)
+            sLinkKilled[sLinkKilledCount++] = GetMonData(mon, MON_DATA_PERSONALITY, NULL);
+    }
+}
+
+static BOOL Coop_WasLinkKilled(u32 pid)
+{
+    u32 i;
+
+    for (i = 0; i < sLinkKilledCount; i++)
+        if (sLinkKilled[i] == pid)
+            return TRUE;
+    return FALSE;
+}
+
+// ---------------------------------------------------------------------------
 // After a wild battle: was the first encounter caught?
 // ---------------------------------------------------------------------------
 
@@ -280,7 +365,7 @@ struct CoopGraveTaskEnv
     struct CoopDialog dialog;
     u16 name[12];
     u8 state;
-    u8 kind; // 0 laid to rest, 1 withdrawn from the PC
+    u8 kind; // 0 laid to rest, 1 withdrawn from the PC, 2 laid to rest by the Soul-Link
 };
 
 static BOOL Coop_Task_GraveMessage(TaskManager *taskman)
@@ -294,8 +379,9 @@ static BOOL Coop_Task_GraveMessage(TaskManager *taskman)
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
         env->dialog.args[0] = env->name;
-        Coop_DialogPrint(&env->dialog, env->kind == 0 ? "@ has fallen...\n@ was laid to rest in the Graveyard."
-                                                      : "@ came out of the PC\nto join your party.");
+        Coop_DialogPrint(&env->dialog, env->kind == 0   ? "@ has fallen...\n@ was laid to rest in the Graveyard."
+                                       : env->kind == 2 ? "@'s Soul-Link was severed...\n@ was laid to rest in the Graveyard."
+                                                        : "@ came out of the PC\nto join your party.");
         env->state = 1;
         break;
     case 1:
@@ -376,7 +462,8 @@ static BOOL Coop_BuryFromParty(FieldSystem *fsys, struct CoopChallengeSave *save
     {
         struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
         u16 name[12];
-        u32 item;
+        u32 item, loc, pid;
+        u8 kind;
         int grave;
 
         if (!(GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD))
@@ -392,12 +479,18 @@ static BOOL Coop_BuryFromParty(FieldSystem *fsys, struct CoopChallengeSave *save
         }
         GetMonData(mon, MON_DATA_NICKNAME, name);
         name[11] = 0xFFFF;
+        // Phase 6: a linked Pokemon's death fails its place for the link group.
+        loc = (GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_LINKED) ? Coop_LinkedLocation(save, &mon->box) : 0xFF;
+        pid = GetMonData(mon, MON_DATA_PERSONALITY, NULL);
+        kind = Coop_WasLinkKilled(pid) ? 2 : 0;
         if (!PCStorage_PlaceMonInBoxFirstEmptySlot(Coop_PC(fsys), grave, &mon->box))
             return FALSE;
         PokeParty_Delete(party, i);
+        if (loc < COOP_LOCATION_BYTES * 8)
+            Coop_SetBit(save->failed, loc);
         if (save->deaths < 0xFFFF)
             save->deaths++;
-        Coop_StartGraveMessage(fsys, name, 0);
+        Coop_StartGraveMessage(fsys, name, kind);
         return TRUE;
     }
     return FALSE;
@@ -419,6 +512,13 @@ static void Coop_SweepBox(FieldSystem *fsys, struct CoopChallengeSave *save, u32
         BOOL dead = (GetBoxMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD) != 0;
         int to;
 
+        // Phase 6: a linked Pokemon of a failed place dies in the box too.
+        if (exists && !dead && Coop_ChallengeSoulLinkOn(save) && Coop_LinkDoomed(save, mon))
+        {
+            u16 bits = GetBoxMonData(mon, MON_DATA_RESERVED_114, NULL) | COOP_MON_DEAD;
+            SetBoxMonData(mon, MON_DATA_RESERVED_114, &bits);
+            dead = TRUE;
+        }
         BoxMonSetFastModeOff(mon, fast);
         if (!exists || dead == graveyard)
             continue;
@@ -503,6 +603,7 @@ void Coop_ChallengeNuzlockeFrame(FieldSystem *fsys, struct CoopChallengeSave *sa
         Coop_NameGraveyard(fsys, save, COOP_GRAVEYARD_BOX, "GRAVEYARD");
     if (save->pending_flags & COOP_PENDING_OPEN)
         Coop_ChallengeResolvePending(fsys, save);
+    Coop_ApplySoulLink(fsys, save); // Phase 6
     if (Coop_BuryFromParty(fsys, save))
         return; // its message runs now
     for (i = 0; i < (u32)party->count; i++)

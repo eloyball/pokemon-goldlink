@@ -95,6 +95,8 @@ BOOL LONG_CALL Task_OverworldFish(TaskManager *taskman);
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 #endif
 
+u16 LONG_CALL MapHeader_GetMapSec(u32 mapNo); // rom.ld (debug command 20 arg 15)
+
 #define COOP_RENDER_OFFSET 0x18 // MapObjectRender inline in MapObjectManager
 
 // Render header of ccd include/field/map_object_render_internal.h. Only the
@@ -745,6 +747,47 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
         bits &= ~COOP_MON_ABILITY_LOCKED; // leave the lead as it was found
         SetMonData(lead, MON_DATA_RESERVED_114, &bits);
         ResetPartyPokemonAbility(lead);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what >= 18 && what <= 20)
+    {
+        // The catching tutorial's flag: 18 -> species = it; 19 clears it, 20 sets it.
+        struct ScriptState *flags = SavArray_Flags_get(fsys->savedata);
+
+        if (what == 19)
+            ClearScriptFlagPassSave(flags, COOP_FLAG_CATCHING_TUTORIAL);
+        if (what == 20)
+            SetScriptFlagPassSave(flags, COOP_FLAG_CATCHING_TUTORIAL);
+        gCoopDebugMonBuffer.species = (u16)CheckScriptFlagPassSave(flags, COOP_FLAG_CATCHING_TUTORIAL);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what >= 15 && what <= 17)
+    {
+        // Phase 6 (Soul-Link): 15 makes the last party member a linked wild
+        // catch met at buffer.held_item's map section (0: the current map's);
+        // 16 -> species = 1 if it can't be offered in a trade; 17 marks only
+        // it dead.
+        struct Party *party = SaveArray_Party_Get(fsys->savedata);
+        struct PartyPokemon *mon;
+        u16 bits;
+
+        if (party->count == 0)
+            return COOP_DEBUG_RESULT_FAILED;
+        mon = Party_GetMonByIndex(party, party->count - 1);
+        bits = GetMonData(mon, MON_DATA_RESERVED_114, NULL);
+        if (what == 15)
+        {
+            u32 met = gCoopDebugMonBuffer.held_item != 0 ? gCoopDebugMonBuffer.held_item : MapHeader_GetMapSec(fsys->location->mapId);
+            bits |= COOP_MON_LINKED | COOP_MON_WILD_CATCH;
+            SetMonData(mon, MON_DATA_MET_LOCATION, &met);
+            gCoopDebugMonBuffer.species = (u16)GetMonData(mon, MON_DATA_MET_LOCATION, NULL);
+        }
+        if (what == 16)
+            gCoopDebugMonBuffer.species = Coop_ChallengeTradeOfferRule(mon) != NULL;
+        if (what == 17)
+            bits |= COOP_MON_DEAD;
+        SetMonData(mon, MON_DATA_RESERVED_114, &bits);
+        gCoopDebugMonBuffer.party_count = (u8)party->count;
         return COOP_DEBUG_RESULT_OK;
     }
     if (what >= 12 && what <= 14)

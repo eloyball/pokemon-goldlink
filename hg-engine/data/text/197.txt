@@ -1798,3 +1798,4 @@ The wild {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}\nwas taken over!
 The opposing {STRVAR_1 1, 0, 0}’s {STRVAR_1 5, 1, 0}\nwas taken over!
 You can only catch {STRVAR_1 15, 1, 0}-type\nPokémon!
 You can only catch the first\nPokémon you find in each area!
+Your Soul-Link partner already\nlost this area’s Pokémon!

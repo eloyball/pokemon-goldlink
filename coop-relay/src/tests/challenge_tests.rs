@@ -12,9 +12,11 @@ use crate::protocol::{
     CHALLENGE_STATE_RUN_LOST, CHALLENGE_STATE_SPIRIT, CHALLENGE_UP_SIZE, ChallengeDown,
     ChallengeUp, ClientToServerPacket, LINK_ROLE_PARENT, LinkUp, MONO_TYPE_COUNT, MONO_TYPE_NONE,
     PLAYER_STATE_SIZE, REMOTE_SLOTS, ROOM_STATE_RUN_LOST, ROOM_STATUS_ERR_RUN_LOST,
-    SESSION_KIND_BATTLE, SESSION_KIND_REVIVE, SESSION_KIND_TRADE, SESSION_OP_REQUEST,
-    SESSION_REASON_BUSY, SESSION_REASON_INVALID, SESSION_STATE_ACCEPTED, SESSION_STATE_REFUSED,
-    SOUL_LINK_DUO, SOUL_LINK_ROOM_WIDE, SessionOut, sanitize_challenge_rules,
+    SESSION_KIND_BATTLE, SESSION_KIND_LEAVE_TEAM, SESSION_KIND_REVIVE, SESSION_KIND_TEAM_UP,
+    SESSION_KIND_TRADE, SESSION_OP_ACCEPT, SESSION_OP_REQUEST, SESSION_REASON_BUSY,
+    SESSION_REASON_INVALID, SESSION_REASON_TEAM_RULE, SESSION_STATE_ACCEPTED,
+    SESSION_STATE_REFUSED, SOUL_LINK_DUO, SOUL_LINK_ROOM_WIDE, SessionOut,
+    sanitize_challenge_rules,
 };
 use crate::session_tests::{addr, gates, op, packet};
 
@@ -280,7 +282,7 @@ fn test_ledgers_only_gain_bits_and_survive_a_restart() {
 }
 
 #[test]
-fn test_room_wide_soul_link_shares_failures_and_duo_waits_for_phase_6() {
+fn test_room_wide_soul_link_shares_failures() {
     let room_wide = CHALLENGE_RULE_NUZLOCKE | room_link(SOUL_LINK_ROOM_WIDE);
     let mut lobby = room_with_rules(3, room_wide, true, None);
     report(
@@ -294,18 +296,69 @@ fn test_room_wide_soul_link_shares_failures_and_duo_waits_for_phase_6() {
     for i in 0..3 {
         assert_eq!(down(&mut lobby, i).0.link_union, bits(&[10]), "player {i}");
     }
+}
 
+/// Phase 6: Duo links a team from its pairing on; the team is permanent.
+#[test]
+fn test_duo_soul_link_starts_at_pairing_and_locks_the_team() {
     let duo = CHALLENGE_RULE_NUZLOCKE | room_link(SOUL_LINK_DUO);
-    let mut lobby = room_with_rules(2, duo, true, None);
-    report(
-        &mut lobby,
-        1,
-        ChallengeUp {
-            failed: bits(&[10]),
-            ..ChallengeUp::default()
-        },
-    );
+    let mut lobby = room_with_rules(3, duo, true, None);
+    let failed = |l: &mut LobbyState, i: usize, at: &[usize]| {
+        report(
+            l,
+            i,
+            ChallengeUp {
+                failed: bits(at),
+                ..ChallengeUp::default()
+            },
+        )
+    };
+    // Before a team: nobody is linked.
+    failed(&mut lobby, 0, &[5]);
     assert_eq!(down(&mut lobby, 0).0.link_union, [0u8; 16]);
+    op(
+        &mut lobby,
+        0,
+        1,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_TEAM_UP,
+        1,
+    );
+    op(&mut lobby, 1, 2, SESSION_OP_ACCEPT, 0, 0);
+    assert_eq!(lobby.teams().len(), 1);
+    // After it: both see the other's new failures, not the old one (E16).
+    failed(&mut lobby, 1, &[10]);
+    failed(&mut lobby, 0, &[5, 7]);
+    for i in 0..2 {
+        assert_eq!(
+            down(&mut lobby, i).0.link_union,
+            bits(&[7, 10]),
+            "teammate {i}"
+        );
+    }
+    assert_eq!(
+        down(&mut lobby, 2).0.link_union,
+        [0u8; 16],
+        "a solo player is unlinked"
+    );
+    // An offline teammate's last report still counts.
+    lobby.remove_client_by_addr(addr(1));
+    assert_eq!(down(&mut lobby, 0).0.link_union, bits(&[7, 10]));
+    // The team can't be left under Duo.
+    op(
+        &mut lobby,
+        0,
+        3,
+        SESSION_OP_REQUEST,
+        SESSION_KIND_LEAVE_TEAM,
+        1,
+    );
+    let g = gates(&mut lobby, 0);
+    assert_eq!(
+        (g[2], g[6]),
+        (SESSION_STATE_REFUSED, SESSION_REASON_TEAM_RULE)
+    );
+    assert_eq!(lobby.teams().len(), 1);
 }
 
 fn spirit(lobby: &mut LobbyState, i: usize, deaths: u16) {

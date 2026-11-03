@@ -29,8 +29,8 @@ use crate::protocol::{
 use crate::protocol::{
     CHALLENGE_FLAG_SPIRIT, CHALLENGE_LOCATION_BYTES, CHALLENGE_RULE_MONOLOCKE,
     CHALLENGE_RULE_NUZLOCKE, CHALLENGE_STATE_RUN_LOST, CHALLENGE_STATE_SPIRIT, ChallengeDown,
-    ChallengeUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, ROOM_STATE_RUN_LOST, SOUL_LINK_ROOM_WIDE,
-    sanitize_challenge_rules, soul_link_mode,
+    ChallengeUp, MONO_TYPE_COUNT, MONO_TYPE_NONE, ROOM_STATE_RUN_LOST, SOUL_LINK_DUO,
+    SOUL_LINK_ROOM_WIDE, sanitize_challenge_rules, soul_link_mode,
 };
 
 mod link;
@@ -88,6 +88,10 @@ pub struct TrainerChallenge {
     /// then on its bridge is turned away (ROOM_STATUS_ERR_RUN_LOST).
     #[serde(default)]
     pub run_lost_seen: bool,
+    /// Milestone 5 Duo Soul-Link: `failed` when this trainer teamed up. The
+    /// link starts at pairing: older failures don't cross (plan E16).
+    #[serde(default)]
+    pub pair_baseline: [u8; CHALLENGE_LOCATION_BYTES],
 }
 
 impl TrainerChallenge {
@@ -582,17 +586,40 @@ impl LobbyState {
             .map_or(MONO_TYPE_NONE, |r| r.assigned_monolocke)
     }
 
-    /// Milestone 5 soul-link: the failed locations of the recipient's link
-    /// group. Room-wide: every roster trainer's. Duo pairs come with
-    /// Phase 6 (docs/MILESTONE5_PLAN.md §5.6); until then they get none.
-    fn link_union_for(&self) -> [u8; CHALLENGE_LOCATION_BYTES] {
+    /// Milestone 5 soul-link (docs/MILESTONE5_PLAN.md §4.4, §5.6): the failed
+    /// locations of the recipient's link group. Room-wide: every roster
+    /// trainer's (offline ones by their last report). Duo: the recipient and
+    /// its teammate, each without what failed before they paired; a player
+    /// without a team is unlinked.
+    fn link_union_for(&self, slot_idx: usize) -> [u8; CHALLENGE_LOCATION_BYTES] {
         let mut union = [0u8; CHALLENGE_LOCATION_BYTES];
-        if soul_link_mode(self.rules) == SOUL_LINK_ROOM_WIDE {
-            for r in &self.roster {
-                for (u, f) in union.iter_mut().zip(r.challenge.failed.iter()) {
-                    *u |= f;
+        match soul_link_mode(self.rules) {
+            SOUL_LINK_ROOM_WIDE => {
+                for r in &self.roster {
+                    for (u, f) in union.iter_mut().zip(r.challenge.failed.iter()) {
+                        *u |= f;
+                    }
                 }
             }
+            SOUL_LINK_DUO => {
+                let Some(me) = self.trainer_at(slot_idx) else {
+                    return union;
+                };
+                let Some(partner) = self.team_partner_of(me) else {
+                    return union;
+                };
+                for r in self
+                    .roster
+                    .iter()
+                    .filter(|r| r.trainer_id == me || r.trainer_id == partner)
+                {
+                    let c = &r.challenge;
+                    for i in 0..CHALLENGE_LOCATION_BYTES {
+                        union[i] |= c.failed[i] & !c.pair_baseline[i];
+                    }
+                }
+            }
+            _ => {}
         }
         union
     }
@@ -611,7 +638,7 @@ impl LobbyState {
                 .roster
                 .iter()
                 .fold(0u16, |n, r| n.saturating_add(r.challenge.deaths)),
-            link_union: self.link_union_for(),
+            link_union: self.link_union_for(slot_idx),
             spent: own.spent,
             failed: own.failed,
         }
@@ -1304,6 +1331,14 @@ impl LobbyState {
                     && self.team_partner_of(b).is_none()
                 {
                     self.teams.push([a, b]);
+                    // Duo Soul-Link starts here: what failed before stays apart.
+                    for r in self
+                        .roster
+                        .iter_mut()
+                        .filter(|r| r.trainer_id == a || r.trainer_id == b)
+                    {
+                        r.challenge.pair_baseline = r.challenge.failed;
+                    }
                     info!("[Room {room_str} | TEAM] 0x{a:08X} and 0x{b:08X} teamed up");
                     self.save_campaign_to_disk();
                 }
@@ -1415,6 +1450,16 @@ impl LobbyState {
                 kind,
                 partner_slot,
                 SESSION_REASON_BUSY,
+            );
+        }
+        // Duo Soul-Link: a team is for the whole run (plan §5.6).
+        if soul_link_mode(self.rules) == SOUL_LINK_DUO {
+            return self.set_view(
+                slot,
+                SESSION_STATE_REFUSED,
+                kind,
+                partner_slot,
+                SESSION_REASON_TEAM_RULE,
             );
         }
         self.teams.retain(|t| !t.contains(&me));

@@ -4560,6 +4560,8 @@ void LONG_CALL PrintBallBlockedMessage(struct tcb_skill_intp_work *data)
         }
         else if (reason == COOP_BALL_NUZLOCKE)
             msg.id = BATTLE_MSG_COOP_NUZLOCKE_BALL;
+        else if (reason == COOP_BALL_SOUL_LINK)
+            msg.id = BATTLE_MSG_COOP_SOUL_LINK_BALL;
         data->work[0] = BattleMSG_Print(data->bw, BattleWorkFightMsgGet(data->bw), &msg, BattleWorkConfigMsgSpeedGet(data->bw));
         data->work[1] = 30;
         data->seq_no = isTrainerBattle ? 27 : 28; // STATE_GET_POKEMON_DONE_NO_STEALING

@@ -67,6 +67,10 @@
 #define COOP_PENDING_PARTNER_FAILED 0x04 // Soul-Link: the group already lost this place (Phase 6)
 #define COOP_PENDING_OPEN           0x80 // a battle to resolve
 
+// pret FLAG_WATCHED_CATCHING_TUTORIAL: set on Route 29 right after the first
+// five Poke Balls. Nuzlocke first encounters count only from then on.
+#define COOP_FLAG_CATCHING_TUTORIAL 0x9A
+
 // PC boxes (0-based): the Graveyard is box 30, then box 29 (Q11).
 #define COOP_GRAVEYARD_BOX  29
 #define COOP_GRAVEYARD_BOX2 28
@@ -339,8 +343,14 @@ u32 Coop_ChallengeTableReroll(struct FieldSystem *fsys, u32 original);
 // quiet after it, or by the next wild hook if another battle came first.
 void Coop_ChallengeResolvePending(struct FieldSystem *fsys, struct CoopChallengeSave *save);
 
+// Phase 6: Soul-Link is on in this save's rules.
+static inline BOOL Coop_ChallengeSoulLinkOn(const struct CoopChallengeSave *save)
+{
+    return save != NULL && (save->rules & COOP_RULE_NUZLOCKE) && (save->rules & COOP_RULE_SOUL_LINK_MASK);
+}
+
 // Once per field frame (from Coop_ChallengeFieldFrame): deaths, the Graveyard,
-// the battle just ended, Day Care eggs.
+// the battle just ended, Day Care eggs, Soul-Link failures (Phase 6).
 void Coop_ChallengeNuzlockeFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save);
 
 // Poke Marts leave revives out in a Nuzlocke (src/field/mart.c).
@@ -363,6 +373,7 @@ BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys);
 #define COOP_BALL_ALLOWED   0
 #define COOP_BALL_MONOLOCKE 1
 #define COOP_BALL_NUZLOCKE  2
+#define COOP_BALL_SOUL_LINK 3 // Phase 6: the link group already lost this first encounter's place
 u32 LONG_CALL Coop_ChallengeBallReason(u32 *monoType);
 
 // A player Pokemon fainted (host / local battles: the faint command) or the

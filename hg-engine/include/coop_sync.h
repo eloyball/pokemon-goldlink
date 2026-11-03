@@ -159,7 +159,7 @@ struct CoopDebugMonBuffer
     u8  checksum_failed;
     u8  is_egg;
     u8  party_count; // after the command
-    u8  team_battle_armed; // one-shot, cleared when used: 1 probe E (multi with an AI partner); 2 Milestone 4 Phase 0: the trainer's first Pokemon becomes species holding held_item; 3 Phase 3: the trainer scales like a Kanto leader (+2 per Kanto badge); 4 Milestone 5 Phase 3: the next wild Pokemon becomes species at level (Coop_ChallengeWildMon)
+    u8  team_battle_armed; // one-shot, cleared when used: 1 probe E (multi with an AI partner); 2 Milestone 4 Phase 0: the trainer's first Pokemon becomes species holding held_item; 3 Phase 3: the trainer scales like a Kanto leader (+2 per Kanto badge); 4 Milestone 5 Phase 3: the next wild Pokemon becomes species at level (Coop_ChallengeWildMon); 5 the same, shiny; 6 the slot rolled species (before the dupes clause)
     u8  team_battle_used;  // probe E: set when a battle was converted
     u8  pad[2];            // pad[0]: battle results; pad[1]: the Pokemon this player brought to a 2v2
     u8  auto_pick[3];      // probes: a 2v2's three (party slots, 1-based) instead of the party screen; 0: none

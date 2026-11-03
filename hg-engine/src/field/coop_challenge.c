@@ -123,6 +123,9 @@ const char *Coop_ChallengeTradeOfferRule(struct PartyPokemon *mon)
 
     if (save != NULL && (save->rules & COOP_RULE_NUZLOCKE) && (GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD))
         return "It has fallen. It can't\nbe traded.";
+    // Phase 6 (E17): trading would sever the link and shield the Pokemon.
+    if (Coop_ChallengeSoulLinkOn(save) && (GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_LINKED))
+        return "Its fate is linked to its\nplace. It can't be traded.";
     return NULL;
 }
 

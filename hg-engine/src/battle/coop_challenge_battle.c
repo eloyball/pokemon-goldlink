@@ -118,7 +118,7 @@ BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys)
         sBallType = save->mono_type;
     }
     else if (Coop_NuzlockeBlocks(save, wild))
-        sBallReason = COOP_BALL_NUZLOCKE;
+        sBallReason = (save->pending_flags & COOP_PENDING_PARTNER_FAILED) ? COOP_BALL_SOUL_LINK : COOP_BALL_NUZLOCKE;
     else
         return FALSE;
     // The ball left the bag (or the Safari count) when it was chosen: give it

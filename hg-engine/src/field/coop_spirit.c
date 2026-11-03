@@ -561,6 +561,15 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     }
     if (player == NULL)
         return FALSE;
+    // The menu and its pages give way too (a revive left waiting would time
+    // out at the relay); the intro finishes first, it saves.
+    if (taskman->state >= COOP_SPIRIT_MENU && taskman->state != COOP_SPIRIT_SAVE && Coop_SpiritMustYield()
+        && !Coop_DialogIsPrinting(&env->dialog))
+    {
+        Coop_SpiritCloseDialog(fsys, env);
+        sys_FreeMemoryEz(env);
+        return TRUE;
+    }
 
     switch (taskman->state)
     {
