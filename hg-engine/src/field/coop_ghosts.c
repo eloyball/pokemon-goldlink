@@ -25,6 +25,7 @@
 #include "pokemon_storage_system.h"
 #pragma long_calls_off
 #include "coop_challenge.h"
+#include "coop_avatars_gen.h"
 #include "roamer.h"
 #include "bag.h"
 #include "script.h"
@@ -1546,10 +1547,81 @@ static const struct CoopPlayerSprite sCoopPlayerSprites[] = {
     { 423, 0, 0x1A, 1 }, { 424, 0, 0x1A, 1 }, // SHAKEHERO(INE): Apricorn shake
 };
 
+// Custom avatars (docs/CUSTOM_SPRITES_PLAN.md, Phase 3). A remote picks its
+// avatar in its bridge (CoopPlayerState.avatar_id): 0 its save's own, 1 Ethan,
+// 2 Lyra, 3 + k custom avatar k (scripts/avatar_build.py). Its sprite_id stays
+// vanilla; only the ghost's drawing changes. A custom tag draws with its
+// vanilla state's billboard (the same model and sequence), so the lookups
+// above go through the hero sprite it stands in for.
+#define COOP_AVATAR_ETHAN     1
+#define COOP_AVATAR_LYRA      2
+#define COOP_SPRITE_HERO_2    238 // pret SPRITE_HERO_2 / HEROINE_2: walking (map-load variants)
+#define COOP_SPRITE_HEROINE_2 239
+
+static const u16 sCoopAvatarStateSprites[COOP_AVATAR_STATES][2] = COOP_AVATAR_STATE_SPRITES;
+#if COOP_AVATAR_CUSTOM > 0
+static const u16 sCoopAvatarTags[COOP_AVATAR_CUSTOM][COOP_AVATAR_STATES] = COOP_AVATAR_TAGS;
+static const u16 sCoopAvatarTagBase[COOP_AVATAR_TAG_SPAN] = COOP_AVATAR_TAG_BASE;
+#endif
+
+// The vanilla sprite a custom tag stands in for; any other sprite as is.
+static u32 Coop_AvatarBase(u32 sprite)
+{
+#if COOP_AVATAR_CUSTOM > 0
+    if (sprite >= COOP_AVATAR_FIRST_TAG && sprite < COOP_AVATAR_FIRST_TAG + COOP_AVATAR_TAG_SPAN
+        && sCoopAvatarTagBase[sprite - COOP_AVATAR_FIRST_TAG] != 0xFFFF)
+        return sCoopAvatarTagBase[sprite - COOP_AVATAR_FIRST_TAG];
+#endif
+    return sprite;
+}
+
+static u32 Coop_AvatarStateOf(u32 sprite)
+{
+    u32 i;
+
+    if (sprite == COOP_SPRITE_HERO_2 || sprite == COOP_SPRITE_HEROINE_2)
+        sprite = COOP_SPRITE_HERO;
+    for (i = 0; i < COOP_AVATAR_STATES; i++)
+    {
+        if (sCoopAvatarStateSprites[i][0] == sprite || sCoopAvatarStateSprites[i][1] == sprite)
+            break;
+    }
+    return i;
+}
+
+// What the remote's avatar draws in place of its vanilla sprite: the other
+// gender's sprite for Ethan / Lyra, the custom state's tag (vanilla when that
+// column wasn't drawn), else the vanilla sprite.
+static u32 Coop_AvatarSprite(const struct CoopPlayerState *remote, u32 sprite)
+{
+    u32 avatar = remote->avatar_id;
+    u32 state;
+
+    if (avatar == 0)
+        return sprite;
+    if (avatar == COOP_AVATAR_ETHAN || avatar == COOP_AVATAR_LYRA)
+    {
+        if (sprite == COOP_SPRITE_HERO_2 || sprite == COOP_SPRITE_HEROINE_2)
+            return avatar == COOP_AVATAR_ETHAN ? COOP_SPRITE_HERO_2 : COOP_SPRITE_HEROINE_2;
+        state = Coop_AvatarStateOf(sprite);
+        return state < COOP_AVATAR_STATES ? sCoopAvatarStateSprites[state][avatar - COOP_AVATAR_ETHAN] : sprite;
+    }
+#if COOP_AVATAR_CUSTOM > 0
+    if (avatar >= COOP_AVATAR_FIRST_CUSTOM_ID && avatar < COOP_AVATAR_FIRST_CUSTOM_ID + COOP_AVATAR_CUSTOM)
+    {
+        state = Coop_AvatarStateOf(sprite);
+        if (state < COOP_AVATAR_STATES && sCoopAvatarTags[avatar - COOP_AVATAR_FIRST_CUSTOM_ID][state] != 0)
+            return sCoopAvatarTags[avatar - COOP_AVATAR_FIRST_CUSTOM_ID][state];
+    }
+#endif
+    return sprite;
+}
+
 static const struct CoopPlayerSprite *Coop_FindPlayerSprite(u32 sprite)
 {
     u32 i;
 
+    sprite = Coop_AvatarBase(sprite);
     for (i = 0; i < NELEMS(sCoopPlayerSprites); i++)
     {
         if (sCoopPlayerSprites[i].sprite == sprite)
@@ -1560,13 +1632,14 @@ static const struct CoopPlayerSprite *Coop_FindPlayerSprite(u32 sprite)
 
 static u32 Coop_WalkingSprite(const struct CoopPlayerState *remote)
 {
-    return remote->gender ? COOP_SPRITE_HEROINE : COOP_SPRITE_HERO;
+    return Coop_AvatarSprite(remote, remote->gender ? COOP_SPRITE_HEROINE : COOP_SPRITE_HERO);
 }
 
-// The remote's own sprite when it is a player sprite, else walking.
+// The remote's own sprite (in its avatar) when it is a player sprite, else walking.
 static u32 Coop_WantedSprite(const struct CoopPlayerState *remote)
 {
-    return Coop_FindPlayerSprite(remote->sprite_id) != NULL ? remote->sprite_id : Coop_WalkingSprite(remote);
+    return Coop_FindPlayerSprite(remote->sprite_id) != NULL ? Coop_AvatarSprite(remote, remote->sprite_id)
+                                                             : Coop_WalkingSprite(remote);
 }
 
 // Free slots always left for vanilla. One animation (and model) is the room
@@ -1903,7 +1976,8 @@ static void Coop_UpdatePoseAnim(LocalMapObject *ghost, const struct CoopPlayerSt
 {
     const struct CoopPlayerSprite *info = Coop_FindPlayerSprite((u32)ghost->gfxId);
 
-    if (info != NULL && info->posed && (u32)ghost->gfxId == (u32)remote->sprite_id && Coop_GhostIsIdle(ghost))
+    if (info != NULL && info->posed && (u32)ghost->gfxId == Coop_AvatarSprite(remote, remote->sprite_id)
+        && Coop_GhostIsIdle(ghost))
         ghost->unkA0 = remote->anim; // pret LocalMapObject.animation
 }
 

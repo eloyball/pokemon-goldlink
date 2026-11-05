@@ -12,7 +12,9 @@ cd "$ROOT_DIR/coop-relay"
 cargo test
 cargo build --release
 
-echo "[2/4] Compiling hg-engine ROM (C / ARMIPS)..."
+echo "[2/4] Cutting the avatar sheets, then compiling hg-engine ROM (C / ARMIPS)..."
+cd "$ROOT_DIR"
+python3 ./scripts/avatar_build.py   # docs/CUSTOM_SPRITES_PLAN.md: writes only what changed
 cd "$ROOT_DIR/hg-engine"
 make -j$(nproc)
 

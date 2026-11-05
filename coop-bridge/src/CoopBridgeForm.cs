@@ -526,6 +526,15 @@ namespace CoopBridge
         // relay's answer (down trailer, also shown in the session card).
         private ushort _challengeRules;
         private readonly object _challengeLock = new object();
+
+        // Custom avatars (docs/CUSTOM_SPRITES_PLAN.md §1): picked before
+        // creating or joining, saved by key, sent as the player state's
+        // avatar_id (the ROM never writes that byte).
+        private readonly List<AvatarChoice> _avatars;
+        private readonly ComboBox _avatarPicker;
+        private readonly PictureBox _avatarPreview;
+        private byte _avatarId;
+        private string _avatarKey;
         private readonly byte[] _challengeUp = new byte[Wire.ChallengeUpSize];
         private bool _challengeUpValid;
         private ushort _roomRules;
@@ -628,10 +637,14 @@ namespace CoopBridge
         public CoopBridgeForm()
         {
             LoadOffsetsFromJson();
-            (string savedHost, int savedParty, ulong savedSecret, ushort savedRules) = LoadNetConfig();
+            (string savedHost, int savedParty, ulong savedSecret, ushort savedRules, string savedAvatar) = LoadNetConfig();
             _playerSecret = savedSecret != 0 ? savedSecret : GenerateCryptoSecret();
             _challengeRules = ChallengeRules.Sanitize(savedRules);
-            if (savedSecret == 0) SaveNetConfig(savedHost, savedParty, _playerSecret, _challengeRules);
+            _avatars = Avatars.Load(RepoFileCandidates(Avatars.ListFileName));
+            AvatarChoice avatar = _avatars.Find(a => a.Key == savedAvatar) ?? _avatars[0];
+            _avatarId = avatar.Id;
+            _avatarKey = avatar.Key;
+            if (savedSecret == 0) SaveNetConfig(savedHost, savedParty, _playerSecret, _challengeRules, _avatarKey);
 
             BackColor = Theme.Window;
             ForeColor = Theme.TextPrimary;
@@ -728,6 +741,48 @@ namespace CoopBridge
             _roomInput.TextChanged += (_, _) => UpdateControls();
             var roomHint = Theme.MakeLabel("6 letters or numbers, shared by everyone in the room.", Theme.Caption, Theme.TextSecondary);
             roomHint.Margin = new Padding(0, 0, 0, 12);
+
+            // The avatar: a list and its battle picture.
+            var avatarCaption = Theme.MakeLabel("Avatar", Theme.Caption, Theme.TextSecondary);
+            var avatarRow = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 0, 0, 12)
+            };
+            avatarRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            avatarRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _avatarPicker = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Input,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.Body,
+                Dock = DockStyle.Top,
+                Margin = new Padding(0, 0, 8, 4)
+            };
+            _avatarPicker.Items.AddRange(_avatars.ToArray());
+            _avatarPicker.SelectedItem = avatar;
+            _avatarPreview = new PictureBox
+            {
+                Size = new Size(80, 80),
+                SizeMode = PictureBoxSizeMode.CenterImage,
+                BackColor = Theme.Input,
+                Margin = new Padding(0),
+                Image = Avatars.LoadPreview(avatar)
+            };
+            var avatarHint = Theme.MakeLabel("How the others see you. Pick it before joining or creating a room.",
+                Theme.Caption, Theme.TextSecondary);
+            avatarHint.MaximumSize = new Size(contentWidth - 128, 0);
+            avatarHint.Margin = new Padding(0);
+            var avatarLeft = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0) };
+            avatarLeft.Controls.Add(_avatarPicker);
+            avatarLeft.Controls.Add(avatarHint);
+            avatarRow.Controls.Add(avatarLeft, 0, 0);
+            avatarRow.Controls.Add(_avatarPreview, 1, 0);
+            _avatarPicker.SelectedIndexChanged += (_, _) => OnAvatarPicked();
 
             _hostOptions = new TableLayoutPanel
             {
@@ -834,6 +889,8 @@ namespace CoopBridge
             roomCard.Controls.Add(roomCaption);
             roomCard.Controls.Add(_roomInput);
             roomCard.Controls.Add(roomHint);
+            roomCard.Controls.Add(avatarCaption);
+            roomCard.Controls.Add(avatarRow);
             roomCard.Controls.Add(_hostOptions);
             roomCard.Controls.Add(_primaryButton);
             roomCard.Controls.Add(_leaveButton);
@@ -1130,6 +1187,7 @@ namespace CoopBridge
             _modeSegments.Visible = offline;
             _roomInput.Enabled = offline;
             _serverInput.Enabled = offline;
+            if (_avatarPicker != null) _avatarPicker.Enabled = offline;
             for (int i = 0; i < _partySizeButtons.Length; i++)
             {
                 _partySizeButtons[i].Kind = i + 2 == _partySize ? Theme.ButtonKind.SegmentOn : Theme.ButtonKind.SegmentOff;
@@ -1228,7 +1286,7 @@ namespace CoopBridge
                 ? $"Creating room {roomText}…"
                 : $"Joining room {roomText}…", isError: false);
 
-            SaveNetConfig(hostText, _partySize, _playerSecret, _challengeRules);
+            SaveNetConfig(hostText, _partySize, _playerSecret, _challengeRules, _avatarKey);
             StartReceiveThread();
         }
 
@@ -1462,6 +1520,7 @@ namespace CoopBridge
             Buffer.BlockCopy(BitConverter.GetBytes(_heartbeatRom), 0, tx, 26, 4);
             Buffer.BlockCopy(BitConverter.GetBytes(_challengeRules), 0, tx, 30, 2); // honored only from the host
             Buffer.BlockCopy(_localPlayer, 0, tx, 32, Mailbox.PlayerStateSize);
+            tx[32 + Mailbox.PsAvatarId] = Volatile.Read(ref _avatarId); // the ROM leaves it 0
             Buffer.BlockCopy(BitConverter.GetBytes(Interlocked.Read(ref _cookie)), 0, tx, 96, 8);
             Buffer.BlockCopy(BitConverter.GetBytes(_playerSecret), 0, tx, 104, 8);
             Buffer.BlockCopy(_sessionOut, 0, tx, 112, Mailbox.SessionOutSize);
@@ -2332,7 +2391,7 @@ namespace CoopBridge
 
         // player_secret identifies this install to locked campaigns: losing it
         // means the relay operator must reset that roster entry's secret to 0.
-        private static void SaveNetConfig(string host, int partySize, ulong playerSecret, ushort challengeRules)
+        private static void SaveNetConfig(string host, int partySize, ulong playerSecret, ushort challengeRules, string avatar)
         {
             try
             {
@@ -2340,6 +2399,7 @@ namespace CoopBridge
                     $"  \"server\": \"{JsonEscape(host)}\",\n" +
                     $"  \"party_size\": {partySize},\n" +
                     $"  \"challenge_rules\": {challengeRules},\n" +
+                    $"  \"avatar\": \"{JsonEscape(avatar)}\",\n" +
                     $"  \"player_secret\": \"{playerSecret:X16}\"\n" +
                     "}\n";
                 File.WriteAllText(ConfigFilePath, json);
@@ -2348,7 +2408,7 @@ namespace CoopBridge
             catch (UnauthorizedAccessException) { }
         }
 
-        private static (string host, int party, ulong secret, ushort rules) LoadNetConfig()
+        private static (string host, int party, ulong secret, ushort rules, string avatar) LoadNetConfig()
         {
             try
             {
@@ -2359,17 +2419,18 @@ namespace CoopBridge
                     Match mP = Regex.Match(json, @"""party_size""\s*:\s*(\d+)");
                     Match mS = Regex.Match(json, @"""player_secret""\s*:\s*""([0-9A-Fa-f]{1,16})""");
                     Match mR = Regex.Match(json, @"""challenge_rules""\s*:\s*(\d+)");
+                    Match mA = Regex.Match(json, @"""avatar""\s*:\s*""([a-z0-9_]+)""");
 
                     string h = mH.Success ? mH.Groups[1].Value : "127.0.0.1:7777";
                     int p = mP.Success && int.TryParse(mP.Groups[1].Value, out int pv) ? pv : 2;
                     ulong secret = mS.Success ? Convert.ToUInt64(mS.Groups[1].Value, 16) : 0;
                     ushort rules = mR.Success && ushort.TryParse(mR.Groups[1].Value, out ushort rv) ? rv : (ushort)0;
-                    return (h, p, secret, rules);
+                    return (h, p, secret, rules, mA.Success ? mA.Groups[1].Value : "default");
                 }
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return ("127.0.0.1:7777", 2, 0, 0);
+            return ("127.0.0.1:7777", 2, 0, 0, "default");
         }
 
         private static IPEndPoint? TryResolveServerEndpoint(string hostPort)
@@ -2409,16 +2470,34 @@ namespace CoopBridge
         /// There is deliberately no fallback offset: without a valid file the
         /// bridge never touches emulated memory.
         /// </summary>
-        private void LoadOffsetsFromJson()
+        // Where build outputs at the repo root are looked for.
+        private static string[] RepoFileCandidates(string fileName)
         {
             string dllDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
-            string[] searchPaths =
+            return new[]
             {
-                Path.Combine(dllDir, "..", "..", OffsetsFileName), // <repo>/BizHawk/ExternalTools -> <repo>
-                Path.Combine(dllDir, OffsetsFileName),
-                OffsetsFileName,
-                Path.Combine("..", OffsetsFileName),
+                Path.Combine(dllDir, "..", "..", fileName), // <repo>/BizHawk/ExternalTools -> <repo>
+                Path.Combine(dllDir, fileName),
+                fileName,
+                Path.Combine("..", fileName),
             };
+        }
+
+        private void OnAvatarPicked()
+        {
+            if (!(_avatarPicker.SelectedItem is AvatarChoice choice) || _link != LinkState.Offline) return;
+            Volatile.Write(ref _avatarId, choice.Id);
+            _avatarKey = choice.Key;
+            Image? old = _avatarPreview.Image;
+            _avatarPreview.Image = Avatars.LoadPreview(choice);
+            old?.Dispose();
+            (string host, int party, ulong secret, ushort rules, _) = LoadNetConfig();
+            SaveNetConfig(host, party, secret != 0 ? secret : _playerSecret, rules, _avatarKey);
+        }
+
+        private void LoadOffsetsFromJson()
+        {
+            string[] searchPaths = RepoFileCandidates(OffsetsFileName);
 
             foreach (string path in searchPaths)
             {

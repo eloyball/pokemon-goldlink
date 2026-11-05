@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "avatars": [
+  {
+   "id": 0,
+   "name": "Default",
+   "note": "Ethan or Lyra, by the save"
+  },
+  {
+   "id": 1,
+   "name": "Ethan",
+   "preview": "build/avatars/ethan.png"
+  },
+  {
+   "id": 2,
+   "name": "Lyra",
+   "preview": "build/avatars/lyra.png"
+  },
+  {
+   "id": 3,
+   "name": "Leroy",
+   "file": "leroy",
+   "preview": "build/avatars/leroy.png"
+  }
+ ]
+}
