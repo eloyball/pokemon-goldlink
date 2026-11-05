@@ -125,11 +125,18 @@ _Static_assert(__builtin_offsetof(LocalMapObject, yCurr) == 0x6C, "yCurr (tile Z
 _Static_assert(__builtin_offsetof(LocalMapObject, posVec) == 0x70, "posVec");
 _Static_assert(__builtin_offsetof(FieldSystem, unkD3) == 0xD3, "FieldSystem.textbox_open byte must be 0xD2 (pret field_system.h)");
 _Static_assert(__builtin_offsetof(FieldSystem, followMon) == 0xE4, "FieldSystem.followMon must be at 0xE4 (pret field_system.h)");
+_Static_assert(__builtin_offsetof(LocalMapObject, unk108) == 0x108, "LocalMapObject draw data (pret map_object.h unk108)");
+_Static_assert(__builtin_offsetof(FIELD_PLAYER_AVATAR, transFlag) == 0x04, "PlayerAvatar.transitionFlags (pret player_avatar.h)");
+_Static_assert(__builtin_offsetof(FIELD_PLAYER_AVATAR, state) == 0x18, "PlayerAvatar.state (pret player_avatar.h)");
+_Static_assert(__builtin_offsetof(FIELD_PLAYER_AVATAR, gender) == 0x1C, "PlayerAvatar.gender (pret player_avatar.h)");
+_Static_assert(__builtin_offsetof(FIELD_PLAYER_AVATAR, mapObject) == 0x30, "PlayerAvatar.mapObject (pret player_avatar.h)");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, modelIds) == 0x20, "modelIds");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, sequenceIds) == 0x40, "sequenceIds");
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, textureIds) == 0x60, "textureIds");
 
 static void Coop_FieldEntry(FieldSystem *fsys);
+static u32 Coop_LocalPlayerSprite(u32 state, u32 gender);
+static u32 Coop_AvatarBase(u32 sprite);
 
 __attribute__((section(".coop_field_entry"), used))
 const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
@@ -139,6 +146,7 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .challenge = &gCoopChallengeSync,
     .giftSpecies = Coop_ChallengeGiftSpecies,
     .roamerSpecies = Coop_ChallengeRoamerSpecies,
+    .playerSprite = Coop_LocalPlayerSprite,
 };
 
 // ---------------------------------------------------------------------------
@@ -1301,7 +1309,7 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
     ps->height = Coop_ObjectHeight(player);
     ps->direction = (u8)player->curFacing;
     ps->gender = (u8)fsys->playerAvatar->gender;
-    ps->sprite_id = (u16)player->gfxId;
+    ps->sprite_id = (u16)Coop_AvatarBase((u32)player->gfxId); // vanilla: the others apply our avatar
     ps->move_action = (u8)player->movementCmd;
     ps->anim = (u8)player->unkA0; // pret LocalMapObject.animation (MapObject_SetAnimation)
     ps->move_seq = Coop_NextMoveSeq(player, lastValid, last.x, last.z, last.move_action, last.move_seq,
@@ -1589,12 +1597,11 @@ static u32 Coop_AvatarStateOf(u32 sprite)
     return i;
 }
 
-// What the remote's avatar draws in place of its vanilla sprite: the other
-// gender's sprite for Ethan / Lyra, the custom state's tag (vanilla when that
-// column wasn't drawn), else the vanilla sprite.
-static u32 Coop_AvatarSprite(const struct CoopPlayerState *remote, u32 sprite)
+// What an avatar draws in place of a vanilla sprite: the other gender's
+// sprite for Ethan / Lyra, the custom state's tag (vanilla when that column
+// wasn't drawn), else the vanilla sprite.
+static u32 Coop_AvatarSpriteFor(u32 avatar, u32 sprite)
 {
-    u32 avatar = remote->avatar_id;
     u32 state;
 
     if (avatar == 0)
@@ -1615,6 +1622,96 @@ static u32 Coop_AvatarSprite(const struct CoopPlayerState *remote, u32 sprite)
     }
 #endif
     return sprite;
+}
+
+static u32 Coop_AvatarSprite(const struct CoopPlayerState *remote, u32 sprite)
+{
+    return Coop_AvatarSpriteFor(remote->avatar_id, sprite);
+}
+
+// The local player (Phase 4): vanilla's sprite for the state (pret
+// PlayerAvatar_GetSpriteByStateAndGender, PLAYER_STATE_* order) in the avatar
+// the bridge set. Called by the resident ARM9 hook through the header.
+static const u16 sCoopVanillaPlayerSprites[][2] = {
+    { 0, 97 },    { 21, 98 },   { 178, 179 }, { 258, 259 }, // walking, cycling, surfing, Rocket
+    { 176, 177 }, { 180, 181 }, { 407, 408 }, { 188, 189 }, // HM, watering, Pokeathlon, fishing
+    { 196, 197 }, { 198, 199 }, { 200, 201 }, { 248, 249 }, // Pokegear, saving, healing, ladder
+    { 260, 261 }, { 423, 424 }, { 297, 298 },               // Rocket healing, Apricorn shake, Rocket saving
+};
+
+static u32 Coop_LocalPlayerSprite(u32 state, u32 gender)
+{
+    if (state >= NELEMS(sCoopVanillaPlayerSprites))
+        return 0; // vanilla asserts, then returns 0
+    return Coop_AvatarSpriteFor(gCoopCommBlock.local_avatar, sCoopVanillaPlayerSprites[state][gender != 0]);
+}
+
+// Overlay-01 hook (hooks: ov01_021F72DC, ccd MapObject_GetBillboard; the
+// whole function is replaced). hg-engine NOPs the follower range's upper
+// bound (armips/asm/overworlds.s, 0x021F7394), so every tag >= 428 reads the
+// draw data's follower slot; the avatar tags (7000+) are player sprites and
+// read the billboard slot, as vanilla's player list and its default do.
+// Without this, changing the player away from an avatar tag read a NULL
+// billboard (BillboardObject_GetModel, data abort).
+void *LONG_CALL ApricornTreeObject_GetBillboard(LocalMapObject *object); // pret sub_02064084
+
+#define COOP_SPRITE_FOLLOWER_FIRST 428   // pret SPRITE_FOLLOWER_MON_BULBASAUR
+#define COOP_SPRITE_BONGURI_FIRST  0x106 // pret SPRITE_BONGURI .. SPRITE_BONGURI_BK
+#define COOP_SPRITE_BONGURI_LAST   0x10D
+
+void *Coop_MapObject_GetBillboard(LocalMapObject *object)
+{
+    u32 sprite = (u32)object->gfxId; // pret MapObject_GetSpriteID
+    void *slots[2];
+
+    __builtin_memcpy(slots, object->unk108, sizeof(slots)); // pret MapObject_GetDrawData
+    if (sprite >= COOP_SPRITE_FOLLOWER_FIRST && Coop_AvatarBase(sprite) == sprite)
+        return slots[0];
+    if (sprite >= COOP_SPRITE_BONGURI_FIRST && sprite <= COOP_SPRITE_BONGURI_LAST)
+        return ApricornTreeObject_GetBillboard(object);
+    return slots[1];
+}
+
+// Overlay-01 hooks (hooks: ov01_021F2EDC / ov01_021F2F24, ccd
+// Field_PlayerAvatar_TryEnterPoketchPose / TryLeavePoketchPose, replaced):
+// vanilla's steps, with the sprite compared through its vanilla base, so a
+// custom Pokegear pose is left like vanilla's.
+BOOL LONG_CALL MapObject_IsDrawInitialized(LocalMapObject *object); // pret sub_0205F73C
+
+#define COOP_SPRITE_POKEHERO          196
+#define COOP_SPRITE_POKEHEROINE       197
+#define COOP_PLAYER_TRANSITION_POKETCH (1u << 6)
+
+static BOOL Coop_InPoketchPose(LocalMapObject *object)
+{
+    u32 base = Coop_AvatarBase((u32)object->gfxId);
+
+    return base == COOP_SPRITE_POKEHERO || base == COOP_SPRITE_POKEHEROINE;
+}
+
+static void Coop_ApplyPlayerTransition(FIELD_PLAYER_AVATAR *avatar, u32 transition)
+{
+    u32 flags = avatar->transFlag; // pret PlayerAvatar_GetTransitionFlags
+
+    Field_PlayerAvatar_OrrTransitionFlags(avatar, transition);
+    Field_PlayerAvatar_ApplyTransitionFlags(avatar);
+    Field_PlayerAvatar_OrrTransitionFlags(avatar, flags);
+}
+
+void Coop_TryEnterPoketchPose(FIELD_PLAYER_AVATAR *avatar)
+{
+    LocalMapObject *object = avatar->mapObject;
+
+    if (MapObject_IsDrawInitialized(object) && avatar->state == COOP_PLAYER_STATE_WALKING && !Coop_InPoketchPose(object))
+        Coop_ApplyPlayerTransition(avatar, COOP_PLAYER_TRANSITION_POKETCH);
+}
+
+void Coop_TryLeavePoketchPose(FIELD_PLAYER_AVATAR *avatar)
+{
+    LocalMapObject *object = avatar->mapObject;
+
+    if (MapObject_IsDrawInitialized(object) && avatar->state == COOP_PLAYER_STATE_WALKING && Coop_InPoketchPose(object))
+        Coop_ApplyPlayerTransition(avatar, COOP_PLAYER_TRANSITION_WALKING);
 }
 
 static const struct CoopPlayerSprite *Coop_FindPlayerSprite(u32 sprite)
@@ -2450,6 +2547,28 @@ static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalM
 // while the field map is active and this overlay is loaded.
 // ---------------------------------------------------------------------------
 
+// A map load creates the player before Overlay 131 is back (the resident
+// hook then answers vanilla), and an avatar picked while offline changes
+// nothing by itself: once the field is idle, a player sprite of the current
+// state that isn't the avatar's becomes it. Poses (another state's sprite)
+// and script-set sprites are left alone.
+static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
+{
+    FIELD_PLAYER_AVATAR *avatar = fsys->playerAvatar;
+    u32 current = (u32)player->gfxId;
+    u32 wanted;
+
+    if ((u32)avatar->state >= NELEMS(sCoopVanillaPlayerSprites))
+        return;
+    wanted = Coop_LocalPlayerSprite((u32)avatar->state, avatar->gender);
+    if (current == wanted || Coop_AvatarStateOf(Coop_AvatarBase(current)) != Coop_AvatarStateOf(Coop_AvatarBase(wanted)))
+        return;
+    if (!Coop_CanRunFieldDebugCommand(fsys, player) || MapObject_IsBillboardPending(player)
+        || !MapObject_IsDrawInitialized(player))
+        return;
+    ChangeMapObjSprite(player, wanted);
+}
+
 static void Coop_FieldEntry(FieldSystem *fsys)
 {
     MapObjectMan *manager = fsys->mapObjectMan;
@@ -2463,6 +2582,7 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     if (fsys->location == NULL || fsys->savedata == NULL)
         return;
     Coop_PublishLocalPlayerState(fsys, player);
+    Coop_ApplyLocalAvatar(fsys, player);
     Coop_ProbeRender(manager);
     Coop_UpdateGhosts(fsys, manager, player);
     Coop_CheckGhostTalk(fsys, manager, player);

@@ -69,6 +69,7 @@ struct CoopFieldEntryHeader
     struct CoopChallengeSync *challenge;     // 0x0C: Milestone 5 sync block (coop_challenge.h), read by the bridge
     u32 (*giftSpecies)(u32 value);           // 0x10: Milestone 5 gift randomizer, called by GiveMon (src/pokemon.c)
     u32 (*roamerSpecies)(u32 idx, u32 vanilla); // 0x14: Milestone 5 roamer randomizer (src/field_roamer.c)
+    u32 (*playerSprite)(u32 state, u32 gender); // 0x18: the local player's sprite in its avatar (Coop_PlayerAvatar_GetSprite)
 };
 _Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, challenge) == 0x0C,
                "the bridge reads the challenge pointer at 0x0C (Mailbox.FieldEntryChallenge)");
@@ -603,7 +604,8 @@ struct CoopCommBlock
     u32 local_player_seq;                                       // 0x1B4 odd while local_player is being written
     u32 bridge_hb_last_seen;                                    // 0x1B8
     u16 bridge_stale_frames;                                    // 0x1BC
-    u16 pad1BE;                                                 // 0x1BE
+    u8  local_avatar;                                           // 0x1BE bridge: this player's avatar (docs/CUSTOM_SPRITES_PLAN.md; 0 the save's own)
+    u8  pad1BF;                                                 // 0x1BF
     // Validation limits published by the ROM so the bridge can bounds-check
     // relay data without duplicating game constants.
     u16 limit_map_id;                                           // 0x1C0 exclusive: map_id < limit
@@ -692,6 +694,7 @@ COOP_ASSERT_OFFSET(CoopCommBlock, heartbeat_bridge, 0x1B0);
 COOP_ASSERT_OFFSET(CoopCommBlock, local_player_seq, 0x1B4);
 COOP_ASSERT_OFFSET(CoopCommBlock, bridge_hb_last_seen, 0x1B8);
 COOP_ASSERT_OFFSET(CoopCommBlock, bridge_stale_frames, 0x1BC);
+COOP_ASSERT_OFFSET(CoopCommBlock, local_avatar, 0x1BE);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_map_id, 0x1C0);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_species, 0x1C2);
 COOP_ASSERT_OFFSET(CoopCommBlock, diag, 0x1C4);

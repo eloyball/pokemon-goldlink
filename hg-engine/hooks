@@ -642,6 +642,12 @@ arm9 PartyMenu_StartContextMenuButtonPressAnim_FromCursorObj 0207CB9C 3
 #co-op (Milestone 2 Phase 4): remote follower ghosts (IDs 0xE5-0xE9) get their shiny palette too
 0001 Coop_MapObject_IsShinyPokemon 0220553C 1
 0001 Coop_FollowMonBillboard_SetResource 02205808 3
+# Custom avatars (docs/CUSTOM_SPRITES_PLAN.md Phase 4): the local player's sprite,
+# and the Pokegear pose checks that compare it with vanilla's (pret ov01_021F2EDC / ov01_021F2F24)
+arm9 Coop_PlayerAvatar_GetSprite 0205C898 2
+0001 Coop_TryEnterPoketchPose 021F2EDC 2
+0001 Coop_TryLeavePoketchPose 021F2F24 2
+0001 Coop_MapObject_GetBillboard 021F72DC 2
 
 0012 BattleMessage_BufferNickname 0223CDD0
 0012 BattleMessage_BufferPokemon 0223CE80

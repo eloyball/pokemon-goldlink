@@ -368,6 +368,20 @@ const struct CoopFieldEntryHeader *LONG_CALL Coop_FieldHeader(void)
     return header;
 }
 
+// ARM9 hook (hooks: 0205C898, pret PlayerAvatar_GetSpriteByStateAndGender,
+// asm label sub_0205C898; the whole function is replaced): the local player's
+// sprite in the avatar the bridge set (docs/CUSTOM_SPRITES_PLAN.md Phase 4).
+// The lookup lives in Overlay 131, which loads with the field overlay where
+// every caller runs; without it, the walking sprite.
+u32 Coop_PlayerAvatar_GetSprite(s32 state, u32 gender)
+{
+    const struct CoopFieldEntryHeader *header = Coop_FieldHeader();
+
+    if (header != NULL)
+        return header->playerSprite((u32)state, gender);
+    return gender ? 97 : 0; // SPRITE_HEROINE / SPRITE_HERO
+}
+
 static void Coop_RunFieldEntry(FieldSystem *fsys)
 {
     const struct CoopFieldEntryHeader *header = (const struct CoopFieldEntryHeader *)COOP_FIELD_ENTRY_ADDR;

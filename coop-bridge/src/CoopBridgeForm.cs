@@ -43,6 +43,7 @@ namespace CoopBridge
         public const uint BadgeMaskLocal = 0x1AC;    // u16  rom
         public const uint RoomRejection = 0x1AE;     // u8   bridge: relay status that turned this save away
         public const uint HeartbeatBridge = 0x1B0;   // u32  bridge
+        public const uint LocalAvatar = 0x1BE;       // u8   bridge: this player's avatar ID (docs/CUSTOM_SPRITES_PLAN.md)
         public const uint LocalPlayerSeq = 0x1B4;    // u32  rom (odd while writing)
         public const uint LimitMapId = 0x1C0;        // u16  rom: map_id < limit
         public const uint LimitSpecies = 0x1C2;      // u16  rom: species <= limit
@@ -1684,6 +1685,8 @@ namespace CoopBridge
 
                 // Tell the ROM we are alive (drives its disconnect watchdog).
                 _memoryApi!.WriteU32(mb + Mailbox.HeartbeatBridge, ++_bridgeHeartbeat, MemoryDomain);
+                // Our own look: the ROM draws the local player in it from the next sprite change.
+                _memoryApi.WriteU8(mb + Mailbox.LocalAvatar, Volatile.Read(ref _avatarId), MemoryDomain);
                 ReadLocalPlayerSnapshot(mb);
                 UpdateSaveSlot(mb);
                 SendPendingDebugCommand(mb);
