@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "frame_order": "top to bottom, as the vanilla source",
  "columns": [
   {
@@ -8,7 +8,10 @@
    "priority": "must",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0069.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      20,
@@ -162,7 +165,10 @@
    "priority": "must",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0071.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      68,
@@ -304,7 +310,10 @@
    "priority": "must",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0073.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      116,
@@ -338,7 +347,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0075.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      164,
@@ -372,7 +384,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0079.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      212,
@@ -478,7 +493,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0087.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      260,
@@ -500,7 +518,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0089.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      308,
@@ -546,7 +567,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0085.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      356,
@@ -628,7 +652,10 @@
    "priority": "should",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0081.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      404,
@@ -674,7 +701,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0077.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      452,
@@ -714,7 +744,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0207.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      500,
@@ -772,7 +805,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0099.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      548,
@@ -932,7 +968,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0095.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      596,
@@ -1098,7 +1137,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0097.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      644,
@@ -1144,7 +1186,10 @@
    "priority": "optional",
    "kind": "overworld",
    "source": "data/graphics/overworlds/0248.png",
-   "frame_size": 32,
+   "frame_size": [
+    32,
+    32
+   ],
    "frames": [
     [
      692,
@@ -1166,13 +1211,22 @@
    "priority": "must",
    "kind": "battle_front",
    "source": "data/graphics/trainer_gfx/000.png",
-   "frame_size": 80,
+   "frame_size": [
+    80,
+    80
+   ],
    "frames": [
     [
      740,
      162,
      80,
      80
+    ]
+   ],
+   "offsets": [
+    [
+     0,
+     0
     ]
    ]
   },
@@ -1182,7 +1236,10 @@
    "priority": "must",
    "kind": "battle_back",
    "source": "data/graphics/trainer_back_gfx/00.png",
-   "frame_size": 80,
+   "frame_size": [
+    80,
+    80
+   ],
    "frames": [
     [
      836,
@@ -1231,6 +1288,40 @@
      736,
      80,
      80
+    ]
+   ],
+   "offsets": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ],
+    [
+     16,
+     0
+    ],
+    [
+     16,
+     0
+    ],
+    [
+     15,
+     1
+    ],
+    [
+     14,
+     2
+    ],
+    [
+     13,
+     3
     ]
    ]
   },
@@ -1240,7 +1331,10 @@
    "priority": "optional",
    "kind": "battle_back",
    "source": "data/graphics/trainer_back_gfx/15.png",
-   "frame_size": 80,
+   "frame_size": [
+    80,
+    80
+   ],
    "frames": [
     [
      932,
@@ -1290,11 +1384,64 @@
      80,
      80
     ]
+   ],
+   "offsets": [
+    [
+     0,
+     0
+    ],
+    [
+     0,
+     0
+    ],
+    [
+     -2,
+     0
+    ],
+    [
+     8,
+     0
+    ],
+    [
+     11,
+     0
+    ],
+    [
+     12,
+     0
+    ],
+    [
+     13,
+     0
+    ],
+    [
+     14,
+     0
+    ]
+   ]
+  },
+  {
+   "key": "vs_face",
+   "label": "VS face",
+   "priority": "should",
+   "kind": "vs_face",
+   "source": "base/root/a/1/0/9 members 207-210",
+   "frame_size": [
+    96,
+    64
+   ],
+   "frames": [
+    [
+     1028,
+     162,
+     96,
+     64
+    ]
    ]
   }
  ],
  "image_size": [
-  1032,
+  1144,
   1050
  ]
 }
