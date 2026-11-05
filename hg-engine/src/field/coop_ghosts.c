@@ -1830,13 +1830,18 @@ static void Coop_BudgetClaim(struct CoopBudget *budget, u32 sprite)
     Coop_IdSetClaim(&budget->sequences, info->sequence);
 }
 
-// Everything the sprite needs is already loaded or claimed.
-static BOOL Coop_BudgetHas(const struct CoopBudget *budget, u32 sprite)
+// Going back to walking frees what a pose holds: possible when the walking
+// model and sequence are loaded already (the scarce kinds) and its texture is
+// loaded or fits without the texture reserve. A vanilla walking texture is
+// always loaded (the local player's); a custom avatar's is released while
+// the ghost poses, and textures are the plentiful kind, so it may be loaded
+// again (custom avatars, KNOWN_RISKS.md #78).
+static BOOL Coop_BudgetCanReturnTo(const struct CoopBudget *budget, u32 sprite)
 {
     const struct CoopPlayerSprite *info = Coop_FindPlayerSprite(sprite);
 
     return info != NULL
-        && Coop_IdSetHas(&budget->textures, sprite)
+        && (Coop_IdSetHas(&budget->textures, sprite) || Coop_IdSetFits(&budget->textures, sprite, COOP_RESERVE_TEXTURES))
         && Coop_IdSetHas(&budget->models, info->model)
         && Coop_IdSetHas(&budget->sequences, info->sequence);
 }
@@ -2138,7 +2143,7 @@ static BOOL Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *gh
         target = wanted;
     else if (current != walking && current != wanted && Coop_BudgetFits(budget, walking))
         target = walking; // the new state does not fit
-    else if (current != walking && Coop_BudgetShort(budget) && Coop_BudgetHas(budget, walking))
+    else if (current != walking && Coop_BudgetShort(budget) && Coop_BudgetCanReturnTo(budget, walking))
         target = walking; // vanilla needs the room back
     if (target == current)
         return current == wanted || current == walking;

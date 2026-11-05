@@ -106,7 +106,8 @@ def normalize_sheet(path, fallback=True):
     for yy in range(layout["columns"][0]["frames"][0][1] - 2, sheet.size[1]):
         for xx in range(sheet.size[0]):
             if not ip[xx, yy] and sp[xx, yy] != tp[xx, yy]:
-                key = [k for x0, k in starts if x0 - 16 <= xx][-1]
+                near = [k for x0, k in starts if x0 - 16 <= xx]
+                key = near[-1] if near else "the left margin"
                 spill[key] = spill.get(key, 0) + 1
     for key, n in spill.items():
         notes.append("%s: %d px drawn outside its cells (cut off)" % (key, n))
