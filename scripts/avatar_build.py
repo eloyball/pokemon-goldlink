@@ -352,10 +352,19 @@ def main():
             stem = os.path.basename(old)[len(prefix):].split("-")[0]
             if stem not in stems:
                 os.remove(old)  # a stale member would shift nothing (av* sort last) but would still be packed
+                repack.add(os.path.join(ENGINE, "build", "narc", built + ".narc"))
                 changed += 1
+    # Removing an input doesn't make make repack a NARC (its rule only sees newer inputs): a NARC
+    # still holding removed overworld members put every follower on the wrong file (a two-frame
+    # avatar texture for Geodude: the follower's animation crashed the game; KNOWN_RISKS #77).
+    for narc in repack:
+        if os.path.exists(narc):
+            os.remove(narc)
+    repack = set()  # packed NARCs that lost a member: make only repacks for newer inputs, never for removed ones
     for old in glob.glob(os.path.join(BUILT, "2_*.btx0")):
         if os.path.basename(old)[2:-5] not in pngs:
             os.remove(old)  # a stale member would shift every follower
+            repack.add(os.path.join(ENGINE, "build", "narc", "pokemonow.narc"))
             changed += 1
 
     # The header: table entries for every av* file, by its place among all the custom PNGs.
