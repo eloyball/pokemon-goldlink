@@ -147,6 +147,7 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .giftSpecies = Coop_ChallengeGiftSpecies,
     .roamerSpecies = Coop_ChallengeRoamerSpecies,
     .playerSprite = Coop_LocalPlayerSprite,
+    .stampAvatar = Coop_StampBattleAvatar,
 };
 
 // ---------------------------------------------------------------------------
@@ -2547,11 +2548,32 @@ static void Coop_CheckGhostTalk(FieldSystem *fsys, MapObjectMan *manager, LocalM
 // while the field map is active and this overlay is loaded.
 // ---------------------------------------------------------------------------
 
+// Custom avatars in battle (Phase 5): this player's avatar into the trainer
+// slots a link battle sends (0, and its copy 2 for a multi), before the
+// exchange; src/battle/coop_avatar_battle.c reads it on every game.
+_Static_assert(__builtin_offsetof(struct BattleSetup, trainer) == 0x28, "BattleSetup.trainer (pret battle_setup.h)");
+_Static_assert(sizeof(TRAINER_DATA) == 0x34, "Trainer (pret trainer_data.h)");
+
+void Coop_StampBattleAvatar(struct BattleSetup *setup)
+{
+    u16 carrier[2];
+    u32 i;
+
+    if (gCoopCommBlock.local_avatar == 0)
+        return;
+    carrier[0] = COOP_AVATAR_CARRIER_MAGIC;
+    carrier[1] = gCoopCommBlock.local_avatar;
+    for (i = 0; i < 4; i += 2)
+        __builtin_memcpy((u8 *)&setup->trainer[i] + COOP_AVATAR_CARRIER_OFFSET, carrier, sizeof(carrier));
+}
+
 // A map load creates the player before Overlay 131 is back (the resident
 // hook then answers vanilla), and an avatar picked while offline changes
-// nothing by itself: once the field is idle, a player sprite of the current
-// state that isn't the avatar's becomes it. Poses (another state's sprite)
-// and script-set sprites are left alone.
+// nothing by itself: a player sprite of the current state that isn't the
+// avatar's becomes it, as soon as the player stands still and is drawn (also
+// under a message or a script: waiting for an idle field showed the vanilla
+// look through every post-battle message). Only the same state's sprite is
+// swapped, so poses and script-set sprites are left alone.
 static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
 {
     FIELD_PLAYER_AVATAR *avatar = fsys->playerAvatar;
@@ -2563,7 +2585,7 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
     wanted = Coop_LocalPlayerSprite((u32)avatar->state, avatar->gender);
     if (current == wanted || Coop_AvatarStateOf(Coop_AvatarBase(current)) != Coop_AvatarStateOf(Coop_AvatarBase(wanted)))
         return;
-    if (!Coop_CanRunFieldDebugCommand(fsys, player) || MapObject_IsBillboardPending(player)
+    if (MapObject_IsSingleMovementActive(player) || MapObject_IsBillboardPending(player)
         || !MapObject_IsDrawInitialized(player))
         return;
     ChangeMapObjSprite(player, wanted);

@@ -345,7 +345,12 @@ GF_RTC_GetTimeOfDayWildParamByHour = 0x0201485C | 1;
 GetMapObjectByID = 0x0205EE60 | 1;
 MapObject_GetMovement = 0x0205F264 | 1;
 MapObject_GetGfxID = 0x0205F25C | 1;
-ApricornTreeObject_GetBillboard = 0x02064084 | 1; /* pret sub_02064084 (asm/unk_020632B0.s), called by ov01_021F72DC (MapObject_GetBillboard) */
+ApricornTreeObject_GetBillboard = 0x02064084 | 1;
+/* Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5); labels are addresses (pret history):
+   CreateTrainerPicSprite was sub_02070C24, TrainerClass_GetGenderOrTrainerCount is labelled 0x020735F8
+   (pret commit 0cf25dc89). */
+CreateTrainerPicSprite = 0x02070C24 | 1;
+TrainerClass_GetGenderOrTrainerCount = 0x020735F8 | 1; /* pret sub_02064084 (asm/unk_020632B0.s), called by ov01_021F72DC (MapObject_GetBillboard) */
 MapObject_IsDrawInitialized = 0x0205F73C | 1; /* pret sub_0205F73C (field_map_object.s before 6dfceafe0), ccd MapObject_IsDrawInitialized */
 MapObject_SetGfxID = 0x0205F258 | 1;
 sub_0205F6AC = 0x0205F6AC | 1;

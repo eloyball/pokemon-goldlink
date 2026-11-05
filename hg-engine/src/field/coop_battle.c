@@ -677,6 +677,7 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
             // player's three (1-based party slots, Coop_BattleChooseEntries).
             setup = BattleSetup_New(COOP_HEAP_ID_FIELD2, BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI | BATTLE_TYPE_DOUBLES | BATTLE_TYPE_TRAINER);
             BattleSetup_InitForLinkBattle(setup, fsys, env->order);
+            Coop_StampBattleAvatar(setup); // custom avatars: the pictures on every game
 #if COOP_DEBUG_TOOLS
             gCoopDebugMonBuffer.pad[1] = (u8)setup->party[0]->count; // probes: the Pokemon this player brings
 #endif
@@ -685,6 +686,7 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
         {
             setup = BattleSetup_New(COOP_HEAP_ID_FIELD2, BATTLE_TYPE_LINK | BATTLE_TYPE_TRAINER);
             BattleSetup_InitForLinkBattle(setup, fsys, NULL);
+            Coop_StampBattleAvatar(setup);
         }
         encounter = Encounter_New(setup, BattleSetup_GetWildTransitionEffect(setup), BattleSetup_GetWildBattleMusic(setup), &env->winFlag);
         env->fought = TRUE;

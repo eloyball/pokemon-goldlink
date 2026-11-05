@@ -145,6 +145,91 @@ def cut_overworld(columns, layout, stem):
     return files
 
 
+# Battle pictures (Phase 5): (column, vanilla base, output folder, suffix). Ethan's pictures are the
+# models: their cell / anim json and encryption key are copied, the pixels are the avatar's.
+BATTLE_PICS = [
+    ("front", "trainer_gfx/000", "trainer_gfx", ""),
+    ("throw", "trainer_back_gfx/00", "trainer_back_gfx", ""),
+    ("throw_link", "trainer_back_gfx/15", "trainer_back_gfx", "l"),
+]
+
+
+def pack_picture(frames, base):
+    """The inverse of avatar_template.battle_frames: each 80x80 frame's OAM pieces back into the
+    picture's tile order (frame i in its own 100-tile block). Returns (indexed image, palette)."""
+    raw = Image.open(os.path.join(GFX, base + ".png"))
+    with open(os.path.join(GFX, base + "_cell.json")) as f:
+        cells = json.load(f)["cells"]
+    if len(cells) != len(frames):
+        raise SystemExit("%s: %d cells, %d frames" % (base, len(cells), len(frames)))
+    pal0 = tuple(raw.getpalette()[:3])
+    strip, palette = indexed(frames, pal0)  # one palette for the picture, frames stacked
+    w = avatar_template.BW
+    src = strip.load()
+    out = Image.new("P", raw.size, 0)
+    out.putpalette(strip.getpalette())
+    dst = out.load()
+    per_row = raw.size[0] // 8
+    for index, cell in enumerate(cells):
+        for oam in cell["OAM"]:
+            ow, oh = avatar_template.OAM_SIZES[(oam["Attr0"]["Shape"], oam["Attr1"]["Size"])]
+            first = index * (w * w // 64) + oam["Attr2"]["CharName"] * 2
+            x0 = oam["Attr1"]["XCoordinate"] - cell["minX"]
+            y0 = oam["Attr0"]["YCoordinate"] - cell["minY"]
+            k = 0
+            for ty in range(oh // 8):
+                for tx in range(ow // 8):
+                    t = first + k
+                    k += 1
+                    tx0, ty0 = (t % per_row) * 8, (t // per_row) * 8
+                    if ty0 + 8 > raw.size[1]:
+                        continue
+                    for yy in range(8):
+                        for xx in range(8):
+                            fx, fy = x0 + tx * 8 + xx, y0 + ty * 8 + yy
+                            v = 0
+                            if 0 <= fx < w and 0 <= fy < w:
+                                v = src[fx, index * w + fy]
+                            dst[tx0 + xx, ty0 + yy] = v
+    return out, palette
+
+
+def encounter_image(frames, palette):
+    """The _enc image: frames 0 and 1 side by side (a single picture: the second half empty)."""
+    w = avatar_template.BW
+    strip, _ = indexed(frames[:2], palette[0])
+    # Re-index with the picture's palette (the same colours, maybe another order).
+    index = {c: i for i, c in enumerate(palette) if i}
+    enc = Image.new("P", (2 * w, w), 0)
+    enc.putpalette([v for c in palette for v in c])
+    px = enc.load()
+    for n, f in enumerate(frames[:2]):
+        fp = f.load()
+        for y in range(w):
+            for x in range(w):
+                p = fp[x, y]
+                if p[3]:
+                    px[n * w + x, y] = index[p[:3]]
+    return enc
+
+
+def cut_battle(columns, stem):
+    """{relative path under data/graphics: bytes} for one avatar's drawn battle pictures."""
+    files = {}
+    for key, base, folder, suffix in BATTLE_PICS:
+        cut = columns.get(key)
+        if cut is None or cut["vanilla"]:
+            continue
+        pic, palette = pack_picture(cut["frames"], base)
+        name = "%s/%s%s" % (folder, stem, suffix)
+        files[name + ".png"] = png_bytes(pic, bits=4)
+        files[name + "_enc.png"] = png_bytes(encounter_image(cut["frames"], palette), bits=4)
+        for ext in ("_cell.json", "_anim.json", "_enc.png.key"):
+            with open(os.path.join(GFX, base + ext), "rb") as f:
+                files[name + ext] = f.read()
+    return files
+
+
 def front_preview(columns):
     """The bridge's preview: the battle front picture, else the first walking frame."""
     for key in ("front", "walk"):
@@ -179,7 +264,30 @@ def selftest():
                         ok = False
         print("%-7s %s" % (col["key"], "same as vanilla" if ok else "DIFFERS"))
         bad += not ok
-    print("selftest: %s" % ("pass" if not bad else "%d states differ" % bad))
+    # The battle pictures: Ethan's frames packed back must draw like the vanilla files.
+    battle = cut_battle(columns, "av00")
+    for key, base, folder, suffix in BATTLE_PICS:
+        name = "%s/av00%s" % (folder, suffix)
+        for mine_name, theirs_path in ((name + ".png", base + ".png"), (name + "_enc.png", base + "_enc.png")):
+            mine = Image.open(io.BytesIO(battle[mine_name]))
+            theirs = Image.open(os.path.join(GFX, theirs_path))
+            ok = mine.size == theirs.size
+            if ok:
+                mp, tp = mine.getpalette(), theirs.getpalette()
+                a, b = mine.load(), theirs.load()
+                diff = 0
+                for y in range(mine.size[1]):
+                    for x in range(mine.size[0]):
+                        ca = None if a[x, y] == 0 else avatar_sheet.ds_colour(tuple(mp[a[x, y] * 3:a[x, y] * 3 + 3]))
+                        cb = None if b[x, y] == 0 else avatar_sheet.ds_colour(tuple(tp[b[x, y] * 3:b[x, y] * 3 + 3]))
+                        diff += ca != cb
+                ok = diff == 0
+                detail = "" if ok else " (%d px differ)" % diff
+            else:
+                detail = " (size %s vs %s)" % (mine.size, theirs.size)
+            print("%-28s %s%s" % (mine_name, "same as vanilla" if ok else "DIFFERS", detail))
+            bad += not ok
+    print("selftest: %s" % ("pass" if not bad else "%d differ" % bad))
     return bad == 0
 
 
@@ -201,6 +309,7 @@ def main():
             raise SystemExit("no vanilla sprite known for the layout's column %s" % col["key"])
 
     wanted = {}
+    battle_wanted = {}  # relative to data/graphics
     avatars = []
     for k, path in enumerate(sheets):
         name = os.path.basename(path)[:-4]
@@ -211,6 +320,7 @@ def main():
             print("avatar %s: %s" % (name, note))
         files = cut_overworld(columns, layout, "av%02d" % k)
         wanted.update(files)
+        battle_wanted.update(cut_battle(columns, "av%02d" % k))
         drawn = [s for s, col in enumerate(states) if not columns[col["key"]]["vanilla"]]
         avatars.append({"name": name, "id": FIRST_CUSTOM_ID + k, "stem": "av%02d" % k, "drawn": drawn,
                         "preview": front_preview(columns)})
@@ -224,6 +334,25 @@ def main():
             os.remove(old)
             changed += 1
     pngs = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(CUSTOM, "*.png")))
+
+    # Battle pictures: NARC a/0/5/8 (fronts) and a/0/0/6 (backs) take one member set per *_enc.png,
+    # in name order, so av* come after the numbered vanilla ones.
+    for rel, data in battle_wanted.items():
+        changed += write_if_changed(os.path.join(GFX, rel), data)
+    pic_index = {}
+    for folder, built, prefix in (("trainer_gfx", "trainer_gfx", "8_"), ("trainer_back_gfx", "trainer_back_gfx", "6_")):
+        for old in glob.glob(os.path.join(GFX, folder, "av*")):
+            if os.path.relpath(old, GFX) not in battle_wanted:
+                os.remove(old)
+                changed += 1
+        stems = sorted(os.path.basename(p)[:-8] for p in glob.glob(os.path.join(GFX, folder, "*_enc.png")))
+        for i, stem in enumerate(stems):
+            pic_index[(folder, stem)] = i
+        for old in glob.glob(os.path.join(ENGINE, "build", built, prefix + "av*")):
+            stem = os.path.basename(old)[len(prefix):].split("-")[0]
+            if stem not in stems:
+                os.remove(old)  # a stale member would shift nothing (av* sort last) but would still be packed
+                changed += 1
     for old in glob.glob(os.path.join(BUILT, "2_*.btx0")):
         if os.path.basename(old)[2:-5] not in pngs:
             os.remove(old)  # a stale member would shift every follower
@@ -244,6 +373,9 @@ def main():
             row.append(CUSTOM_TAG_START + n)
             base.append((CUSTOM_TAG_START + n, hero))
         tags.append("    { %s }, /* %d %s */" % (", ".join(str(t) for t in row), a["id"], a["name"]))
+        a["pics"] = [pic_index.get(("trainer_gfx", a["stem"]), 0xFFFF),
+                     pic_index.get(("trainer_back_gfx", a["stem"]), 0xFFFF),
+                     pic_index.get(("trainer_back_gfx", a["stem"] + "l"), 0xFFFF)]
     first = min((t for t, _ in base), default=CUSTOM_TAG_START)
     span = (max(t for t, _ in base) - first + 1) if base else 0
     base_row = [0xFFFF] * span  # 0xFFFF: not an avatar tag (0 is Ethan's walking sprite)
@@ -271,6 +403,12 @@ def main():
               "#define COOP_AVATAR_FIRST_TAG %d" % first,
               "#define COOP_AVATAR_TAG_SPAN %d" % span,
               "#define COOP_AVATAR_TAG_BASE { %s }" % ", ".join(str(v) for v in base_row), ""]
+    if avatars:
+        h += ["// Battle pictures per custom avatar (Phase 5): { front (NARC a/0/5/8 set), throw, link throw",
+              "// (a/0/0/6 sets) }, 0xFFFF where the column wasn't drawn (Ethan's picture is used).",
+              "#define COOP_AVATAR_PICS { \\"]
+        h += ["    { %d, %d, %d }, /* %d %s */ \\" % (a["pics"][0], a["pics"][1], a["pics"][2], a["id"], a["name"])
+              for a in avatars] + ["}", ""]
     h += ["#endif // COOP_AVATARS_GEN_H", ""]
     changed += write_if_changed(HEADER, "\n".join(h).encode())
 

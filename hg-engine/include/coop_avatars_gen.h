@@ -40,4 +40,10 @@
 #define COOP_AVATAR_TAG_SPAN 15
 #define COOP_AVATAR_TAG_BASE { 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297 }
 
+// Battle pictures per custom avatar (Phase 5): { front (NARC a/0/5/8 set), throw, link throw
+// (a/0/0/6 sets) }, 0xFFFF where the column wasn't drawn (Ethan's picture is used).
+#define COOP_AVATAR_PICS { \
+    { 138, 17, 18 }, /* 3 leroy */ \
+}
+
 #endif // COOP_AVATARS_GEN_H

@@ -294,6 +294,13 @@ static BOOL Coop_StartBossBattle(TaskManager *taskman, u32 trainer, int heapID, 
     else if (setup->party[0]->count > COOP_BOSS_PARTY_MAX)
         setup->party[0]->count = COOP_BOSS_PARTY_MAX;
     BattleSetup_SetAllySideBattlersToPlayer(setup);
+    {
+        // Custom avatars: this player's pictures on the partner's game (Overlay 131).
+        const struct CoopFieldEntryHeader *header = Coop_FieldHeader();
+
+        if (header != NULL)
+            header->stampAvatar(setup);
+    }
     // The boss in both enemy seats; hg-engine's party builder splits its
     // team between them (Coop_BossSplitParty, while armed).
     // Its team roster (docs/GAME_REBALANCE_UPDATE.md §4.2), through Overlay 131.

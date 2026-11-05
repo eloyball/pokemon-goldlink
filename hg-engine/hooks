@@ -648,6 +648,10 @@ arm9 Coop_PlayerAvatar_GetSprite 0205C898 2
 0001 Coop_TryEnterPoketchPose 021F2EDC 2
 0001 Coop_TryLeavePoketchPose 021F2F24 2
 0001 Coop_MapObject_GetBillboard 021F72DC 2
+# Custom avatars in battle (Phase 5): the trainer pictures (src/battle/coop_avatar_battle.c)
+0012 Coop_GetVersionTrainerClass 02261EF0 3
+0012 Coop_CreateTrainerSprite 02261B2C
+arm9 Coop_TrainerClassToBackpicID 0207280C 2
 
 0012 BattleMessage_BufferNickname 0223CDD0
 0012 BattleMessage_BufferPokemon 0223CE80

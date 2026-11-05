@@ -61,6 +61,7 @@
 
 struct FieldSystem;
 struct CoopChallengeSync;
+struct BattleSetup;
 struct CoopFieldEntryHeader
 {
     u32 magic;
@@ -70,7 +71,17 @@ struct CoopFieldEntryHeader
     u32 (*giftSpecies)(u32 value);           // 0x10: Milestone 5 gift randomizer, called by GiveMon (src/pokemon.c)
     u32 (*roamerSpecies)(u32 idx, u32 vanilla); // 0x14: Milestone 5 roamer randomizer (src/field_roamer.c)
     u32 (*playerSprite)(u32 state, u32 gender); // 0x18: the local player's sprite in its avatar (Coop_PlayerAvatar_GetSprite)
+    void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar, for resident battle setups (coop_boss.c)
 };
+
+// Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5): a player's
+// avatar ID rides in their Trainer.loseMessage (Frontier-only; zeroed by
+// BattleSetup_New) as { magic, avatar ID }; link battles exchange whole
+// Trainer structs, so every game learns every player's avatar
+// (src/battle/coop_avatar_battle.c reads it).
+#define COOP_AVATAR_CARRIER_OFFSET 0x2C
+#define COOP_AVATAR_CARRIER_MAGIC  0xC0A7 // never a valid easy-chat sentence type
+void Coop_StampBattleAvatar(struct BattleSetup *setup);
 _Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, challenge) == 0x0C,
                "the bridge reads the challenge pointer at 0x0C (Mailbox.FieldEntryChallenge)");
 
