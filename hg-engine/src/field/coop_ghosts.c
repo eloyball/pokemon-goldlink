@@ -1160,6 +1160,15 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
                 return;
             result = Coop_DebugChallenge(fsys, mb->debug_arg);
             break;
+        case COOP_DEBUG_HEAP_FREE:
+        {
+            // Read only, any time in the field (KNOWN_RISKS.md #80's regression check).
+            u32 freeBytes = GF_ExpHeap_FndGetTotalFreeSize(COOP_HEAP_ID_FIELD1);
+
+            __builtin_memcpy((void *)gCoopDebugMonBuffer.mon, &freeBytes, sizeof(freeBytes));
+            result = COOP_DEBUG_RESULT_OK;
+            break;
+        }
         case COOP_DEBUG_WILD_SPECIES:
             if (!Coop_CanRunFieldDebugCommand(fsys, player))
                 return;
@@ -2103,6 +2112,45 @@ static void Coop_RemoveGhost(MapObjectMan *manager, LocalMapObject *ghost)
     MapObjectRender_ReleaseSpriteResources(manager, sprite, NULL);
 }
 
+BOOL LONG_CALL MapObject_IsBillboardPending(LocalMapObject *object);
+
+// docs/KNOWN_RISKS.md #80. Vanilla's sprite change (ChangeMapObjSprite, ccd
+// MapObject_ChangeBillboardSprite) keeps a copy of the old billboard, with its
+// own model, sequence and texture files (10-25 KB of the field heap), on
+// screen until the new sprite's billboard exists. A second change before the
+// first has settled loses that copy for good: a ghost whose sprites aren't
+// already loaded (a girl teammate on a boy's save, any custom avatar)
+// switching poses quickly drained the field heap until a load failed. So a
+// ghost's sprite only changes once its last change has settled: no billboard
+// pending, then COOP_SPRITE_SETTLE_FRAMES more frames. The old look stays on
+// screen meanwhile, so a quick pose shows a few frames late, never blinks.
+// Per remote slot, in .data (Overlay 131 has no BSS init); a counter left by
+// a deleted ghost only delays its successor's first change.
+#define COOP_SPRITE_SETTLE_FRAMES 8
+
+static u8 sCoopGhostSettle[COOP_REMOTE_SLOTS] __attribute__((section(".data"))) = { 0 };
+
+// TRUE when the ghost may change sprite now; counts the settle frames down.
+static BOOL Coop_GhostSpriteSettled(LocalMapObject *ghost)
+{
+    u32 slot = (u32)ghost->id - COOP_GHOST_ID_FIRST;
+
+    if (MapObject_IsBillboardPending(ghost))
+        return FALSE;
+    if (slot >= COOP_REMOTE_SLOTS || sCoopGhostSettle[slot] == 0)
+        return TRUE;
+    sCoopGhostSettle[slot]--;
+    return FALSE;
+}
+
+static void Coop_GhostSpriteChanged(LocalMapObject *ghost)
+{
+    u32 slot = (u32)ghost->id - COOP_GHOST_ID_FIRST;
+
+    if (slot < COOP_REMOTE_SLOTS)
+        sCoopGhostSettle[slot] = COOP_SPRITE_SETTLE_FRAMES;
+}
+
 // The ghost's sprite this frame: the remote's when it fits the budget, else
 // walking when that fits; a ghost not walking goes back to walking (when
 // that costs nothing) once something else needs the reserve. No new poses
@@ -2119,6 +2167,7 @@ static BOOL Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *gh
     u32 wanted = Coop_WantedSprite(remote);
     u32 walking = Coop_WalkingSprite(remote);
     u32 target = current;
+    BOOL settled = Coop_GhostSpriteSettled(ghost);
 
     if (!allowPoses && wanted != current)
         wanted = walking;
@@ -2130,7 +2179,10 @@ static BOOL Coop_UpdateGhostSprite(struct CoopBudget *budget, LocalMapObject *gh
         target = walking; // vanilla needs the room back
     if (target == current)
         return current == wanted || current == walking;
+    if (!settled)
+        return TRUE; // the last change is still settling: next frame
     ChangeMapObjSprite(ghost, target);
+    Coop_GhostSpriteChanged(ghost);
     ghost->unkA0 = 0; // a pose's animation index means something else to the new sprite
     Coop_BudgetClaim(budget, target);
     return TRUE;
@@ -2209,8 +2261,6 @@ static void Coop_UpdateGhost(MapObjectMan *manager, LocalMapObject *player, cons
 // ---------------------------------------------------------------------------
 
 void Coop_FollowMonBillboard_SetResource(BOOL alternate, LocalMapObject *object, void *billboard);
-BOOL LONG_CALL MapObject_IsBillboardPending(LocalMapObject *object);
-
 // Vanilla picks the shiny sequence once per object, on its first draw update
 // with a billboard (draw byte 0x17 bit 0), which a recycled object slot can
 // skip. So the follower ghost gets it here once its billboard exists (the
