@@ -46,4 +46,8 @@
     { 138, 17, 18 }, /* 3 leroy */ \
 }
 
+// The HM cut-in's trainer frames per custom avatar (KNOWN_RISKS #82): NARC a/0/9/3 member of
+// the frames (the palette is the next one), 0xFFFF where the HM column wasn't drawn.
+#define COOP_AVATAR_CUTIN { 26 }
+
 #endif // COOP_AVATARS_GEN_H

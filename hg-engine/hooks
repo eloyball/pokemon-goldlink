@@ -648,6 +648,8 @@ arm9 Coop_PlayerAvatar_GetSprite 0205C898 2
 0001 Coop_TryEnterPoketchPose 021F2EDC 2
 0001 Coop_TryLeavePoketchPose 021F2F24 2
 0001 Coop_MapObject_GetBillboard 021F72DC 2
+# ... and the HM / Fly / Sweet Scent cut-in's trainer (KNOWN_RISKS #82; pret ov02_02249458 + 0x10, asm/field/field_hooks.s)
+0002 Coop_CutInStart_hook 02249468 1
 # Custom avatars in battle (Phase 5): the trainer pictures (src/battle/coop_avatar_battle.c)
 0012 Coop_GetVersionTrainerClass 02261EF0 3
 0012 Coop_CreateTrainerSprite 02261B2C

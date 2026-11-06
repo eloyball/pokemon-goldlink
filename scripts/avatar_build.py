@@ -7,6 +7,9 @@ avatar ID 3 + k) and writes:
       one overworld state per file (KK = avatar, SS = state in the layout's order). hg-engine's
       btx rule builds them into NARC a/0/8/1 members 2_avKK_SS. The json is the vanilla state's,
       byte for byte: the billboard animation looks the texture and palette names up.
+  hg-engine/data/graphics/cutin/<NN>.png
+      the HM cut-in's trainer frames of each avatar whose HM column is drawn (KNOWN_RISKS #82):
+      narcs.mk adds them to NARC a/0/9/3 as members NN (the frames) and NN + 1 (the palette).
   hg-engine/include/coop_avatars_gen.h
       the overworld table entries, the follower offset, and the lookup tables for the ghosts
   coop_avatars.json, build/avatars/*.png
@@ -41,12 +44,19 @@ BUILT = os.path.join(ENGINE, "build", "pokemonow")
 HEADER = os.path.join(ENGINE, "include", "coop_avatars_gen.h")
 TABLE = os.path.join(ENGINE, "src", "field", "overworld_table.c")
 LIST = os.path.join(ROOT, "coop_avatars.json")
+CUTIN = os.path.join(GFX, "cutin")
+CUTIN_NARC = os.path.join(ENGINE, "build", "narc", "a093.narc")
 PREVIEWS = os.path.join(ROOT, "build", "avatars")
 
 CUSTOM_GFX_START = 297   # overworld_table.c NEW_NPC_GFX_START
 CUSTOM_TAG_START = 7000  # overworld_table.c NEW_NPC_TAG_START
 FIRST_CUSTOM_ID = 3      # 0 = the save's own, 1 = Ethan, 2 = Lyra
 MAX_CUSTOM = 32
+CUTIN_FIRST_MEMBER = 26  # NARC a/0/9/3 (choose_starter_sub_res) has 26 members; narcpy names them 3_00..
+# The HM cut-in's 10 trainer frames (vanilla's Ethan set, member 17), from the overworld columns
+# (zero-based frames; checked shape by shape against the vanilla char).
+CUTIN_FRAMES = [("walk", 0), ("walk", 21), ("surf", 0), ("surf", 1), ("walk", 7), ("walk", 11),
+                ("hm", 0), ("hm", 1), ("hm", 2), ("hm", 3)]
 NAME = re.compile(r"^[a-z0-9_]{1,16}$")
 
 # Each overworld column's {hero, heroine} sprite (PlayerAvatar_GetSpriteByStateAndGender and the
@@ -230,6 +240,45 @@ def cut_battle(columns, stem):
     return files
 
 
+def cut_cutin(columns, layout):
+    """The HM cut-in's frames (KNOWN_RISKS #82) as a 4-bit 32x320 strip with its own palette
+    (the cut-in loads one palette for all 10), or None when the HM column isn't drawn (the
+    save's own cut-in stays). An undrawn walking or surfing column lends Ethan's frames."""
+    if columns["hm"]["vanilla"]:
+        return None, []
+    cols = {c["key"]: c for c in layout["columns"]}
+    guide = None
+    frames = []
+    for key, j in CUTIN_FRAMES:
+        if columns[key]["vanilla"]:
+            if guide is None:
+                guide = Image.open(os.path.join(avatar_sheet.TEMPLATE, "avatar_template_guide.png")).convert("RGBA")
+            x, y, w, h = cols[key]["frames"][j]
+            frames.append(avatar_sheet.opaque_or_clear(guide.crop((x, y, x + w, y + h))))
+        else:
+            frames.append(columns[key]["frames"][j].copy())
+    counts = {}
+    for f in frames:
+        for p in f.get_flattened_data():
+            if p[3]:
+                c = avatar_sheet.ds_colour(p[:3])
+                counts[c] = counts.get(c, 0) + 1
+    merged, merges = avatar_sheet.reduce_colours(counts)
+    for f in frames:
+        px = f.load()
+        for yy in range(f.size[1]):
+            for xx in range(f.size[0]):
+                p = px[xx, yy]
+                if p[3]:
+                    px[xx, yy] = merged[avatar_sheet.ds_colour(p[:3])] + (255,)
+    notes = []
+    if merges:
+        notes.append("HM cut-in: walking, surfing and HM share one palette: %d colours reduced to %d, %d px changed"
+                     % (len(counts), len(set(merged.values())), sum(n for _, _, n in merges)))
+    strip, _ = indexed(frames, (0, 0, 0))
+    return png_bytes(strip, bits=4), notes
+
+
 def front_preview(columns):
     """The bridge's preview: the battle front picture, else the first walking frame."""
     for key in ("front", "walk"):
@@ -322,8 +371,11 @@ def main():
         wanted.update(files)
         battle_wanted.update(cut_battle(columns, "av%02d" % k))
         drawn = [s for s, col in enumerate(states) if not columns[col["key"]]["vanilla"]]
+        cutin, cutin_notes = cut_cutin(columns, layout)
+        for note in cutin_notes:
+            print("avatar %s: %s" % (name, note))
         avatars.append({"name": name, "id": FIRST_CUSTOM_ID + k, "stem": "av%02d" % k, "drawn": drawn,
-                        "preview": front_preview(columns)})
+                        "preview": front_preview(columns), "cutin": cutin})
 
     # The custom folder: ours are av*; anything else there is another custom NPC and keeps its place.
     changed = 0
@@ -366,6 +418,26 @@ def main():
     for narc in repack:
         if os.path.exists(narc):
             os.remove(narc)
+
+    # The HM cut-in (KNOWN_RISKS #82): one PNG per avatar that has one, named by its NARC member.
+    # narcs.mk rebuilds a/0/9/3 from vanilla's 26 members every time, so a removed PNG only needs
+    # the archive rebuilt.
+    cutin_wanted = {}
+    for a in avatars:
+        a["cutin_member"] = 0xFFFF
+        if a["cutin"] is not None:
+            a["cutin_member"] = CUTIN_FIRST_MEMBER + 2 * len(cutin_wanted)
+            cutin_wanted["%d.png" % a["cutin_member"]] = a["cutin"]
+    if CUTIN_FIRST_MEMBER + 2 * len(cutin_wanted) > 100:
+        raise SystemExit("internal: a/0/9/3 member names would need three digits")
+    for fname, data in cutin_wanted.items():
+        changed += write_if_changed(os.path.join(CUTIN, fname), data)
+    for old in glob.glob(os.path.join(CUTIN, "*.png")):
+        if os.path.basename(old) not in cutin_wanted:
+            os.remove(old)
+            changed += 1
+            if os.path.exists(CUTIN_NARC):
+                os.remove(CUTIN_NARC)
 
     # The header: table entries for every av* file, by its place among all the custom PNGs.
     entries, tags, base = [], [], []
@@ -418,6 +490,9 @@ def main():
               "#define COOP_AVATAR_PICS { \\"]
         h += ["    { %d, %d, %d }, /* %d %s */ \\" % (a["pics"][0], a["pics"][1], a["pics"][2], a["id"], a["name"])
               for a in avatars] + ["}", ""]
+        h += ["// The HM cut-in's trainer frames per custom avatar (KNOWN_RISKS #82): NARC a/0/9/3 member of",
+              "// the frames (the palette is the next one), 0xFFFF where the HM column wasn't drawn.",
+              "#define COOP_AVATAR_CUTIN { %s }" % ", ".join("%d" % a["cutin_member"] for a in avatars), ""]
     h += ["#endif // COOP_AVATARS_GEN_H", ""]
     changed += write_if_changed(HEADER, "\n".join(h).encode())
 

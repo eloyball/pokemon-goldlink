@@ -1639,6 +1639,56 @@ static u32 Coop_LocalPlayerSprite(u32 state, u32 gender)
     return Coop_AvatarSpriteFor(gCoopCommBlock.local_avatar, sCoopVanillaPlayerSprites[state][gender != 0]);
 }
 
+// The HM / Fly / Sweet Scent cut-in's trainer (docs/KNOWN_RISKS.md #82).
+// Vanilla's FieldMoveCutIn_Start (pret ov02_02249458) copies the gender into
+// trainerGraphics, which picks the trainer's files in NARC a/0/9/3 from three
+// Overlay 2 tables (0 Ethan, 1 Lyra, 2 Lance on his Dragonite; only Ethan's set
+// borrows the banner's palette). The hook (asm/field/field_hooks.s) calls this
+// in place of that copy. The local avatar picks the set: Ethan / Lyra theirs,
+// a custom avatar with a drawn HM column its own frames and palette
+// (scripts/avatar_build.py) through Lyra's slot, whose cells and animations
+// are byte for byte everyone's. Lyra's two entries are written at every start,
+// back to vanilla's when the set isn't custom. Lance's cut-in has its own start
+// and never comes here.
+#define COOP_CUTIN_PLTT_FILES 0x022532FC // pret ov02_022532FC: u16 [Lyra, Lance] palette members
+#define COOP_CUTIN_CHAR_FILES 0x02253304 // pret ov02_02253304: u16 [Ethan, Lyra, Lance] char members
+#define COOP_CUTIN_PLAYER_GENDER    0x0C // ccd FieldMoveCutIn.playerGender (u16)
+#define COOP_CUTIN_TRAINER_GRAPHICS 0x0E // ccd FieldMoveCutIn.trainerGraphics (u16)
+
+#if COOP_AVATAR_CUSTOM > 0
+static const u16 sCoopAvatarCutIn[COOP_AVATAR_CUSTOM] = COOP_AVATAR_CUTIN;
+#endif
+
+void Coop_CutInTrainerGraphics(u8 *cutIn)
+{
+    volatile u16 *chars = (volatile u16 *)COOP_CUTIN_CHAR_FILES;
+    volatile u16 *pltts = (volatile u16 *)COOP_CUTIN_PLTT_FILES;
+    u32 avatar = gCoopCommBlock.local_avatar;
+    u16 graphics, charFile = 20, plttFile = 7; // vanilla Lyra: members 20 and 7
+    BOOL vanillaTables = chars[0] == 17 && chars[2] == 23 && pltts[1] == 8; // Ethan's and Lance's never change
+
+    __builtin_memcpy(&graphics, cutIn + COOP_CUTIN_PLAYER_GENDER, sizeof(graphics));
+    if (avatar == COOP_AVATAR_ETHAN)
+        graphics = 0;
+    else if (avatar == COOP_AVATAR_LYRA)
+        graphics = 1;
+#if COOP_AVATAR_CUSTOM > 0
+    else if (vanillaTables && avatar >= COOP_AVATAR_FIRST_CUSTOM_ID && avatar < COOP_AVATAR_FIRST_CUSTOM_ID + COOP_AVATAR_CUSTOM
+             && sCoopAvatarCutIn[avatar - COOP_AVATAR_FIRST_CUSTOM_ID] != 0xFFFF)
+    {
+        graphics = 1;
+        charFile = sCoopAvatarCutIn[avatar - COOP_AVATAR_FIRST_CUSTOM_ID];
+        plttFile = charFile + 1;
+    }
+#endif
+    if (vanillaTables)
+    {
+        chars[1] = charFile;
+        pltts[0] = plttFile;
+    }
+    __builtin_memcpy(cutIn + COOP_CUTIN_TRAINER_GRAPHICS, &graphics, sizeof(graphics));
+}
+
 // Overlay-01 hook (hooks: ov01_021F72DC, ccd MapObject_GetBillboard; the
 // whole function is replaced). hg-engine NOPs the follower range's upper
 // bound (armips/asm/overworlds.s, 0x021F7394), so every tag >= 428 reads the

@@ -889,6 +889,36 @@ clean_trgfx:
 	rm -rf $(TRAINER_GFX_DIR) $(TRAINER_GFX_NARC) $(TRAINER_GFX_BACK_DIR) $(TRAINER_GFX_BACK_NARC)
 
 
+# Co-op custom avatars (docs/KNOWN_RISKS.md #82): the HM cut-in's trainer frames. NARC a/0/9/3
+# (choose_starter_sub_res) keeps vanilla's 26 members; scripts/avatar_build.py writes
+# data/graphics/cutin/<NN>.png per avatar, which becomes member NN (the frames, as vanilla's
+# trainer chars) and NN + 1 (its palette). The archive is rebuilt from vanilla's members every
+# time (the rom's copy holds the last build's), and the install is phony because move_narc's
+# own copies are in the Makefile.
+COOP_CUTIN_DIR := $(BUILD)/a093
+COOP_CUTIN_NARC := $(BUILD_NARC)/a093.narc
+COOP_CUTIN_TARGET := $(FILESYS)/a/0/9/3
+COOP_CUTIN_DEPENDENCIES_DIR := data/graphics/cutin
+COOP_CUTIN_DEPENDENCIES := $(wildcard $(COOP_CUTIN_DEPENDENCIES_DIR)/*.png)
+
+$(COOP_CUTIN_NARC): $(COOP_CUTIN_DEPENDENCIES)
+	rm -rf $(COOP_CUTIN_DIR)
+	$(NARCHIVE) extract $(COOP_CUTIN_TARGET) -o $(COOP_CUTIN_DIR) -nf
+	ls $(COOP_CUTIN_DIR) | sort | tail -n +27 | sed 's|^|$(COOP_CUTIN_DIR)/|' | xargs -r rm -f
+	for f in $(COOP_CUTIN_DEPENDENCIES); do \
+		n=$$(basename $$f .png); \
+		$(GFX) $$f $(COOP_CUTIN_DIR)/3_$$n.NCGR -clobbersize -version101 -bitdepth 4 -mappingtype 32 || exit 1; \
+		$(GFX) $$f $(COOP_CUTIN_DIR)/3_$$((n + 1)).NCLR -ir -bitdepth 4 || exit 1; \
+	done
+	$(NARCHIVE) create $@ $(COOP_CUTIN_DIR) -nf
+
+.PHONY: coop_cutin_install
+coop_cutin_install: $(COOP_CUTIN_NARC)
+	cp $(COOP_CUTIN_NARC) $(COOP_CUTIN_TARGET)
+
+NARC_FILES += coop_cutin_install
+
+
 # only the archives that were built replace what the rom already has, so every archive left out stays as rom.nds had it
 # if no keys.csv, fall back to msgenc's own key as before
 $(MSGDATA_NARC): $(MSGDATA_DEPENDENCIES) $(MSGDATA_COMPILETIME_DEPENDENCIES) $(wildcard $(MSGDATA_KEYS))
