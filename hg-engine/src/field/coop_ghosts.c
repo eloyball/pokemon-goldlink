@@ -671,46 +671,29 @@ static u8 Coop_DebugAskHm(FieldSystem *fsys, u8 index)
 }
 
 // EXP Share probe (docs/MILESTONE3_PLAN.md §20): a wild battle against a
-// Rattata of the given level, as a script's WildBattle starts one.
-struct CoopDebugWildEnv
-{
-    u32 winFlag;
-    u16 species; // species | form << 11 (hg-engine's wild hook splits it)
-    u8 level;
-};
-
-static BOOL Coop_Task_DebugWildBattle(TaskManager *taskman)
-{
-    struct CoopDebugWildEnv *env = taskman->env;
-
-    if (taskman->state++ == 0)
-    {
-        SetupAndStartWildBattle(taskman, env->species, env->level, &env->winFlag, TRUE, FALSE);
-        return FALSE;
-    }
-    sys_FreeMemoryEz(env);
-    return TRUE;
-}
+// Rattata of the given level (species | form << 11: hg-engine's hook on the
+// generator splits it). Started as a grass encounter does: vanilla's
+// Task_WildEncounter (ARM9) restores the overworld, or blacks out on a loss.
+// (It used SetupAndStartWildBattle from a task here; that script-style path
+// leaves a loss to the script, so the task's next step ran from Overlay 131
+// while it was unloaded: KNOWN_RISKS.md #69.)
+void LONG_CALL FieldSystem_GenerateSingleWildPokemon(FieldSystem *fsys, u16 species, u8 level, BOOL shiny, struct BattleSetup *setup);
+void LONG_CALL FieldSystem_StartWildEncounter(FieldSystem *fsys, struct BattleSetup *setup);
 
 static u8 Coop_DebugWildBattle(FieldSystem *fsys, u16 species, u8 level)
 {
-    struct CoopDebugWildEnv *env;
+    struct BattleSetup *setup;
 
     if (level == 0 || level > 100)
         return COOP_DEBUG_RESULT_BAD_ARG;
     if (fsys->taskman != NULL)
         return COOP_DEBUG_RESULT_NOT_NOW;
-    env = sys_AllocMemory(32 /* HEAP_ID_FIELD3 */, sizeof(*env));
-    if (env == NULL)
+    setup = BattleSetup_New(11 /* HEAP_ID_FIELD2 */, 0); // pret BATTLE_TYPE_NONE: a single wild battle
+    if (setup == NULL)
         return COOP_DEBUG_RESULT_FAILED;
-    env->winFlag = 0;
-    env->species = species;
-    env->level = level;
-    if (Coop_FieldSystem_CreateTask(fsys, Coop_Task_DebugWildBattle, env) == NULL)
-    {
-        sys_FreeMemoryEz(env);
-        return COOP_DEBUG_RESULT_FAILED;
-    }
+    BattleSetup_InitFromFieldSystem(setup, fsys);
+    FieldSystem_GenerateSingleWildPokemon(fsys, species, level, FALSE, setup);
+    FieldSystem_StartWildEncounter(fsys, setup);
     return COOP_DEBUG_RESULT_OK;
 }
 

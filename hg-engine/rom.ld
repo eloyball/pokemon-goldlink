@@ -350,6 +350,11 @@ ApricornTreeObject_GetBillboard = 0x02064084 | 1;
    CreateTrainerPicSprite was sub_02070C24, TrainerClass_GetGenderOrTrainerCount is labelled 0x020735F8
    (pret commit 0cf25dc89). */
 CreateTrainerPicSprite = 0x02070C24 | 1;
+/* The debug wild battle as a grass encounter (KNOWN_RISKS.md #69): pret sub_02050B08 (ccd
+   FieldSystem_StartWildEncounter, encounter.c) and ov02_02247F30 (pret commit 50ae6a826:
+   FieldSystem_GenerateSingleWildPokemon, Overlay 2, loaded with the field). */
+FieldSystem_StartWildEncounter = 0x02050B08 | 1;
+FieldSystem_GenerateSingleWildPokemon = 0x02247F30 | 1;
 TrainerClass_GetGenderOrTrainerCount = 0x020735F8 | 1; /* pret sub_02064084 (asm/unk_020632B0.s), called by ov01_021F72DC (MapObject_GetBillboard) */
 MapObject_IsDrawInitialized = 0x0205F73C | 1; /* pret sub_0205F73C (field_map_object.s before 6dfceafe0), ccd MapObject_IsDrawInitialized */
 MapObject_SetGfxID = 0x0205F258 | 1;
