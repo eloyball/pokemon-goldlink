@@ -13,7 +13,7 @@ Layout: one column per state, frames stacked from the top in the vanilla order.
 - Overworld columns: 32x32 frames.
 - Battle front and throws: 80x80 frames, each stored unshifted. The game draws some throw frames
   shifted (the arm reaching forward); that shift is in the layout (offset).
-- VS face: one 96x64 picture (the Elite Four / Champion battle intro, NARC a/1/0/9).
+- VS face: one 96x64 picture (the PvP battle intro, built on the Elite Four / Champion one, NARC a/1/0/9).
 The header, the gutters and the gaps between frames are ignored by the cutter.
 
 Usage: python3 scripts/avatar_template.py   (run from anywhere; uses hg-engine's own tools)
@@ -127,7 +127,21 @@ def battle_frames(base):
 
 
 def vs_face():
-    """Ethan's VS face, unpacked with hg-engine's narcpy and nitrogfx into a temporary folder."""
+    """Ethan's VS face, reassembled from its OAM pieces."""
+    raw, cell = vs_face_raw()
+    w, h = cell["maxX"] - cell["minX"] + 1, cell["maxY"] - cell["minY"] + 1
+    face = Image.new("P", (w, h), 0)
+    face.putpalette(raw.getpalette())
+    tiles = tiles_of(raw)
+    for oam in cell["OAM"]:  # 1D mapping, one tile per character name
+        place(face, tiles, oam, oam["Attr2"]["CharName"],
+              oam["Attr1"]["XCoordinate"] - cell["minX"], oam["Attr0"]["YCoordinate"] - cell["minY"])
+    return to_rgba(face)
+
+
+def vs_face_raw():
+    """Ethan's VS face as the game stores it: (its characters as an indexed 8-pixel-wide tile
+    strip, its cell), unpacked with hg-engine's narcpy and nitrogfx into a temporary folder."""
     _, narc, first, _, _ = VS_FACE
     tmp = tempfile.mkdtemp(prefix="avatar_vs_")
     try:
@@ -143,15 +157,9 @@ def vs_face():
         subprocess.run([gfx, os.path.join(tmp, "face.NCER"), os.path.join(tmp, "face.json")],
                        check=True, capture_output=True)
         raw = Image.open(os.path.join(tmp, "face.png"))
+        raw.load()
         cell = json.load(open(os.path.join(tmp, "face.json")))["cells"][0]
-        w, h = cell["maxX"] - cell["minX"] + 1, cell["maxY"] - cell["minY"] + 1
-        face = Image.new("P", (w, h), 0)
-        face.putpalette(raw.getpalette())
-        tiles = tiles_of(raw)
-        for oam in cell["OAM"]:  # 1D mapping, one tile per character name
-            place(face, tiles, oam, oam["Attr2"]["CharName"],
-                  oam["Attr1"]["XCoordinate"] - cell["minX"], oam["Attr0"]["YCoordinate"] - cell["minY"])
-        return to_rgba(face)
+        return raw, cell
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -10,6 +10,10 @@ avatar ID 3 + k) and writes:
   hg-engine/data/graphics/cutin/<NN>.png
       the HM cut-in's trainer frames of each avatar whose HM column is drawn (KNOWN_RISKS #82):
       narcs.mk adds them to NARC a/0/9/3 as members NN (the frames) and NN + 1 (the palette).
+  hg-engine/data/graphics/vsface/<NNN>.png
+      the VS face of each avatar that has one (Phase 6, the PvP battle intro), in the game's tile
+      order: narcs.mk adds it to NARC a/1/0/9 as members NNN (palette), NNN + 1 (characters) and
+      Ethan's cell and animation (NNN + 2, NNN + 3).
   hg-engine/include/coop_avatars_gen.h
       the overworld table entries, the follower offset, and the lookup tables for the ghosts
   coop_avatars.json, build/avatars/*.png
@@ -46,6 +50,8 @@ TABLE = os.path.join(ENGINE, "src", "field", "overworld_table.c")
 LIST = os.path.join(ROOT, "coop_avatars.json")
 CUTIN = os.path.join(GFX, "cutin")
 CUTIN_NARC = os.path.join(ENGINE, "build", "narc", "a093.narc")
+VSFACE = os.path.join(GFX, "vsface")
+VSFACE_NARC = os.path.join(ENGINE, "build", "narc", "a109.narc")
 PREVIEWS = os.path.join(ROOT, "build", "avatars")
 
 CUSTOM_GFX_START = 297   # overworld_table.c NEW_NPC_GFX_START
@@ -55,6 +61,12 @@ MAX_CUSTOM = 32
 CUTIN_FIRST_MEMBER = 26  # NARC a/0/9/3 (choose_starter_sub_res) has 26 members; narcpy names them 3_00..
 # The HM cut-in's 10 trainer frames (vanilla's Ethan set, member 17), from the overworld columns
 # (zero-based frames; checked shape by shape against the vanilla char).
+# NARC a/1/0/9 (the encounter effects) has 242 members; narcpy names them 9_000..
+VSFACE_FIRST_MEMBER = 242
+# Ethan's VS face cell (a/1/0/9 member 209): (x, y, width, height, first tile) of its two OAM
+# pieces in the 96x64 face, tiles in 1D order (one per character name). --selftest checks it.
+VSFACE_OAMS = [(0, 0, 64, 64, 0), (64, 0, 32, 64, 64)]
+VSFACE_PAL0 = (197, 189, 156)  # Ethan's face's colour 0 (transparent, 0x4EF8), as nitrogfx decodes it
 CUTIN_FRAMES = [("walk", 0), ("walk", 21), ("surf", 0), ("surf", 1), ("walk", 7), ("walk", 11),
                 ("hm", 0), ("hm", 1), ("hm", 2), ("hm", 3)]
 NAME = re.compile(r"^[a-z0-9_]{1,16}$")
@@ -279,6 +291,31 @@ def cut_cutin(columns, layout):
     return png_bytes(strip, bits=4), notes
 
 
+def pack_vsface(face, pal0):
+    """A 96x64 RGBA face in the game's tile order: an indexed 8x768 strip, tile t at y = 8t."""
+    pic, palette = indexed([face], pal0)
+    src = pic.load()
+    out = Image.new("P", (8, 8 * sum(w * h // 64 for _, _, w, h, _ in VSFACE_OAMS)), 0)
+    out.putpalette(pic.getpalette())
+    dst = out.load()
+    for x0, y0, w, h, first in VSFACE_OAMS:
+        for t in range(w * h // 64):
+            tx, ty = x0 + (t % (w // 8)) * 8, y0 + (t // (w // 8)) * 8
+            for yy in range(8):
+                for xx in range(8):
+                    dst[xx, (first + t) * 8 + yy] = src[tx + xx, ty + yy]
+    return out, palette
+
+
+def cut_vsface(columns):
+    """The VS face's PNG for narcs.mk, or None when the column isn't drawn (the save's own face)."""
+    col = columns.get("vs_face")
+    if col is None or col["vanilla"]:
+        return None
+    pic, _ = pack_vsface(col["frames"][0], VSFACE_PAL0)
+    return png_bytes(pic, bits=4)
+
+
 def front_preview(columns):
     """The bridge's preview: the battle front picture, else the first walking frame."""
     for key in ("front", "walk"):
@@ -336,6 +373,30 @@ def selftest():
                 detail = " (size %s vs %s)" % (mine.size, theirs.size)
             print("%-28s %s%s" % (mine_name, "same as vanilla" if ok else "DIFFERS", detail))
             bad += not ok
+    # The VS face: Ethan's packed back must be his characters, tile for tile, colour for colour.
+    raw, cell = avatar_template.vs_face_raw()
+    oams = [(o["Attr1"]["XCoordinate"] - cell["minX"], o["Attr0"]["YCoordinate"] - cell["minY"],
+             avatar_template.OAM_SIZES[(o["Attr0"]["Shape"], o["Attr1"]["Size"])][0],
+             avatar_template.OAM_SIZES[(o["Attr0"]["Shape"], o["Attr1"]["Size"])][1],
+             o["Attr2"]["CharName"]) for o in cell["OAM"]]
+    mine, _ = pack_vsface(columns["vs_face"]["frames"][0], tuple(raw.getpalette()[:3]))
+    ok = oams == VSFACE_OAMS and mine.size == raw.size
+    diff = 0
+    if ok:
+        mp, tp = mine.getpalette(), raw.getpalette()
+        a, b = mine.load(), raw.load()
+        for y in range(mine.size[1]):
+            for x in range(mine.size[0]):
+                ca = None if a[x, y] == 0 else avatar_sheet.ds_colour(tuple(mp[a[x, y] * 3:a[x, y] * 3 + 3]))
+                cb = None if b[x, y] == 0 else avatar_sheet.ds_colour(tuple(tp[b[x, y] * 3:b[x, y] * 3 + 3]))
+                diff += ca != cb
+        ok = diff == 0
+    print("%-28s %s%s" % ("vsface", "same as vanilla" if ok else "DIFFERS",
+                          "" if ok else " (cell %s, %d px differ)" % (oams, diff)))
+    bad += not ok
+    if tuple(raw.getpalette()[:3]) != VSFACE_PAL0:
+        print("vsface colour 0 %s, VSFACE_PAL0 %s" % (tuple(raw.getpalette()[:3]), VSFACE_PAL0))
+        bad += 1
     print("selftest: %s" % ("pass" if not bad else "%d differ" % bad))
     return bad == 0
 
@@ -375,7 +436,7 @@ def main():
         for note in cutin_notes:
             print("avatar %s: %s" % (name, note))
         avatars.append({"name": name, "id": FIRST_CUSTOM_ID + k, "stem": "av%02d" % k, "drawn": drawn,
-                        "preview": front_preview(columns), "cutin": cutin})
+                        "preview": front_preview(columns), "cutin": cutin, "vsface": cut_vsface(columns)})
 
     # The custom folder: ours are av*; anything else there is another custom NPC and keeps its place.
     changed = 0
@@ -439,6 +500,25 @@ def main():
             if os.path.exists(CUTIN_NARC):
                 os.remove(CUTIN_NARC)
 
+    # The VS face (Phase 6): one PNG per avatar that has one, named by its first NARC member.
+    # narcs.mk rebuilds a/1/0/9 from vanilla's 242 members every time, as the cut-in's.
+    vsface_wanted = {}
+    for a in avatars:
+        a["vsface_member"] = 0xFFFF
+        if a["vsface"] is not None:
+            a["vsface_member"] = VSFACE_FIRST_MEMBER + 4 * len(vsface_wanted)
+            vsface_wanted["%d.png" % a["vsface_member"]] = a["vsface"]
+    if VSFACE_FIRST_MEMBER + 4 * len(vsface_wanted) > 1000:
+        raise SystemExit("internal: a/1/0/9 member names would need four digits")
+    for fname, data in vsface_wanted.items():
+        changed += write_if_changed(os.path.join(VSFACE, fname), data)
+    for old in glob.glob(os.path.join(VSFACE, "*.png")):
+        if os.path.basename(old) not in vsface_wanted:
+            os.remove(old)
+            changed += 1
+            if os.path.exists(VSFACE_NARC):
+                os.remove(VSFACE_NARC)
+
     # The header: table entries for every av* file, by its place among all the custom PNGs.
     entries, tags, base = [], [], []
     for a in avatars:
@@ -493,6 +573,9 @@ def main():
         h += ["// The HM cut-in's trainer frames per custom avatar (KNOWN_RISKS #82): NARC a/0/9/3 member of",
               "// the frames (the palette is the next one), 0xFFFF where the HM column wasn't drawn.",
               "#define COOP_AVATAR_CUTIN { %s }" % ", ".join("%d" % a["cutin_member"] for a in avatars), ""]
+        h += ["// The VS face per custom avatar (Phase 6, the PvP intro): NARC a/1/0/9 member of its palette",
+              "// (characters, cell, animation follow), 0xFFFF where the VS face wasn't drawn.",
+              "#define COOP_AVATAR_VSFACE { %s }" % ", ".join("%d" % a["vsface_member"] for a in avatars), ""]
     h += ["#endif // COOP_AVATARS_GEN_H", ""]
     changed += write_if_changed(HEADER, "\n".join(h).encode())
 

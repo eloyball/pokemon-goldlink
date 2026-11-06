@@ -20,6 +20,12 @@ BOOL LONG_CALL Coop_BattleTakeOver(TaskManager *taskman, const u16 *name, u32 pe
 struct LocalMapObject;
 void LONG_CALL Coop_BossTalkStart(struct FieldSystem *fsys, struct LocalMapObject *boss, u16 script);
 
+// Custom avatars, Phase 6 (src/field/coop_vs_intro.c): the next battle transition, at
+// effect 33, is the PvP intro with this player's and the opponent's (remote slot) VS faces and
+// the opponent's name. FALSE: nothing armed (use the battle's own transition).
+BOOL Coop_VsIntroArm(u32 opponentSlot, const u16 *name);
+#define COOP_VS_INTRO_EFFECT 33
+
 #if COOP_DEBUG_TOOLS
 // Link probe: a battle without a session request; both sides use beacon id 1.
 BOOL LONG_CALL Coop_DebugStartBattle(struct FieldSystem *fsys, BOOL parent);

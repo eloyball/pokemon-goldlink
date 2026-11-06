@@ -1026,6 +1026,11 @@ SetupAndStartWildBattle = 0x02051020 | 1;
 
 BattleSetup_New_Tutorial = 0x02051AAC | 1;
 Encounter_New = 0x020506BC | 1;
+/* Custom avatars Phase 6, the PvP intro (src/field/coop_vs_intro.c): pret labels, bodies paired with ccd */
+ov01_021EFCDC = 0x021EFCDC | 1; /* EncounterEffect_Finish */
+ov01_021F05C4 = 0x021F05C4 | 1; /* EncounterEffect_InitSprites */
+ov01_021F0614 = 0x021F0614 | 1; /* EncounterEffect_LoadSpriteResources */
+ov115_0225F978 = 0x0225F978 | 1; /* LeadersEffect_RunEliteFourIntro (Overlay 115) */
 TaskManager_Call = 0x02050530 | 1;
 Task_TutorialBattle = 0x0205128C | 1;
 

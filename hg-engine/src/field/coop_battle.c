@@ -134,7 +134,7 @@ struct CoopBattleEnv
     // Team boss (docs/MILESTONE3_PLAN.md §18).
     u8 boss;
     u8 bossIndex;  // sGatedBosses index
-    u8 peerSlot;   // the teammate's remote slot
+    u8 peerSlot;   // the teammate's (team boss) or the opponent's (1v1) remote slot
     u16 bossScript;
     LocalMapObject *bossObj;
     int bossObjId;     // to find it again after the party screen (the overworld is rebuilt)
@@ -498,6 +498,7 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
     struct CoopBattleEnv *env = taskman->env;
     struct BattleSetup *setup;
     void *encounter;
+    s32 effect;
 
     switch (taskman->state)
     {
@@ -688,7 +689,10 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
             BattleSetup_InitForLinkBattle(setup, fsys, NULL);
             Coop_StampBattleAvatar(setup);
         }
-        encounter = Encounter_New(setup, BattleSetup_GetWildTransitionEffect(setup), BattleSetup_GetWildBattleMusic(setup), &env->winFlag);
+        // A 1v1 opens with both players' VS faces (custom avatars Phase 6); 2v2s keep vanilla's.
+        effect = !env->team && Coop_VsIntroArm(env->peerSlot, env->name) ? COOP_VS_INTRO_EFFECT
+                                                                        : BattleSetup_GetWildTransitionEffect(setup);
+        encounter = Encounter_New(setup, effect, BattleSetup_GetWildBattleMusic(setup), &env->winFlag);
         env->fought = TRUE;
         gCoopLinkBattleChildren = env->team ? 3 : 1;
         gCoopCommBlock.track_link_lost_frames = 0;
@@ -924,6 +928,7 @@ BOOL Coop_BattleTakeOver(TaskManager *taskman, const u16 *name, u32 peerSlot, BO
     if (env == NULL)
         return FALSE;
     env->team = team ? TRUE : FALSE;
+    env->peerSlot = (u8)peerSlot; // the other player's remote slot (the PvP intro shows them)
     taskman->func = Coop_Task_Battle;
     taskman->state = COOP_BATTLE_OPEN;
     taskman->env = env;

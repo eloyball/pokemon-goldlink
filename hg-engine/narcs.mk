@@ -918,6 +918,36 @@ coop_cutin_install: $(COOP_CUTIN_NARC)
 
 NARC_FILES += coop_cutin_install
 
+# Custom avatars, Phase 6 (docs/CUSTOM_SPRITES_PLAN.md): the VS faces of the PvP battle intro.
+# scripts/avatar_build.py writes data/graphics/vsface/NNN.png (the face in the game's tile order)
+# per avatar that has one; each becomes members NNN (palette), NNN + 1 (characters) and copies of
+# Ethan's cell and animation (209, 210) of NARC a/1/0/9, after vanilla's 242 members. Rebuilt
+# from vanilla's members every time, as the cut-in's above.
+COOP_VSFACE_DIR := $(BUILD)/a109
+COOP_VSFACE_NARC := $(BUILD_NARC)/a109.narc
+COOP_VSFACE_TARGET := $(FILESYS)/a/1/0/9
+COOP_VSFACE_DEPENDENCIES_DIR := data/graphics/vsface
+COOP_VSFACE_DEPENDENCIES := $(wildcard $(COOP_VSFACE_DEPENDENCIES_DIR)/*.png)
+
+$(COOP_VSFACE_NARC): $(COOP_VSFACE_DEPENDENCIES)
+	rm -rf $(COOP_VSFACE_DIR)
+	$(NARCHIVE) extract $(COOP_VSFACE_TARGET) -o $(COOP_VSFACE_DIR) -nf
+	ls $(COOP_VSFACE_DIR) | sort | tail -n +243 | sed 's|^|$(COOP_VSFACE_DIR)/|' | xargs -r rm -f
+	for f in $(COOP_VSFACE_DEPENDENCIES); do \
+		n=$$(basename $$f .png); \
+		$(GFX) $$f $(COOP_VSFACE_DIR)/9_$$n.NCLR -ir -bitdepth 4 || exit 1; \
+		$(GFX) $$f $(COOP_VSFACE_DIR)/9_$$((n + 1)).NCGR -clobbersize -version101 -bitdepth 4 -mappingtype 32 || exit 1; \
+		cp $(COOP_VSFACE_DIR)/9_209 $(COOP_VSFACE_DIR)/9_$$((n + 2)).NCER || exit 1; \
+		cp $(COOP_VSFACE_DIR)/9_210 $(COOP_VSFACE_DIR)/9_$$((n + 3)).NANR || exit 1; \
+	done
+	$(NARCHIVE) create $@ $(COOP_VSFACE_DIR) -nf
+
+.PHONY: coop_vsface_install
+coop_vsface_install: $(COOP_VSFACE_NARC)
+	cp $(COOP_VSFACE_NARC) $(COOP_VSFACE_TARGET)
+
+NARC_FILES += coop_vsface_install
+
 
 # only the archives that were built replace what the rom already has, so every archive left out stays as rom.nds had it
 # if no keys.csv, fall back to msgenc's own key as before

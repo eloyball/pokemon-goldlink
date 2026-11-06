@@ -186,6 +186,11 @@ struct CoopDebugMonBuffer
     u8  wild_task;         // a field task or script was running (statics need one)
     u16 wild_ability;      // the random ability given (0 none)
     u16 wild_count;        // wild hooks seen since boot
+    // Custom avatars Phase 6 (vs_intro probe): the PvP intro's faces (NARC a/1/0/9 palette
+    // members) as armed, and how many intros finished since boot.
+    u16 vs_player;
+    u16 vs_opponent;
+    u16 vs_count;
 };
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, wild_original) == 0xFC, "m5_probe.lua reads the wild log at +0xFC");
 extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;

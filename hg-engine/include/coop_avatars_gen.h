@@ -50,4 +50,8 @@
 // the frames (the palette is the next one), 0xFFFF where the HM column wasn't drawn.
 #define COOP_AVATAR_CUTIN { 26 }
 
+// The VS face per custom avatar (Phase 6, the PvP intro): NARC a/1/0/9 member of its palette
+// (characters, cell, animation follow), 0xFFFF where the VS face wasn't drawn.
+#define COOP_AVATAR_VSFACE { 242 }
+
 #endif // COOP_AVATARS_GEN_H
