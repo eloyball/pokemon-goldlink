@@ -19,6 +19,7 @@
 .if FAIRY_TYPE_IMPLEMENTED == 1
 
 .include "armips/asm/fairy.s" // repoints all the move table defines within the structure
+.include "armips/asm/coop_box_count.s" // co-op: the box-full checks compare with 30 boxes (docs/KNOWN_RISKS.md #60)
 
 .endif
 
