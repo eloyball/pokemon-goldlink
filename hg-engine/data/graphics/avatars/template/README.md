@@ -53,4 +53,4 @@ Red label = must, black = should / optional. A column left empty falls back to t
 | Battle front | 1 | what your opponent sees in a battle against you (must) |
 | Throw | 8 | your back picture throwing a Poke Ball (must) |
 | Throw (link) | 8 | the same in link battles (PvP, team battles); empty = uses "Throw" |
-| VS face | 1 | the battle intro's face close-up. Vanilla only shows the player's in the Elite Four and Champion intros; PvP has no intro yet, so showing it there is new work |
+| VS face | 1 | the face in the PvP battle intro (1v1): yours on the left, mirrored on the right for your opponent, so draw it looking right. Empty = Ethan's or Lyra's, by the save |
