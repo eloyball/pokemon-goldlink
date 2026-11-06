@@ -121,12 +121,14 @@ BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys)
         sBallReason = (save->pending_flags & COOP_PENDING_PARTNER_FAILED) ? COOP_BALL_SOUL_LINK : COOP_BALL_NUZLOCKE;
     else
         return FALSE;
-    // The ball left the bag (or the Safari count) when it was chosen: give it
-    // back. Sport Balls are the contest's own count (KNOWN_RISKS #67).
+    // The ball left the bag (or the ball count) when it was chosen: give it
+    // back. Safari and Sport Balls share the battle's count (ccd
+    // BattleControllerPlayer_SafariThrowBall / the Sport Ball throw; the setup
+    // writes it back to the Safari counter or the contest's, KNOWN_RISKS #67).
     ctx = bsys->sp;
-    if (type & BATTLE_TYPE_SAFARI)
+    if (type & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_BUG_CONTEST))
         BattleSystem_SetSafariBallCount(bsys, BattleSystem_GetSafariBallCount(bsys) + 1);
-    else if (!(type & BATTLE_TYPE_BUG_CONTEST) && ctx->item_work != ITEM_NONE)
+    else if (ctx->item_work != ITEM_NONE)
         Bag_AddItem(bsys->bag, (u16)ctx->item_work, 1, COOP_HEAP_BATTLE);
     return TRUE;
 }
