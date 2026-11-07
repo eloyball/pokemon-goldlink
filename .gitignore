@@ -1,7 +1,6 @@
 # Root ignore rules for the pokemon-hg monorepo.
 # Subprojects keep their own rules: hg-engine/.gitignore (build outputs,
 # generated sources, base ROM) and coop-relay/.gitignore (target/).
-# The reference decomps are submodules (see .gitmodules).
 
 # --- Never commit: copyrighted ROMs, saves and savestates (any directory) ---
 *.nds
@@ -32,9 +31,6 @@
 # --- coop-relay runtime data (campaign rosters; default --save-dir) ---
 /campaigns/
 /coop-relay/campaigns/
-
-# --- Generated knowledge graphs (regenerate with `graphify update .`) ---
-graphify-out/
 
 # --- Python ---
 __pycache__/
