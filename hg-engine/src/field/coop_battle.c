@@ -48,6 +48,9 @@
 #define COOP_COMM_TYPE_BATTLE_TOWER  16 // a team boss: the Battle Tower's link multi
 #define COOP_BOSS_BEACON_BASE        16 // team boss beacon ids: 16 + lower id * 6 + higher id (PvP: 1-6)
 #define COOP_HEAP_ID_FIELD2          11
+#define COOP_HEAP_ID_FIELD3          32 // field task heap (the boss battle's env, as src/coop_boss.c)
+#define COOP_BOSS_PARTY_MAX          3  // each player's Pokemon in the boss multi
+#define COOP_GAME_STAT_TRAINER_BATTLES 9 // ccd constants/game_stats.h
 #define COOP_BATTLE_SYNC             0x61 // LinkSync value both games reach before the battle
 #define COOP_FPS                     30 // game logic (field tasks) runs every other frame (ccd main.c)
 #define COOP_FIND_FAILSAFE           (20 * COOP_FPS) // child: the parent's beacon
@@ -68,6 +71,10 @@ int LONG_CALL Comm_CountConnected(void);
 // Vanilla's link battle (pret src/encounter.c CallTask_020508B8 /
 // Task_020508B8; ccd CallTask_LinkBattle / Task_LinkBattle).
 void LONG_CALL BattleSetup_InitForLinkBattle(struct BattleSetup *setup, FieldSystem *fsys, void *partySlots);
+// The team boss battle's setup (pret src/encounter.c, src/battle/battle_setup.c, src/trainer_data.c).
+void LONG_CALL EnemyTrainerSet_Init(struct BattleSetup *setup, void *saveData, int heapID);
+void LONG_CALL BattleSetup_SetAllySideBattlersToPlayer(struct BattleSetup *setup);
+int LONG_CALL Comm_GetLocalNetId(void);
 void *LONG_CALL Encounter_New(struct BattleSetup *setup, s32 effect, s32 bgm, u32 *winFlag);
 BOOL LONG_CALL Task_LinkBattle(TaskManager *taskman);
 void LONG_CALL CallTask_FadeFromBlack(TaskManager *taskman);
@@ -661,6 +668,7 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
             gCoopBoss.bossIndex = env->bossIndex;
             gCoopBoss.fought = 0;
             gCoopBoss.won = 0;
+            gCoopBoss.linkLost = 0;
             gCoopBoss.foeCount = 0;
             gCoopBoss.prizeLevel = 0;
             Coop_SnapshotPartyForRewards(fsys);
@@ -756,6 +764,16 @@ static BOOL Coop_Task_Battle(TaskManager *taskman)
     case COOP_BATTLE_BOSS_CLOSE:
         if (CommState_Exists() && ++env->frames < COOP_SHUTDOWN_FAILSAFE)
             break;
+        // A lost link ended the battle (KNOWN_RISKS #32): no white-out (the
+        // script skipped it), say so. The boss can be talked to again.
+        if (gCoopBoss.linkLost)
+        {
+            gCoopBoss.linkLost = 0;
+            Coop_BattleOpenDialog(fsys, env);
+            Coop_DialogPrint(&env->dialog, "The link was lost.\nThe battle was called off.");
+            taskman->state = COOP_BATTLE_FINAL_TEXT;
+            break;
+        }
         // A win: the experience and prize money the link battle could not
         // give (src/field/coop_rewards.c), then the pages and evolutions.
         if (!Coop_PayBossRewards(fsys, &env->rewards))
@@ -1023,6 +1041,55 @@ u32 LONG_CALL Coop_TeamRosterFor(u32 trainer)
         if (gCoopTeamRosters[i].solo == trainer)
             return gCoopTeamRosters[i].team;
     return trainer;
+}
+
+// The team boss battle's setup (src/coop_boss.c Coop_SetupAndStartTrainerBattle, through
+// gCoopBoss.startBattle): moved here from Overlay 129, which had no room left (KNOWN_RISKS #27).
+// The battle task itself stays resident: it runs while the overworld is gone.
+BOOL LONG_CALL Coop_StartBossBattle(TaskManager *taskman, u32 trainer, int heapID, u32 *winFlag)
+{
+    FieldSystem *fsys = taskman->fieldSystem;
+    struct CoopBossBattleEnv *env = sys_AllocMemory(COOP_HEAP_ID_FIELD3, sizeof(struct CoopBossBattleEnv));
+    struct BattleSetup *setup;
+
+    if (env == NULL)
+        return FALSE;
+    __builtin_memset(env, 0, sizeof(*env));
+    setup = BattleSetup_New(COOP_HEAP_ID_FIELD2, COOP_BOSS_BATTLE_TYPE);
+    BattleSetup_InitFromFieldSystem(setup, fsys);
+    // A multi gives each player three slots: the three chosen before waiting
+    // (gCoopBoss.order), in that order, or the first three.
+    if (gCoopBoss.order[0] != 0)
+    {
+        struct Party *save = SaveData_GetPlayerPartyPtr(fsys->savedata);
+        int i;
+
+        for (i = 0; i < COOP_BOSS_PARTY_MAX && gCoopBoss.order[i] != 0; i++)
+            __builtin_memcpy(Party_GetMonByIndex(setup->party[0], i), Party_GetMonByIndex(save, gCoopBoss.order[i] - 1), COOP_PARTY_MON_SIZE);
+        setup->party[0]->count = i;
+    }
+    else if (setup->party[0]->count > COOP_BOSS_PARTY_MAX)
+        setup->party[0]->count = COOP_BOSS_PARTY_MAX;
+    BattleSetup_SetAllySideBattlersToPlayer(setup);
+    Coop_StampBattleAvatar(setup); // custom avatars: this player's pictures on the partner's game
+    // The boss in both enemy seats, in its team roster (docs/GAME_REBALANCE_UPDATE.md §4.2);
+    // hg-engine's party builder splits its team between them (Coop_BossSplitParty, while armed).
+    trainer = Coop_TeamRosterFor(trainer);
+    setup->trainerId[BATTLER_ENEMY] = (int)trainer;
+    setup->trainerId[BATTLER_ENEMY2] = (int)trainer;
+    EnemyTrainerSet_Init(setup, fsys->savedata, heapID);
+    setup->battleType = COOP_BOSS_BATTLE_TYPE;
+    GameStats_Inc(Save_GameStats_Get(fsys->savedata), COOP_GAME_STAT_TRAINER_BATTLES);
+
+    env->setup = setup;
+    env->winFlag = winFlag;
+    env->trainer = trainer;
+    env->heapID = heapID;
+    env->effect = BattleSetup_GetWildTransitionEffect(setup);
+    env->bgm = BattleSetup_GetWildBattleMusic(setup);
+    env->seat = (u8)(Comm_GetLocalNetId() * 2);
+    TaskManager_Call(taskman, Coop_Task_BossBattle, env);
+    return TRUE;
 }
 
 static u32 Coop_CountBadges(u32 mask)

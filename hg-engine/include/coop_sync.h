@@ -71,7 +71,7 @@ struct CoopFieldEntryHeader
     u32 (*giftSpecies)(u32 value);           // 0x10: Milestone 5 gift randomizer, called by GiveMon (src/pokemon.c)
     u32 (*roamerSpecies)(u32 idx, u32 vanilla); // 0x14: Milestone 5 roamer randomizer (src/field_roamer.c)
     u32 (*playerSprite)(u32 state, u32 gender); // 0x18: the local player's sprite in its avatar (Coop_PlayerAvatar_GetSprite)
-    void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar, for resident battle setups (coop_boss.c)
+    void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar; unused since the boss setup moved to Overlay 131 (2026-11-06), kept for the layout
 };
 
 // Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5): a player's

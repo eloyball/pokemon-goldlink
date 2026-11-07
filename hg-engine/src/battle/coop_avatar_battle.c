@@ -19,6 +19,7 @@
 #include "trainer_data.h"
 #include "coop_sync.h"
 #include "coop_avatars_gen.h"
+#include "coop_boss.h"
 
 struct ManagedSprite;
 
@@ -163,6 +164,88 @@ int Coop_TrainerClassToBackpicID(int trainerClass, BOOL isLink)
     return TrainerClass_GetGenderOrTrainerCount(trainerClass) == TRAINER_FEMALE ? 1 : 0;
 }
 
+// A co-op team boss battle (src/coop_boss.c COOP_BOSS_BATTLE_TYPE: the Battle Tower's link multi,
+// which co-op uses for nothing else).
+static BOOL Coop_IsTeamBossBattle(struct BattleSystem *bsys)
+{
+    return (bsys->battleType & (BATTLE_TYPE_FRONTIER | BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI))
+               == (BATTLE_TYPE_FRONTIER | BATTLE_TYPE_LINK | BATTLE_TYPE_MULTI)
+        && gCoopBoss.fought;
+}
+
+// The enemy side's second seat (ccd BATTLER_TYPE_ENEMY_SIDE_SLOT_2), the resource tag of its
+// trainer sprite. pret struct ManagedSprite starts with its Sprite *.
+#define COOP_BATTLER_TYPE_ENEMY_SLOT_2 5
+void LONG_CALL Sprite_SetDrawFlag(void *sprite, BOOL flag); // ARM9 (pret sprite.c)
+
+// ccd BattleMessage: the tag, the message ID, then the tag's parameters (battlers).
+struct CoopBattleMessage
+{
+    u8 commandType;
+    u8 tag;
+    u16 id;
+    int param[6];
+};
+
+// Overlay-12 hook (hooks: ov12_02261544, ccd BattleControllerOpponent_GetEncounterMessage;
+// replaced): vanilla's choice, except that a team boss (in both enemy seats) is greeted as
+// one trainer, "X would like to battle!", not "X and X..." (KNOWN_RISKS #35).
+void Coop_GetEncounterMessage(struct BattleSystem *bsys, void *opponentData, struct CoopBattleMessage *msg)
+{
+    u32 type = BattleTypeGet(bsys);
+    int enemy1, enemy2;
+
+    (void)opponentData;
+    if (type & BATTLE_TYPE_DOUBLES)
+    {
+        enemy1 = BattleWorkClientNoGet(bsys, 3); // BATTLER_TYPE_ENEMY_SIDE_SLOT_1
+        enemy2 = BattleWorkClientNoGet(bsys, 5); // BATTLER_TYPE_ENEMY_SIDE_SLOT_2
+    }
+    else
+        enemy1 = enemy2 = BattleWorkClientNoGet(bsys, 1); // BATTLER_TYPE_SOLO_ENEMY
+    if ((type & BATTLE_TYPE_LINK) && !Coop_IsTeamBossBattle(bsys))
+    {
+        if (type & BATTLE_TYPE_FRONTIER)
+        {
+            msg->id = 992; // msg_0197_00992: two trainers (class and name each)
+            msg->tag = 59;
+            msg->param[0] = enemy1;
+            msg->param[1] = enemy1;
+            msg->param[2] = enemy2;
+            msg->param[3] = enemy2;
+        }
+        else if (type & BATTLE_TYPE_MULTI)
+        {
+            msg->id = 971; // two link players
+            msg->tag = 26;
+            msg->param[0] = enemy1;
+            msg->param[1] = enemy2;
+        }
+        else
+        {
+            msg->id = 970; // a link player
+            msg->tag = 8;  // TAG_TRNAME
+            msg->param[0] = enemy1;
+        }
+    }
+    else if (!Coop_IsTeamBossBattle(bsys) && (type & (BATTLE_TYPE_TAG | BATTLE_TYPE_MULTI)))
+    {
+        msg->id = 992;
+        msg->tag = 59;
+        msg->param[0] = enemy1;
+        msg->param[1] = enemy1;
+        msg->param[2] = enemy2;
+        msg->param[3] = enemy2;
+    }
+    else
+    {
+        msg->id = 969; // msg_0197_00969: one trainer
+        msg->tag = 30;
+        msg->param[0] = enemy1;
+        msg->param[1] = enemy1;
+    }
+}
+
 // Overlay-12 hook (hooks: ov12_02261B2C, ccd
 // BattleControllerOpponent_CreateTrainerSprite; replaced). The encounter
 // passes the class from GetVersionTrainerClass, the slide-in the raw one: an
@@ -171,6 +254,8 @@ struct ManagedSprite *Coop_CreateTrainerSprite(struct BattleSystem *bsys, int po
                                                BOOL isLink, s16 x, s16 y)
 {
     const u8 *data = Coop_OpponentData(bsys, -1, resTag);
+    struct ManagedSprite *managed;
+    void *sprite;
 
     if (data != NULL && Coop_BattlerAvatar(bsys, data[COOP_OPPONENT_BATTLER_ID]) != 0)
         trainerClass = Coop_GetVersionTrainerClass(bsys, data[COOP_OPPONENT_BATTLER_ID], (u8)trainerClass);
@@ -185,6 +270,15 @@ struct ManagedSprite *Coop_CreateTrainerSprite(struct BattleSystem *bsys, int po
             data != NULL ? (u8)Coop_TrainerCarrier(BattleSystem_GetTrainer(bsys, data[COOP_OPPONENT_BATTLER_ID])) : 0xEE;
     }
 #endif
-    return CreateTrainerPicSprite(bsys->unk90, bsys->unk94, bsys->palette, x, y, trainerClass, (position & 1) ? 2 : 0,
-                                  isLink, resTag, COOP_HEAP_ID_BATTLE);
+    managed = CreateTrainerPicSprite(bsys->unk90, bsys->unk94, bsys->palette, x, y, trainerClass, (position & 1) ? 2 : 0,
+                                     isLink, resTag, COOP_HEAP_ID_BATTLE);
+    // A team boss sits in both enemy seats (KNOWN_RISKS #35): its second seat's sprite is
+    // created as vanilla expects (moved, animated, deleted with the first) but never drawn.
+    if (managed != NULL && resTag == COOP_BATTLER_TYPE_ENEMY_SLOT_2 && Coop_IsTeamBossBattle(bsys))
+    {
+        __builtin_memcpy(&sprite, managed, sizeof(sprite));
+        if (sprite != NULL)
+            Sprite_SetDrawFlag(sprite, FALSE);
+    }
+    return managed;
 }

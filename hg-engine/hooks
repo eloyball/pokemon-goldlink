@@ -653,6 +653,9 @@ arm9 Coop_PlayerAvatar_GetSprite 0205C898 2
 # Custom avatars in battle (Phase 5): the trainer pictures (src/battle/coop_avatar_battle.c)
 0012 Coop_GetVersionTrainerClass 02261EF0 3
 0012 Coop_CreateTrainerSprite 02261B2C
+# Team bosses greeted as one trainer (KNOWN_RISKS #35): the encounter message's choice
+# (ccd BattleControllerOpponent_GetEncounterMessage, replaced). r3: three arguments.
+0012 Coop_GetEncounterMessage 02261544 3
 arm9 Coop_TrainerClassToBackpicID 0207280C 2
 
 0012 BattleMessage_BufferNickname 0223CDD0
@@ -718,6 +721,10 @@ arm9 Coop_SetupAndStartTrainerBattle 02051370
 # co-op: GF_AssertFail never resets, even during a link session; it keeps
 # the caller (src/coop_boss.c). r0: no arguments, lr stays the caller's.
 arm9 Coop_GF_AssertFail 0202551C 0
+
+# co-op: script command 219 (WhiteOut) is skipped after a team boss battle a
+# lost link ended (KNOWN_RISKS #32, src/coop_boss.c). r1: one argument (ctx).
+arm9 Coop_ScrCmd_WhiteOut 020498C8 1
 
 # co-op HMs (docs/MILESTONE3_PLAN.md §21): the party's slot for a move also
 # answers for an unlocked HM nobody knows (src/field/coop_hm_field.c, Overlay

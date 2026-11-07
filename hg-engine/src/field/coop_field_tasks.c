@@ -673,7 +673,7 @@ void LONG_CALL Coop_UpdateBossWatch(FieldSystem *fsys)
     gCoopBoss.talkObj = NULL;
     gCoopBoss.coordObj = NULL;
     gCoopBoss.talkStart = Coop_BossTalkStart;
-    gCoopBoss.teamRoster = Coop_TeamRosterFor;
+    gCoopBoss.startBattle = Coop_StartBossBattle;
     if (gCoopCommBlock.gates.team_partner_slot == COOP_SLOT_NONE || !Coop_IsAdventureStarted())
         return;
     if (fsys->location->mapId == MAP_T10R0601 && fsys->mapObjectMan != NULL)

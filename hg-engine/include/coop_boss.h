@@ -27,8 +27,9 @@ struct CoopBossState
     struct LocalMapObject *talkObj; // a team boss the player could talk to now; NULL: none
     // Overlay 131: starts the waiting task instead of the boss's script.
     void (*talkStart)(struct FieldSystem *fsys, struct LocalMapObject *boss, u16 script);
-    // Overlay 131: the boss's team roster (docs/GAME_REBALANCE_UPDATE.md §4.2), or the trainer itself.
-    u32 (*teamRoster)(u32 trainer);
+    // Overlay 131: builds the team boss battle and calls Coop_Task_BossBattle (Coop_StartBossBattle;
+    // run from the boss's TrainerBattle, so in the field). FALSE: no memory.
+    BOOL (*startBattle)(TaskManager *taskman, u32 trainer, int heapID, u32 *winFlag);
     // Overlay 131: a team boss whose battle starts from a coord event, not a
     // talk (Lance, docs/GAME_REBALANCE_UPDATE.md §21): its map object, and the
     // script the coord event starts with no object.
@@ -57,9 +58,29 @@ struct CoopBossState
     u8 prizeClass;
     u8 prizeLevel;
     u8 prizeDouble;
+    // The battle ended by a lost link (KNOWN_RISKS #32): the boss's script skips its WhiteOut
+    // (Coop_ScrCmd_WhiteOut) and Overlay 131 says so after the script, then clears it.
+    u8 linkLost;
 };
 
 #define COOP_BOSS_MAGIC 0x53534F42 // "BOSS"
+
+// The team boss battle task (src/coop_boss.c, Overlay 129: it outlives the field) and its
+// environment, built by Coop_StartBossBattle (src/field/coop_battle.c, Overlay 131).
+struct CoopBossBattleEnv
+{
+    struct BattleSetup *setup;
+    u32 *winFlag;
+    s32 effect;
+    s32 bgm;
+    u32 trainer;
+    int heapID;
+    u16 frames;
+    u8 seat; // my party's seat: link slot * 2 (frontier multi, ccd battle_link_comm.c)
+    u8 won;
+};
+BOOL Coop_Task_BossBattle(TaskManager *taskman);
+BOOL LONG_CALL Coop_StartBossBattle(TaskManager *taskman, u32 trainer, int heapID, u32 *winFlag);
 
 // The team boss battle: the Battle Tower's link multi (src/coop_boss.c).
 #define COOP_BOSS_BATTLE_TYPE (BATTLE_TYPE_FRONTIER | BATTLE_TYPE_MULTI | BATTLE_TYPE_LINK | BATTLE_TYPE_DOUBLES | BATTLE_TYPE_TRAINER)

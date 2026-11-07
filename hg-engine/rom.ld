@@ -858,6 +858,7 @@ CallTask_LeaveOverworld = 0x0205525C | 1;
 CallTask_RestoreOverworld = 0x020552A4 | 1;
 PaletteFadeUntilFinished = 0x020552E8 | 1;
 CallTask_FadeFromBlack = 0x0205532C | 1;
+CallTask_Blackout = 0x0205297C | 1; /* pret sub_0205297C, called by ScrCmd_WhiteOut (0x020498C8) */
 CallApplicationAsTask = 0x02050624 | 1;
 TradeSequence_Init = 0x02246960 | 1;
 TradeSequence_Exit = 0x02246B58 | 1;
