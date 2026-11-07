@@ -20,9 +20,10 @@
 /instances/
 # Probe output (dev/run_probe.sh)
 /build/
-# Dev tools: Lua probes and test runners, a private repository of their own
-# (eloyball/pokemon-goldlink-dev; docs/RELEASE_PLAN.md §11)
+# Dev tools (Lua probes, test runners) and the project docs (plans, risks, specs): a private
+# repository of their own (eloyball/pokemon-goldlink-dev). docs is a local link to dev/docs.
 /dev/
+/docs
 
 # --- coop-bridge build outputs ---
 /coop-bridge/src/bin/
