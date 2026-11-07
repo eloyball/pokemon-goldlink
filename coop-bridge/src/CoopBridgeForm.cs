@@ -1116,7 +1116,7 @@ namespace CoopBridge
 
         // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_AUTOJOIN="host:port|ROOM"
         // joins that room as soon as the tool is open, and again after a failed
-        // attempt, until connected (scripts/run_link_e2e.sh). Never set by users.
+        // attempt, until connected (dev/run_link_e2e.sh). Never set by users.
         // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_LEAVE_IN_BATTLE=seconds
         // leaves the room (as the Leave room button does) once the game has
         // been in a battle that long, once (docs/KNOWN_RISKS.md #52 repro).

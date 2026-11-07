@@ -544,7 +544,7 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     }
     else if (lead)
     {
-        // Team boss probe (scripts/bizhawk/link_e2e_probe.lua): the lead,
+        // Team boss probe (dev/bizhawk/link_e2e_probe.lua): the lead,
         // in place of the first Pokemon, with one move that never asks for a
         // target (the probe only presses A; one Pokemon: no switch screen).
         // 3 wins against Falkner (Rock Slide hits both foes), 4 loses.

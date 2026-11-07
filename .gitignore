@@ -18,8 +18,11 @@
 /emulators/
 # Extra BizHawk instances (scripts/run_bizhawk.sh <name>): configs, saves, secrets
 /instances/
-# Probe output (scripts/run_probe.sh)
+# Probe output (dev/run_probe.sh)
 /build/
+# Dev tools: Lua probes and test runners, a private repository of their own
+# (eloyball/pokemon-goldlink-dev; docs/RELEASE_PLAN.md §11)
+/dev/
 
 # --- coop-bridge build outputs ---
 /coop-bridge/src/bin/
