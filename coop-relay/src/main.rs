@@ -13,6 +13,7 @@ use coop_relay::protocol::{CLIENT_PACKET_MAX, ClientToServerPacket, ServerToClie
 #[derive(Parser, Debug)]
 #[command(
     name = "coop-relay",
+    version,
     about = "Pokemon HeartGold 6-Player Co-op Multi-Room Relay Server"
 )]
 struct Args {
@@ -50,6 +51,19 @@ struct Args {
     max_rooms: usize,
 }
 
+/// SIGTERM (systemd, `docker stop`): as Ctrl+C. Inside a container the relay is PID 1, which
+/// the kernel never kills for an unhandled SIGTERM. Elsewhere it never fires.
+async fn terminate_signal() {
+    #[cfg(unix)]
+    if let Ok(mut term) =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        term.recv().await;
+        return;
+    }
+    std::future::pending::<()>().await
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -58,13 +72,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .with_target(false)
+        // Colours for a terminal only: journald and `docker logs` would show the escape codes.
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stdout()))
         .init();
 
     let args = Args::parse();
     let socket = UdpSocket::bind(args.bind).await?;
     info!(
-        "HGSS Multi-Room Co-op Relay listening on UDP {} (Tick: {} Hz | Saves: {:?})",
-        args.bind, args.tick_rate, args.save_dir
+        "HGSS Multi-Room Co-op Relay {} (relay protocol {}) listening on UDP {} (Tick: {} Hz | Saves: {:?})",
+        env!("CARGO_PKG_VERSION"),
+        coop_relay::protocol::PROTOCOL_VERSION,
+        args.bind,
+        args.tick_rate,
+        args.save_dir
     );
 
     let mut manager = RoomManager::new(
@@ -90,6 +110,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // signal that arrives between iterations.
     let shutdown = tokio::signal::ctrl_c();
     tokio::pin!(shutdown);
+    let terminate = terminate_signal();
+    tokio::pin!(terminate);
 
     loop {
         tokio::select! {
@@ -146,6 +168,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             _ = &mut shutdown => {
                 info!("Shutting down HGSS Co-op Relay Server...");
+                break;
+            }
+            _ = &mut terminate => {
+                info!("Shutting down HGSS Co-op Relay Server (SIGTERM)...");
                 break;
             }
         }

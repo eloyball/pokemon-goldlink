@@ -1,0 +1,70 @@
+# The relay release (docs/RELEASE_PLAN.md §6, §7 Phase 5). Pushing a tag relay-vX.Y (matching
+# coop-relay/Cargo.toml's version) builds the three archives with scripts/package_relay.sh,
+# runs the ARM64 one on an ARM runner, and creates a draft GitHub release to review and publish.
+name: Relay release
+
+on:
+  push:
+    tags: ["relay-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-pc-windows-gnu
+          sudo apt-get update -q
+          sudo apt-get install -y -q gcc-mingw-w64-x86-64
+      - name: Test and package
+        run: scripts/package_relay.sh "$GITHUB_REF_NAME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay
+          path: build/relay-release/
+          if-no-files-found: error
+
+  arm64:
+    needs: package
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: relay
+          path: relay
+      - name: The ARM64 relay starts, listens and stops on SIGTERM
+        run: |
+          v="v${GITHUB_REF_NAME#relay-v}"
+          tar xzf "relay/$v/coop-relay-$v-linux-aarch64.tar.gz"
+          "coop-relay-$v/coop-relay" --version
+          "coop-relay-$v/coop-relay" --bind 127.0.0.1:7777 --save-dir "$RUNNER_TEMP/campaigns" > relay.log 2>&1 &
+          pid=$!
+          sleep 2
+          kill -TERM "$pid"
+          wait "$pid"
+          cat relay.log
+          grep -q "listening on UDP 127.0.0.1:7777" relay.log
+
+  release:
+    needs: [package, arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: relay
+          path: relay
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="v${GITHUB_REF_NAME#relay-v}"
+          cd "relay/$v"
+          gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --draft \
+            --title "coop-relay $v" --notes-file notes.md \
+            coop-relay-"$v"-* SHA256SUMS
