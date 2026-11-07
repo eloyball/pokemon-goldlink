@@ -293,6 +293,9 @@ namespace CoopBridge
         public const byte StatusMidgameSave = 6;   // forming room, save already in progress
         public const byte StatusSaveOtherRoom = 9; // trainer belongs to another locked campaign
         public const byte StatusRunLost = 10;      // Milestone 5: every player of this Nuzlocke run is a spirit
+        // The relay speaks another protocol version: its own is at bytes 4..6 of this reply (the
+        // 16-byte error header, frozen across versions; docs/RELEASE_PLAN.md §5).
+        public const byte StatusProtocol = 11;
 
         public const byte ActionCreate = 1;
         public const byte ActionJoin = 2;
@@ -1182,6 +1185,16 @@ namespace CoopBridge
 
         private void SetStatus(string message, bool isError)
         {
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
+            // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_STATUS_LOG=<file> appends each
+            // message the bridge shows, for probes (dev/test_protocol_mismatch.sh).
+            string? statusLog = Environment.GetEnvironmentVariable("COOP_BRIDGE_STATUS_LOG");
+            if (!string.IsNullOrEmpty(statusLog))
+            {
+                try { File.AppendAllText(statusLog, $"{(isError ? "error" : "info")}: {message}\n"); }
+                catch (IOException) { }
+            }
+#endif
             _message = message;
             _messageIsError = isError;
             _lastInfoRefreshUtc = DateTime.MinValue; // show it on the next refresh
@@ -1462,7 +1475,9 @@ namespace CoopBridge
                     if (!remoteEp.Equals(_serverEndpoint)) continue;
                     if (data.Length < Wire.ErrorPacketSize) continue;
                     if (BitConverter.ToUInt32(data, 0) != Mailbox.Magic) continue;
-                    if (BitConverter.ToUInt16(data, 4) != Wire.ProtocolVersion) continue;
+                    // Only this protocol, except the relay's "other version" refusal, which
+                    // carries its own version and is read as a rejection.
+                    if (BitConverter.ToUInt16(data, 4) != Wire.ProtocolVersion && data[12] != Wire.StatusProtocol) continue;
 
                     byte status = data[12];
                     if (status == Wire.StatusChallenge)
@@ -1640,10 +1655,11 @@ namespace CoopBridge
             _memoryApi!.WriteByteRange(sync + Mailbox.ChallengeSyncIn, down, MemoryDomain);
         }
 
-        private static string MapServerStatusToError(byte code, string room)
+        private static string MapServerStatusToError(byte code, string room, ushort serverProtocol)
         {
             return code switch
             {
+                Wire.StatusProtocol => ProtocolMismatchText(serverProtocol),
                 1 => $"Room {room} doesn't exist. Check the code, or host it instead.",
                 2 => $"Room {room} already exists. Join it, or pick another code to host.",
                 3 => $"Room {room} is locked to its original players (or this trainer is registered to another install).",
@@ -1655,6 +1671,18 @@ namespace CoopBridge
                 Wire.StatusRunLost => $"The run in room {room} is over: every player's Pokémon have fallen. Host a new room for a new run.",
                 _ => $"The server rejected the connection (code {code})."
             };
+        }
+
+        /// The relay and this release speak different protocol versions (docs/RELEASE_PLAN.md §5):
+        /// which one is behind decides who updates.
+        private static string ProtocolMismatchText(ushort serverProtocol)
+        {
+            ushort ours = Wire.ProtocolVersion;
+            return serverProtocol > ours
+                ? $"This server runs relay protocol {serverProtocol}, newer than this GoldLink release (protocol {ours}). "
+                  + "Update GoldLink to the release your group uses."
+                : $"This server runs relay protocol {serverProtocol}, older than this GoldLink release (protocol {ours}). "
+                  + $"The server needs a coop-relay release for protocol {ours}: ask whoever runs it to update.";
         }
 
         // ------------------------------------------------------------------
@@ -1730,7 +1758,11 @@ namespace CoopBridge
 
                 if (!handshaking && (now - _lastServerPacketUtc).TotalSeconds > ServerTimeoutSeconds)
                 {
-                    DisconnectFromServer("Lost the connection to the server.", isError: true);
+                    // Never connected: no answer at all. Besides a wrong address or a closed port,
+                    // an old relay drops another version's packets without a word.
+                    DisconnectFromServer(_link == LinkState.Connecting
+                        ? $"The server didn't answer. Check the address and that its UDP port is open; it must also run a relay for protocol {Wire.ProtocolVersion}."
+                        : "Lost the connection to the server.", isError: true);
                     ClearRomConnectionState(mb, clearPayload: true);
                     return;
                 }
@@ -1878,7 +1910,7 @@ namespace CoopBridge
                 // frame as the disconnect, so it wins over the disconnect save).
                 if (status == Wire.StatusMidgameSave || status == Wire.StatusSaveOtherRoom || status == Wire.StatusRunLost)
                     _memoryApi!.WriteU8(mb + Mailbox.RoomRejection, status, MemoryDomain);
-                DisconnectFromServer(MapServerStatusToError(status, _activeRoomString), isError: true);
+                DisconnectFromServer(MapServerStatusToError(status, _activeRoomString, BitConverter.ToUInt16(pkt, 4)), isError: true);
                 ClearRomConnectionState(mb, clearPayload: true);
                 return;
             }

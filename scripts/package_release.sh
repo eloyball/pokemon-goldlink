@@ -135,7 +135,7 @@ step 4 "The patch"
 step 5 "The bridge without the debug tools"
 (cd coop-bridge/src && dotnet build -c Ship -nologo -v q) || die "the bridge build failed"
 BRIDGE="coop-bridge/src/bin/Ship/CoopBridge.dll"
-if strings -el "$BRIDGE" | grep -qE 'COOP_BRIDGE_AUTOJOIN|COOP_BRIDGE_LEAVE_IN_BATTLE|Show diagnostics'; then
+if strings -el "$BRIDGE" | grep -qE 'COOP_BRIDGE_AUTOJOIN|COOP_BRIDGE_LEAVE_IN_BATTLE|COOP_BRIDGE_STATUS_LOG|Show diagnostics'; then
     die "the release bridge still has the debug tools"
 fi
 echo "[*] $BRIDGE: no debug tools"

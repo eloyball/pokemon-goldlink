@@ -8,7 +8,10 @@ use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info, warn};
 
 use coop_relay::lobby::{DEFAULT_MAX_ROOMS, Rejection, RoomManager};
-use coop_relay::protocol::{CLIENT_PACKET_MAX, ClientToServerPacket, ServerToClientPacket};
+use coop_relay::protocol::{
+    CLIENT_PACKET_MAX, ClientToServerPacket, ERROR_PACKET_SIZE, PROTOCOL_VERSION, ProtocolError,
+    ROOM_STATUS_ERR_PROTOCOL, ServerToClientPacket,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -81,7 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "HGSS Multi-Room Co-op Relay {} (relay protocol {}) listening on UDP {} (Tick: {} Hz | Saves: {:?})",
         env!("CARGO_PKG_VERSION"),
-        coop_relay::protocol::PROTOCOL_VERSION,
+        PROTOCOL_VERSION,
         args.bind,
         args.tick_rate,
         args.save_dir
@@ -141,6 +144,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let _ = socket.send_to(&reply, peer_addr).await;
                                     }
                                 }
+                            }
+                            // Another protocol version: say so (in the frozen 16-byte header,
+                            // never more bytes than the request), so its bridge can tell the
+                            // player which versions differ.
+                            Err(ProtocolError::UnsupportedVersion(version)) if len >= ERROR_PACKET_SIZE => {
+                                info!("Refused {peer_addr}: relay protocol {version}, this relay speaks {PROTOCOL_VERSION}");
+                                let reply = ServerToClientPacket::create_error_response(ROOM_STATUS_ERR_PROTOCOL);
+                                let _ = socket.send_to(&reply, peer_addr).await;
                             }
                             Err(err) => {
                                 debug!("Dropped malformed packet from {peer_addr}: {err}");

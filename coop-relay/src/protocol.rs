@@ -31,6 +31,10 @@ pub const ROOM_STATUS_ERR_SAVE_OTHER_ROOM: u8 = 9;
 /// Milestone 5: every roster player of this Nuzlocke run became a spirit, so
 /// the run is over and the room takes no more joins (docs/MILESTONE5_PLAN.md §5.5.5).
 pub const ROOM_STATUS_ERR_RUN_LOST: u8 = 10;
+/// The client speaks another protocol version. Sent in the 16-byte error header, whose bytes
+/// 4..6 name this relay's `PROTOCOL_VERSION`, so the client can say which versions differ
+/// (docs/RELEASE_PLAN.md §5).
+pub const ROOM_STATUS_ERR_PROTOCOL: u8 = 11;
 
 // PlayerState.save_status, computed by the ROM (the relay never inspects maps).
 // Player-to-player sessions (docs/MILESTONE3_PLAN.md, Phase 1). The client
@@ -936,19 +940,23 @@ impl ClientToServerPacket {
     }
 
     pub fn decode_le(buf: &[u8]) -> Result<Self, ProtocolError> {
+        // Magic and version first: another version's packet may have another size, and its
+        // sender should still learn that the versions differ (main.rs answers it).
+        if buf.len() >= 6 {
+            let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            if magic != COOP_MAGIC {
+                return Err(ProtocolError::InvalidMagic(magic));
+            }
+            let version = u16::from_le_bytes([buf[4], buf[5]]);
+            if version != PROTOCOL_VERSION {
+                return Err(ProtocolError::UnsupportedVersion(version));
+            }
+        }
         if buf.len() < CLIENT_PACKET_SIZE {
             return Err(ProtocolError::PacketTooShort {
                 expected: CLIENT_PACKET_SIZE,
                 actual: buf.len(),
             });
-        }
-        let magic = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        if magic != COOP_MAGIC {
-            return Err(ProtocolError::InvalidMagic(magic));
-        }
-        let version = u16::from_le_bytes([buf[4], buf[5]]);
-        if version != PROTOCOL_VERSION {
-            return Err(ProtocolError::UnsupportedVersion(version));
         }
 
         let mut raw_room = [0u8; 6];
@@ -973,8 +981,8 @@ impl ClientToServerPacket {
         let link = rest.get(link_at..).and_then(LinkUp::decode);
 
         Ok(Self {
-            magic,
-            version,
+            magic: COOP_MAGIC, // both checked above (the packet is long enough for them)
+            version: PROTOCOL_VERSION,
             room_code: raw_room,
             room_action: buf[12],
             requested_player_id: buf[13],
@@ -1103,6 +1111,10 @@ impl ServerToClientPacket {
     }
 
     /// Compact rejection: the 16-byte header only (see `ERROR_PACKET_SIZE`).
+    ///
+    /// FROZEN across protocol versions: magic (0..4), the relay's protocol version (4..6) and the
+    /// status (12) stay where they are, so a client of any version can read a relay's
+    /// `ROOM_STATUS_ERR_PROTOCOL` and its version.
     pub fn create_error_response(status_code: u8) -> [u8; ERROR_PACKET_SIZE] {
         let mut buf = [0u8; ERROR_PACKET_SIZE];
         buf[0..4].copy_from_slice(&COOP_MAGIC.to_le_bytes());
@@ -1126,6 +1138,29 @@ impl ServerToClientPacket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_protocol_version_is_named_before_the_size_is_checked() {
+        // A future (or older) client's packet, of a size this version doesn't know.
+        let mut pkt = vec![0u8; 40];
+        pkt[0..4].copy_from_slice(&COOP_MAGIC.to_le_bytes());
+        pkt[4..6].copy_from_slice(&(PROTOCOL_VERSION + 1).to_le_bytes());
+        assert_eq!(
+            ClientToServerPacket::decode_le(&pkt).unwrap_err(),
+            ProtocolError::UnsupportedVersion(PROTOCOL_VERSION + 1)
+        );
+        // The answer names this relay's version in the frozen header.
+        let reply = ServerToClientPacket::create_error_response(ROOM_STATUS_ERR_PROTOCOL);
+        assert_eq!(reply.len(), ERROR_PACKET_SIZE);
+        assert_eq!(u32::from_le_bytes(reply[0..4].try_into().unwrap()), COOP_MAGIC);
+        assert_eq!(u16::from_le_bytes(reply[4..6].try_into().unwrap()), PROTOCOL_VERSION);
+        assert_eq!(reply[12], ROOM_STATUS_ERR_PROTOCOL);
+        // Too short to be anything: still a size error.
+        assert!(matches!(
+            ClientToServerPacket::decode_le(&pkt[..4]),
+            Err(ProtocolError::PacketTooShort { .. })
+        ));
+    }
 
     fn sample_state() -> PlayerState {
         PlayerState {
