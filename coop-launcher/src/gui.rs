@@ -80,7 +80,7 @@ impl App {
                 self.bizhawk = Some(child);
                 self.message = Some(Message::Info(
                     "BizHawk is starting. In the Co-op Bridge window, pick your avatar, then enter the \
-                     server address and room code your group uses."
+                     server address your group uses and your world code (or pick a world you played before)."
                         .into(),
                 ));
             }

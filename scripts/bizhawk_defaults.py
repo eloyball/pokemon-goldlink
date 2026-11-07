@@ -72,6 +72,7 @@ OVERRIDE = {
     "SingleInstanceMode": False,     # several BizHawks on one machine (tests, two players)
     "UpdateAutoCheckEnabled": False,  # the release pins BizHawk 2.11.1
     "FirstBoot": False,
+    "MainWindowMaximized": False,     # a window state, like the position (the developer's varies)
 }
 
 # Something that looks like a path on someone's machine.

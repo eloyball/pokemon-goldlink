@@ -221,7 +221,7 @@ namespace CoopBridge
         public const byte MonoNone = 18;
 
         public static readonly string[] RandomModes = { "None", "Semi-random", "Preserve difficulty", "Fully random" };
-        public static readonly string[] SoulLinkModes = { "Off", "Room-wide", "Duo" };
+        public static readonly string[] SoulLinkModes = { "Off", "World-wide", "Duo" };
 
         // hg-engine type order (constants/battle_constants.h): Fairy took the "???" slot 9.
         public static readonly string[] TypeNames =
@@ -488,7 +488,7 @@ namespace CoopBridge
         private const int KeepAliveIntervalMs = 250;
         private const double PausedThresholdSeconds = 0.5;
         private const int InfoRefreshMs = 100;
-        private const string DefaultMessage = "Enter a room code to join your friends, or host a new room.";
+        private const string DefaultMessage = "Enter a world code to join your friends, or create a new world.";
 
         private uint? _mailboxOffset; // null => coop_offsets.json missing/invalid; never touch RAM
         private string _offsetsError = string.Empty;
@@ -559,7 +559,12 @@ namespace CoopBridge
         private readonly Label _messageLabel;
         private readonly ThemedButton _joinModeButton;
         private readonly ThemedButton _hostModeButton;
-        private readonly TextBox _roomInput;
+        private readonly ComboBox _roomInput; // the world code, with the worlds played before (Worlds.cs)
+        private readonly ThemedButton _forgetButton;
+        private readonly WorldList _worlds = new WorldList(
+            Path.GetDirectoryName(ConfigFilePath) ?? ".",
+            Path.Combine(Path.GetDirectoryName(ConfigFilePath) ?? ".", "coop_saves"));
+        private string _activeServerText = string.Empty;
         private readonly TableLayoutPanel _modeSegments;
         private readonly TableLayoutPanel _hostOptions;
         private readonly ThemedButton[] _partySizeButtons = new ThemedButton[Mailbox.MaxPlayers - 1];
@@ -719,8 +724,8 @@ namespace CoopBridge
             };
             segments.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
             segments.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50f));
-            _joinModeButton = Theme.MakeButton("Join a room", Theme.ButtonKind.SegmentOn);
-            _hostModeButton = Theme.MakeButton("Host a room", Theme.ButtonKind.SegmentOff);
+            _joinModeButton = Theme.MakeButton("Join a world", Theme.ButtonKind.SegmentOn);
+            _hostModeButton = Theme.MakeButton("Create a world", Theme.ButtonKind.SegmentOff);
             _joinModeButton.Height = _hostModeButton.Height = 30;
             _joinModeButton.Margin = new Padding(0, 0, 2, 0);
             _hostModeButton.Margin = new Padding(2, 0, 0, 0);
@@ -729,26 +734,61 @@ namespace CoopBridge
             segments.Controls.Add(_joinModeButton, 0, 0);
             segments.Controls.Add(_hostModeButton, 1, 0);
 
-            var roomCaption = Theme.MakeLabel("Room code", Theme.Caption, Theme.TextSecondary);
-            _roomInput = new TextBox
+            var roomCaption = Theme.MakeLabel("World code", Theme.Caption, Theme.TextSecondary);
+            // Milestone 6 §4.2: type a code, or pick a world played before (most recent first).
+            _roomInput = new ComboBox
             {
+                DropDownStyle = ComboBoxStyle.DropDown,
                 MaxLength = 6,
-                CharacterCasing = CharacterCasing.Upper,
-                TextAlign = HorizontalAlignment.Center,
                 Font = Theme.Code,
                 BackColor = Theme.Input,
                 ForeColor = Theme.TextPrimary,
-                BorderStyle = BorderStyle.FixedSingle,
+                FlatStyle = FlatStyle.Flat,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0)
+            };
+            // Only letters and digits, upper case; everything else (except editing keys) is dropped.
+            _roomInput.KeyPress += (_, e) =>
+            {
+                if (char.IsControl(e.KeyChar)) return;
+                if (!IsRoomCodeChar(e.KeyChar)) e.Handled = true;
+                else e.KeyChar = char.ToUpperInvariant(e.KeyChar);
+            };
+            _roomInput.TextChanged += (_, _) =>
+            {
+                string upper = _roomInput.Text.ToUpperInvariant();
+                if (upper != _roomInput.Text && _roomInput.SelectedIndex < 0) // pasted lower case
+                {
+                    int caret = _roomInput.SelectionStart;
+                    _roomInput.Text = upper;
+                    _roomInput.SelectionStart = caret;
+                    return;
+                }
+                UpdateControls();
+            };
+            _roomInput.SelectionChangeCommitted += (_, _) => OnWorldPicked();
+            _forgetButton = Theme.MakeButton("Forget", Theme.ButtonKind.Neutral);
+            _forgetButton.Dock = DockStyle.None;
+            _forgetButton.Size = new Size(76, 28);
+            _forgetButton.Margin = new Padding(6, 0, 0, 0);
+            _forgetButton.Click += (_, _) =>
+            {
+                _worlds.Forget(_roomInput.Text);
+                RefreshWorldList();
+                UpdateControls();
+            };
+            var roomRow = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                AutoSize = true,
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0, 0, 0, 4)
             };
-            // Only letters and digits; everything else (except editing keys) is dropped.
-            _roomInput.KeyPress += (_, e) =>
-            {
-                if (!char.IsControl(e.KeyChar) && !IsRoomCodeChar(e.KeyChar)) e.Handled = true;
-            };
-            _roomInput.TextChanged += (_, _) => UpdateControls();
-            var roomHint = Theme.MakeLabel("6 letters or numbers, shared by everyone in the room.", Theme.Caption, Theme.TextSecondary);
+            roomRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            roomRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            roomRow.Controls.Add(_roomInput, 0, 0);
+            roomRow.Controls.Add(_forgetButton, 1, 0);
+            var roomHint = Theme.MakeLabel("6 letters or numbers, shared by everyone in the world.", Theme.Caption, Theme.TextSecondary);
             roomHint.Margin = new Padding(0, 0, 0, 12);
 
             // The avatar: a list and its battle picture.
@@ -782,7 +822,7 @@ namespace CoopBridge
                 Margin = new Padding(0),
                 Image = Avatars.LoadPreview(avatar)
             };
-            var avatarHint = Theme.MakeLabel("How the others see you. Pick it before joining or creating a room.",
+            var avatarHint = Theme.MakeLabel("How the others see you. Pick it before joining or creating a world.",
                 Theme.Caption, Theme.TextSecondary);
             avatarHint.MaximumSize = new Size(contentWidth - 128, 0);
             avatarHint.Margin = new Padding(0);
@@ -823,7 +863,7 @@ namespace CoopBridge
             }
             _hostOptions.Controls.Add(sizePicker);
             var playersHint = Theme.MakeLabel(
-                "The adventure starts, and the room locks to these players, once everyone is ready in their bedroom.",
+                "The adventure starts, and the world locks to these players, once everyone is ready in their bedroom.",
                 Theme.Caption, Theme.TextSecondary);
             playersHint.MaximumSize = new Size(contentWidth - 28, 0);
             playersHint.Margin = new Padding(0);
@@ -877,7 +917,7 @@ namespace CoopBridge
             _hostOptions.Controls.Add(_monolockeCheck);
             _hostOptions.Controls.Add(_levelCapCheck);
             var rulesHint = Theme.MakeLabel(
-                "Everyone in the room plays with these rules. They can't change once the adventure starts.",
+                "Everyone in the world plays with these rules. They can't change once the adventure starts.",
                 Theme.Caption, Theme.TextSecondary);
             rulesHint.MaximumSize = new Size(contentWidth - 28, 0);
             rulesHint.Margin = new Padding(0);
@@ -888,15 +928,15 @@ namespace CoopBridge
             foreach (var c in new[] { _legendsCheck, _abilitiesCheck, _nuzlockeCheck, _monolockeCheck, _levelCapCheck })
                 c.CheckedChanged += (_, _) => OnRulesEdited();
 
-            _primaryButton = Theme.MakeButton("Join room", Theme.ButtonKind.Primary);
+            _primaryButton = Theme.MakeButton("Join world", Theme.ButtonKind.Primary);
             _primaryButton.Click += (_, _) => StartConnection(_hostMode ? Wire.ActionCreate : Wire.ActionJoin);
-            _leaveButton = Theme.MakeButton("Leave room", Theme.ButtonKind.Danger);
+            _leaveButton = Theme.MakeButton("Leave world", Theme.ButtonKind.Danger);
             _leaveButton.Visible = false;
-            _leaveButton.Click += (_, _) => DisconnectFromServer("You left the room.", isError: false);
+            _leaveButton.Click += (_, _) => DisconnectFromServer("You left the world.", isError: false);
 
             roomCard.Controls.Add(segments);
             roomCard.Controls.Add(roomCaption);
-            roomCard.Controls.Add(_roomInput);
+            roomCard.Controls.Add(roomRow);
             roomCard.Controls.Add(roomHint);
             roomCard.Controls.Add(avatarCaption);
             roomCard.Controls.Add(avatarRow);
@@ -1106,6 +1146,7 @@ namespace CoopBridge
 #endif
             Controls.Add(root);
             AcceptButton = _primaryButton; // Enter in the room code submits
+            RefreshWorldList(); // after every control exists: it sets the text (TextChanged -> UpdateControls)
             ActiveControl = _roomInput;    // type the code straight away
 
             _serverEndpoint = new IPEndPoint(IPAddress.Loopback, 7777);
@@ -1145,7 +1186,7 @@ namespace CoopBridge
             _devBattleSinceUtc ??= DateTime.UtcNow;
             if ((DateTime.UtcNow - _devBattleSinceUtc.Value).TotalSeconds < _devLeaveInBattle) return;
             _devLeaveInBattle = -1;
-            DisconnectFromServer("Left the room (COOP_BRIDGE_LEAVE_IN_BATTLE).", isError: false);
+            DisconnectFromServer("Left the world (COOP_BRIDGE_LEAVE_IN_BATTLE).", isError: false);
         }
 
         private void StartDevAutoJoin()
@@ -1176,6 +1217,32 @@ namespace CoopBridge
         private static bool IsRoomCodeChar(char c) => (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
 
         private bool RoomCodeIsValid => Regex.IsMatch(_roomInput.Text, "^[A-Z0-9]{6}$");
+
+        // The drop-down's list from the saved worlds, keeping what is typed.
+        private void RefreshWorldList()
+        {
+            string text = _roomInput.Text;
+            _roomInput.BeginUpdate();
+            _roomInput.Items.Clear();
+            foreach (WorldEntry entry in _worlds.Entries) _roomInput.Items.Add(entry);
+            _roomInput.EndUpdate();
+            _roomInput.Text = text;
+        }
+
+        // A world from the list: its code (the entry's text is longer), its server, and Join:
+        // a world that exists can't be created again.
+        private void OnWorldPicked()
+        {
+            if (!(_roomInput.SelectedItem is WorldEntry entry) || _link != LinkState.Offline) return;
+            BeginInvoke((Action)(() =>
+            {
+                _roomInput.SelectedIndex = -1;
+                _roomInput.Text = entry.Code;
+                _roomInput.SelectionStart = entry.Code.Length;
+                if (entry.Server.Length > 0) _serverInput.Text = entry.Server;
+                SetHostMode(false);
+            }));
+        }
 
         private void SetHostMode(bool host)
         {
@@ -1213,6 +1280,7 @@ namespace CoopBridge
             // While connecting/connected only the room code and the action matter.
             _modeSegments.Visible = offline;
             _roomInput.Enabled = offline;
+            _forgetButton.Visible = offline && _worlds.Find(_roomInput.Text) != null;
             _serverInput.Enabled = offline;
             if (_avatarPicker != null) _avatarPicker.Enabled = offline;
             for (int i = 0; i < _partySizeButtons.Length; i++)
@@ -1236,7 +1304,7 @@ namespace CoopBridge
             _primaryButton.Text = _link switch
             {
                 LinkState.Resolving or LinkState.Connecting => "Connecting…",
-                _ => _hostMode ? "Create room" : "Join room"
+                _ => _hostMode ? "Create world" : "Join world"
             };
             _primaryButton.Enabled = offline && RoomCodeIsValid && _mailboxOffset != null;
 
@@ -1277,6 +1345,13 @@ namespace CoopBridge
 
             string hostText = _serverInput.Text.Trim();
             string roomText = _roomInput.Text;
+            if (hostText.Length == 0)
+            {
+                // No address is built in (Milestone 6 §4.3): the world's host shares theirs.
+                SetStatus("Enter the server address (host:port) your world's host gave you, below.", isError: true);
+                _serverInput.Focus();
+                return;
+            }
 
             if (_mailboxOffset == null)
             {
@@ -1301,6 +1376,7 @@ namespace CoopBridge
             _serverEndpoint = resolvedEp;
             _roomCodeBytes = Encoding.ASCII.GetBytes(roomText);
             _activeRoomString = roomText;
+            _activeServerText = hostText;
             _activeAction = initialAction;
             _assignedSlot = Mailbox.PlayerIdNone;
             _lastServerPacketUtc = DateTime.UtcNow;
@@ -1310,8 +1386,8 @@ namespace CoopBridge
             _hostToken = initialAction == Wire.ActionCreate ? GenerateCryptoToken() : 0;
             _link = LinkState.Connecting;
             SetStatus(initialAction == Wire.ActionCreate
-                ? $"Creating room {roomText}…"
-                : $"Joining room {roomText}…", isError: false);
+                ? $"Creating world {roomText}…"
+                : $"Joining world {roomText}…", isError: false);
 
             SaveNetConfig(hostText, _partySize, _playerSecret, _challengeRules, _avatarKey);
             StartReceiveThread();
@@ -1358,7 +1434,7 @@ namespace CoopBridge
             var files = room.Length > 0 ? _backups.List(room) : new List<FileInfo>();
             if (files.Count == 0)
             {
-                MessageBox.Show(this, "There are no backups of your last room yet. One is taken every few minutes while you play in a room.",
+                MessageBox.Show(this, "There are no backups of your last world yet. One is taken every few minutes while you play in a world.",
                     "Restore a backup", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -1389,7 +1465,7 @@ namespace CoopBridge
                 + "Use this only after a crash or a game-breaking bug that your save can't fix. "
                 + "Your game goes back to that moment: everything since then is lost, and a trade "
                 + "made since then can leave the traded Pokémon in both games.\n\n"
-                + "The game then saves and returns to the title screen. Join your room again to continue.";
+                + "The game then saves and returns to the title screen. Join your world again to continue.";
             if (MessageBox.Show(this, warning, "Restore a backup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
                 return;
             _pendingRestore = chosen.FullName;
@@ -1661,15 +1737,15 @@ namespace CoopBridge
             return code switch
             {
                 Wire.StatusProtocol => ProtocolMismatchText(serverProtocol),
-                1 => $"Room {room} doesn't exist. Check the code, or host it instead.",
-                2 => $"Room {room} already exists. Join it, or pick another code to host.",
-                3 => $"Room {room} is locked to its original players (or this trainer is registered to another install).",
-                4 => $"Room {room} is full, or the server is at capacity.",
-                5 => "Room codes are 6 letters or numbers.",
-                Wire.StatusMidgameSave => $"Room {room} hasn't started yet, so it only takes a New Game (this save is already under way).",
-                Wire.StatusSaveOtherRoom => $"This save belongs to another room. Load that room's save, or start a New Game for {room}.",
+                1 => $"World {room} doesn't exist. Check the code, or create it instead.",
+                2 => $"World {room} already exists. Join it, or pick another code to create a world.",
+                3 => $"World {room} is locked to its original players (or this trainer is registered to another install).",
+                4 => $"World {room} is full, or the server is at capacity.",
+                5 => "World codes are 6 letters or numbers.",
+                Wire.StatusMidgameSave => $"World {room} hasn't started yet, so it only takes a New Game (this save is already under way).",
+                Wire.StatusSaveOtherRoom => $"This save belongs to another world. Load that world's save, or start a New Game for {room}.",
                 Wire.StatusRateLimited => "Too many failed attempts. Wait a few seconds and try again.",
-                Wire.StatusRunLost => $"The run in room {room} is over: every player's Pokémon have fallen. Host a new room for a new run.",
+                Wire.StatusRunLost => $"The run in world {room} is over: every player's Pokémon have fallen. Create a new world for a new run.",
                 _ => $"The server rejected the connection (code {code})."
             };
         }
@@ -1714,7 +1790,7 @@ namespace CoopBridge
                     string path = _pendingRestore;
                     _pendingRestore = null;
                     bool loaded = _saveStateApi != null && _saveStateApi.Load(path, suppressOSD: true);
-                    SetStatus(loaded ? "Backup restored. The game saves it and returns to the title screen; then join your room again."
+                    SetStatus(loaded ? "Backup restored. The game saves it and returns to the title screen; then join your world again."
                                      : "Could not load that backup.", isError: !loaded);
                     return;
                 }
@@ -1933,13 +2009,16 @@ namespace CoopBridge
                 _slotKey = SaveSlots.RoomKey(_activeRoomString, roomUid);
 
             bool firstOk = _link != LinkState.Connected || _assignedSlot != assigned;
+            bool created = _activeAction == Wire.ActionCreate;
             _assignedSlot = assigned;
             _activeAction = Wire.ActionSync; // Handshake complete; switch to steady-state SYNC
             _lastServerPacketUtc = DateTime.UtcNow;
             if (firstOk)
             {
                 _link = LinkState.Connected;
-                SetStatus($"In room {_activeRoomString}. Start or continue your game.", isError: false);
+                _worlds.Record(_activeRoomString, _activeServerText, created); // Milestone 6 §4.2
+                RefreshWorldList();
+                SetStatus($"In world {_activeRoomString}. Start or continue your game.", isError: false);
             }
 
             byte[] payload = SanitizeServerPayload(pkt);
@@ -2314,11 +2393,11 @@ namespace CoopBridge
             if (_saveSlots.LastError.Length > 0)
                 SetValue(_saveValue, "Error: " + _saveSlots.LastError, Theme.Error);
             else if (_link != LinkState.Connected || _slotKey == null)
-                SetValue(_saveValue, _saveSlots.Owner.Length > 0 ? $"Last room: {_saveSlots.Owner.Split('-')[0]}" : none, Theme.TextSecondary);
+                SetValue(_saveValue, _saveSlots.Owner.Length > 0 ? $"Last world: {_saveSlots.Owner.Split('-')[0]}" : none, Theme.TextSecondary);
             else if (_slotState == SlotState.Swapping)
-                SetValue(_saveValue, "Loading this room's save (the game restarts)…", Theme.Connecting);
+                SetValue(_saveValue, "Loading this world's save (the game restarts)…", Theme.Connecting);
             else if (_slotState == SlotState.Ready)
-                SetValue(_saveValue, _saveSlots.HasRoomSave(_slotKey) ? "This room's save is loaded" : "New room: start a New Game", Theme.Connected);
+                SetValue(_saveValue, _saveSlots.HasRoomSave(_slotKey) ? "This world's save is loaded" : "New world: start a New Game", Theme.Connected);
             else
                 SetValue(_saveValue, "Preparing…", Theme.Connecting);
 
@@ -2357,7 +2436,7 @@ namespace CoopBridge
             }
             SetValue(_othersValue, lines.Count > 0 ? string.Join("\n", lines) : "Nobody else yet",
                 lines.Count > 0 ? (Color?)null : Theme.TextSecondary);
-            SetValue(_adventureValue, started == 1 ? "Started · room locked" : "Waiting for everyone in the bedroom",
+            SetValue(_adventureValue, started == 1 ? "Started · world locked" : "Waiting for everyone in the bedroom",
                 started == 1 ? Theme.Connected : Theme.Connecting);
             SetValue(_gymValue, syncReady == 1 ? "Open for you" : "Closed · a teammate is behind on badges",
                 syncReady == 1 ? Theme.Connected : Theme.TextSecondary);
@@ -2477,7 +2556,7 @@ namespace CoopBridge
                     Match mR = Regex.Match(json, @"""challenge_rules""\s*:\s*(\d+)");
                     Match mA = Regex.Match(json, @"""avatar""\s*:\s*""([a-z0-9_]+)""");
 
-                    string h = mH.Success ? mH.Groups[1].Value : "127.0.0.1:7777";
+                    string h = mH.Success ? mH.Groups[1].Value : string.Empty; // no built-in server (Milestone 6 §4.3)
                     int p = mP.Success && int.TryParse(mP.Groups[1].Value, out int pv) ? pv : 2;
                     ulong secret = mS.Success ? Convert.ToUInt64(mS.Groups[1].Value, 16) : 0;
                     ushort rules = mR.Success && ushort.TryParse(mR.Groups[1].Value, out ushort rv) ? rv : (ushort)0;
@@ -2486,7 +2565,7 @@ namespace CoopBridge
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return ("127.0.0.1:7777", 2, 0, 0, "default");
+            return ("", 2, 0, 0, "default");
         }
 
         private static IPEndPoint? TryResolveServerEndpoint(string hostPort)

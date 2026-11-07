@@ -151,17 +151,17 @@ static void Coop_UpdateBridgeWatchdog(void)
 
 // Kept to <= 22 characters per line: the window is 208 px wide.
 static const char *const sGateLines[] = {
-    "Not in a Co-op Room.",
+    "Not in a Co-op World.",
     "Open the Co-op Bridge,",
-    "create or join a room,",
+    "create or join a world",
     "then start again.",
     "Press A, B or START.",
 };
 
-// Connected, but the bridge has not loaded this room's save yet
+// Connected, but the bridge has not loaded this world's save yet
 // (docs/MILESTONE2_PLAN.md 7.2). It swaps it in and the game restarts.
 static const char *const sSlotGateLines[] = {
-    "Getting this room's",
+    "Getting this world's",
     "save ready...",
     "",
     "The game will restart.",

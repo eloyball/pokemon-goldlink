@@ -308,7 +308,7 @@ BOOL Coop_ChallengeStartPage(u32 index, char *buf, u32 size)
         if (page++ == index)
         {
             u32 soulLink = (rules & COOP_RULE_SOUL_LINK_MASK) >> COOP_RULE_SOUL_LINK_SHIFT;
-            parts[0] = soulLink == COOP_SOUL_LINK_ROOM_WIDE ? "Nuzlocke rules, with a\nroom-wide Soul-Link!"
+            parts[0] = soulLink == COOP_SOUL_LINK_ROOM_WIDE ? "Nuzlocke rules, with a\nworld-wide Soul-Link!"
                      : soulLink == COOP_SOUL_LINK_DUO       ? "Nuzlocke rules, with a\nSoul-Link for teams!"
                                                             : "Nuzlocke rules\nare on!";
             Coop_CopyAscii(buf, size, parts, 1);

@@ -9,7 +9,8 @@ What you need
   (x64); GoldLink tells you if it's missing.
 - Or Linux, 64-bit, with Mono installed (Arch: sudo pacman -S mono; Debian / Ubuntu:
   sudo apt install mono-complete; Fedora: sudo dnf install mono-complete).
-- The address of the server your group uses (host:port) and your room code.
+- The address of the server your group uses (host:port; ask whoever runs it) and your
+  world code.
 
 Starting
 --------
@@ -19,7 +20,7 @@ Starting
 3. The first time, choose your HeartGold ROM. GoldLink checks it, keeps a copy and builds
    the co-op game (a few seconds).
 4. Press Play. BizHawk opens with the Co-op Bridge window: pick your avatar, enter the server
-   address and the room code, and join.
+   address and the world code, and join (next time, pick the world from the list).
 
 Your files
 ----------
@@ -30,7 +31,7 @@ A new GoldLink release goes into a new folder; your saves stay where they are, a
 release updates the game the first time you start it. Settings > "Open your GoldLink folder"
 opens it.
 
-Everyone in a room must use the same GoldLink release ({{VERSION}}). This release speaks relay
+Everyone in a world must use the same GoldLink release ({{VERSION}}). This release speaks relay
 protocol {{WIRE}}: the server needs a coop-relay release for that protocol.
 
 Controls are BizHawk's (Config > Controllers). Settings > "Reset BizHawk settings" brings back

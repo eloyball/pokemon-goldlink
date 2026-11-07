@@ -333,13 +333,13 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
         MapObjectMan_PauseAllMovement(fsys->mapObjectMan);
         Coop_DialogOpen(fsys, &env->dialog);
         if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
-            Coop_DialogPrint(&env->dialog, "This save belongs to another\nCo-op Room.");
+            Coop_DialogPrint(&env->dialog, "This save belongs to another\nCo-op World.");
         else if (env->rejection == COOP_REJECT_RUN_LOST)
-            Coop_DialogPrint(&env->dialog, "This room's run is over:\nthe whole team has fallen.");
+            Coop_DialogPrint(&env->dialog, "This world's run is over:\nthe whole team has fallen.");
         else if (env->rejection != 0)
-            Coop_DialogPrint(&env->dialog, "This room hasn't started yet,\nso it only takes new saves.");
+            Coop_DialogPrint(&env->dialog, "This world hasn't started yet,\nso it only takes new saves.");
         else
-            Coop_DialogPrint(&env->dialog, "Disconnected from the Co-op Room.\nSaving your adventure...");
+            Coop_DialogPrint(&env->dialog, "Disconnected from the Co-op World.\nSaving your adventure...");
         taskman->state = COOP_TASK_WAIT_SAVING_TEXT;
         break;
 
@@ -357,9 +357,9 @@ static BOOL Coop_Task_DisconnectSaveAndReset(TaskManager *taskman)
             if (!Coop_DialogButtonPressed())
                 break;
             if (env->rejection == COOP_REJECT_SAVE_OTHER_ROOM)
-                Coop_DialogPrint(&env->dialog, "Load that room's save, or\nstart a New Game here.");
+                Coop_DialogPrint(&env->dialog, "Load that world's save, or\nstart a New Game here.");
             else if (env->rejection == COOP_REJECT_RUN_LOST)
-                Coop_DialogPrint(&env->dialog, "Host a new room for a new run.\nReturning to the Title Screen...");
+                Coop_DialogPrint(&env->dialog, "Create a new world for a new run.\nReturning to the Title Screen...");
             else
                 Coop_DialogPrint(&env->dialog, "Start a New Game to join.\nReturning to the Title Screen...");
             taskman->state = COOP_TASK_WAIT_RESULT_TEXT;
