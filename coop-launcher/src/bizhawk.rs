@@ -60,7 +60,10 @@ pub fn write_config(paths: &Paths, reset: bool) -> Result<(), String> {
         None => entries.push(json!({ "Type": "Base", "Path": nds, "System": "NDS" })),
     }
 
+    // Several BizHawks on one machine; BizHawk's own update check would offer a version the
+    // release isn't tested on (scripts/bizhawk_defaults.py sets them too).
     obj.insert("SingleInstanceMode".into(), Value::Bool(false));
+    obj.insert("UpdateAutoCheckEnabled".into(), Value::Bool(false));
     let dll = bridge_dll(paths);
     let dll_key = fs::canonicalize(&dll).unwrap_or(dll.clone()).to_string_lossy().to_string();
     let mut trusted = Map::new();
