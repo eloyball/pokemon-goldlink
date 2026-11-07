@@ -17,7 +17,7 @@ enum Message {
 pub struct App {
     paths: Paths,
     release: Result<Release, String>,
-    mono: Result<String, String>,
+    runtime: Result<String, String>,
     status: Status,
     work: Option<(String, Receiver<Result<(), String>>)>,
     message: Option<Message>,
@@ -31,7 +31,7 @@ impl App {
             Ok(r) => setup::status(&paths, r),
             Err(_) => Status::NeedRom,
         };
-        let mut app = App { paths, release, mono: bizhawk::mono_version(), status, work: None, message: None, bizhawk: None };
+        let mut app = App { paths, release, runtime: bizhawk::runtime_check(), status, work: None, message: None, bizhawk: None };
         if app.status == Status::NeedPatch && app.ready_to_work() {
             app.start_patch(); // a new release: bring the game up to date at once
         }
@@ -39,7 +39,7 @@ impl App {
     }
 
     fn ready_to_work(&self) -> bool {
-        self.release.is_ok() && self.mono.is_ok() && self.work.is_none()
+        self.release.is_ok() && self.runtime.is_ok() && self.work.is_none()
     }
 
     fn run(&mut self, label: &str, job: impl FnOnce(Paths, Release) -> Result<(), String> + Send + 'static) {
@@ -127,7 +127,7 @@ impl eframe::App for App {
             };
             ui.separator();
 
-            if let Err(e) = &self.mono {
+            if let Err(e) = &self.runtime {
                 ui.colored_label(ui.visuals().error_fg_color, e.as_str());
                 return;
             }

@@ -47,10 +47,10 @@ fn cli(args: &[String]) -> Result<(), String> {
             println!("install {}", paths.install.display());
             println!("data {}", paths.data.display());
             println!("status {:?}", setup::status(&paths, &release));
-            println!("mono {:?}", bizhawk::mono_version());
+            println!("runtime {:?}", bizhawk::runtime_check());
         }
         ("--setup", Some(rom)) => {
-            bizhawk::mono_version()?;
+            bizhawk::runtime_check()?;
             setup::import_rom(&paths, &release, Path::new(rom))?;
             bizhawk::write_config(&paths, false)?;
             println!("ready: {}", paths.game_rom().display());
@@ -68,9 +68,24 @@ fn cli(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// A Windows GUI program has no console: the command line borrows the one it was started from.
+#[cfg(windows)]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn AttachConsole(process: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if !args.is_empty() {
+        #[cfg(windows)]
+        attach_console();
         return match cli(&args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -79,22 +94,34 @@ fn main() -> ExitCode {
             }
         };
     }
-    let paths = match setup::Paths::detect() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[-] {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([460.0, 340.0]).with_title("GoldLink"),
-        ..Default::default()
-    };
-    match eframe::run_native("GoldLink", options, Box::new(|_cc| Ok(Box::new(gui::App::new(paths))))) {
+    let shown = setup::Paths::detect().and_then(|paths| {
+        // A graphics driver without what the renderer needs makes eframe panic, not fail.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_window(paths)))
+            .unwrap_or_else(|_| Err("the graphics driver can't draw the window".into()))
+    });
+    match shown {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("[-] {e}");
+            // Started from a desktop there's no terminal to read: say it in a box.
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("GoldLink")
+                .set_description(format!(
+                    "GoldLink couldn't open its window: {e}.\n\nUpdating your graphics driver usually helps."
+                ))
+                .show();
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_window(paths: setup::Paths) -> Result<(), String> {
+    let options = eframe::NativeOptions {
+        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([460.0, 340.0]).with_title("GoldLink"),
+        #[cfg(windows)]
+        renderer: eframe::Renderer::Wgpu,
+        ..Default::default()
+    };
+    eframe::run_native("GoldLink", options, Box::new(|_cc| Ok(Box::new(gui::App::new(paths))))).map_err(|e| e.to_string())
 }

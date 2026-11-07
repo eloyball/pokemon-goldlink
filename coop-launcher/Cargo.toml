@@ -19,6 +19,12 @@ sha2 = "0.10"
 crc32fast = "1"
 dirs = "6"
 
+# Windows draws with wgpu (Direct3D 12, with Windows' software adapter when there's no usable
+# GPU) rather than OpenGL, which many Windows drivers, VMs and remote desktops lack.
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu"] }
+wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

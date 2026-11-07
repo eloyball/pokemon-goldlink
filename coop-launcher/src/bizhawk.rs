@@ -27,6 +27,21 @@ fn trust_hash(dll: &Path) -> Result<String, String> {
     Ok(format!("SHA512:{}", Sha512::digest(&bytes).iter().map(|b| format!("{b:02X}")).collect::<String>()))
 }
 
+/// The bridge's full path as BizHawk names it: canonical, and on Windows without the `\\?\`
+/// prefix `canonicalize` adds (BizHawk uses the plain `C:\...` form).
+fn trust_key(dll: &Path) -> String {
+    let full = fs::canonicalize(dll).unwrap_or_else(|_| dll.to_path_buf()).to_string_lossy().to_string();
+    if cfg!(windows) {
+        if let Some(rest) = full.strip_prefix(r"\\?\UNC\") {
+            return format!(r"\\{rest}");
+        }
+        if let Some(rest) = full.strip_prefix(r"\\?\") {
+            return rest.to_string();
+        }
+    }
+    full
+}
+
 /// Writes the player's BizHawk config: the release's defaults on the first run or a reset,
 /// otherwise the player's own (their control changes stay). Either way this machine's paths and
 /// the bundled bridge's trust are filled in.
@@ -65,19 +80,31 @@ pub fn write_config(paths: &Paths, reset: bool) -> Result<(), String> {
     obj.insert("SingleInstanceMode".into(), Value::Bool(false));
     obj.insert("UpdateAutoCheckEnabled".into(), Value::Bool(false));
     let dll = bridge_dll(paths);
-    let dll_key = fs::canonicalize(&dll).unwrap_or(dll.clone()).to_string_lossy().to_string();
     let mut trusted = Map::new();
-    trusted.insert(dll_key, Value::String(trust_hash(&dll)?));
+    trusted.insert(trust_key(&dll), Value::String(trust_hash(&dll)?));
     obj.insert("TrustedExtTools".into(), Value::Object(trusted));
 
     let text = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
     write_atomic(&config, text.as_bytes())
 }
 
-/// Linux runs BizHawk through Mono: its version, or why it can't be used.
-pub fn mono_version() -> Result<String, String> {
+/// What BizHawk needs from the system: Mono on Linux; on Windows the Visual C++ runtime (its
+/// native cores are built with MSVC; .NET Framework 4.8 comes with Windows 10 and 11). A short
+/// description of what was found, or what to install.
+pub fn runtime_check() -> Result<String, String> {
     if cfg!(windows) {
-        return Ok(String::new());
+        let system = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let missing: Vec<&str> =
+            ["vcruntime140.dll", "msvcp140.dll"].into_iter().filter(|f| !system.join("System32").join(f).is_file()).collect();
+        if !missing.is_empty() {
+            return Err(format!(
+                "BizHawk needs the Microsoft Visual C++ Redistributable (x64), which isn't installed \
+                 ({} missing). Install it from https://aka.ms/vs/17/release/vc_redist.x64.exe, then \
+                 start GoldLink again.",
+                missing.join(", ")
+            ));
+        }
+        return Ok("Visual C++ runtime".into());
     }
     let out = Command::new("mono")
         .arg("--version")

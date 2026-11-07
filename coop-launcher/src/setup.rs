@@ -54,7 +54,7 @@ impl Paths {
         };
         let data = match std::env::var_os("GOLDLINK_DATA_DIR") {
             Some(dir) => PathBuf::from(dir),
-            None => dirs::data_dir()
+            None => dirs::data_local_dir()
                 .ok_or("can't find your user data folder")?
                 .join(if cfg!(windows) { "GoldLink" } else { "goldlink" }),
         };
