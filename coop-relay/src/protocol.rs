@@ -490,6 +490,10 @@ pub struct LinkUp {
 pub struct LinkDown {
     pub ack: u16,                       // next client->relay sequence number expected
     pub first_seq: u16,                 // sequence number of msgs[0]
+    /// The link block (the client's epoch) this stream belongs to: bytes 10-11 (epoch, 1).
+    /// A late trailer of an earlier block must not ack or deliver into the next one (the
+    /// stream restarts at 0). Relays before it sent 0, 0 there: no epoch, accepted.
+    pub epoch: Option<u8>,
     pub beacons: Vec<(u8, LinkBeacon)>, // (absolute player id, beacon) of the room's parents
     pub msgs: Vec<LinkMsg>,
 }
@@ -617,7 +621,10 @@ impl LinkDown {
         buf.push(self.msgs.len() as u8);
         buf.extend_from_slice(&self.ack.to_le_bytes());
         buf.extend_from_slice(&self.first_seq.to_le_bytes());
-        buf.extend_from_slice(&[0, 0]);
+        match self.epoch {
+            Some(e) => buf.extend_from_slice(&[e, 1]),
+            None => buf.extend_from_slice(&[0, 0]),
+        }
         for (player, b) in &self.beacons {
             buf.push(*player);
             buf.push(b.data.len() as u8);
@@ -638,7 +645,8 @@ impl LinkDown {
         let count = r.u8()? as usize;
         let ack = r.u16()?;
         let first_seq = r.u16()?;
-        r.u16()?;
+        let epoch_byte = r.u8()?;
+        let epoch = if r.u8()? == 1 { Some(epoch_byte) } else { None };
         if beacon_count > MAX_PLAYERS {
             return None;
         }
@@ -666,6 +674,7 @@ impl LinkDown {
         Some(Self {
             ack,
             first_seq,
+            epoch,
             beacons,
             msgs,
         })

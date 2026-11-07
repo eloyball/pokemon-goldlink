@@ -4,6 +4,7 @@
 #include "pokemon.h"
 #include "coop_sync.h"
 #include "coop_link.h"
+#include "system.h"
 
 // ---------------------------------------------------------------------------
 // Virtual link (docs/MILESTONE3_PLAN.md §15), Overlay 129.
@@ -146,6 +147,10 @@ enum
 #define COOP_BEACON_INTERVAL  8         // frames between "beacon sent" events
 
 static const u8 sCoopConnectTag[3] = { 'D', 'P', 0 }; // ccd sWirelessConnectTag
+
+// gSystem.vblankCounter at the last Coop_LinkUpdate: the DATA a sender may deliver
+// (KNOWN_RISKS #89). In .data: Overlay 129's .bss is never zeroed.
+static u32 sCoopLinkLastVblank __attribute__((section(".data"))) = 0;
 
 // Writes a data-cache range back to memory (CP15 "clean line", then "drain
 // write buffer"). The radio writes parentInfo straight to memory, so the scan
@@ -696,7 +701,7 @@ void Coop_LinkUpdate(void)
 {
     struct CoopWirelessWork *work = Coop_LinkWork();
     struct CoopLinkBlock *blk = Coop_LinkBlock();
-    u32 pending, i, count, intr;
+    u32 pending, i, count, intr, budget, once, twice;
     void *sent[4];
 
     if (blk == NULL)
@@ -760,10 +765,30 @@ void Coop_LinkUpdate(void)
         Wireless_OnDataSent(event);
     }
 
-    // The others' messages.
+    // The others' messages. A sender's DATA at the radio's pace: one per VBlank
+    // since the last update (this runs every other frame while the game's loop
+    // is at 30 Hz), at most two. The comm core's receive rings are sized for
+    // that (ccd ByteRing_Write drops what does not fit): delivering a whole
+    // burst after the internet's jitter lost a battle command and the host
+    // timed out (KNOWN_RISKS #89). The rest stays in the ring, in order.
+    budget = gSystem.vblankCounter - sCoopLinkLastVblank;
+    sCoopLinkLastVblank = gSystem.vblankCounter;
+    once = 0;
+    twice = 0;
     while (blk->in_tail != blk->in_head && blk->magic == COOP_LINK_MAGIC)
     {
         struct CoopLinkMsg *msg = &blk->in[blk->in_tail % COOP_LINK_IN_SLOTS];
+        if (msg->type == COOP_LINK_MSG_DATA)
+        {
+            u32 bit = 1u << (msg->aid & 15);
+            if (once & bit)
+            {
+                if (budget < 2 || (twice & bit))
+                    break;
+                twice |= bit;
+            }
+            once |= bit;
+        }
         if (msg->length > COOP_LINK_DATA_MAX)
             msg->length = COOP_LINK_DATA_MAX;
         Coop_LinkDeliver(work, blk, msg);

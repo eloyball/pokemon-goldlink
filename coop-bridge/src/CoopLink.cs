@@ -229,6 +229,15 @@ namespace CoopBridge
             beacons[0] = (byte)beaconCount;
             Buffer.BlockCopy(t, beaconsStart, beacons, 1, pos - beaconsStart);
 
+            // Milestone 6 (the PvP freeze over the VPS): every link block restarts its streams
+            // at 0, so a late relay trailer of the previous block (the internet reorders) would
+            // ack and deliver into this one: acked-away messages never arrive, and the battle
+            // waits forever ("Communicating..."). The relay names the block it serves (bytes
+            // 10-11: epoch, 1; older relays send 0, 0): another block's ack and messages are
+            // skipped (its beacons are the room's, still fine). An ack past what was ever sent
+            // is never from this block either.
+            bool otherBlock = t[11] == 1 && t[10] != _epoch;
+            if (otherBlock || SeqBefore(_outNext, ack)) return beacons;
             _out.RemoveAll(p => SeqBefore(p.Seq, ack));
             for (int i = 0; i < count; i++)
             {

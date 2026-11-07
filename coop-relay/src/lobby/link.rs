@@ -15,7 +15,9 @@
 //!
 //! Each direction of each hop is a reliable, ordered stream (go-back-N):
 //! consecutive u16 sequence numbers, a cumulative ack (the next one
-//! expected), out-of-order messages dropped, unacked ones resent.
+//! expected), out-of-order messages dropped, unacked ones resent. Each block
+//! restarts its streams at 0, so both ends tag them with the block's epoch and
+//! drop a late trailer of an earlier block.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -78,6 +80,14 @@ impl LobbyState {
             return; // silence is handled by expire_links
         };
         let peer = &self.links[slot];
+        // The bridge counts its link blocks (epochs) up. A trailer of an earlier block
+        // arriving late (the internet reorders) is stale: dropping it, not restarting the
+        // session on it, keeps the current one alive (Milestone 6: the PvP freeze over the
+        // VPS; locally nothing ever arrived late).
+        if peer.active && peer.epoch != up.epoch && (up.epoch.wrapping_sub(peer.epoch) as i8) < 0 {
+            debug!("link P{slot} stale trailer of epoch {} (now {})", up.epoch, peer.epoch);
+            return;
+        }
         if !peer.active || peer.epoch != up.epoch {
             if peer.active {
                 self.leave_link(slot); // a new link block: the old session is over
@@ -327,6 +337,7 @@ impl LobbyState {
         Some(LinkDown {
             ack: peer.in_next,
             first_seq,
+            epoch: Some(peer.epoch),
             beacons,
             msgs,
         })

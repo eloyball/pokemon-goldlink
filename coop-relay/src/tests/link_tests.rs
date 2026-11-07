@@ -137,12 +137,18 @@ fn test_link_trailers_round_trip_and_reject_bad_input() {
     let down = LinkDown {
         ack: 5,
         first_seq: 9,
+        epoch: Some(3),
         beacons: vec![(2, beacon())],
         msgs: vec![msg(LINK_MSG_ACCEPT, 1, &[])],
     };
     let mut buf = Vec::new();
     down.encode(&mut buf);
-    assert_eq!(LinkDown::decode(&buf), Some(down));
+    assert_eq!(LinkDown::decode(&buf), Some(down.clone()));
+    // A relay before the epoch wrote 0, 0 there: no epoch.
+    let mut old = buf.clone();
+    old[10] = 0;
+    old[11] = 0;
+    assert_eq!(LinkDown::decode(&old).unwrap().epoch, None);
 
     // In a client packet: alone at byte 120, or after a trade trailer.
     let mut pkt: ClientToServerPacket = packet(0, SessionOut::default(), true);
@@ -332,6 +338,33 @@ fn test_link_bye_epoch_silence_and_disconnect() {
     c.recv_next = 0;
     c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]);
     assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_BYE, 1, &[])]);
+
+    // Milestone 6: a late trailer of the child's previous block, arriving after the new
+    // block started (the internet reorders), is dropped: no BYE, the new block goes on.
+    let (mut lobby, mut p, mut c, _) = linked_room();
+    let old_epoch = c.epoch;
+    c.epoch = c.epoch.wrapping_add(1);
+    c.next_seq = 0;
+    c.recv_next = 0;
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]);
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_BYE, 1, &[])]);
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_CONNECT, 0, &[0, 1, b'D', b'P', 0])],
+    );
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_CONNECT, 1, &[1, b'D', b'P', 0])]);
+    p.send(&mut lobby, 0, LINK_ROLE_PARENT, Some(beacon()), vec![msg(LINK_MSG_ACCEPT, 1, &[])]);
+    assert_eq!(c.recv(&mut lobby, 1).1, vec![msg(LINK_MSG_ACCEPT, 1, &[])]);
+    let mut late = Client { epoch: old_epoch, next_seq: 7, recv_next: 9 };
+    late.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![msg(LINK_MSG_DATA, 1, &[9])]);
+    assert!(p.recv(&mut lobby, 0).1.is_empty(), "no BYE, no stale data");
+    let (d, _) = c.recv(&mut lobby, 1);
+    assert_eq!(d.unwrap().epoch, Some(c.epoch), "the down stream names the current block");
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![msg(LINK_MSG_DATA, 1, &[5])]);
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_DATA, 1, &[5])], "the new block still routes");
 
     // The parent's bridge went quiet: the child gets BYE after LINK_SILENCE.
     let (mut lobby, _p, mut c, _) = linked_room();
