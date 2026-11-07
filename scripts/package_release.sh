@@ -190,10 +190,13 @@ assemble() { # <os> <dir>
 JSON
     fill scripts/release/README.txt > "$dir/README.txt"
     fill scripts/release/THIRD_PARTY.txt > "$dir/LICENSES/THIRD_PARTY.txt"
+    cp LICENSE "$dir/LICENSES/GoldLink-LICENSE.txt"
+    cp NOTICE.md "$dir/LICENSES/NOTICE.md"
+    cp CREDITS.md "$dir/CREDITS.md"
     cp "$CACHE/BizHawk-LICENSE-$BIZHAWK_VERSION.txt" "$dir/LICENSES/BizHawk-LICENSE.txt"
     cp "$WORK/launcher-libraries.txt" "$dir/LICENSES/launcher-libraries.txt"
     if [[ $os == windows ]]; then # Windows' Notepad and Explorer like CRLF
-        for f in README.txt LICENSES/THIRD_PARTY.txt; do sed -i 's/$/\r/' "$dir/$f"; done
+        for f in README.txt LICENSES/THIRD_PARTY.txt LICENSES/GoldLink-LICENSE.txt; do sed -i 's/$/\r/' "$dir/$f"; done
     fi
 }
 NAME="GoldLink-$VERSION"

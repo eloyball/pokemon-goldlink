@@ -20,6 +20,12 @@ Windows shows an "unknown publisher" warning for this unsigned program: **More i
 - The ROM it accepts: SHA-1 `{{ROM_SHA1}}`.
 - Bundled: BizHawk {{BIZHAWK_VERSION}}, unchanged.
 
+## License
+
+GoldLink is free, under CC BY-NC-SA 4.0 and hg-engine's terms: no money involved (donations
+included). Credits: `CREDITS.md`. Pokémon belongs to Nintendo, Creatures Inc. and GAME FREAK inc.;
+this is an unofficial fan project.
+
 ## Changes
 
 {{CHANGES}}

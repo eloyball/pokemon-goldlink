@@ -3,6 +3,7 @@ name = "coop-relay"
 version = "0.2.0"
 edition = "2024"
 description = "Multi-room 6-Player UDP relay server with persistent roster locking for Pokemon HeartGold"
+license = "CC-BY-NC-SA-4.0"
 
 [lints.rust]
 unsafe_code = "forbid"

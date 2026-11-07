@@ -36,4 +36,9 @@ protocol {{WIRE}}: the server needs a coop-relay release for that protocol.
 Controls are BizHawk's (Config > Controllers). Settings > "Reset BizHawk settings" brings back
 GoldLink's.
 
-Licenses: see LICENSES/. Project page: https://github.com/{{REPOSITORY}}
+GoldLink is free, and must stay free: CC BY-NC-SA 4.0, on hg-engine's terms (no money
+involved, donations included). See LICENSES/NOTICE.md; the people it builds on are in
+CREDITS.md. Pokémon belongs to Nintendo, Creatures Inc. and GAME FREAK inc.; this is an
+unofficial fan project.
+
+Project page: https://github.com/{{REPOSITORY}}

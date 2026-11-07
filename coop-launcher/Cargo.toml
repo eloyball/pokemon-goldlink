@@ -3,6 +3,7 @@ name = "goldlink-launcher"
 version = "0.1.0"
 edition = "2021"
 description = "GoldLink: sets up and starts the co-op HeartGold game (docs/RELEASE_PLAN.md)"
+license = "CC-BY-NC-SA-4.0"
 publish = false
 
 [[bin]]
