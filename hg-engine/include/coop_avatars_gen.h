@@ -4,54 +4,105 @@
 #define COOP_AVATARS_GEN_H
 
 // Every PNG in data/graphics/overworlds/custom (NARC a/0/8/1 from 297): the followers come after.
-#define COOP_CUSTOM_OW_FILES 15
+#define COOP_CUSTOM_OW_FILES 60
 #define COOP_AVATAR_STATES 15
-#define COOP_AVATAR_CUSTOM 1
+#define COOP_AVATAR_CUSTOM 4
 #define COOP_AVATAR_FIRST_CUSTOM_ID 3
 
 // gOWTagToFileNum entries: the vanilla state's billboard (callback_params), the avatar's texture.
 #define COOP_AVATAR_OW_ENTRIES \
-    { .tag = 7000, .gfx = 297, .callback_params = 0x1C60 }, /* leroy walk */ \
-    { .tag = 7001, .gfx = 298, .callback_params = 0x1881 }, /* leroy cycle */ \
-    { .tag = 7002, .gfx = 299, .callback_params = 0x24E0 }, /* leroy surf */ \
-    { .tag = 7003, .gfx = 300, .callback_params = 0x20A0 }, /* leroy hm */ \
-    { .tag = 7004, .gfx = 301, .callback_params = 0x2D00 }, /* leroy fish */ \
-    { .tag = 7005, .gfx = 302, .callback_params = 0x40A0 }, /* leroy save */ \
-    { .tag = 7006, .gfx = 303, .callback_params = 0x3540 }, /* leroy heal */ \
-    { .tag = 7007, .gfx = 304, .callback_params = 0x3D60 }, /* leroy gear */ \
-    { .tag = 7008, .gfx = 305, .callback_params = 0x3120 }, /* leroy ladder */ \
-    { .tag = 7009, .gfx = 306, .callback_params = 0x28C0 }, /* leroy water */ \
-    { .tag = 7010, .gfx = 307, .callback_params = 0x3A60 }, /* leroy shake */ \
-    { .tag = 7011, .gfx = 308, .callback_params = 0x1C60 }, /* leroy athlon */ \
-    { .tag = 7012, .gfx = 309, .callback_params = 0x1C60 }, /* leroy rocket */ \
-    { .tag = 7013, .gfx = 310, .callback_params = 0x3540 }, /* leroy rheal */ \
-    { .tag = 7014, .gfx = 311, .callback_params = 0x40A0 }, /* leroy rsave */ \
+    { .tag = 7000, .gfx = 297, .callback_params = 0x1C60 }, /* gones walk */ \
+    { .tag = 7001, .gfx = 298, .callback_params = 0x1881 }, /* gones cycle */ \
+    { .tag = 7002, .gfx = 299, .callback_params = 0x24E0 }, /* gones surf */ \
+    { .tag = 7003, .gfx = 300, .callback_params = 0x20A0 }, /* gones hm */ \
+    { .tag = 7004, .gfx = 301, .callback_params = 0x2D00 }, /* gones fish */ \
+    { .tag = 7005, .gfx = 302, .callback_params = 0x40A0 }, /* gones save */ \
+    { .tag = 7006, .gfx = 303, .callback_params = 0x3540 }, /* gones heal */ \
+    { .tag = 7007, .gfx = 304, .callback_params = 0x3D60 }, /* gones gear */ \
+    { .tag = 7008, .gfx = 305, .callback_params = 0x3120 }, /* gones ladder */ \
+    { .tag = 7009, .gfx = 306, .callback_params = 0x28C0 }, /* gones water */ \
+    { .tag = 7010, .gfx = 307, .callback_params = 0x3A60 }, /* gones shake */ \
+    { .tag = 7011, .gfx = 308, .callback_params = 0x1C60 }, /* gones athlon */ \
+    { .tag = 7012, .gfx = 309, .callback_params = 0x1C60 }, /* gones rocket */ \
+    { .tag = 7013, .gfx = 310, .callback_params = 0x3540 }, /* gones rheal */ \
+    { .tag = 7014, .gfx = 311, .callback_params = 0x40A0 }, /* gones rsave */ \
+    { .tag = 7015, .gfx = 312, .callback_params = 0x1C60 }, /* leroy walk */ \
+    { .tag = 7016, .gfx = 313, .callback_params = 0x1881 }, /* leroy cycle */ \
+    { .tag = 7017, .gfx = 314, .callback_params = 0x24E0 }, /* leroy surf */ \
+    { .tag = 7018, .gfx = 315, .callback_params = 0x20A0 }, /* leroy hm */ \
+    { .tag = 7019, .gfx = 316, .callback_params = 0x2D00 }, /* leroy fish */ \
+    { .tag = 7020, .gfx = 317, .callback_params = 0x40A0 }, /* leroy save */ \
+    { .tag = 7021, .gfx = 318, .callback_params = 0x3540 }, /* leroy heal */ \
+    { .tag = 7022, .gfx = 319, .callback_params = 0x3D60 }, /* leroy gear */ \
+    { .tag = 7023, .gfx = 320, .callback_params = 0x3120 }, /* leroy ladder */ \
+    { .tag = 7024, .gfx = 321, .callback_params = 0x28C0 }, /* leroy water */ \
+    { .tag = 7025, .gfx = 322, .callback_params = 0x3A60 }, /* leroy shake */ \
+    { .tag = 7026, .gfx = 323, .callback_params = 0x1C60 }, /* leroy athlon */ \
+    { .tag = 7027, .gfx = 324, .callback_params = 0x1C60 }, /* leroy rocket */ \
+    { .tag = 7028, .gfx = 325, .callback_params = 0x3540 }, /* leroy rheal */ \
+    { .tag = 7029, .gfx = 326, .callback_params = 0x40A0 }, /* leroy rsave */ \
+    { .tag = 7030, .gfx = 327, .callback_params = 0x1C60 }, /* rapha walk */ \
+    { .tag = 7031, .gfx = 328, .callback_params = 0x1881 }, /* rapha cycle */ \
+    { .tag = 7032, .gfx = 329, .callback_params = 0x24E0 }, /* rapha surf */ \
+    { .tag = 7033, .gfx = 330, .callback_params = 0x20A0 }, /* rapha hm */ \
+    { .tag = 7034, .gfx = 331, .callback_params = 0x2D00 }, /* rapha fish */ \
+    { .tag = 7035, .gfx = 332, .callback_params = 0x40A0 }, /* rapha save */ \
+    { .tag = 7036, .gfx = 333, .callback_params = 0x3540 }, /* rapha heal */ \
+    { .tag = 7037, .gfx = 334, .callback_params = 0x3D60 }, /* rapha gear */ \
+    { .tag = 7038, .gfx = 335, .callback_params = 0x3120 }, /* rapha ladder */ \
+    { .tag = 7039, .gfx = 336, .callback_params = 0x28C0 }, /* rapha water */ \
+    { .tag = 7040, .gfx = 337, .callback_params = 0x3A60 }, /* rapha shake */ \
+    { .tag = 7041, .gfx = 338, .callback_params = 0x1C60 }, /* rapha athlon */ \
+    { .tag = 7042, .gfx = 339, .callback_params = 0x1C60 }, /* rapha rocket */ \
+    { .tag = 7043, .gfx = 340, .callback_params = 0x3540 }, /* rapha rheal */ \
+    { .tag = 7044, .gfx = 341, .callback_params = 0x40A0 }, /* rapha rsave */ \
+    { .tag = 7045, .gfx = 342, .callback_params = 0x1C60 }, /* vitinho walk */ \
+    { .tag = 7046, .gfx = 343, .callback_params = 0x1881 }, /* vitinho cycle */ \
+    { .tag = 7047, .gfx = 344, .callback_params = 0x24E0 }, /* vitinho surf */ \
+    { .tag = 7048, .gfx = 345, .callback_params = 0x20A0 }, /* vitinho hm */ \
+    { .tag = 7049, .gfx = 346, .callback_params = 0x2D00 }, /* vitinho fish */ \
+    { .tag = 7050, .gfx = 347, .callback_params = 0x40A0 }, /* vitinho save */ \
+    { .tag = 7051, .gfx = 348, .callback_params = 0x3540 }, /* vitinho heal */ \
+    { .tag = 7052, .gfx = 349, .callback_params = 0x3D60 }, /* vitinho gear */ \
+    { .tag = 7053, .gfx = 350, .callback_params = 0x3120 }, /* vitinho ladder */ \
+    { .tag = 7054, .gfx = 351, .callback_params = 0x28C0 }, /* vitinho water */ \
+    { .tag = 7055, .gfx = 352, .callback_params = 0x3A60 }, /* vitinho shake */ \
+    { .tag = 7056, .gfx = 353, .callback_params = 0x1C60 }, /* vitinho athlon */ \
+    { .tag = 7057, .gfx = 354, .callback_params = 0x1C60 }, /* vitinho rocket */ \
+    { .tag = 7058, .gfx = 355, .callback_params = 0x3540 }, /* vitinho rheal */ \
+    { .tag = 7059, .gfx = 356, .callback_params = 0x40A0 }, /* vitinho rsave */ \
 
 // {hero, heroine} sprite of each state, in the tables' order.
 #define COOP_AVATAR_STATE_SPRITES { { 0, 97 }, { 21, 98 }, { 178, 179 }, { 176, 177 }, { 188, 189 }, { 198, 199 }, { 200, 201 }, { 196, 197 }, { 248, 249 }, { 180, 181 }, { 423, 424 }, { 407, 408 }, { 258, 259 }, { 260, 261 }, { 297, 298 } }
 
 // Per custom avatar, its tag in each state (0: the vanilla sprite).
 #define COOP_AVATAR_TAGS { \
-    { 7000, 7001, 7002, 7003, 7004, 7005, 7006, 7007, 7008, 7009, 7010, 7011, 7012, 7013, 7014 }, /* 3 leroy */ \
+    { 7000, 7001, 7002, 7003, 7004, 7005, 7006, 7007, 7008, 7009, 7010, 7011, 7012, 7013, 7014 }, /* 3 gones */ \
+    { 7015, 7016, 7017, 7018, 7019, 7020, 7021, 7022, 7023, 7024, 7025, 7026, 7027, 7028, 7029 }, /* 4 leroy */ \
+    { 7030, 7031, 7032, 7033, 7034, 7035, 7036, 7037, 7038, 7039, 7040, 7041, 7042, 7043, 7044 }, /* 5 rapha */ \
+    { 7045, 7046, 7047, 7048, 7049, 7050, 7051, 7052, 7053, 7054, 7055, 7056, 7057, 7058, 7059 }, /* 6 vitinho */ \
 }
 
 // Per custom tag from COOP_AVATAR_FIRST_TAG, the hero sprite it stands in for (0xFFFF: none).
 #define COOP_AVATAR_FIRST_TAG 7000
-#define COOP_AVATAR_TAG_SPAN 15
-#define COOP_AVATAR_TAG_BASE { 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297 }
+#define COOP_AVATAR_TAG_SPAN 60
+#define COOP_AVATAR_TAG_BASE { 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297, 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297, 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297, 0, 21, 178, 176, 188, 198, 200, 196, 248, 180, 423, 407, 258, 260, 297 }
 
 // Battle pictures per custom avatar (Phase 5): { front (NARC a/0/5/8 set), throw, link throw
 // (a/0/0/6 sets) }, 0xFFFF where the column wasn't drawn (Ethan's picture is used).
 #define COOP_AVATAR_PICS { \
-    { 138, 17, 18 }, /* 3 leroy */ \
+    { 138, 17, 18 }, /* 3 gones */ \
+    { 139, 19, 20 }, /* 4 leroy */ \
+    { 140, 21, 22 }, /* 5 rapha */ \
+    { 141, 23, 24 }, /* 6 vitinho */ \
 }
 
 // The HM cut-in's trainer frames per custom avatar (KNOWN_RISKS #82): NARC a/0/9/3 member of
 // the frames (the palette is the next one), 0xFFFF where the HM column wasn't drawn.
-#define COOP_AVATAR_CUTIN { 26 }
+#define COOP_AVATAR_CUTIN { 26, 28, 30, 32 }
 
 // The VS face per custom avatar (Phase 6, the PvP intro): NARC a/1/0/9 member of its palette
 // (characters, cell, animation follow), 0xFFFF where the VS face wasn't drawn.
-#define COOP_AVATAR_VSFACE { 242 }
+#define COOP_AVATAR_VSFACE { 242, 246, 250, 254 }
 
 #endif // COOP_AVATARS_GEN_H

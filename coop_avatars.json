@@ -18,9 +18,27 @@
   },
   {
    "id": 3,
+   "name": "Gones",
+   "file": "gones",
+   "preview": "build/avatars/gones.png"
+  },
+  {
+   "id": 4,
    "name": "Leroy",
    "file": "leroy",
    "preview": "build/avatars/leroy.png"
+  },
+  {
+   "id": 5,
+   "name": "Rapha",
+   "file": "rapha",
+   "preview": "build/avatars/rapha.png"
+  },
+  {
+   "id": 6,
+   "name": "Vitinho",
+   "file": "vitinho",
+   "preview": "build/avatars/vitinho.png"
   }
  ]
 }
