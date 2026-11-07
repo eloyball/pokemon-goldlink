@@ -1018,8 +1018,8 @@ const struct CoopPoolEntry gCoopPool[] = {
     { 0x0420, 526, 9, 1, 0x03, 4 }, // IRON_VALIANT
     { 0x0421, 527, 1, 16, 0x0B, 4 }, // KORAIDON
     { 0x0422, 528, 13, 16, 0x0B, 4 }, // MIRAIDON
-    { 0x0423, 529, 11, 16, 0x03, 4 }, // WALKING_WAKE
-    { 0x0424, 530, 12, 14, 0x03, 4 }, // IRON_LEAVES
+    { 0x0423, 529, 11, 16, 0x07, 4 }, // WALKING_WAKE
+    { 0x0424, 530, 12, 14, 0x07, 4 }, // IRON_LEAVES
     { 0x0425, 433, 12, 16, 0x01, 3 }, // DIPPLIN
     { 0x0426, 531, 12, 7, 0x03, 1 }, // POLTCHAGEIST
     { 0x0427, 531, 12, 7, 0x01, 3 }, // SINISTCHA
@@ -1029,10 +1029,10 @@ const struct CoopPoolEntry gCoopPool[] = {
     { 0x042B, 535, 12, 12, 0x07, 4 }, // OGERPON
     { 0x042C, 457, 8, 16, 0x01, 4 }, // ARCHALUDON
     { 0x042D, 433, 12, 16, 0x01, 4 }, // HYDRAPPLE
-    { 0x042E, 536, 10, 16, 0x03, 4 }, // GOUGING_FIRE
-    { 0x042F, 537, 13, 16, 0x03, 4 }, // RAGING_BOLT
-    { 0x0430, 538, 5, 14, 0x03, 4 }, // IRON_BOULDER
-    { 0x0431, 539, 8, 14, 0x03, 4 }, // IRON_CROWN
+    { 0x042E, 536, 10, 16, 0x07, 4 }, // GOUGING_FIRE
+    { 0x042F, 537, 13, 16, 0x07, 4 }, // RAGING_BOLT
+    { 0x0430, 538, 5, 14, 0x07, 4 }, // IRON_BOULDER
+    { 0x0431, 539, 8, 14, 0x07, 4 }, // IRON_CROWN
     { 0x0432, 540, 0, 0, 0x0B, 3 }, // TERAPAGOS
     { 0x0433, 541, 3, 7, 0x0B, 4 }, // PECHARUNT
     { 0x0813, 6, 17, 0, 0x03, 1 }, // RATTATA_ALOLAN

@@ -310,6 +310,7 @@ static const struct CoopWarpTarget sCoopWarpTargets[COOP_WARP_COUNT] = {
     [COOP_WARP_CELADON]     = { MAP_T07, 1231, 238 }, // MAP_CELADON
     [COOP_WARP_VIOLET_GYM]  = { MAP_T22GYM0101, 15, 6 }, // MAP_VIOLET_GYM (Falkner on 15, 4)
     [COOP_WARP_LANCE]       = { MAP_T10R0601, 6, 27 }, // Lance's room, the door (his coord event row is z 10)
+    [COOP_WARP_ELMS_LAB]    = { MAP_T20R0101, 8, 5 },  // Elm's lab: the starter machine is at 8, 4 (pret zone_event 058)
 };
 
 // Same check as using Surf / a rod from the menu (Field_PlayerCanSurfOnTile
@@ -534,10 +535,12 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
         species = SPECIES_HAUNTER;
     else if (preset == 8)
         species = SPECIES_RATTATA; // stress probe: fills the party, fainted (below)
-    else if (preset == 9)
+    else if (preset == 9 || preset == 11)
     {
         // Milestone 4 Phase 0 (Mega probes): the probe's species, held item
-        // and level, with its level-up moves.
+        // and level, with its level-up moves. 11 (Milestone 6 §3.1, the PvP
+        // switch probe): the same added to the party, with Rock Slide first
+        // and the ability in mon[0..1] (0: its own).
         species = gCoopDebugMonBuffer.species & 0x7FF;
         item = gCoopDebugMonBuffer.held_item;
         level = gCoopDebugMonBuffer.level;
@@ -580,6 +583,17 @@ static u8 Coop_DebugGiveTestMon(FieldSystem *fsys, u8 preset)
     SetMonData(&mon, MON_DATA_MET_GENDER, &gender);
     if (item != ITEM_NONE)
         SetMonData(&mon, MON_DATA_HELD_ITEM, &item);
+    if (preset == 11)
+    {
+        u32 m = MOVE_ROCK_SLIDE, p = 10;
+        u16 ability;
+
+        SetMonData(&mon, MON_DATA_MOVE1, &m);
+        SetMonData(&mon, MON_DATA_MOVE1PP, &p);
+        __builtin_memcpy(&ability, gCoopDebugMonBuffer.mon, sizeof(ability));
+        if (ability != 0)
+            SetMonData(&mon, MON_DATA_ABILITY, &ability);
+    }
     if (lead && preset != 9)
     {
         static const u16 sFullMoves[4] = { MOVE_ROCK_SLIDE, MOVE_DEFENSE_CURL, MOVE_ROCK_POLISH, MOVE_TACKLE };
@@ -701,6 +715,9 @@ static u8 Coop_DebugWildBattle(FieldSystem *fsys, u16 species, u8 level)
 
 // Milestone 5 Phase 2: the gift and roamer randomizers through the real
 // vanilla entry points (debug command 20).
+struct BattleSetup *LONG_CALL BattleSetup_New_Tutorial(u32 heapID, FieldSystem *fieldSystem);
+void *LONG_CALL Encounter_New(struct BattleSetup *setup, s32 effect, s32 bgm, u32 *winFlag);
+
 static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
 {
     if (what < 4)
@@ -742,6 +759,52 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
         bits &= ~COOP_MON_ABILITY_LOCKED; // leave the lead as it was found
         SetMonData(lead, MON_DATA_RESERVED_114, &bits);
         ResetPartyPokemonAbility(lead);
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what == 23)
+    {
+        // Milestone 6 §3.3: Lyra's catching tutorial (Route 29), as hg-engine's
+        // SetupAndStartTutorialBattle builds it, run by vanilla's task.
+        struct BattleSetup *setup;
+        void *encounter;
+
+        if (fsys->taskman != NULL)
+            return COOP_DEBUG_RESULT_NOT_NOW;
+        setup = BattleSetup_New_Tutorial(11 /* HEAP_ID_FIELD2 */, fsys);
+        if (setup == NULL)
+            return COOP_DEBUG_RESULT_FAILED;
+        encounter = Encounter_New(setup, BattleSetup_GetWildTransitionEffect(setup), BattleSetup_GetWildBattleMusic(setup), NULL);
+        return Coop_FieldSystem_CreateTask(fsys, Task_TutorialBattle, encounter) != NULL ? COOP_DEBUG_RESULT_OK : COOP_DEBUG_RESULT_FAILED;
+    }
+    if (what == 21 || what == 22)
+    {
+        // Milestone 6 §3.2: 21 puts this save back before Elm's starter
+        // (FLAG_GOT_STARTER clear, VAR_SCENE_ELMS_LAB 0, the starter flags and
+        // personality reset); 22 -> mon[0..5] = the starter offer this save's
+        // rules give trainer ID buffer.held_item.
+        struct CoopChallengeSave *save = Coop_ChallengeSave();
+
+        if (save == NULL)
+            return COOP_DEBUG_RESULT_FAILED;
+        if (what == 21)
+        {
+            // As at a new game's start: no Pokemon yet (Elm's script names and
+            // reads party slot 0), so no "had Pokemon" for the spirit state.
+            SaveArray_Party_Get(fsys->savedata)->count = 0;
+            save->state &= ~COOP_CHALLENGE_HAD_POKEMON;
+            ClearScriptFlagPassSave(SavArray_Flags_get(fsys->savedata), COOP_FLAG_GOT_STARTER);
+            VarSet(fsys, COOP_VAR_SCENE_ELMS_LAB, 0);
+            save->flags &= ~(COOP_FLAG_STARTER_DONE | COOP_FLAG_STARTER_NAMED);
+            save->starter_pid = 0;
+        }
+        else
+        {
+            struct CoopChallengeSave copy;
+
+            __builtin_memcpy(&copy, save, sizeof(copy));
+            Coop_ChallengeStarters(&copy, gCoopDebugMonBuffer.held_item);
+            __builtin_memcpy(gCoopDebugMonBuffer.mon, copy.starters, sizeof(copy.starters));
+        }
         return COOP_DEBUG_RESULT_OK;
     }
     if (what >= 18 && what <= 20)

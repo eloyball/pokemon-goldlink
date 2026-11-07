@@ -369,9 +369,12 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
 #endif
 }
 
-void Coop_ChallengeStarters(struct CoopChallengeSave *save)
+void Coop_ChallengeStarters(struct CoopChallengeSave *save, u32 trainerId)
 {
     struct CoopPoolFilter f = { 0 };
+    // Fully random: each player's own three (Milestone 6 §3.2); the other modes
+    // keep one offer for the whole room (Monolocke already differs by type).
+    u32 player = (save->rules & COOP_RULE_RANDOM_MASK) == COOP_RANDOM_FULL ? trainerId : 0;
     u32 i;
 
     if (!(save->rules & (COOP_RULE_RANDOM_MASK | COOP_RULE_MONOLOCKE)))
@@ -383,7 +386,7 @@ void Coop_ChallengeStarters(struct CoopChallengeSave *save)
     f.exclude = save->starters;
     for (i = 0; i < 3; i++)
     {
-        u32 key = Coop_Hash(save->seed ^ COOP_KEY_STARTER, i, f.monoType, 0);
+        u32 key = Coop_Hash(save->seed ^ COOP_KEY_STARTER, i, f.monoType, player);
         u16 pick;
 
         f.excludeCount = i; // three different Pokemon
@@ -447,4 +450,46 @@ u32 Coop_ChallengeRoamerSpecies(u32 roamerIdx, u32 vanilla)
             picks[i] = sRoamerSpecies[i]; // not enough of this type: vanilla from here on
     }
     return picks[roamerIdx];
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 §3.2, §3.5: the starter. Elm's starter app adds it to the party
+// before the field (and this overlay) is back, so its rules come here, on the
+// field frames of the same script: after ChooseStarter (FLAG_GOT_STARTER set)
+// and before the script's end (VAR_SCENE_ELMS_LAB still 0). Once per save; a
+// save already past that point only gets the flag.
+// ---------------------------------------------------------------------------
+
+void *LONG_CALL SaveArray_Party_Get(void *saveData);
+
+void Coop_ChallengeStarterFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save)
+{
+    struct Party *party;
+    struct PartyPokemon *mon;
+    u16 bits;
+
+    if ((save->flags & COOP_FLAG_STARTER_DONE) || !CheckScriptFlag(COOP_FLAG_GOT_STARTER))
+        return;
+    save->flags |= COOP_FLAG_STARTER_DONE;
+    if (Coop_CurrentMap() != COOP_MAP_ELMS_LAB || VarGet(fsys, COOP_VAR_SCENE_ELMS_LAB) != 0)
+        return; // an older save, long past Elm's lab: starter_pid stays 0 (none)
+    party = SaveArray_Party_Get(fsys->savedata);
+    if (party == NULL || party->count < 1)
+        return;
+    mon = Party_GetMonByIndex(party, party->count - 1); // Party_AddMon: the last (and in a real game the only) one
+    save->starter_pid = GetMonData(mon, MON_DATA_PERSONALITY, NULL);
+    bits = GetMonData(mon, MON_DATA_RESERVED_114, NULL);
+    // Random abilities (D3: the starter, not gifts or eggs); the relay's
+    // sanitizer keeps the rule only with the randomizer on.
+    if ((save->rules & COOP_RULE_RANDOM_ABILITIES) && gCoopAbilityPoolCount != 0)
+    {
+        u16 ability = gCoopAbilityPool[Coop_RandomU32() % gCoopAbilityPoolCount];
+
+        SetMonData(mon, MON_DATA_ABILITY, &ability);
+        bits |= COOP_MON_ABILITY_LOCKED;
+    }
+    // Soul-Link (D1): every player's starter is linked under location 122.
+    if (Coop_ChallengeSoulLinkOn(save))
+        bits |= COOP_MON_LINKED;
+    SetMonData(mon, MON_DATA_RESERVED_114, &bits);
 }

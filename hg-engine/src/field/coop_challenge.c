@@ -99,7 +99,9 @@ static struct CoopChallengeSave *Coop_ChallengeLatch(void)
                           : COOP_MONO_TYPE_NONE;
     save->seed = gCoopCommBlock.gates.room_uid;
     save->pending_loc = 0xFF;
-    Coop_ChallengeStarters(save); // Phase 2: Elm's choices (the starter app runs without this overlay)
+    // Phase 2: Elm's choices (the starter app runs without this overlay); Fully
+    // random gives each trainer their own (Milestone 6 §3.2).
+    Coop_ChallengeStarters(save, PlayerProfile_GetTrainerID_VisibleHalf(Sav2_PlayerData_GetProfileAddr(SaveBlock2_get())));
     save->state = COOP_CHALLENGE_LATCHED;
     save->magic = COOP_CHALLENGE_SAVE_MAGIC; // last: the block is valid from here on
     return save;
@@ -223,6 +225,8 @@ void Coop_ChallengeFieldFrame(struct FieldSystem *fsys)
     struct CoopChallengeUp *out = &gCoopChallengeSync.out;
     u32 i;
 
+    if (save != NULL)
+        Coop_ChallengeStarterFrame(fsys, save); // Milestone 6: the starter's ability and Soul-Link
     if (save != NULL && (save->rules & COOP_RULE_NUZLOCKE))
         Coop_ChallengeNuzlockeFrame(fsys, save); // Phase 3
     if (save != NULL)
@@ -332,4 +336,46 @@ BOOL Coop_ChallengeStartPage(u32 index, char *buf, u32 size)
         }
     }
     return FALSE;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 §3.2: Nuzlocke forces the starter's nickname. Elm asks "Give a
+// nickname?" with GetMenuChoice (script command 748); its callback (pret
+// sub_020477C0, replaced through `hooks`) writes the answer once the Yes / No
+// menu is done, and No or B (both non-zero) skip NicknameInput. In Elm's
+// starter script (after ChooseStarter, before the script's end) the first
+// answer counts as Yes; the "So, NAME is it?" after the naming screen keeps
+// its own (No goes back to the naming screen, as vanilla).
+// ---------------------------------------------------------------------------
+
+int LONG_CALL ov01_021F6B00(FieldSystem *fsys);
+int LONG_CALL ov01_021F6AEC(FieldSystem *fsys);
+
+// TRUE for the first Yes / No of Elm's starter script under Nuzlocke (once per save).
+static BOOL Coop_IsStarterNicknameQuestion(FieldSystem *fsys)
+{
+    struct CoopChallengeSave *save = Coop_ChallengeSave();
+
+    if (save == NULL || !(save->rules & COOP_RULE_NUZLOCKE) || (save->flags & COOP_FLAG_STARTER_NAMED))
+        return FALSE;
+    if (fsys->location == NULL || fsys->location->mapId != COOP_MAP_ELMS_LAB || !CheckScriptFlag(COOP_FLAG_GOT_STARTER)
+        || VarGet(fsys, COOP_VAR_SCENE_ELMS_LAB) != 0)
+        return FALSE;
+    save->flags |= COOP_FLAG_STARTER_NAMED; // whatever the answer: the confirmation keeps its own
+    return TRUE;
+}
+
+BOOL Coop_ScrNative_GetMenuChoice(SCRIPTCONTEXT *ctx)
+{
+    FieldSystem *fsys = ctx->fsys;
+    u16 *ret = GetVarPointer(fsys, (u16)ctx->data[0]);
+    u16 answer;
+
+    if (ov01_021F6B00(fsys) != 3 || ov01_021F6AEC(fsys) != 6)
+        return FALSE; // the menu is still open
+    answer = (u16)ctx->data[1];
+    if (Coop_IsStarterNicknameQuestion(fsys))
+        answer = 0; // Yes
+    *ret = answer;
+    return TRUE;
 }

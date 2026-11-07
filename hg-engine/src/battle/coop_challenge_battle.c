@@ -42,10 +42,11 @@ static void Coop_MarkDead(struct PartyPokemon *mon)
     SetMonData(mon, MON_DATA_RESERVED_114, &bits);
 }
 
-// No player Pokemon fights in the Safari Zone or the Bug Contest.
+// No player Pokemon fights in the Safari Zone or the Bug Contest, nor in the
+// catching tutorial (Lyra's Marill does, Milestone 6 §3.3).
 static BOOL Coop_PlayerFights(struct BattleSystem *bsys)
 {
-    return !(BattleTypeGet(bsys) & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_BUG_CONTEST));
+    return !(BattleTypeGet(bsys) & (BATTLE_TYPE_SAFARI | BATTLE_TYPE_BUG_CONTEST | BATTLE_TYPE_TUTORIAL));
 }
 
 void LONG_CALL Coop_ChallengeMarkFainted(struct BattleSystem *bsys, struct BattleStruct *ctx, int battlerId)
@@ -109,7 +110,9 @@ BOOL LONG_CALL Coop_ChallengeBallBlocked(struct BattleSystem *bsys)
     struct BattleStruct *ctx;
 
     sBallReason = COOP_BALL_ALLOWED;
-    if (save == NULL || (type & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_LINK)))
+    // The catching tutorial's ball is Lyra's demonstration, not the player's
+    // catch: no rule applies (Milestone 6 §3.3, Monolocke blocked it).
+    if (save == NULL || (type & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_LINK | BATTLE_TYPE_TUTORIAL)))
         return FALSE;
     wild = BattleWorkPokemonParamGet(bsys, 1, 0);
     if (Coop_MonoBlocks(save, wild)) // the shiny clause doesn't override it (E9)

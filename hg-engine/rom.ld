@@ -112,6 +112,11 @@ AddHallOfFameEntry = 0x02052A50 | 1;
 GetVarAdrs = 0x020504A4 | 1;
 EncDataSave_GetSaveDataPtr = 0x0202D9C4 | 1;
 GetVarPointer = 0x02040374 |1;
+/* co-op Milestone 6 (src/field/coop_challenge.c, the starter's nickname): the
+   Yes / No menu's state, as pret sub_020477C0 (GetMenuChoice's callback) polls it
+   (pret include/overlay_01.h; Overlay 1 is loaded whenever a field script runs). */
+ov01_021F6AEC = 0x021F6AEC | 1;
+ov01_021F6B00 = 0x021F6B00 | 1;
 VarSet = 0x020403C0 | 1;
 VarGet = 0x020403AC | 1;
 GF_CpuCopy8 = 0x0204D450;

@@ -39,6 +39,11 @@ POOL_B = {
     'MARSHADOW', 'ZERAORA', 'MELTAN', 'MELMETAL', 'ZARUDE', 'PECHARUNT',
 }
 
+# Pool A members the rebalance places as ordinary wild species (Cerulean Cave), so
+# deferred_species() doesn't list them: the legendary paradoxes of CHALLENGE_RULES.md §2.3
+# (Milestone 6 §3.4: with legends out of the wild they turned up in grass anyway).
+POOL_A_EXTRA = {'RAGING_BOLT', 'GOUGING_FIRE', 'WALKING_WAKE', 'IRON_LEAVES', 'IRON_BOULDER', 'IRON_CROWN'}
+
 # Never a replacement (still listed, so a wild slot holding one can be looked up).
 NOT_PICKABLE = {'UNOWN'}
 
@@ -113,7 +118,7 @@ def build():
     for i, root in enumerate(sorted(fam, key=sp.get)):
         for member in fam[root]:
             family_of[member] = i
-    legends = plan.deferred_species(evo)
+    legends = plan.deferred_species(evo) | POOL_A_EXTRA
     stats = load_species_data()
     forms = load_forms()
 

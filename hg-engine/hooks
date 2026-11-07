@@ -71,6 +71,11 @@ arm9 set_starter_hidden_ability_hook 02096158 5
 arm9 CreateStarter_SetStarterSpecies_hook 02096094 3
 arm9 CreateStarterMon_hook 020960E6 1
 0061 CreateMonSprites_hook 021E7098 3
+# co-op Milestone 6: Nuzlocke forces the starter's nickname. The callback of
+# script command 748 (GetMenuChoice), pret sub_020477C0 (asm/scrcmd.s before
+# pret a5bb89098), in src/field/coop_challenge.c (Overlay 131: scripts run in
+# the field). r1: one argument (ctx).
+arm9 Coop_ScrNative_GetMenuChoice 020477C0 1
 
 #battle hooks
 0012 CalcBaseDamage 02256FF8

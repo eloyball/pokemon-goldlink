@@ -220,13 +220,16 @@ u32 Coop_ChallengeTableReroll(FieldSystem *fsys, u32 original)
 // ---------------------------------------------------------------------------
 
 // The location a linked Pokemon came from (its first encounter), 0xFF none:
-// the Safari areas and the contest by the personality value kept for them,
-// elsewhere its met location (the map section it was caught in).
+// the starter (Milestone 6 §3.5), the Safari areas and the contest by the
+// personality value kept for them, elsewhere its met location (the map
+// section it was caught in).
 static u32 Coop_LinkedLocation(const struct CoopChallengeSave *save, struct BoxPokemon *mon)
 {
     u32 pid = GetBoxMonData(mon, MON_DATA_PERSONALITY, NULL);
     u32 met, i;
 
+    if ((save->flags & COOP_FLAG_STARTER_DONE) && save->starter_pid == pid && pid != 0)
+        return COOP_LOCATION_STARTER;
     for (i = 0; i < COOP_SAFARI_AREAS; i++)
         if (save->safari_pid[i] == pid && pid != 0)
             return COOP_LOCATION_SAFARI + i;

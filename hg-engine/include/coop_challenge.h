@@ -40,11 +40,13 @@
 #define COOP_MONO_TYPE_NONE  18
 
 // One bit per place (docs/MILESTONE5_PLAN.md §4.3): 0-108 HGSS map section
-// - 126, 109-120 the Safari areas, 121 the Bug-Catching Contest.
+// - 126, 109-120 the Safari areas, 121 the Bug-Catching Contest, 122 the
+// starters (Milestone 6 §3.5: Soul-Link links every player's starter).
 #define COOP_LOCATION_BYTES   16
 #define COOP_MAPSEC_FIRST     126
 #define COOP_LOCATION_SAFARI  109
 #define COOP_LOCATION_CONTEST 121
+#define COOP_LOCATION_STARTER 122
 #define COOP_SAFARI_AREAS     12
 
 // CoopChallengeSave.state bits (also the up trailer's state).
@@ -70,6 +72,17 @@
 // pret FLAG_WATCHED_CATCHING_TUTORIAL: set on Route 29 right after the first
 // five Poke Balls. Nuzlocke first encounters count only from then on.
 #define COOP_FLAG_CATCHING_TUTORIAL 0x9A
+
+// Elm's lab, where the starter is given (Milestone 6 §3.2): pret
+// MAP_NEW_BARK_ELMS_LAB_1F, FLAG_GOT_STARTER (set right after ChooseStarter)
+// and VAR_SCENE_ELMS_LAB (still 0 until the end of that script).
+#define COOP_MAP_ELMS_LAB        61
+#define COOP_FLAG_GOT_STARTER    0x6A
+#define COOP_VAR_SCENE_ELMS_LAB  0x4108
+
+// CoopChallengeSave.flags (Milestone 6).
+#define COOP_FLAG_STARTER_DONE   0x0001 // the starter got its rules once (starter_pid valid)
+#define COOP_FLAG_STARTER_NAMED  0x0002 // Nuzlocke: Elm's "Give a nickname?" was answered Yes once
 
 // PC boxes (0-based): the Graveyard is box 30, then box 29 (Q11).
 #define COOP_GRAVEYARD_BOX  29
@@ -111,7 +124,7 @@ struct CoopChallengeSave
     u16 starters[3];                   // 0x0C species | form << 11 (Phase 2); 0 = vanilla
     u8  spent[COOP_LOCATION_BYTES];    // 0x12 first encounter used
     u8  failed[COOP_LOCATION_BYTES];   // 0x22 my linked locations that failed or died
-    u16 pad32;                         // 0x32
+    u16 flags;                         // 0x32 COOP_FLAG_* (Milestone 6; 0 in older saves)
     u32 safari_pid[COOP_SAFARI_AREAS]; // 0x34 the first catch of each Safari area
     u32 contest_pid;                   // 0x64 the Bug Contest's first catch
     u32 pending_pid;                   // 0x68 the wild Pokemon of a first encounter in progress
@@ -127,14 +140,17 @@ struct CoopChallengeSave
     u16 prebattle_map;                 // 0x7C the last field tile before the current battle (0: none)
     s16 prebattle_x;
     s16 prebattle_z;
-};                                     // 0x82
+    u16 pad82;
+    u32 starter_pid;                   // 0x84 Milestone 6: valid with COOP_FLAG_STARTER_DONE
+};                                     // 0x88
 
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, seed) == 0x08, "CoopChallengeSave.seed");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, spent) == 0x12, "CoopChallengeSave.spent");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, safari_pid) == 0x34, "CoopChallengeSave.safari_pid");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, pending_pid) == 0x68, "CoopChallengeSave.pending_pid");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, prebattle_z) == 0x80, "CoopChallengeSave.prebattle_z");
-_Static_assert(sizeof(struct CoopChallengeSave) == 0x84, "CoopChallengeSave size");
+_Static_assert(__builtin_offsetof(struct CoopChallengeSave, starter_pid) == 0x84, "CoopChallengeSave.starter_pid");
+_Static_assert(sizeof(struct CoopChallengeSave) == 0x88, "CoopChallengeSave size");
 _Static_assert(COOP_CHALLENGE_SAVE_OFFSET + sizeof(struct CoopChallengeSave) <= COOP_CHALLENGE_SAVE_END,
                "CoopChallengeSave must end before the Pokewalker's unlockedCourses");
 
@@ -300,8 +316,18 @@ struct BATTLE_PARAM;
 // randomizer when its rules say so, and given a random ability.
 void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp);
 
-// Elm's three choices for a new save's challenge block (0 = vanilla).
-void Coop_ChallengeStarters(struct CoopChallengeSave *save);
+// Elm's three choices for a new save's challenge block (0 = vanilla). Fully
+// random mixes in this player's trainer ID: an offer of their own (M6 §3.2).
+void Coop_ChallengeStarters(struct CoopChallengeSave *save, u32 trainerId);
+
+// Milestone 6 §3.2, §3.5: once, on the field frames right after Elm gives the
+// starter: its random ability and its Soul-Link (location 122).
+void Coop_ChallengeStarterFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// Milestone 6 §3.2: GetMenuChoice's callback (pret sub_020477C0, `hooks`):
+// under Nuzlocke, Elm's "Give a nickname?" always answers Yes.
+struct SCRIPTCONTEXT;
+BOOL Coop_ScrNative_GetMenuChoice(struct SCRIPTCONTEXT *ctx);
 
 // Overlay 129 calls these through Overlay 131's pinned header, in the field.
 // A script gift (GiveMon) and a roamer's species (Save_CreateRoamerByID):
