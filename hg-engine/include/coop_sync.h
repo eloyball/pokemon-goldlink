@@ -90,7 +90,16 @@ _Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, challenge) == 0x0
 // ROM then compiles the handlers out and acknowledges every command with
 // COOP_DEBUG_RESULT_DISABLED. The mailbox fields stay so the layout never
 // changes between builds.
+//
+// Release builds (scripts/package_release.sh) put a coop_build_config.h that
+// defines COOP_DEBUG_TOOLS 0 on the compiler's include path (C_INCLUDE_PATH);
+// a normal build finds none and keeps the tools.
+#if __has_include(<coop_build_config.h>)
+#include <coop_build_config.h>
+#endif
+#ifndef COOP_DEBUG_TOOLS
 #define COOP_DEBUG_TOOLS 1
+#endif
 
 // Bridge -> ROM debug commands (diagnostics card). The bridge writes
 // debug_cmd and debug_arg, then bumps debug_seq; the ROM answers with

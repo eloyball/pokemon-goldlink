@@ -583,6 +583,7 @@ namespace CoopBridge
         private bool _allowAhead;
         private readonly Label _locationValue;
         private readonly Label _othersValue;
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
         private readonly ThemedButton _diagToggle;
         private readonly TableLayoutPanel _diagCard;
         private readonly Label _diagFieldValue;
@@ -596,6 +597,7 @@ namespace CoopBridge
         private readonly Label _diagCommandValue;
         private readonly ComboBox _warpPicker;
         private readonly ThemedButton[] _diagButtons;
+#endif
         // One save per room (SaveSlots.cs). Prepared once per connection,
         // after the relay's first OK packet names the room (room_uid).
         private enum SlotState { None, Swapping, Ready }
@@ -612,12 +614,14 @@ namespace CoopBridge
         private uint _lastRomHeartbeat;
         private DateTime _swapRequestedUtc;
         private const double SwapRetrySeconds = 10.0;
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
         private byte _pendingDebugCmd;
         private byte _pendingDebugArg;
         private string _sentDebugName = "";
         private byte _debugSeq;
         private uint _lastFieldEntryCalls;
         private DateTime _lastFieldEntryChangeUtc;
+#endif
         private readonly System.Windows.Forms.Timer _keepAliveTimer;
 
         private readonly UdpClient _udpClient;
@@ -958,6 +962,7 @@ namespace CoopBridge
                 Margin = new Padding(0)
             };
             serverCard.Controls.Add(_serverInput);
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
             _diagToggle = Theme.MakeButton("Show diagnostics", Theme.ButtonKind.Neutral);
             _diagToggle.Height = 28;
             _diagToggle.Margin = new Padding(0, 10, 0, 0);
@@ -1085,13 +1090,16 @@ namespace CoopBridge
             diagHint.MaximumSize = new Size(contentWidth - 28, 0);
             diagHint.Margin = new Padding(0, 8, 0, 0);
             _diagCard.Controls.Add(diagHint);
+#endif
 
             root.Controls.Add(header);
             root.Controls.Add(_messageLabel);
             root.Controls.Add(roomCard);
             root.Controls.Add(sessionCard);
             root.Controls.Add(serverCard);
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
             root.Controls.Add(_diagCard);
+#endif
             Controls.Add(root);
             AcceptButton = _primaryButton; // Enter in the room code submits
             ActiveControl = _roomInput;    // type the code straight away
@@ -1111,9 +1119,12 @@ namespace CoopBridge
 
             if (_mailboxOffset == null) SetStatus(_offsetsError, isError: true);
             UpdateControls();
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
             StartDevAutoJoin();
+#endif
         }
 
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
         // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): COOP_BRIDGE_AUTOJOIN="host:port|ROOM"
         // joins that room as soon as the tool is open, and again after a failed
         // attempt, until connected (dev/run_link_e2e.sh). Never set by users.
@@ -1152,6 +1163,7 @@ namespace CoopBridge
             };
             timer.Start();
         }
+#endif
 
         // ------------------------------------------------------------------
         // UI state (UI thread)
@@ -1689,8 +1701,10 @@ namespace CoopBridge
                 _memoryApi.WriteU8(mb + Mailbox.LocalAvatar, Volatile.Read(ref _avatarId), MemoryDomain);
                 ReadLocalPlayerSnapshot(mb);
                 UpdateSaveSlot(mb);
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
                 SendPendingDebugCommand(mb);
                 RefreshDiagnostics(mb);
+#endif
 
                 if (_link != LinkState.Connecting && _link != LinkState.Connected)
                 {
@@ -1705,7 +1719,9 @@ namespace CoopBridge
                 uint? linkBlock = CoopLink.Find(_memoryApi, MemoryDomain, _memoryApi.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain));
                 _linkCarrier.Pump(_memoryApi, MemoryDomain, linkBlock, _assignedSlot);
                 TryTakeBackup(mb);
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
                 DevMaybeLeaveInBattle();
+#endif
 
                 DateTime now = DateTime.UtcNow;
                 DateTime lastChallenge = new DateTime(Interlocked.Read(ref _lastChallengeUtcTicks), DateTimeKind.Utc);
@@ -2048,6 +2064,7 @@ namespace CoopBridge
             _memoryApi.WriteU8(mb + Mailbox.SaveSlotReady, (byte)(ready ? 1 : 0), MemoryDomain);
         }
 
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
         /// <summary>
         /// Hands a diagnostics-card command to the ROM (handled by the
         /// Overlay 131 field entry): the command byte first, then a new
@@ -2069,6 +2086,7 @@ namespace CoopBridge
             _memoryApi.WriteU8(mb + Mailbox.DebugSeq, _debugSeq, MemoryDomain);
             _pendingDebugCmd = 0;
         }
+#endif
 
         private static bool IsValidMoveAction(byte action) =>
             action < Mailbox.MaxHeldMovement || action == Mailbox.MoveActionNone;
@@ -2122,6 +2140,7 @@ namespace CoopBridge
             _ => $"state {state}",
         };
 
+#if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
         private static (string text, Color color) DebugResultText(byte result) => result switch
         {
             1 => ("done", Theme.Connected),
@@ -2211,6 +2230,7 @@ namespace CoopBridge
                 SetValue(_diagHeightValue, $"ghost {gy} · you {py}", gy == py ? Theme.Connected : Theme.Connecting);
             }
         }
+#endif
 
         /// <summary>
         /// Writes the "not connected" state. Called every disconnected frame so

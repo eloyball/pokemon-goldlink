@@ -74,26 +74,28 @@ BOOL LONG_CALL MapObject_ClearHeldMovementIfActive(LocalMapObject *object);
 #define COOP_MOVEMENT_JUMP_NEAR_FAST 52 // + direction (asm/macros/movement.inc)
 #define COOP_MOVEMENT_EMOTE_EXCLAIM  75
 
-#if COOP_DEBUG_TOOLS
-// pret constants/global_fieldmap.h
+// pret constants/global_fieldmap.h: the local player's states and transitions.
 #define COOP_PLAYER_STATE_WALKING      0
 #define COOP_PLAYER_STATE_CYCLING      1
 #define COOP_PLAYER_STATE_SURFING      2
 #define COOP_PLAYER_TRANSITION_WALKING (1u << 0)
 #define COOP_PLAYER_TRANSITION_CYCLING (1u << 1)
 #define COOP_PLAYER_TRANSITION_SURFING (1u << 2)
+
+void LONG_CALL Field_PlayerAvatar_OrrTransitionFlags(FIELD_PLAYER_AVATAR *avatar, u32 flags);
+void LONG_CALL Field_PlayerAvatar_ApplyTransitionFlags(FIELD_PLAYER_AVATAR *avatar);
+struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
+
+#if COOP_DEBUG_TOOLS
 #define COOP_DIR_SOUTH                 1
 #define COOP_HEAP_ID_FIELD1            4 // pret constants/heap.h
 #define COOP_ROD_TYPE_OLD              0 // pret include/overlay_01.h
 
 // Debug-only vanilla functions (rom.ld, "Co-op DEBUG TOOLS only").
 void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
-void LONG_CALL Field_PlayerAvatar_OrrTransitionFlags(FIELD_PLAYER_AVATAR *avatar, u32 flags);
-void LONG_CALL Field_PlayerAvatar_ApplyTransitionFlags(FIELD_PLAYER_AVATAR *avatar);
 BOOL LONG_CALL Field_PlayerCanSurfOnTile(FIELD_PLAYER_AVATAR *avatar, int currentTile, int facingTile);
 void *LONG_CALL CreateFishingRodTaskEnv(FieldSystem *fsys, u32 heapId, int rod);
 BOOL LONG_CALL Task_OverworldFish(TaskManager *taskman);
-struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 #endif
 
 u16 LONG_CALL MapHeader_GetMapSec(u32 mapNo); // rom.ld (debug command 20 arg 15)
