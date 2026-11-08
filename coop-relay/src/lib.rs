@@ -1,5 +1,6 @@
 pub mod admission;
 pub mod lobby;
+pub mod quic;
 // The wire protocol is the shared goldlink-proto crate (compiled from src/protocol.rs, where it
 // still lives; crates/goldlink-proto/src/lib.rs).
 pub use goldlink_proto as protocol;

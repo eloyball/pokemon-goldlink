@@ -2,7 +2,6 @@
 //! ported step for step. It runs on the emulation thread after every frame; the window calls
 //! [`Bridge::join`] / [`Bridge::leave`] and reads [`Bridge::view`].
 
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
@@ -85,7 +84,7 @@ pub struct Bridge {
     avatars: Vec<AvatarChoice>,
     avatar_id: u8,
     net: RelayClient,
-    resolving: Option<Receiver<Option<SocketAddr>>>,
+    resolving: Option<Receiver<Option<net::Target>>>,
     pending_join: Option<(String, String, bool)>,
 
     link: LinkState,
@@ -237,6 +236,14 @@ impl Bridge {
         self.config.challenge_rules = wire::sanitize_challenge_rules(rules);
     }
 
+    /// A trade or link session is open (the ROM's exchange pointer is set): link scenes run at
+    /// 1x for everyone (RFC §4.4), so fast-forward waits.
+    pub fn in_link_scene(&self) -> bool {
+        self.mailbox_copy
+            .as_ref()
+            .is_some_and(|mb| u32_at(mb, EXCHANGE_PTR) != 0)
+    }
+
     /// The local player's current activity (CoopActivity), from the last snapshot.
     pub fn local_activity(&self) -> u8 {
         self.local_player[PS_ACTIVITY]
@@ -329,6 +336,11 @@ impl Bridge {
         );
         self.config.server = server;
         self.config.save(&self.dir).ok();
+    }
+
+    /// QUIC only: moves the connection to a new local port (tests a NAT rebinding).
+    pub fn rebind(&self) -> bool {
+        self.net.rebind()
     }
 
     /// Leaves the world (the Leave button).

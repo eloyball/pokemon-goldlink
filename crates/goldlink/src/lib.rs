@@ -2,6 +2,7 @@
 //! `goldlink-dev` opens the same window with its dev tools added as [`FrameHook`]s (D2).
 
 pub mod app;
+pub mod crash;
 pub mod input;
 pub mod launcher;
 pub mod layout;
@@ -55,6 +56,9 @@ pub fn avatar_files() -> Vec<PathBuf> {
     out
 }
 
+/// More UI drawn over the game each frame (the dev binary's panels; the release has none).
+pub type ExtraUi = Box<dyn FnMut(&eframe::egui::Context)>;
+
 /// One game in a window.
 pub struct Session {
     pub setup: GameSetup,
@@ -64,6 +68,7 @@ pub struct Session {
     pub bridge: Option<SharedBridge>,
     pub hooks: Vec<Box<dyn FrameHook>>,
     pub title: String,
+    pub extra_ui: Option<ExtraUi>,
 }
 
 /// Boots the game and shows it in a window until the player closes it. The save is written on
@@ -75,6 +80,7 @@ pub fn run(session: Session) -> Result<(), String> {
         bridge,
         mut hooks,
         title,
+        extra_ui,
     } = session;
     let (config, note) = Config::load(&data_dir);
     let emu = Emulator::new(setup)?;
@@ -101,9 +107,9 @@ pub fn run(session: Session) -> Result<(), String> {
             options,
             Box::new(|_cc| {
                 let (runner, bridge) = parts.take().expect("one window");
-                Ok(Box::new(app::GameApp::new(
-                    runner, bridge, config, data_dir, notes,
-                )))
+                let mut app = app::GameApp::new(runner, bridge, config, data_dir, notes);
+                app.extra_ui = extra_ui;
+                Ok(Box::new(app))
             }),
         )
     }))

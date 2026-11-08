@@ -12,6 +12,7 @@ pub mod hook;
 pub mod layout;
 pub mod link;
 pub mod net;
+pub mod quic;
 pub mod sanitize;
 pub mod slots;
 pub mod text;

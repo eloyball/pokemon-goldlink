@@ -53,11 +53,16 @@ pub fn run(
         mailbox_offset: crate::MAILBOX,
         rtc,
     };
+    let panel = crate::devpanel::DevPanel::default();
     goldlink::run(goldlink::Session {
         setup,
         data_dir: data,
         bridge: None,
-        hooks: vec![Box::new(OfflineWorld { heartbeat: 0 })],
+        hooks: vec![
+            Box::new(OfflineWorld { heartbeat: 0 }),
+            Box::new(panel.hook()),
+        ],
         title: "GoldLink (dev, offline world)".into(),
+        extra_ui: Some(crate::dev_ui(panel)),
     })
 }

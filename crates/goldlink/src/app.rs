@@ -42,6 +42,8 @@ pub struct GameApp {
     /// Fast-forward is allowed (in a world it becomes the world's decision, UC5).
     pub fast_forward_allowed: bool,
     messages: VecDeque<Message>,
+    /// Drawn after everything else (dev panels).
+    pub extra_ui: Option<crate::ExtraUi>,
 }
 
 impl GameApp {
@@ -90,6 +92,7 @@ impl GameApp {
             fast: false,
             fast_forward_allowed: true,
             messages,
+            extra_ui: None,
         }
     }
 
@@ -149,7 +152,12 @@ impl GameApp {
         };
         *lock(&runner.shared.input) = Input { keys, touch };
 
-        let fast = fast && self.fast_forward_allowed;
+        // Link scenes (a trade, a link battle) run at 1x for everyone (RFC §4.4).
+        let link_scene = self
+            .bridge
+            .as_ref()
+            .is_some_and(|b| goldlink_bridge::hook::lock(b).in_link_scene());
+        let fast = fast && self.fast_forward_allowed && !link_scene;
         if fast != self.fast {
             self.fast = fast;
             runner.send(Command::Speed(Some(if fast {
@@ -344,6 +352,9 @@ impl GameApp {
         }
         if let (Some(w), Some(b)) = (self.world.as_mut(), self.bridge.as_ref()) {
             w.show(ctx, b);
+        }
+        if let Some(extra) = self.extra_ui.as_mut() {
+            extra(ctx);
         }
         // The emulator runs on its own clock; draw whenever the display can.
         ctx.request_repaint();

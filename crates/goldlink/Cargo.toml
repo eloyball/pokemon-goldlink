@@ -28,6 +28,7 @@ goldlink-rom = { path = "../goldlink-rom" }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 serde_json = "1"
 ureq = "3"
+png = "0.17"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 dirs = "6"

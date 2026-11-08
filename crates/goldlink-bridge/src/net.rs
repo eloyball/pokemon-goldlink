@@ -1,6 +1,8 @@
 //! The relay connection (the C# bridge's UdpClient, ReceiveLoop and SendPacket): one UDP socket,
 //! a receive thread that keeps the latest server packet (latest wins, as the bridge's snapshot
-//! semantics need) and the relay's return-routability cookie.
+//! semantics need) and the relay's return-routability cookie. A server address with a
+//! certificate fingerprint (`host:port#<sha256>`) goes over QUIC instead (`quic.rs`, UC6): the
+//! same packets, encrypted, the relay's certificate pinned.
 
 use std::collections::VecDeque;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
@@ -18,7 +20,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 #[derive(Default)]
-struct Shared {
+pub(crate) struct Shared {
     server: Mutex<Option<SocketAddr>>,
     cookie: AtomicU64,
     last_challenge: Mutex<Option<Instant>>,
@@ -30,10 +32,19 @@ struct Shared {
     ok_packets: Mutex<VecDeque<Vec<u8>>>,
 }
 
+/// Where the relay is, and how to reach it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Target {
+    pub addr: SocketAddr,
+    /// The relay certificate's SHA-256: QUIC, pinned. None: plain UDP.
+    pub pin: Option<[u8; 32]>,
+}
+
 pub struct RelayClient {
     socket: Arc<UdpSocket>,
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
+    quic: Option<(Target, crate::quic::QuicClient)>,
 }
 
 impl RelayClient {
@@ -44,17 +55,30 @@ impl RelayClient {
             socket: Arc::new(socket),
             shared: Arc::new(Shared::default()),
             thread: None,
+            quic: None,
         })
     }
 
-    /// Talks to `server` from now on (a new server forgets the old cookie) and starts listening.
-    pub fn set_server(&mut self, server: SocketAddr) {
+    /// Talks to `target` from now on (a new server forgets the old cookie) and starts listening.
+    pub fn set_server(&mut self, target: Target) {
+        let server = target.addr;
         let mut s = lock(&self.shared.server);
         if *s != Some(server) {
             self.shared.cookie.store(0, Ordering::Relaxed);
         }
         *s = Some(server);
         drop(s);
+        match target.pin {
+            Some(pin) => {
+                if self.quic.as_ref().is_none_or(|(t, _)| *t != target) {
+                    self.quic = Some((
+                        target,
+                        crate::quic::QuicClient::connect(server, pin, self.shared.clone()),
+                    ));
+                }
+            }
+            None => self.quic = None,
+        }
         if self.thread.is_none() {
             self.shared.running.store(true, Ordering::Relaxed);
             let (sock, shared) = (self.socket.clone(), self.shared.clone());
@@ -94,9 +118,22 @@ impl RelayClient {
     }
 
     pub fn send(&self, packet: &[u8]) {
-        if let Some(server) = *lock(&self.shared.server) {
+        if let Some((_, q)) = &self.quic {
+            q.send(packet.to_vec());
+        } else if let Some(server) = *lock(&self.shared.server) {
             self.socket.send_to(packet, server).ok();
         }
+    }
+
+    /// QUIC only: moves to a new local UDP port, as a NAT rebinding or a network change would.
+    /// The connection (and the seat in the world) carries on. False over plain UDP.
+    pub fn rebind(&self) -> bool {
+        self.quic.as_ref().is_some_and(|(_, q)| q.rebind())
+    }
+
+    /// Talking to the relay over QUIC.
+    pub fn is_quic(&self) -> bool {
+        self.quic.is_some()
     }
 }
 
@@ -117,18 +154,26 @@ fn receive_loop(socket: &UdpSocket, shared: &Shared) {
             // Timeouts, and ICMP "port unreachable" (relay not up yet): keep listening.
             Err(_) => continue,
         };
-        let data = &buf[..n];
-        // Only the relay we're talking to, only this protocol (except its "other version"
-        // refusal, which carries its own version).
-        if Some(from) != *lock(&shared.server) || n < wire::ERROR_PACKET_SIZE {
+        // Only the relay we're talking to.
+        if Some(from) != *lock(&shared.server) {
             continue;
         }
-        if u32_at(data, 0) != wire::COOP_MAGIC {
-            continue;
+        accept(shared, &buf[..n]);
+    }
+}
+
+/// A packet from the relay (UDP or QUIC): the cookie, or the latest packet and the link's.
+pub(crate) fn accept(shared: &Shared, data: &[u8]) {
+    let n = data.len();
+    {
+        // Only this protocol (except the relay's "other version" refusal, which carries its
+        // own version).
+        if n < wire::ERROR_PACKET_SIZE || u32_at(data, 0) != wire::COOP_MAGIC {
+            return;
         }
         let status = data[12];
         if u16_at(data, 4) != wire::PROTOCOL_VERSION && status != wire::ROOM_STATUS_ERR_PROTOCOL {
-            continue;
+            return;
         }
         if status == wire::ROOM_STATUS_CHALLENGE {
             if n >= wire::CHALLENGE_PACKET_SIZE {
@@ -136,10 +181,10 @@ fn receive_loop(socket: &UdpSocket, shared: &Shared) {
                 shared.cookie.store(cookie, Ordering::Relaxed);
                 *lock(&shared.last_challenge) = Some(Instant::now());
             }
-            continue;
+            return;
         }
         if status == wire::ROOM_STATUS_OK && n < wire::SERVER_PACKET_SIZE {
-            continue;
+            return;
         }
         let session = shared.session.load(Ordering::Relaxed);
         *lock(&shared.latest) = Some((data.to_vec(), session));
@@ -153,10 +198,30 @@ fn receive_loop(socket: &UdpSocket, shared: &Shared) {
     }
 }
 
-/// `host:port` (port 7777 when left out) to an address: IPv4 first, as the C# bridge. DNS can
-/// take seconds; call it off the emulation thread.
-pub fn resolve(host_port: &str) -> Option<SocketAddr> {
+/// `host:port` (port 7777 when left out) to an address: IPv4 first, as the C# bridge. A
+/// `#<64 hex digits>` suffix is the relay's QUIC certificate fingerprint. DNS can take seconds;
+/// call it off the emulation thread.
+pub fn resolve(host_port: &str) -> Option<Target> {
     let text = host_port.trim();
+    let (text, pin) = match text.split_once('#') {
+        Some((t, fp)) => (t.trim(), Some(parse_pin(fp.trim())?)),
+        None => (text, None),
+    };
+    resolve_addr(text).map(|addr| Target { addr, pin })
+}
+
+fn parse_pin(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+fn resolve_addr(text: &str) -> Option<SocketAddr> {
     if text.is_empty() {
         return None;
     }
@@ -178,15 +243,29 @@ mod tests {
 
     #[test]
     fn resolve_forms() {
+        let udp = |a: &str| {
+            Some(Target {
+                addr: a.parse().unwrap(),
+                pin: None,
+            })
+        };
+        assert_eq!(resolve("127.0.0.1:7795"), udp("127.0.0.1:7795"));
+        assert_eq!(resolve("127.0.0.1"), udp("127.0.0.1:7777"));
         assert_eq!(
-            resolve("127.0.0.1:7795"),
-            Some("127.0.0.1:7795".parse().unwrap())
+            resolve(" localhost:1234 ").map(|t| t.addr.port()),
+            Some(1234)
+        );
+        let fp = "00112233445566778899aabbccddeeff00112233445566778899AABBCCDDEEFF";
+        let t = resolve(&format!("127.0.0.1:7778#{fp}")).unwrap();
+        assert_eq!(
+            (t.addr.port(), t.pin.unwrap()[1], t.pin.unwrap()[31]),
+            (7778, 0x11, 0xFF)
         );
         assert_eq!(
-            resolve("127.0.0.1"),
-            Some("127.0.0.1:7777".parse().unwrap())
+            resolve("127.0.0.1:7778#abc"),
+            None,
+            "a cut fingerprint is refused, never UDP"
         );
-        assert_eq!(resolve(" localhost:1234 ").map(|a| a.port()), Some(1234));
         assert_eq!(resolve("127.0.0.1:0"), None);
         assert_eq!(resolve("127.0.0.1:99999"), None);
         assert_eq!(resolve(""), None);

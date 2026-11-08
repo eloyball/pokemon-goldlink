@@ -4,14 +4,15 @@ use std::time::Duration;
 
 use clap::Parser;
 use tokio::net::UdpSocket;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
 
-use coop_relay::lobby::{DEFAULT_MAX_ROOMS, Rejection, RoomManager};
+use coop_relay::lobby::{Rejection, RoomManager, DEFAULT_MAX_ROOMS};
 use coop_relay::protocol::{
-    CLIENT_PACKET_MAX, ClientToServerPacket, ERROR_PACKET_SIZE, PROTOCOL_VERSION, ProtocolError,
-    ROOM_STATUS_ERR_PROTOCOL, ServerToClientPacket,
+    ClientToServerPacket, ProtocolError, ServerToClientPacket, CLIENT_PACKET_MAX,
+    ERROR_PACKET_SIZE, PROTOCOL_VERSION, ROOM_STATUS_ERR_PROTOCOL,
 };
+use coop_relay::quic::{self, QuicServer};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -52,14 +53,68 @@ struct Args {
     /// Maximum number of rooms held in memory at once
     #[arg(long, default_value_t = DEFAULT_MAX_ROOMS)]
     max_rooms: usize,
+
+    /// Also listen for QUIC (encrypted; the unified client) on this address and UDP port, e.g.
+    /// 0.0.0.0:7778. Players add the fingerprint printed at startup to the server address.
+    #[arg(long)]
+    quic: Option<SocketAddr>,
+}
+
+/// Sends a packet to a player: over QUIC to a QUIC player's stand-in address, else UDP.
+async fn send(socket: &UdpSocket, quic: Option<&QuicServer>, addr: SocketAddr, payload: Vec<u8>) {
+    if quic::is_virtual(&addr) {
+        if let Some(q) = quic {
+            q.send(addr, payload);
+        }
+    } else if let Err(err) = socket.send_to(&payload, addr).await {
+        debug!("Failed sending to {addr}: {err}");
+    }
+}
+
+/// One packet from a player, by UDP or QUIC: the replies to send.
+fn handle(
+    manager: &mut RoomManager,
+    data: &[u8],
+    peer_addr: SocketAddr,
+) -> Vec<(SocketAddr, Vec<u8>)> {
+    match ClientToServerPacket::decode_le(data) {
+        Ok(pkt) => match manager.handle_client_packet(peer_addr, pkt) {
+            Ok(_) => manager.take_immediate(),
+            // Both replies are smaller than the request (no amplification).
+            Err(Rejection::Challenge(cookie)) => {
+                vec![(
+                    peer_addr,
+                    ServerToClientPacket::create_challenge_response(cookie).to_vec(),
+                )]
+            }
+            Err(Rejection::Status(status)) => {
+                vec![(
+                    peer_addr,
+                    ServerToClientPacket::create_error_response(status).to_vec(),
+                )]
+            }
+        },
+        // Another protocol version: say so (in the frozen 16-byte header, never more bytes than
+        // the request), so its bridge can tell the player which versions differ.
+        Err(ProtocolError::UnsupportedVersion(version)) if data.len() >= ERROR_PACKET_SIZE => {
+            info!("Refused {peer_addr}: relay protocol {version}, this relay speaks {PROTOCOL_VERSION}");
+            vec![(
+                peer_addr,
+                ServerToClientPacket::create_error_response(ROOM_STATUS_ERR_PROTOCOL).to_vec(),
+            )]
+        }
+        Err(err) => {
+            debug!("Dropped malformed packet from {peer_addr}: {err}");
+            Vec::new()
+        }
+    }
 }
 
 /// SIGTERM (systemd, `docker stop`): as Ctrl+C. Inside a container the relay is PID 1, which
 /// the kernel never kills for an unhandled SIGTERM. Elsewhere it never fires.
 async fn terminate_signal() {
     #[cfg(unix)]
-    if let Ok(mut term) =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    if let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
     {
         term.recv().await;
         return;
@@ -89,6 +144,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.tick_rate,
         args.save_dir
     );
+
+    let (quic_server, mut quic_rx) = match args.quic {
+        Some(addr) => {
+            let (server, rx, fp) = QuicServer::start(addr, &args.save_dir, CLIENT_PACKET_MAX)?;
+            info!(
+                "QUIC on UDP {addr}: players join with <host>:{}#{fp}",
+                addr.port()
+            );
+            (Some(server), Some(rx))
+        }
+        None => (None, None),
+    };
 
     let mut manager = RoomManager::new(
         Duration::from_secs(args.client_timeout_secs),
@@ -124,38 +191,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         warn!("Dropped an oversized packet from {peer_addr} ({len}+ bytes)");
                     }
                     Ok((len, peer_addr)) => {
-                        match ClientToServerPacket::decode_le(&recv_buf[..len]) {
-                            Ok(pkt) => {
-                                // Both replies are smaller than the request (no amplification).
-                                match manager.handle_client_packet(peer_addr, pkt) {
-                                    Ok(_) => {
-                                        for (addr, payload) in manager.take_immediate() {
-                                            if let Err(err) = socket.send_to(&payload, addr).await {
-                                                debug!("Failed sending link packet to {addr}: {err}");
-                                            }
-                                        }
-                                    }
-                                    Err(Rejection::Challenge(cookie)) => {
-                                        let reply = ServerToClientPacket::create_challenge_response(cookie);
-                                        let _ = socket.send_to(&reply, peer_addr).await;
-                                    }
-                                    Err(Rejection::Status(status)) => {
-                                        let reply = ServerToClientPacket::create_error_response(status);
-                                        let _ = socket.send_to(&reply, peer_addr).await;
-                                    }
-                                }
-                            }
-                            // Another protocol version: say so (in the frozen 16-byte header,
-                            // never more bytes than the request), so its bridge can tell the
-                            // player which versions differ.
-                            Err(ProtocolError::UnsupportedVersion(version)) if len >= ERROR_PACKET_SIZE => {
-                                info!("Refused {peer_addr}: relay protocol {version}, this relay speaks {PROTOCOL_VERSION}");
-                                let reply = ServerToClientPacket::create_error_response(ROOM_STATUS_ERR_PROTOCOL);
-                                let _ = socket.send_to(&reply, peer_addr).await;
-                            }
-                            Err(err) => {
-                                debug!("Dropped malformed packet from {peer_addr}: {err}");
-                            }
+                        for (addr, payload) in handle(&mut manager, &recv_buf[..len], peer_addr) {
+                            send(&socket, quic_server.as_ref(), addr, payload).await;
                         }
                     }
                     Err(err) => {
@@ -164,12 +201,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            Some((peer_addr, data)) = async { quic_rx.as_mut()?.recv().await }, if quic_rx.is_some() => {
+                for (addr, payload) in handle(&mut manager, &data, peer_addr) {
+                    send(&socket, quic_server.as_ref(), addr, payload).await;
+                }
+            }
+
             _ = broadcast_timer.tick() => {
                 let batch = manager.tick_all_rooms();
                 for (addr, payload) in batch {
-                    if let Err(err) = socket.send_to(&payload, addr).await {
-                        debug!("Failed sending broadcast to {addr}: {err}");
-                    }
+                    send(&socket, quic_server.as_ref(), addr, payload).await;
                 }
             }
 

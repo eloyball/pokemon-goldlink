@@ -20,6 +20,30 @@ pub struct WorldPanel {
     code: String,
     server: String,
     restore_open: bool,
+    /// The chosen avatar's preview picture, by avatar ID (None: it has none).
+    preview: Option<(u8, Option<egui::TextureHandle>)>,
+}
+
+/// A PNG file as an egui image.
+fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
+    let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let (w, h) = (info.width as usize, info.height as usize);
+    let px = &buf[..info.buffer_size()];
+    let pixels: Vec<egui::Color32> = match (info.color_type, info.bit_depth) {
+        (png::ColorType::Rgba, png::BitDepth::Eight) => px
+            .chunks_exact(4)
+            .map(|c| egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+            .collect(),
+        (png::ColorType::Rgb, png::BitDepth::Eight) => px
+            .chunks_exact(3)
+            .map(|c| egui::Color32::from_rgb(c[0], c[1], c[2]))
+            .collect(),
+        _ => return None,
+    };
+    (pixels.len() == w * h).then_some(egui::ColorImage { size: [w, h], pixels })
 }
 
 impl WorldPanel {
@@ -31,6 +55,7 @@ impl WorldPanel {
             code: String::new(),
             server: b.config.server.clone(),
             restore_open: false,
+            preview: None,
         }
     }
 
@@ -161,6 +186,18 @@ impl WorldPanel {
             let b = goldlink_bridge::hook::lock(bridge);
             (b.avatars().to_vec(), b.avatar_id())
         };
+        if self.preview.as_ref().is_none_or(|(id, _)| *id != current) {
+            let tex = avatars
+                .iter()
+                .find(|a| a.id == current)
+                .and_then(|a| a.preview.as_deref())
+                .and_then(load_png)
+                .map(|img| {
+                    ui.ctx()
+                        .load_texture("avatar", img, egui::TextureOptions::NEAREST)
+                });
+            self.preview = Some((current, tex));
+        }
         let name = avatars
             .iter()
             .find(|a| a.id == current)
@@ -177,6 +214,11 @@ impl WorldPanel {
                         }
                     }
                 });
+            if let Some((_, Some(tex))) = &self.preview {
+                let size = tex.size_vec2();
+                let scale = 48.0 / size.y.max(1.0);
+                ui.image((tex.id(), size * scale));
+            }
         });
     }
 

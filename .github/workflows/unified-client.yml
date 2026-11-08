@@ -36,3 +36,48 @@ jobs:
         run: cargo test --locked --manifest-path coop-relay/Cargo.toml
       - name: The ROM interface is up to date with hg-engine's headers (libclang)
         run: cargo run --locked -p goldlink-abi-gen -- --check
+
+  # macOS (RFC §6 M7): the client as a universal .app (Apple silicon + Intel), ad-hoc signed.
+  # Notarization needs the maintainer's Apple Developer ID (UC7.md), so Gatekeeper still asks
+  # the first time (right-click > Open).
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          brew list cmake > /dev/null 2>&1 || brew install cmake
+      - name: Tests (the ones without a ROM)
+        run: cargo test --locked -p goldlink-core -p goldlink-runtime -p goldlink-bridge -p goldlink-rom -p goldlink
+      - name: The universal app
+        run: |
+          cargo build --locked --release -p goldlink --target aarch64-apple-darwin
+          cargo build --locked --release -p goldlink --target x86_64-apple-darwin
+          app=build/GoldLink.app/Contents
+          mkdir -p "$app/MacOS"
+          lipo -create -output "$app/MacOS/GoldLink" \
+            target/aarch64-apple-darwin/release/goldlink target/x86_64-apple-darwin/release/goldlink
+          cat > "$app/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>GoldLink</string>
+            <key>CFBundleExecutable</key><string>GoldLink</string>
+            <key>CFBundleIdentifier</key><string>io.github.eloyball.goldlink</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.0</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          codesign --force --deep -s - build/GoldLink.app
+          lipo -info "$app/MacOS/GoldLink"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoldLink-macos-app
+          path: build/GoldLink.app

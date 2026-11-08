@@ -521,3 +521,252 @@ fn two_games_link_through_the_relay() {
 fn four_games_in_one_world_two_of_them_link() {
     run_world(4, 19_500 + (std::process::id() % 500) as u16);
 }
+
+/// Where each game really was, frame by frame for the last 2 s: role → (when, trainer, map, x,
+/// z), written by the game itself.
+type Truth = Arc<
+    Mutex<
+        std::collections::HashMap<char, std::collections::VecDeque<(Instant, u32, u16, i16, i16)>>,
+    >,
+>;
+
+fn six_saves() -> [PathBuf; 6] {
+    let r = repo();
+    let four = saves();
+    [
+        four[0].clone(),
+        four[1].clone(),
+        four[2].clone(),
+        four[3].clone(),
+        r.join("BizHawk/coop_saves/TEST03-BC71B831.sav"),
+        r.join("instances/p2/coop_saves/TEST03-BC71B831.sav"),
+    ]
+}
+
+/// One game of the soak: into the world, warp to Goldenrod (dense), then walk at random until
+/// `until`, checking every second that it's still connected, sees the five others, and that
+/// what it sees of each matches where that game says it is (within 2 tiles, on the same map;
+/// five checks in a row off, about 3 to 5 s, is a desync).
+fn soak_script(g: &mut Game, all: &[char], truth: &Truth, until: Instant) -> (u32, u32, u32) {
+    let ok = g.wait_for(6000, Game::connected);
+    g.check("bridge connected", ok);
+    let field = g.boot_to_field(true);
+    g.check("in the field", field);
+    if !field {
+        return (0, 0, 0);
+    }
+    g.wait(60);
+    g.press(Keys::B, 3);
+    // COOP_DEBUG_WARP, COOP_WARP_GOLDENROD; "not now" (3) while a step or message runs: again.
+    let mut r = None;
+    for _ in 0..5 {
+        r = g.command(5, 3);
+        if r == Some(1) {
+            break;
+        }
+        g.press(Keys::B, 3);
+        g.wait(120);
+    }
+    g.check(&format!("warped to Goldenrod (result {r:?})"), r == Some(1));
+    g.wait(240);
+    g.mark("ready");
+    let ok = g.wait_marks(all, "ready", 9000);
+    g.check("everyone ready", ok);
+    let (mut seconds, mut blind, mut desyncs) = (0u32, 0u32, 0u32);
+    let mut behind: std::collections::HashMap<u32, u32> = Default::default();
+    let dirs = [Keys::UP, Keys::DOWN, Keys::LEFT, Keys::RIGHT];
+    let mut rng = 0x9E37_79B9u32 ^ g.role as u32;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 17;
+        rng ^= rng << 5;
+        rng
+    };
+    while Instant::now() < until {
+        g.held = dirs[(next() % 4) as usize];
+        let steps = 16 + next() % 48;
+        for i in 0..steps + 4 {
+            if i == steps {
+                g.held = Keys::NONE;
+            }
+            g.frame();
+            // Publish where I am, every frame.
+            let lp = LOCAL_PLAYER;
+            let now = Instant::now();
+            let me = (
+                now,
+                g.trainer_id(),
+                u16_at(g.mb(), lp + PS_MAP_ID),
+                u16_at(g.mb(), lp + PS_X) as i16,
+                u16_at(g.mb(), lp + PS_Z) as i16,
+            );
+            let mut t = truth.lock().unwrap();
+            let h = t.entry(g.role).or_default();
+            h.push_back(me);
+            while h
+                .front()
+                .is_some_and(|f| now.duration_since(f.0) > Duration::from_secs(2))
+            {
+                h.pop_front();
+            }
+        }
+        // One check per walk (about every 0.5 to 1 s).
+        seconds += 1;
+        if !g.connected() {
+            g.check("still connected", false);
+            break;
+        }
+        let seen: Vec<(u32, u16, i16, i16)> = (0..REMOTE_SLOTS)
+            .map(|s| {
+                let o = SERVER_PAYLOAD + s * PLAYER_STATE_SIZE;
+                let mb = g.mb();
+                (
+                    u32_at(mb, o + PS_TRAINER_ID),
+                    u16_at(mb, o + PS_MAP_ID),
+                    u16_at(mb, o + PS_X) as i16,
+                    u16_at(mb, o + PS_Z) as i16,
+                )
+            })
+            .filter(|p| p.0 != 0)
+            .collect();
+        if seen.len() != all.len() - 1 {
+            blind += 1;
+        }
+        // In step: what I see of a player is where they were at some point in the last second
+        // (the relay's tick and the network in between), within a tile.
+        let now = Instant::now();
+        let histories: Vec<Vec<(u32, u16, i16, i16)>> = truth
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(r, _)| **r != g.role)
+            .map(|(_, h)| {
+                h.iter()
+                    .filter(|e| now.duration_since(e.0) <= Duration::from_secs(1))
+                    .map(|e| (e.1, e.2, e.3, e.4))
+                    .collect()
+            })
+            .collect();
+        for hist in histories {
+            let Some(t) = hist.last().copied() else {
+                continue;
+            };
+            let close = seen.iter().any(|s| {
+                s.0 == t.0
+                    && hist
+                        .iter()
+                        .any(|h| s.1 == h.1 && (s.2 - h.2).abs() <= 1 && (s.3 - h.3).abs() <= 1)
+            });
+            let n = behind.entry(t.0).or_default();
+            *n = if close { 0 } else { *n + 1 };
+            if *n == 5 {
+                desyncs += 1;
+                eprintln!(
+                    "[{}] out of step with trainer {:08X} for 5 checks: sees {:?}, it is at {:?}",
+                    g.role,
+                    t.0,
+                    seen.iter().find(|s| s.0 == t.0),
+                    t
+                );
+            }
+        }
+    }
+    (seconds, blind, desyncs)
+}
+
+/// The RFC M5 soak with six games (SOAK_SECS, default 300; the exit criterion is 2 hours).
+#[test]
+#[ignore = "needs the co-op ROM, the regression's saves and the relay"]
+fn six_games_soak() {
+    let secs: u64 = std::env::var("SOAK_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(300);
+    let port = 20_000 + (std::process::id() % 500) as u16;
+    let dir = std::env::temp_dir().join(format!("goldlink-soak-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join("campaigns")).unwrap();
+    let rom = rom();
+    let saves = six_saves();
+    let tids = trainer_ids(&rom, &saves, &dir.join("tid"));
+    let unique: HashSet<u32> = tids.iter().copied().collect();
+    assert_eq!(unique.len(), 6, "six different trainers: {tids:08X?}");
+    let roster: Vec<String> = tids
+        .iter()
+        .enumerate()
+        .map(|(i, t)| format!("{{ \"slot_id\": {i}, \"trainer_id\": {t}, \"last_badge_mask\": 0, \"assigned_monolocke\": 18, \"player_secret\": 0 }}"))
+        .collect();
+    std::fs::write(
+        dir.join("campaigns").join(format!("{ROOM}.json")),
+        format!("{{ \"room_code\": \"{ROOM}\", \"room_uid\": {ROOM_UID}, \"host_token\": 1, \"campaign_started\": true, \"expected_party_size\": 6, \"rules\": 0, \"roster\": [{}], \"teams\": [] }}", roster.join(", ")),
+    )
+    .unwrap();
+    let bin = std::env::var_os("GOLDLINK_RELAY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo().join("coop-relay/target/release/coop-relay"));
+    let _relay = Relay(
+        Command::new(&bin)
+            .args(["--bind", &format!("127.0.0.1:{port}"), "--save-dir"])
+            .arg(dir.join("campaigns"))
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(dir.join("relay.log")).unwrap())
+            .spawn()
+            .unwrap(),
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    let server = format!("127.0.0.1:{port}");
+    let marks: Arc<Mutex<HashSet<String>>> = Arc::default();
+    let truth: Truth = Arc::default();
+    let all: Vec<char> = "ABCDEF".chars().collect();
+    let until = Instant::now() + Duration::from_secs(120 + secs);
+    let handles: Vec<_> = saves
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let role = all[i];
+            let gd = dir.join(role.to_string());
+            std::fs::create_dir_all(gd.join("coop_saves")).unwrap();
+            std::fs::copy(s, gd.join("cart.sav")).unwrap();
+            std::fs::copy(
+                s,
+                gd.join("coop_saves")
+                    .join(format!("{ROOM}-{ROOM_UID:08X}.sav")),
+            )
+            .unwrap();
+            let (rom, marks, all, server, truth) = (
+                rom.clone(),
+                marks.clone(),
+                all.clone(),
+                server.clone(),
+                truth.clone(),
+            );
+            std::thread::spawn(move || {
+                let bridge: SharedBridge = Arc::new(Mutex::new(Bridge::new(&gd, &[]).unwrap()));
+                let mut g = game(
+                    role,
+                    rom,
+                    gd.join("cart.sav"),
+                    Some(bridge.clone()),
+                    marks,
+                    &server,
+                );
+                lock(&bridge).join(&server, ROOM, false);
+                let r = soak_script(&mut g, &all, &truth, until);
+                lock(&bridge).leave();
+                (role, g.fail, r)
+            })
+        })
+        .collect();
+    let mut problems = Vec::new();
+    for h in handles {
+        let (role, fail, (seconds, blind, desyncs)) = h.join().unwrap();
+        eprintln!(
+            "{role}: {seconds} checks, {blind} not seeing all five, {desyncs} desyncs, {fail} failed checks"
+        );
+        if fail > 0 || desyncs > 0 || seconds == 0 || blind * 20 > seconds {
+            problems.push(role);
+        }
+    }
+    assert!(problems.is_empty(), "games with problems: {problems:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
