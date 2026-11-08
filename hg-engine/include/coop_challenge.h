@@ -23,7 +23,8 @@
 #define COOP_RULE_SOUL_LINK_MASK   0x0060
 #define COOP_RULE_MONOLOCKE        0x0080
 #define COOP_RULE_LEVEL_CAP        0x0100
-#define COOP_RULES_VALID           0x01FF
+#define COOP_RULE_RANDOM_ITEMS     0x0200 // Milestone 6 §5.1: item balls hold random items
+#define COOP_RULES_VALID           0x03FF
 
 #define COOP_RANDOM_NONE     0
 #define COOP_RANDOM_SEMI     1
@@ -328,6 +329,13 @@ void Coop_ChallengeStarterFrame(struct FieldSystem *fsys, struct CoopChallengeSa
 // under Nuzlocke, Elm's "Give a nickname?" always answers Yes.
 struct SCRIPTCONTEXT;
 BOOL Coop_ScrNative_GetMenuChoice(struct SCRIPTCONTEXT *ctx);
+
+// Milestone 6 §5.1 (src/field/coop_challenge_items.c): the item an item ball
+// gives, called through the field header by the resident CopyVar hook when an
+// item-ball script copies its item (0x8008) into 0x8004. Under the random
+// items rule, a ball that holds neither a TM nor a key item gives a random one
+// (and sets the count, 0x8009, to 1); otherwise the vanilla item.
+u32 Coop_ChallengeBallItem(struct FieldSystem *fsys, u32 item);
 
 // Overlay 129 calls these through Overlay 131's pinned header, in the field.
 // A script gift (GiveMon) and a roamer's species (Save_CreateRoamerByID):

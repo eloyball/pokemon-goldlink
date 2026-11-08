@@ -6,6 +6,7 @@
 #include "bag.h"
 #include "battle.h"
 #include "pokemon.h"
+#include "coop_sync.h"
 #include "coop_challenge.h"
 
 // ---------------------------------------------------------------------------
@@ -145,4 +146,91 @@ u32 LONG_CALL Coop_ChallengeBallReason(u32 *monoType)
 BOOL LONG_CALL Coop_ChallengeForceNickname(void)
 {
     return Coop_NuzlockeSave() != NULL;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 §5.2: the "already met here" icon. In a wild battle the enemy's
+// HP box shows a Poke Ball when the species is caught (pret battle_hp_bar.c
+// ov12_02265560, HP-bar flag 0x200, which only enemy boxes of non-trainer
+// battles get). That function is replaced through `hooks`: under Nuzlocke,
+// when this place's first encounter is spent (the balls are blocked, or the
+// shiny clause lets them through), the same tile shows a grey ball instead.
+// Otherwise it does what vanilla does.
+// ---------------------------------------------------------------------------
+
+// pret BattleHpBar (include/battle/battle.h): only the fields used.
+struct CoopHpBar
+{
+    u8 script;
+    u8 pad1[3];
+    struct CoopManagedSprite *boxObj;   // 0x04
+    void *arrowObj;
+    struct BattleSystem *battleSystem;  // 0x0C
+    u8 pad10[0x25 - 0x10];
+    u8 type;                            // 0x25 HPBarType
+    u8 pad26[0x4B - 0x26];
+    u8 caught;                          // 0x4B unk4B: 1 when the species is caught
+};
+_Static_assert(__builtin_offsetof(struct CoopHpBar, boxObj) == 0x04, "pret BattleHpBar.boxObj");
+_Static_assert(__builtin_offsetof(struct CoopHpBar, battleSystem) == 0x0C, "pret BattleHpBar.battleSystem");
+_Static_assert(__builtin_offsetof(struct CoopHpBar, type) == 0x25, "pret BattleHpBar.type");
+_Static_assert(__builtin_offsetof(struct CoopHpBar, caught) == 0x4B, "pret BattleHpBar.unk4B");
+
+// pret ManagedSprite.sprite (include/sprite.h).
+struct CoopManagedSprite
+{
+    u8 *sprite;
+};
+
+#define COOP_SPRITE_VRAM_MAIN 0xB8       // pret Sprite.imageProxy (0xB4) .vramLocation.baseAddrOfVram[NNS_G2D_VRAM_TYPE_2DMAIN]
+#define COOP_OBJ_VRAM         0x06400000 // G2_GetOBJCharPtr()
+#define COOP_HP_BAR_TYPES     6          // the table covers the four single / double types; Safari and Pal Park read
+                                         // the next table's { 0, 0 } (pret ov12_0226D3D8): nothing is copied
+
+// pret ov12_0226D3C0: where the icon tile sits in each box type.
+static const u16 sCoopHpIconOffset[COOP_HP_BAR_TYPES] = { 0x460, 0x420, 0x440, 0x420, 0x440, 0x420 };
+
+// pret gBattleHpBar_RawGraphicComponents 38 (no icon) and 59 (caught), and
+// the same ball with a grey top (already met here). 8x8, 4bpp.
+static const u8 sCoopHpIconTiles[3][32] = {
+    { 0xFF, 0xFF, 0xFF, 0xFF, 0x22, 0x22, 0x22, 0x22, 0xFF, 0xFF, 0xFF, 0xFF, 0x22, 0x22, 0x22, 0x22,
+      0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22 },
+    { 0x2F, 0xEE, 0x2E, 0xFF, 0xE2, 0xAA, 0xEA, 0x22, 0xAE, 0xE9, 0xA9, 0xFE, 0xEE, 0x4E, 0xEE, 0x2E,
+      0x4E, 0xE2, 0x42, 0x2E, 0xE3, 0x44, 0xE4, 0x23, 0x32, 0xEE, 0x3E, 0x22, 0x22, 0x22, 0x22, 0x22 },
+    { 0x2F, 0xEE, 0x2E, 0xFF, 0xE2, 0x33, 0xE3, 0x22, 0x3E, 0xE3, 0x33, 0xFE, 0xEE, 0x4E, 0xEE, 0x2E,
+      0x4E, 0xE2, 0x42, 0x2E, 0xE3, 0x44, 0xE4, 0x23, 0x32, 0xEE, 0x3E, 0x22, 0x22, 0x22, 0x22, 0x22 },
+};
+
+// The place's first encounter is spent (Nuzlocke): the shiny clause doesn't hide it.
+BOOL LONG_CALL Coop_ChallengeAlreadyMet(struct BattleSystem *bsys)
+{
+    struct CoopChallengeSave *save = Coop_NuzlockeSave();
+
+    if (save == NULL || (BattleTypeGet(bsys) & (BATTLE_TYPE_TRAINER | BATTLE_TYPE_LINK | BATTLE_TYPE_TUTORIAL)))
+        return FALSE;
+    return (save->pending_flags & COOP_PENDING_OPEN) && !(save->pending_flags & (COOP_PENDING_FIRST | COOP_PENDING_EXEMPT));
+}
+
+void LONG_CALL Coop_HpBar_DrawCaughtIcon(struct CoopHpBar *hpBar)
+{
+    const u8 *tile;
+    u32 base, i, kind;
+    u16 word;
+
+    if (hpBar->type >= COOP_HP_BAR_TYPES || hpBar->boxObj == NULL || hpBar->boxObj->sprite == NULL)
+        return;
+    kind = Coop_ChallengeAlreadyMet(hpBar->battleSystem) ? 2 : hpBar->caught == 1 ? 1 : 0;
+    tile = sCoopHpIconTiles[kind];
+    __builtin_memcpy(&base, hpBar->boxObj->sprite + COOP_SPRITE_VRAM_MAIN, sizeof(base));
+    base += COOP_OBJ_VRAM + sCoopHpIconOffset[hpBar->type];
+#if COOP_DEBUG_TOOLS
+    gCoopDebugMonBuffer.hp_icon_kind = (u16)kind;
+    gCoopDebugMonBuffer.hp_icon_count++;
+    gCoopDebugMonBuffer.hp_icon_addr = base;
+#endif
+    for (i = 0; i < 32; i += 2) // VRAM takes 16-bit writes (vanilla: MI_CpuCopy16)
+    {
+        word = (u16)(tile[i] | (tile[i + 1] << 8));
+        *(vu16 *)(base + i) = word;
+    }
 }

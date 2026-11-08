@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 pub const MAX_PLAYERS: usize = 6;
 pub const REMOTE_SLOTS: usize = MAX_PLAYERS - 1;
 pub const AUTO_PLAYER_ID: u8 = 0xFF;
@@ -701,7 +701,8 @@ pub const CHALLENGE_RULE_SOUL_LINK_SHIFT: u16 = 5; // 0 off, 1 room-wide, 2 duo
 pub const CHALLENGE_RULE_SOUL_LINK_MASK: u16 = 0x0060;
 pub const CHALLENGE_RULE_MONOLOCKE: u16 = 0x0080;
 pub const CHALLENGE_RULE_LEVEL_CAP: u16 = 0x0100;
-pub const CHALLENGE_RULES_VALID: u16 = 0x01FF;
+pub const CHALLENGE_RULE_RANDOM_ITEMS: u16 = 0x0200; // protocol 8
+pub const CHALLENGE_RULES_VALID: u16 = 0x03FF;
 
 pub const SOUL_LINK_OFF: u16 = 0;
 pub const SOUL_LINK_ROOM_WIDE: u16 = 1;

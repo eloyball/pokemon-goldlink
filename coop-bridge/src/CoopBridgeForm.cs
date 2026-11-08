@@ -137,6 +137,7 @@ namespace CoopBridge
             "Violet Gym (gym gate, Falkner ahead)",
             "Lance's room (team boss by coord event)",
             "Elm's lab (below the starter machine)",
+            "Route 29 (below the Potion ball)",
         };
 
         // CoopPlayerState field offsets (64 bytes, follower included)
@@ -218,6 +219,7 @@ namespace CoopBridge
         public const ushort SoulLinkMask = 0x0060;
         public const ushort Monolocke = 0x0080;
         public const ushort LevelCap = 0x0100;
+        public const ushort RandomItems = 0x0200;
         public const byte MonoNone = 18;
 
         public static readonly string[] RandomModes = { "None", "Semi-random", "Preserve difficulty", "Fully random" };
@@ -266,6 +268,7 @@ namespace CoopBridge
             if ((rules & Monolocke) != 0)
                 parts.Add(monoType < TypeNames.Length ? $"Monolocke ({TypeNames[monoType]})" : "Monolocke");
             if ((rules & LevelCap) != 0) parts.Add("Level cap");
+            if ((rules & RandomItems) != 0) parts.Add("Random items");
             return parts.Count == 0 ? "None" : string.Join("; ", parts);
         }
     }
@@ -273,7 +276,7 @@ namespace CoopBridge
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 7;
+        public const ushort ProtocolVersion = 8;
         public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open, + a link trailer (CoopLink), + the challenge trailer (always last)
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
@@ -286,7 +289,7 @@ namespace CoopBridge
         public const byte ChallengeVersion = 1;
         public const int ChallengeUpSize = 48;
         public const int ChallengeDownSize = 64;
-        public const ushort ChallengeRulesValid = 0x01FF;
+        public const ushort ChallengeRulesValid = 0x03FF;
 
         public const byte StatusOk = 0;
         public const byte StatusChallenge = 7;   // not an error: echo the cookie
@@ -585,6 +588,7 @@ namespace CoopBridge
         private readonly CheckBox _nuzlockeCheck;
         private readonly CheckBox _monolockeCheck;
         private readonly CheckBox _levelCapCheck;
+        private readonly CheckBox _randomItemsCheck;
         private readonly Label _gymValue;
         private readonly Label _saveValue;
         private readonly ThemedButton _allowAheadButton;
@@ -916,6 +920,8 @@ namespace CoopBridge
             _levelCapCheck = MakeCheck("Level cap (next boss's ace)");
             _hostOptions.Controls.Add(_monolockeCheck);
             _hostOptions.Controls.Add(_levelCapCheck);
+            _randomItemsCheck = MakeCheck("Random items (item balls)");
+            _hostOptions.Controls.Add(_randomItemsCheck);
             var rulesHint = Theme.MakeLabel(
                 "Everyone in the world plays with these rules. They can't change once the adventure starts.",
                 Theme.Caption, Theme.TextSecondary);
@@ -925,7 +931,7 @@ namespace CoopBridge
             ShowRules(_challengeRules);
             _randomPicker.SelectedIndexChanged += (_, _) => OnRulesEdited();
             _soulLinkPicker.SelectedIndexChanged += (_, _) => OnRulesEdited();
-            foreach (var c in new[] { _legendsCheck, _abilitiesCheck, _nuzlockeCheck, _monolockeCheck, _levelCapCheck })
+            foreach (var c in new[] { _legendsCheck, _abilitiesCheck, _nuzlockeCheck, _monolockeCheck, _levelCapCheck, _randomItemsCheck })
                 c.CheckedChanged += (_, _) => OnRulesEdited();
 
             _primaryButton = Theme.MakeButton("Join world", Theme.ButtonKind.Primary);
@@ -1292,7 +1298,7 @@ namespace CoopBridge
             {
                 bool random = (_challengeRules & ChallengeRules.RandomMask) != 0;
                 bool nuzlocke = (_challengeRules & ChallengeRules.Nuzlocke) != 0;
-                _randomPicker.Enabled = _nuzlockeCheck.Enabled = _monolockeCheck.Enabled = _levelCapCheck.Enabled = offline;
+                _randomPicker.Enabled = _nuzlockeCheck.Enabled = _monolockeCheck.Enabled = _levelCapCheck.Enabled = _randomItemsCheck.Enabled = offline;
                 _legendsCheck.Enabled = _abilitiesCheck.Enabled = offline && random;
                 _soulLinkPicker.Enabled = offline && nuzlocke;
             }
@@ -2454,6 +2460,7 @@ namespace CoopBridge
             _nuzlockeCheck.Checked = (rules & ChallengeRules.Nuzlocke) != 0;
             _monolockeCheck.Checked = (rules & ChallengeRules.Monolocke) != 0;
             _levelCapCheck.Checked = (rules & ChallengeRules.LevelCap) != 0;
+            _randomItemsCheck.Checked = (rules & ChallengeRules.RandomItems) != 0;
         }
 
         private bool _showingRules;
@@ -2470,7 +2477,8 @@ namespace CoopBridge
                 | (_nuzlockeCheck.Checked ? ChallengeRules.Nuzlocke : 0)
                 | (soulLink << ChallengeRules.SoulLinkShift)
                 | (_monolockeCheck.Checked ? ChallengeRules.Monolocke : 0)
-                | (_levelCapCheck.Checked ? ChallengeRules.LevelCap : 0));
+                | (_levelCapCheck.Checked ? ChallengeRules.LevelCap : 0)
+                | (_randomItemsCheck.Checked ? ChallengeRules.RandomItems : 0));
             _challengeRules = ChallengeRules.Sanitize(raw);
             _showingRules = true;
             ShowRules(_challengeRules);

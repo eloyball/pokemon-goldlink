@@ -150,6 +150,7 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .roamerSpecies = Coop_ChallengeRoamerSpecies,
     .playerSprite = Coop_LocalPlayerSprite,
     .stampAvatar = Coop_StampBattleAvatar,
+    .ballItem = Coop_ChallengeBallItem,
 };
 
 // ---------------------------------------------------------------------------
@@ -311,6 +312,7 @@ static const struct CoopWarpTarget sCoopWarpTargets[COOP_WARP_COUNT] = {
     [COOP_WARP_VIOLET_GYM]  = { MAP_T22GYM0101, 15, 6 }, // MAP_VIOLET_GYM (Falkner on 15, 4)
     [COOP_WARP_LANCE]       = { MAP_T10R0601, 6, 27 }, // Lance's room, the door (his coord event row is z 10)
     [COOP_WARP_ELMS_LAB]    = { MAP_T20R0101, 8, 5 },  // Elm's lab: the starter machine is at 8, 4 (pret zone_event 058)
+    [COOP_WARP_R29_ITEM]    = { MAP_R29, 654, 387 },   // Route 29: the Potion ball is at 654, 386 (pret zone_event 030)
 };
 
 // Same check as using Surf / a rod from the menu (Field_PlayerCanSurfOnTile
@@ -970,6 +972,17 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
                     gCoopDebugMonBuffer.held_item = n;
             }
         }
+        return COOP_DEBUG_RESULT_OK;
+    }
+    if (what == 24)
+    {
+        // Milestone 6 §5.1: species = how many of item held_item the bag holds.
+        void *bag = Sav2_Bag_get(fsys->savedata);
+        u16 n;
+
+        for (n = 0; n < 999 && Bag_HasItem(bag, gCoopDebugMonBuffer.held_item, n + 1, 11); n++)
+            ;
+        gCoopDebugMonBuffer.species = n;
         return COOP_DEBUG_RESULT_OK;
     }
     return COOP_DEBUG_RESULT_BAD_ARG;

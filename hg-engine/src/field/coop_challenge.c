@@ -335,6 +335,15 @@ BOOL Coop_ChallengeStartPage(u32 index, char *buf, u32 size)
             return TRUE;
         }
     }
+    if (rules & COOP_RULE_RANDOM_ITEMS)
+    {
+        if (page++ == index)
+        {
+            parts[0] = "Item balls hold\nrandom items!";
+            Coop_CopyAscii(buf, size, parts, 1);
+            return TRUE;
+        }
+    }
     return FALSE;
 }
 

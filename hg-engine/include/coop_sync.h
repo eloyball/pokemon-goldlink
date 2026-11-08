@@ -72,6 +72,7 @@ struct CoopFieldEntryHeader
     u32 (*roamerSpecies)(u32 idx, u32 vanilla); // 0x14: Milestone 5 roamer randomizer (src/field_roamer.c)
     u32 (*playerSprite)(u32 state, u32 gender); // 0x18: the local player's sprite in its avatar (Coop_PlayerAvatar_GetSprite)
     void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar; unused since the boss setup moved to Overlay 131 (2026-11-06), kept for the layout
+    u32 (*ballItem)(struct FieldSystem *fsys, u32 item); // 0x20: Milestone 6 random items (Coop_ScrCmd_CopyVar)
 };
 
 // Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5): a player's
@@ -126,7 +127,7 @@ enum CoopDebugCommand
     COOP_DEBUG_ASK_HM = 17,          // §21 HM probe: result 0x80 | script slot << 3 | overworld slot (7: none) for HM debug_arg (0-7, the party menu's order)
     COOP_DEBUG_WILD_SPECIES = 18,    // Milestone 4 Phase 0: a wild battle against gCoopDebugMonBuffer.species (species | form << 11) at level debug_arg
     COOP_DEBUG_REBALANCE = 19,       // Milestone 4 Phase 1: debug_arg 0 = the lead's evolution with gCoopDebugMonBuffer.held_item (0: by level up) -> buffer.species (0: none); 1-4 = rebuild a department store list (Goldenrod 4F / 5F, Celadon 3F / 4F) from the save
-    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left; Phase 3: 7 gives three Master Balls; 7 / 8 -> buffer.held_item = Master Balls in the bag, party_count; 8 also buffer.species = the last party member's RESERVED_114 bits, level = its nickname flag; 9 deposits the last party member in box 1; Phase 4: 10 -> buffer.species = the level cap variable, level = GetLevelCap(), mon[0..3] = the lead's EXP; 11 -> buffer.species = 1 if a trade would refuse the last party member (Monolocke); Phase 5: 12 marks every party Pokemon dead, 13 every PC Pokemon outside the Graveyard; 14 (any time, read only) -> buffer.species = save state | spirit_flags << 8, held_item = anchor_map, level = living party count, party_count, mon[0..13] = u16 anchor_x, anchor_z, return_map, return_x, return_z, prebattle_map, deaths, mon[14] = the published challenge_flags, mon[15] = field_busy, mon[16] = 1 while the spirit task roams; Milestone 6: 21 puts the save back before Elm's starter (FLAG_GOT_STARTER clear, VAR_SCENE_ELMS_LAB 0, the starter flags reset), 22 -> mon[0..5] = the starter offer for trainer ID buffer.held_item under the save's rules; 23 starts Lyra's catching tutorial battle
+    COOP_DEBUG_CHALLENGE = 20,       // Milestone 5 Phase 2: debug_arg 0-3 creates roamer n (Save_CreateRoamerByID) -> buffer.species = its species, buffer.level = SpeciesToRoamerIdx(species); 4 gives an Eevee through GiveMon (a script gift) -> buffer.species = the new last party member's species | form << 11; 5 / 6 the lead's ability set to Drought with / without the random-ability lock, then ResetPartyPokemonAbility -> buffer.species = the ability left; Phase 3: 7 gives three Master Balls; 7 / 8 -> buffer.held_item = Master Balls in the bag, party_count; 8 also buffer.species = the last party member's RESERVED_114 bits, level = its nickname flag; 9 deposits the last party member in box 1; Phase 4: 10 -> buffer.species = the level cap variable, level = GetLevelCap(), mon[0..3] = the lead's EXP; 11 -> buffer.species = 1 if a trade would refuse the last party member (Monolocke); Phase 5: 12 marks every party Pokemon dead, 13 every PC Pokemon outside the Graveyard; 14 (any time, read only) -> buffer.species = save state | spirit_flags << 8, held_item = anchor_map, level = living party count, party_count, mon[0..13] = u16 anchor_x, anchor_z, return_map, return_x, return_z, prebattle_map, deaths, mon[14] = the published challenge_flags, mon[15] = field_busy, mon[16] = 1 while the spirit task roams; Milestone 6: 21 puts the save back before Elm's starter (FLAG_GOT_STARTER clear, VAR_SCENE_ELMS_LAB 0, the starter flags reset), 22 -> mon[0..5] = the starter offer for trainer ID buffer.held_item under the save's rules; 23 starts Lyra's catching tutorial battle; 24 -> buffer.species = how many of item buffer.held_item the bag holds
     COOP_DEBUG_HEAP_FREE = 21,       // custom avatars (KNOWN_RISKS.md #80): mon[0..3] = the field heap's free bytes (u32; HEAP_ID_FIELD1), read only, any time in the field
 };
 
@@ -200,8 +201,20 @@ struct CoopDebugMonBuffer
     u16 vs_player;
     u16 vs_opponent;
     u16 vs_count;
+    // Milestone 6 §5.1 (m5_probe.lua items, at +0x10E): the last item ball's pick.
+    u16 ball_vanilla;      // the ball's own item
+    u16 ball_result;       // what it gave
+    u16 ball_key;          // its event flag (the script number without a talked-to object)
+    u16 ball_count;        // item-ball picks since boot
+    // Milestone 6 §5.2 (m5_probe.lua alreadymet, at +0x116): the last HP-box icon drawn.
+    u16 hp_icon_kind;      // 0 none, 1 caught, 2 already met here
+    u16 hp_icon_count;     // icons drawn since boot
+    u32 hp_icon_addr;      // the VRAM address of its tile
 };
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, wild_original) == 0xFC, "m5_probe.lua reads the wild log at +0xFC");
+_Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, ball_vanilla) == 0x10E, "m5_probe.lua reads the ball log at +0x10E");
+_Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, hp_icon_kind) == 0x116, "m5_probe.lua reads the icon log at +0x116");
+_Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, hp_icon_addr) == 0x11C, "m5_probe.lua reads the icon address at +0x11C");
 extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;
 struct BATTLE_PARAM;
 void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num); // Overlay 131, called by hg-engine MakeTrainerPokemonParty
@@ -224,6 +237,7 @@ enum CoopWarpPreset
     COOP_WARP_VIOLET_GYM,    // Violet Gym, two tiles in front of Falkner: gym gate
     COOP_WARP_LANCE,         // the Champion's room, at its door: Lance as a team boss (rebalance plan §21)
     COOP_WARP_ELMS_LAB,      // Elm's lab, below the starter machine (Milestone 6 §3.2 probe; face north)
+    COOP_WARP_R29_ITEM,      // Route 29, below its Potion ball (Milestone 6 §5.1 probe; face north)
     COOP_WARP_COUNT
 };
 

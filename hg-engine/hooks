@@ -731,6 +731,16 @@ arm9 Coop_GF_AssertFail 0202551C 0
 # lost link ended (KNOWN_RISKS #32, src/coop_boss.c). r1: one argument (ctx).
 arm9 Coop_ScrCmd_WhiteOut 020498C8 1
 
+# co-op (Milestone 6 §5.1): script command CopyVar (pret ScrCmd_CopyVar); the
+# item balls' copy of their item into 0x8004 can pick a random one
+# (src/coop_ball_items.c). r1: one argument (ctx).
+arm9 Coop_ScrCmd_CopyVar 02040F38 1
+
+# co-op (Milestone 6 §5.2): the enemy HP box's caught icon (pret battle_hp_bar.c
+# ov12_02265560) also shows "already met here" under Nuzlocke
+# (src/battle/coop_challenge_battle.c). r1: one argument (hpBar).
+0012 Coop_HpBar_DrawCaughtIcon 02265560 1
+
 # co-op HMs (docs/MILESTONE3_PLAN.md §21): the party's slot for a move also
 # answers for an unlocked HM nobody knows (src/field/coop_hm_field.c, Overlay
 # 131: both are only called in the field). r2 / r1: not arguments.
