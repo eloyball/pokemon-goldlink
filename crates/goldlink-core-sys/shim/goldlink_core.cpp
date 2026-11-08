@@ -174,6 +174,12 @@ uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames)
     return n > 0 ? static_cast<uint32_t>(n) : 0;
 }
 
+void gl_core_set_audio_rate(GlCore *core, double rate)
+{
+    if (rate >= 8000.0 && rate <= 192000.0)
+        core->nds->SPU.SetOutputSampleRate(rate);
+}
+
 void gl_core_registers(GlCore *core, int cpu, uint32_t out[17])
 {
     melonDS::NDS &nds = *core->nds;

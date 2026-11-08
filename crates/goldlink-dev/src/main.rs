@@ -4,6 +4,10 @@
 //!     goldlink-dev --headless --rom <patched.nds> [--save <file>] [--frames N] [--mailbox]
 //!                  [--lua <script.lua>] [--rtc 2026-11-07T12:00:00] [--uncapped] [--no-bridge]
 //!
+//!     goldlink-dev --window --rom <patched.nds> [--data <dir>] [--world CODE-UID] [--rtc …]
+//!
+//! opens the release window with a stand-in for the bridge (an offline world, `offline.rs`).
+//!
 //! It also takes EmuHawk's arguments, so copies of the probe runners only swap the program:
 //!
 //!     goldlink-dev --config=<instance>/config.ini --lua=<script.lua> [--open-ext-tool-dll=CoopBridge] <rom>
@@ -15,6 +19,7 @@
 
 mod lua;
 mod machine;
+mod offline;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -34,6 +39,9 @@ struct Args {
     mailbox: bool,
     uncapped: bool,
     bridge: bool,
+    window: bool,
+    data: Option<PathBuf>,
+    world: Option<String>,
 }
 
 fn usage(err: &str) -> ExitCode {
@@ -76,6 +84,9 @@ fn parse() -> Result<Args, String> {
         let mut value = |name: &str| it.next().ok_or(format!("{name} needs a value"));
         match a.as_str() {
             "--headless" => {}
+            "--window" => args.window = true,
+            "--data" => args.data = Some(value("--data")?.into()),
+            "--world" => args.world = Some(value("--world")?),
             "--rom" => args.rom = Some(value("--rom")?.into()),
             "--save" => args.save = Some(value("--save")?.into()),
             "--lua" => args.lua = Some(value("--lua")?.into()),
@@ -119,6 +130,23 @@ fn main() -> ExitCode {
     let Some(rom_path) = args.rom.clone() else {
         return usage("no ROM given (--rom)");
     };
+    if args.window {
+        let data = match args.data.clone().map_or_else(goldlink::data_dir, Ok) {
+            Ok(d) => d,
+            Err(e) => return usage(&e),
+        };
+        let world = args
+            .world
+            .clone()
+            .unwrap_or_else(|| "OFFLINE-00000000".into());
+        return match offline::run(rom_path, data, world, args.rtc) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("goldlink-dev: {e}");
+                ExitCode::from(3)
+            }
+        };
+    }
     if args.bridge && args.lua.is_some() {
         eprintln!(
             "goldlink-dev: the co-op bridge isn't on the new client yet (UC3): run probes without it (--no-bridge, or EmuHawk's form without --open-ext-tool-dll)"

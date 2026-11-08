@@ -1,0 +1,34 @@
+[package]
+name = "goldlink"
+version = "0.1.0"
+description = "GoldLink: six-player co-op Pokémon HeartGold in one program (the unified client)"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "goldlink"
+path = "src/main.rs"
+
+[dependencies]
+goldlink-core = { path = "../goldlink-core" }
+goldlink-runtime = { path = "../goldlink-runtime" }
+gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
+dirs = "6"
+
+# The launcher's choices (coop-launcher/Cargo.toml): OpenGL on Linux and macOS; on Windows wgpu
+# (Direct3D 12, with Windows' software adapter when there's no usable GPU), since many Windows
+# drivers, VMs and remote desktops lack OpenGL.
+[target.'cfg(not(windows))'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }

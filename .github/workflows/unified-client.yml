@@ -1,6 +1,6 @@
 # The unified client's crates: the shared wire protocol and the ROM interface (UC0), the melonDS
-# core, the in-memory ROM step and the dev binary (UC1), plus the relay on the shared protocol
-# crate. Runs on pushes and pull requests that touch them.
+# core, the in-memory ROM step and the dev binary (UC1), the runtime and the game window (UC2),
+# plus the relay on the shared protocol crate. Runs on pushes and pull requests that touch them.
 name: Unified client
 
 on:
@@ -24,9 +24,14 @@ jobs:
           rustup update stable --no-self-update
           rustup default stable
           sudo apt-get update -q
-          sudo apt-get install -y -q libclang-dev
+          sudo apt-get install -y -q libclang-dev libasound2-dev libudev-dev
       - name: Workspace tests (melonDS builds with CMake; the tests that need a ROM stay ignored)
         run: cargo test --locked --workspace --exclude goldlink-abi-gen
+      - name: The release program carries no dev code (DECISIONS D2)
+        run: |
+          if cargo tree --locked -p goldlink -e normal | grep -E 'goldlink-dev|mlua'; then
+            echo "goldlink depends on dev code"; exit 1
+          fi
       - name: Relay tests on the shared protocol crate
         run: cargo test --locked --manifest-path coop-relay/Cargo.toml
       - name: The ROM interface is up to date with hg-engine's headers (libclang)

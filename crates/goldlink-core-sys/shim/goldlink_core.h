@@ -95,6 +95,8 @@ const uint32_t *gl_core_framebuffer(GlCore *core, int screen);
 
 // Up to max_frames stereo frames (interleaved L, R) of audio produced so far. Returns how many.
 uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames);
+// The audio output's sample rate in Hz (48000 until set): melonDS resamples to it.
+void gl_core_set_audio_rate(GlCore *core, double rate);
 
 // cpu 9 or 7: out[0..16] = r0-r15, out[16] = CPSR.
 void gl_core_registers(GlCore *core, int cpu, uint32_t out[17]);

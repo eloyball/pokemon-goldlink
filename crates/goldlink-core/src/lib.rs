@@ -360,6 +360,13 @@ impl Nds {
         unsafe { sys::gl_core_audio(self.ptr(), out.as_mut_ptr(), (out.len() / 2) as u32) as usize }
     }
 
+    /// The audio output's sample rate in Hz (48,000 until set; 8,000..192,000): the core
+    /// resamples to it, so `audio` yields this many stereo frames per emulated second.
+    pub fn set_audio_rate(&mut self, rate: f64) {
+        // SAFETY: plain call on a live core.
+        unsafe { sys::gl_core_set_audio_rate(self.ptr(), rate) }
+    }
+
     /// `cpu` 9 or 7: r0..r15, then CPSR.
     pub fn registers(&self, cpu: u8) -> [u32; 17] {
         let mut out = [0u32; 17];

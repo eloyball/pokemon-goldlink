@@ -10,6 +10,8 @@ members = [
     "crates/goldlink-rom",
     "crates/goldlink-core-sys",
     "crates/goldlink-core",
+    "crates/goldlink-runtime",
+    "crates/goldlink",
     "crates/goldlink-dev",
 ]
 # The generator needs bindgen; `cargo test` at the root builds everything else (melonDS needs
@@ -20,6 +22,8 @@ default-members = [
     "crates/goldlink-rom",
     "crates/goldlink-core-sys",
     "crates/goldlink-core",
+    "crates/goldlink-runtime",
+    "crates/goldlink",
     "crates/goldlink-dev",
 ]
 exclude = ["coop-relay", "coop-launcher", "hg-engine"]
