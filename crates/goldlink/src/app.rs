@@ -13,6 +13,8 @@ use goldlink_runtime::{Command, Event, Input, Runner};
 
 use crate::input::{Controls, touch_at};
 use crate::layout;
+use crate::world_ui::WorldPanel;
+use goldlink_bridge::SharedBridge;
 
 /// Fast-forward speed while the key is held (percent).
 const FAST_FORWARD: f64 = 400.0;
@@ -25,6 +27,8 @@ struct Message {
 
 pub struct GameApp {
     runner: Option<Runner>,
+    bridge: Option<SharedBridge>,
+    world: Option<WorldPanel>,
     config: Config,
     config_dir: PathBuf,
     controls: Controls,
@@ -41,7 +45,13 @@ pub struct GameApp {
 }
 
 impl GameApp {
-    pub fn new(runner: Runner, config: Config, config_dir: PathBuf, notes: Vec<String>) -> Self {
+    pub fn new(
+        runner: Runner,
+        bridge: Option<SharedBridge>,
+        config: Config,
+        config_dir: PathBuf,
+        notes: Vec<String>,
+    ) -> Self {
         let mut messages = VecDeque::new();
         let mut note = |text: String, error: bool| {
             messages.push_back(Message {
@@ -67,6 +77,8 @@ impl GameApp {
         Self {
             controls: Controls::new(&config.keys, &config.pad, &config.fast_forward_keys),
             runner: Some(runner),
+            world: bridge.as_ref().map(WorldPanel::new),
+            bridge,
             config,
             config_dir,
             audio,
@@ -108,6 +120,9 @@ impl GameApp {
     /// Reads the keyboard, gamepads and pointer into the next frame's input.
     fn feed_input(&mut self, ctx: &egui::Context) {
         let Some(runner) = &self.runner else { return };
+        // Typing in a panel or clicking on one isn't playing.
+        let typing = ctx.wants_keyboard_input();
+        let over_panel = ctx.is_pointer_over_area() && ctx.wants_pointer_input();
         let (held, down, pos, focused) = ctx.input(|i| {
             (
                 i.keys_down.clone(),
@@ -118,7 +133,7 @@ impl GameApp {
         });
         let mut keys = goldlink_core::Keys::NONE;
         let mut fast = false;
-        if focused && !self.settings_open {
+        if focused && !self.settings_open && !typing {
             keys |= self.controls.keyboard(&held);
             fast = self.controls.fast_forward(&held);
         }
@@ -129,7 +144,7 @@ impl GameApp {
             }
         }
         let touch = match (down, pos) {
-            (true, Some(p)) if !self.settings_open => touch_at(self.bottom, p),
+            (true, Some(p)) if !self.settings_open && !over_panel => touch_at(self.bottom, p),
             _ => None,
         };
         *lock(&runner.shared.input) = Input { keys, touch };
@@ -238,6 +253,12 @@ impl GameApp {
                     if ui.button("Back to the game").clicked() {
                         self.settings_open = false;
                     }
+                    if let Some(w) = self.world.as_mut()
+                        && ui.button("World…").clicked()
+                    {
+                        w.open = true;
+                        self.settings_open = false;
+                    }
                     if ui.button("Quit").clicked() {
                         quit = true;
                     }
@@ -253,6 +274,13 @@ impl GameApp {
     }
 
     fn stop(&mut self) {
+        // As the C# bridge on close: a one-shot LEAVE frees the slot at once.
+        if let Some(b) = &self.bridge {
+            let mut b = goldlink_bridge::hook::lock(b);
+            if b.link() != goldlink_bridge::LinkState::Offline {
+                b.leave();
+            }
+        }
         if let Some(r) = self.runner.take() {
             r.stop();
         }
@@ -262,7 +290,10 @@ impl GameApp {
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.settings_open = !self.settings_open;
+            match self.world.as_mut() {
+                Some(w) if w.open => w.open = false,
+                _ => self.settings_open = !self.settings_open,
+            }
         }
         self.feed_input(ctx);
         self.collect_events();
@@ -309,6 +340,9 @@ impl eframe::App for GameApp {
 
         if self.settings_open {
             self.settings(ctx);
+        }
+        if let (Some(w), Some(b)) = (self.world.as_mut(), self.bridge.as_ref()) {
+            w.show(ctx, b);
         }
         // The emulator runs on its own clock; draw whenever the display can.
         ctx.request_repaint();

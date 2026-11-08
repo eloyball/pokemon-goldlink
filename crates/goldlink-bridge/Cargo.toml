@@ -1,0 +1,22 @@
+[package]
+name = "goldlink-bridge"
+version = "0.1.0"
+description = "The co-op bridge in Rust (port of coop-bridge's CoopBridgeForm): mailbox, relay client, sessions, trades, challenge sync, per-world saves"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+goldlink-abi = { path = "../goldlink-abi" }
+goldlink-proto = { path = "../goldlink-proto" }
+goldlink-runtime = { path = "../goldlink-runtime" }
+goldlink-core = { path = "../goldlink-core" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+getrandom = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.10"

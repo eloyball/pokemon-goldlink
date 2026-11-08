@@ -11,6 +11,7 @@ members = [
     "crates/goldlink-core-sys",
     "crates/goldlink-core",
     "crates/goldlink-runtime",
+    "crates/goldlink-bridge",
     "crates/goldlink",
     "crates/goldlink-dev",
 ]
@@ -23,6 +24,7 @@ default-members = [
     "crates/goldlink-core-sys",
     "crates/goldlink-core",
     "crates/goldlink-runtime",
+    "crates/goldlink-bridge",
     "crates/goldlink",
     "crates/goldlink-dev",
 ]

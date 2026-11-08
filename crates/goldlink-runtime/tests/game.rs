@@ -46,8 +46,7 @@ fn temp_data(name: &str) -> PathBuf {
 fn setup(rom: Arc<Vec<u8>>, data: PathBuf) -> GameSetup {
     GameSetup {
         rom,
-        data_dir: data,
-        world: WORLD.into(),
+        cart_save: Some(data.join("coop_saves").join(format!("{WORLD}.sav"))),
         mailbox_offset: MAILBOX,
         rtc: Some(
             NaiveDate::from_ymd_opt(2026, 11, 8)
@@ -55,7 +54,6 @@ fn setup(rom: Arc<Vec<u8>>, data: PathBuf) -> GameSetup {
                 .and_hms_opt(12, 0, 0)
                 .unwrap(),
         ),
-        backups: false,
     }
 }
 
@@ -192,7 +190,7 @@ fn save_counter(emu: &Emulator) -> u32 {
         .map_or(0, |m| u32::from_le_bytes(m[at..at + 4].try_into().unwrap()))
 }
 
-/// Exit criterion (RFC §6 M2, saves): the game's own save reaches the world's file through
+/// Exit criterion (RFC §6 M2, saves): the game's own save reaches the cart's save file through
 /// melonDS's save callback, and a reboot continues from it. The bedroom save's adventure-start
 /// save (the `start-save` probe) is a real in-game save the ROM makes by itself.
 #[test]
@@ -275,7 +273,7 @@ fn in_game_save_reaches_the_world_file_and_reloads() {
         save_counter(&emu)
     );
     assert_ne!(save_counter(&emu), counter0, "the ROM finished a save");
-    let on_disk = std::fs::read(emu.save_path()).unwrap();
+    let on_disk = std::fs::read(emu.cart_save().unwrap()).unwrap();
     assert_ne!(on_disk, bedroom, "the world's file changed");
     assert_eq!(
         on_disk.as_slice(),

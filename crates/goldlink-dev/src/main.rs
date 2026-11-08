@@ -4,9 +4,10 @@
 //!     goldlink-dev --headless --rom <patched.nds> [--save <file>] [--frames N] [--mailbox]
 //!                  [--lua <script.lua>] [--rtc 2026-11-07T12:00:00] [--uncapped] [--no-bridge]
 //!
-//!     goldlink-dev --window --rom <patched.nds> [--data <dir>] [--world CODE-UID] [--rtc …]
+//!     goldlink-dev --window --rom <patched.nds> [--data <dir>] [--rtc …] [--offline-world [--world CODE-UID]]
 //!
-//! opens the release window with a stand-in for the bridge (an offline world, `offline.rs`).
+//! opens the release window with the real bridge (and its dev hooks, `devbridge.rs`), or with a
+//! stand-in for it (`--offline-world`, `offline.rs`).
 //!
 //! It also takes EmuHawk's arguments, so copies of the probe runners only swap the program:
 //!
@@ -17,6 +18,7 @@
 //! Exit status: 0 done (client.exit() or the frames ran), 2 a Lua error, 3 the ROM or save
 //! couldn't be loaded, 64 bad arguments. Runners read the verdict from the probe's log.
 
+mod devbridge;
 mod lua;
 mod machine;
 mod offline;
@@ -40,6 +42,8 @@ struct Args {
     uncapped: bool,
     bridge: bool,
     window: bool,
+    offline_world: bool,
+    config_dir: Option<PathBuf>,
     data: Option<PathBuf>,
     world: Option<String>,
 }
@@ -73,10 +77,7 @@ fn bizhawk_save_path(config: &Path, rom: &Path) -> Result<PathBuf, String> {
 }
 
 fn parse() -> Result<Args, String> {
-    let mut args = Args {
-        bridge: true,
-        ..Args::default()
-    };
+    let mut args = Args { ..Args::default() };
     let mut config: Option<PathBuf> = None;
     let mut bizhawk_bridge = false;
     let mut it = std::env::args().skip(1);
@@ -85,6 +86,7 @@ fn parse() -> Result<Args, String> {
         match a.as_str() {
             "--headless" => {}
             "--window" => args.window = true,
+            "--offline-world" => args.offline_world = true,
             "--data" => args.data = Some(value("--data")?.into()),
             "--world" => args.world = Some(value("--world")?),
             "--rom" => args.rom = Some(value("--rom")?.into()),
@@ -106,6 +108,7 @@ fn parse() -> Result<Args, String> {
             "--mailbox" => args.mailbox = true,
             "--uncapped" => args.uncapped = true,
             "--no-bridge" => args.bridge = false,
+            "--bridge" => args.bridge = true,
             _ if a.starts_with("--config=") => config = Some(a["--config=".len()..].into()),
             _ if a.starts_with("--lua=") => args.lua = Some(a["--lua=".len()..].into()),
             _ if a.starts_with("--open-ext-tool-dll=") => bizhawk_bridge = true,
@@ -114,8 +117,10 @@ fn parse() -> Result<Args, String> {
         }
     }
     if let Some(config) = config {
-        // EmuHawk's form: no external tool = the script plays the bridge.
+        // EmuHawk's form: no external tool = the script plays the bridge. The bridge's files
+        // live beside the instance's config.ini, as the C# bridge's do.
         args.bridge = bizhawk_bridge;
+        args.config_dir = config.parent().map(Path::to_path_buf);
         let rom = args.rom.as_ref().ok_or("no ROM given")?;
         args.save = Some(bizhawk_save_path(&config, rom)?);
     }
@@ -135,23 +140,22 @@ fn main() -> ExitCode {
             Ok(d) => d,
             Err(e) => return usage(&e),
         };
-        let world = args
-            .world
-            .clone()
-            .unwrap_or_else(|| "OFFLINE-00000000".into());
-        return match offline::run(rom_path, data, world, args.rtc) {
+        let result = if args.offline_world {
+            let world = args
+                .world
+                .clone()
+                .unwrap_or_else(|| "OFFLINE-00000000".into());
+            offline::run(rom_path, data, world, args.rtc)
+        } else {
+            window_with_bridge(rom_path, data, args.rtc)
+        };
+        return match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("goldlink-dev: {e}");
                 ExitCode::from(3)
             }
         };
-    }
-    if args.bridge && args.lua.is_some() {
-        eprintln!(
-            "goldlink-dev: the co-op bridge isn't on the new client yet (UC3): run probes without it (--no-bridge, or EmuHawk's form without --open-ext-tool-dll)"
-        );
-        return ExitCode::from(64);
     }
     goldlink_core::set_log_sink(Some(|level, msg| {
         if level >= 2 {
@@ -165,7 +169,7 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    let machine = match Machine::new(
+    let mut machine = match Machine::new(
         rom,
         args.save.clone(),
         args.rtc,
@@ -177,6 +181,20 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    if args.bridge {
+        let Some(dir) = args.config_dir.clone().or(args.data.clone()) else {
+            return usage(
+                "the bridge needs a folder for its files (EmuHawk's --config=, or --data)",
+            );
+        };
+        match devbridge::new(&dir) {
+            Ok(d) => machine.bridge = Some(d),
+            Err(e) => {
+                eprintln!("goldlink-dev: {e}");
+                return ExitCode::from(3);
+            }
+        }
+    }
 
     let (status, machine) = match &args.lua {
         Some(script) => match lua::run(script, machine) {
@@ -215,4 +233,27 @@ fn main() -> ExitCode {
         eprintln!("goldlink-dev: saving: {e}");
     }
     status
+}
+
+/// The window with the real bridge, its files in `data` (as the release program's).
+fn window_with_bridge(
+    rom: PathBuf,
+    data: PathBuf,
+    rtc: Option<chrono::NaiveDateTime>,
+) -> Result<(), String> {
+    let bytes = std::fs::read(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
+    let ticker = devbridge::new(&data)?;
+    let bridge = ticker.bridge.clone();
+    goldlink::run(goldlink::Session {
+        setup: goldlink_runtime::GameSetup {
+            rom: std::sync::Arc::new(bytes),
+            cart_save: Some(data.join(goldlink::CART_SAVE)),
+            mailbox_offset: MAILBOX,
+            rtc,
+        },
+        data_dir: data,
+        bridge: Some(bridge),
+        hooks: vec![Box::new(devbridge::TickHook(ticker))],
+        title: "GoldLink (dev)".into(),
+    })
 }
