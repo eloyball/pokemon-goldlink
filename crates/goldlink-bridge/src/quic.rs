@@ -23,8 +23,35 @@ enum Cmd {
     Rebind(std_mpsc::Sender<bool>),
 }
 
+/// What went through the connection (dev tools print it).
+#[derive(Default, Debug)]
+pub struct Stats {
+    pub sent_datagrams: std::sync::atomic::AtomicU64,
+    pub sent_streams: std::sync::atomic::AtomicU64,
+    pub send_failures: std::sync::atomic::AtomicU64,
+    pub got_datagrams: std::sync::atomic::AtomicU64,
+    pub got_streams: std::sync::atomic::AtomicU64,
+    pub queued_before_connect: std::sync::atomic::AtomicU64,
+}
+
+impl Stats {
+    pub fn line(&self) -> String {
+        use std::sync::atomic::Ordering::Relaxed;
+        format!(
+            "sent {} datagrams, {} streams ({} failed, {} before connecting); got {} datagrams, {} streams",
+            self.sent_datagrams.load(Relaxed),
+            self.sent_streams.load(Relaxed),
+            self.send_failures.load(Relaxed),
+            self.queued_before_connect.load(Relaxed),
+            self.got_datagrams.load(Relaxed),
+            self.got_streams.load(Relaxed),
+        )
+    }
+}
+
 pub struct QuicClient {
     tx: mpsc::UnboundedSender<Cmd>,
+    pub stats: Arc<Stats>,
 }
 
 /// Accepts exactly the certificate with this SHA-256 (the relay's self-signed one).
@@ -107,6 +134,11 @@ fn client_config(pin: [u8; 32]) -> Result<quinn::ClientConfig, String> {
             .map_err(|e| format!("{e}"))?,
     ));
     transport.datagram_receive_buffer_size(Some(1 << 20));
+    // Real-time traffic: a stale packet is worth less than a fresh one. A small send buffer
+    // drops the oldest instead of queueing seconds behind the congestion window, and BBR
+    // doesn't read random loss (Wi-Fi, the internet) as congestion the way the default does.
+    transport.datagram_send_buffer_size(16 * 1024);
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
     config.transport_config(Arc::new(transport));
     Ok(config)
 }
@@ -115,6 +147,8 @@ impl QuicClient {
     /// Connects in the background; packets sent before the handshake finishes wait for it.
     pub(crate) fn connect(server: SocketAddr, pin: [u8; 32], shared: Arc<Shared>) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
+        let stats = Arc::new(Stats::default());
+        let st = stats.clone();
         std::thread::Builder::new()
             .name("relay quic".into())
             .spawn(move || {
@@ -125,10 +159,10 @@ impl QuicClient {
                     Ok(rt) => rt,
                     Err(_) => return,
                 };
-                rt.block_on(run(server, pin, shared, rx));
+                rt.block_on(run(server, pin, shared, rx, st));
             })
             .ok();
-        Self { tx }
+        Self { tx, stats }
     }
 
     pub fn send(&self, packet: Vec<u8>) {
@@ -150,7 +184,9 @@ async fn run(
     pin: [u8; 32],
     shared: Arc<Shared>,
     mut rx: mpsc::UnboundedReceiver<Cmd>,
+    stats: Arc<Stats>,
 ) {
+    use std::sync::atomic::Ordering::Relaxed;
     let Ok(config) = client_config(pin) else {
         return;
     };
@@ -172,12 +208,12 @@ async fn run(
     // every frame anyway, so the newest few are enough).
     let conn = tokio::select! {
         c = connecting => match c { Ok(c) => c, Err(_) => return },
-        _ = async { while rx.recv().await.is_some() {} } => return,
+        _ = async { while rx.recv().await.is_some() { stats.queued_before_connect.fetch_add(1, Relaxed); } } => return,
     };
     loop {
         tokio::select! {
             cmd = rx.recv() => match cmd {
-                Some(Cmd::Send(p)) => send(&conn, p),
+                Some(Cmd::Send(p)) => send(&conn, p, &stats),
                 Some(Cmd::Rebind(done)) => {
                     let ok = std::net::UdpSocket::bind(bind).and_then(|s| endpoint.rebind(s)).is_ok();
                     done.send(ok).ok();
@@ -188,12 +224,16 @@ async fn run(
                 }
             },
             d = conn.read_datagram() => match d {
-                Ok(bytes) => accept(&shared, &bytes),
+                Ok(bytes) => {
+                    stats.got_datagrams.fetch_add(1, Relaxed);
+                    accept(&shared, &bytes)
+                }
                 Err(_) => return,
             },
             s = conn.accept_uni() => match s {
                 Ok(mut s) => {
                     let shared = shared.clone();
+                    stats.got_streams.fetch_add(1, Relaxed);
                     tokio::spawn(async move {
                         let mut len = [0u8; 2];
                         if s.read_exact(&mut len).await.is_err() { return; }
@@ -209,14 +249,19 @@ async fn run(
     }
 }
 
-fn send(conn: &quinn::Connection, packet: Vec<u8>) {
+fn send(conn: &quinn::Connection, packet: Vec<u8>, stats: &Stats) {
+    use std::sync::atomic::Ordering::Relaxed;
     if conn
         .max_datagram_size()
         .is_some_and(|max| packet.len() <= max)
     {
-        conn.send_datagram(packet.into()).ok();
+        match conn.send_datagram(packet.into()) {
+            Ok(()) => stats.sent_datagrams.fetch_add(1, Relaxed),
+            Err(_) => stats.send_failures.fetch_add(1, Relaxed),
+        };
         return;
     }
+    stats.sent_streams.fetch_add(1, Relaxed);
     let conn = conn.clone();
     tokio::spawn(async move {
         if let Ok(mut s) = conn.open_uni().await {

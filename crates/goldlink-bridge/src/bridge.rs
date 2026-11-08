@@ -338,6 +338,11 @@ impl Bridge {
         self.config.save(&self.dir).ok();
     }
 
+    /// The QUIC connection's counters, for dev tools (None over UDP).
+    pub fn quic_stats(&self) -> Option<String> {
+        self.net.quic_stats()
+    }
+
     /// QUIC only: moves the connection to a new local port (tests a NAT rebinding).
     pub fn rebind(&self) -> bool {
         self.net.rebind()

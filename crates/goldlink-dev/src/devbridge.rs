@@ -68,6 +68,13 @@ impl DevTicker {
                 _ => {}
             }
         }
+        // GOLDLINK_QUIC_STATS: the QUIC connection's counters every 10 s.
+        if self.frames % 600 == 0
+            && std::env::var_os("GOLDLINK_QUIC_STATS").is_some()
+            && let Some(line) = b.quic_stats()
+        {
+            eprintln!("[quic {}] {line}", self.frames);
+        }
         if let Some(secs) = self.leave_in_battle {
             if b.local_activity() != 2 {
                 self.battle_since = None;
