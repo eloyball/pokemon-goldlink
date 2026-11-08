@@ -273,6 +273,46 @@ fn test_link_connect_and_data_routing() {
 }
 
 #[test]
+fn test_link_child_data_reaches_every_member() {
+    let (mut lobby, mut p, mut c, mut s) = linked_room();
+    s.send(
+        &mut lobby,
+        2,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_CONNECT, 0, &[0, 1, b'D', b'P', 0])],
+    );
+    p.recv(&mut lobby, 0);
+    p.send(
+        &mut lobby,
+        0,
+        LINK_ROLE_PARENT,
+        None,
+        vec![msg(LINK_MSG_ACCEPT, 2, &[])],
+    );
+    s.recv(&mut lobby, 2);
+
+    // The message link: a child's commands reach the parent and the other child,
+    // tagged with its aid; not the child itself.
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_DATA, 1, &[0xCC; 20])],
+    );
+    assert_eq!(
+        p.recv(&mut lobby, 0).1,
+        vec![msg(LINK_MSG_DATA, 1, &[0xCC; 20])]
+    );
+    assert_eq!(
+        s.recv(&mut lobby, 2).1,
+        vec![msg(LINK_MSG_DATA, 1, &[0xCC; 20])]
+    );
+    assert!(c.recv(&mut lobby, 1).1.is_empty(), "not its own");
+}
+
+#[test]
 fn test_link_refusals_and_second_child() {
     let (mut lobby, mut p, _c, mut s) = linked_room();
 

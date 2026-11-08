@@ -9,7 +9,8 @@
 //!   the parent's address): the relay assigns the child an aid (1..=3) and
 //!   forms the group;
 //! - DATA from a parent goes to its accepted children (aid 0), DATA from a
-//!   child to its parent (the child's aid);
+//!   child to its parent and the other accepted children (the child's aid):
+//!   every member gets every member's comm commands (the ROM's message link);
 //! - BYE, a new link block (epoch), silence or a disconnect dissolves a
 //!   member's part of the group, and the others get BYE.
 //!
@@ -172,7 +173,15 @@ impl LobbyState {
                 } else if let Some(p) = self.links[from].parent
                     && self.links[from].accepted
                 {
+                    // Every member gets every member's commands (the ROM's message link,
+                    // like transfer mode 1's parent frames): the parent and the other
+                    // children, tagged with the sender's aid.
                     let aid = self.links[from].aid;
+                    for c in self.children_of(p) {
+                        if c != from && self.links[c].accepted {
+                            self.push_link_msg(c, LINK_MSG_DATA, aid, msg.data.clone());
+                        }
+                    }
                     self.push_link_msg(p, LINK_MSG_DATA, aid, msg.data);
                 }
             }

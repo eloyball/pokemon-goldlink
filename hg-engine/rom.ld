@@ -913,6 +913,15 @@ Wireless_OnEntrySet = 0x020339F0 | 1;
 CommState_GetLinkMode = 0x0203993C | 1;
 sWirelessManager = 0x021D4124;
 sCommWireless = 0x021D4134;
+/* The message link (docs/LINK_BATTLE_REWORK.md part 1, src/coop_link.c). The comm
+   core's data (pret asm/unk_02035900.s _021D4140, ccd sCommCore; work at +8) and the
+   command layer (pret asm/unk_02033AE0.s, its 44 labels paired with ccd
+   communication_command.c; _021D412C is sCommCommandTable). */
+sCommCore = 0x021D4140;
+sCommCommandTable = 0x021D412C;
+ByteRing_Write = 0x02033AF0 | 1;
+PacketPool_WriteFrame = 0x02033ECC | 1;
+Comm_GetCommandSize = 0x020341DC | 1;
 /* Link battles (Milestone 3 Phase 4, src/field/coop_battle.c). CommState
    from pret f90c3a7c0:asm/unk_02037C94.s, LinkSync from asm/unk_020379A0.s,
    CommWireless from asm/unk_02034B0C.s, the comm core from

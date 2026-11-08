@@ -62,6 +62,8 @@
 
 struct FieldSystem;
 struct CoopChallengeSync;
+struct CoopWirelessWork;
+struct CoopLinkBlock;
 struct BattleSetup;
 struct CoopFieldEntryHeader
 {
@@ -74,6 +76,7 @@ struct CoopFieldEntryHeader
     u32 (*playerSprite)(u32 state, u32 gender); // 0x18: the local player's sprite in its avatar (Coop_PlayerAvatar_GetSprite)
     void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar; unused since the boss setup moved to Overlay 131 (2026-11-06), kept for the layout
     u32 (*ballItem)(struct FieldSystem *fsys, u32 item); // 0x20: Milestone 6 random items (Coop_ScrCmd_CopyVar)
+    void (*linkScan)(struct CoopWirelessWork *work, struct CoopLinkBlock *blk); // 0x24: the virtual link's scan report (src/field/coop_link_field.c)
 };
 
 // Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5): a player's
@@ -540,7 +543,8 @@ struct CoopTradeExchange
 enum CoopLinkMsgType
 {
     COOP_LINK_MSG_NONE = 0,
-    COOP_LINK_MSG_DATA = 1,    // a comm frame; out: to the parent (child) or every child (parent); in: aid = sender
+    COOP_LINK_MSG_DATA = 1,    // a piece of a comm command stream (src/coop_link.c): out: to every other
+                               // member of the link group; in: aid = sender
     COOP_LINK_MSG_CONNECT = 2, // out (child): data[0] = the parent's player id, data[1..4] = connect data;
                                // in (parent): aid = the child's aid, data[0..3] = connect data
     COOP_LINK_MSG_ACCEPT = 3,  // out (parent): aid = the child; in (child): aid = mine
@@ -600,8 +604,7 @@ struct CoopLinkBlock
     struct CoopLinkMsg in[COOP_LINK_IN_SLOTS];        // 0x5F0 bridge
     // 0xD98: ROM private (src/coop_link.c)
     u32 pending;                                // 0xD98 callbacks due next frame
-    void *sent[4];                              // 0xD9C send callbacks due next frame
-    u8  sent_count;                             // 0xDAC
+    u8  unused_d9c[17];                         // 0xD9C (was the radio's send callbacks)
     u8  scan_next;                              // 0xDAD next seen slot the fake scan reports
     u16 timer;                                  // 0xDAE child: frames waiting for an answer; parent: beacon events
 };

@@ -717,6 +717,12 @@ arm9 Coop_Link_SetEntry 02033A0C 3
 arm9 Coop_Link_CommStartUp 02034D8C 3
 arm9 Coop_Link_CommTerminate 02034DE0 3
 
+# The message link (docs/LINK_BATTLE_REWORK.md part 1, src/coop_link.c): the comm
+# core's per-frame sends (ccd communication_core.c Comm_UpdateChildSend,
+# Comm_UpdateParentSend) become messages over the link block.
+arm9 Coop_CommUpdate 02036298 3
+arm9 Coop_CommNoop 0203667C 3
+
 # co-op team bosses (Milestone 3 Phase 5, src/coop_boss.c): talking to a team
 # boss starts the waiting; its TrainerBattle becomes the link multi. Both
 # replacements do what vanilla does otherwise (no register: 4+ arguments).

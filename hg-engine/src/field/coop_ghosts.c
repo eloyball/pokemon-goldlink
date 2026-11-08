@@ -15,6 +15,7 @@
 #include "system.h"
 #include "task.h"
 #include "coop_sync.h"
+#include "coop_link_internal.h"
 #include "coop_boss.h"
 #include "coop_session.h"
 #include "coop_battle.h"
@@ -89,13 +90,10 @@ struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 #if COOP_DEBUG_TOOLS
 #define COOP_DIR_SOUTH                 1
 #define COOP_HEAP_ID_FIELD1            4 // pret constants/heap.h
-#define COOP_ROD_TYPE_OLD              0 // pret include/overlay_01.h
 
 // Debug-only vanilla functions (rom.ld, "Co-op DEBUG TOOLS only").
 void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
 BOOL LONG_CALL Field_PlayerCanSurfOnTile(FIELD_PLAYER_AVATAR *avatar, int currentTile, int facingTile);
-void *LONG_CALL CreateFishingRodTaskEnv(FieldSystem *fsys, u32 heapId, int rod);
-BOOL LONG_CALL Task_OverworldFish(TaskManager *taskman);
 #endif
 
 u16 LONG_CALL MapHeader_GetMapSec(u32 mapNo); // rom.ld (debug command 20 arg 15)
@@ -151,6 +149,7 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .playerSprite = Coop_LocalPlayerSprite,
     .stampAvatar = Coop_StampBattleAvatar,
     .ballItem = Coop_ChallengeBallItem,
+    .linkScan = Coop_LinkScanReport,
 };
 
 // ---------------------------------------------------------------------------
@@ -440,28 +439,6 @@ static u8 Coop_DebugSurf(FieldSystem *fsys, LocalMapObject *player)
     if (!Coop_StartFieldTask(fsys, (party != NULL && party->count > 0) ? Coop_Task_DebugVanillaSurf : Coop_Task_DebugSurf,
                              sizeof(u32)))
         return COOP_DEBUG_RESULT_FAILED;
-    return COOP_DEBUG_RESULT_OK;
-}
-
-// The registered Old Rod (ItemFieldUseFunc_OldRod). A bite is a real
-// encounter: reeling it in starts a wild battle, which needs a party.
-static u8 Coop_DebugFish(FieldSystem *fsys, LocalMapObject *player)
-{
-    void *env;
-    u32 state = (u32)fsys->playerAvatar->state;
-
-    if (state != COOP_PLAYER_STATE_WALKING && state != COOP_PLAYER_STATE_SURFING)
-        return COOP_DEBUG_RESULT_NOT_NOW;
-    if (!Coop_IsFacingSurfableWater(fsys, player))
-        return COOP_DEBUG_RESULT_NO_WATER;
-    env = CreateFishingRodTaskEnv(fsys, COOP_HEAP_ID_FIELD1, COOP_ROD_TYPE_OLD);
-    if (env == NULL)
-        return COOP_DEBUG_RESULT_FAILED;
-    if (Coop_FieldSystem_CreateTask(fsys, Task_OverworldFish, env) == NULL)
-    {
-        sys_FreeMemoryEz(env);
-        return COOP_DEBUG_RESULT_FAILED;
-    }
     return COOP_DEBUG_RESULT_OK;
 }
 
@@ -1255,17 +1232,14 @@ static void Coop_ProcessDebugCommand(FieldSystem *fsys, MapObjectMan *manager, L
         case COOP_DEBUG_WARP:
         case COOP_DEBUG_TOGGLE_BIKE:
         case COOP_DEBUG_SURF:
-        case COOP_DEBUG_FISH:
             if (!Coop_CanRunFieldDebugCommand(fsys, player))
                 return;
             if (cmd == COOP_DEBUG_WARP)
                 result = Coop_DebugWarp(fsys, mb->debug_arg);
             else if (cmd == COOP_DEBUG_TOGGLE_BIKE)
                 result = Coop_DebugToggleBike(fsys);
-            else if (cmd == COOP_DEBUG_SURF)
-                result = Coop_DebugSurf(fsys, player);
             else
-                result = Coop_DebugFish(fsys, player);
+                result = Coop_DebugSurf(fsys, player);
             break;
         default:
             result = COOP_DEBUG_RESULT_BAD_ARG;
