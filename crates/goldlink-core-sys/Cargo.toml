@@ -1,0 +1,16 @@
+[package]
+name = "goldlink-core-sys"
+version = "0.1.0"
+description = "melonDS 1.1's core (git submodule) behind GoldLink's C ABI shim, built with CMake"
+license = "GPL-3.0-or-later"
+links = "goldlink_core"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# FFI crate: unsafe is its job (the workspace forbids it elsewhere).
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[build-dependencies]
+cmake = "0.1"

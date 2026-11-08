@@ -1,0 +1,22 @@
+[package]
+name = "goldlink-dev"
+version = "0.1.0"
+description = "GoldLink's developer binary (DECISIONS D2): headless runs and BizHawk's Lua probes on the new core"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "goldlink-dev"
+path = "src/main.rs"
+
+[dependencies]
+goldlink-core = { path = "../goldlink-core" }
+mlua = { version = "0.11", features = ["lua54", "vendored"] }
+png = "0.17"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

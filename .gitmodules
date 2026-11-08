@@ -2,3 +2,6 @@
 	path = hg-engine/tools/source/nitrogfx
 	url = https://github.com/BluRosie/nitrogfx.git
 	branch = master
+[submodule "crates/goldlink-core-sys/melonDS"]
+	path = crates/goldlink-core-sys/melonDS
+	url = https://github.com/melonDS-emu/melonDS.git

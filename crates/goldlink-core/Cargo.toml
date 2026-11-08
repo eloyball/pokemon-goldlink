@@ -1,0 +1,20 @@
+[package]
+name = "goldlink-core"
+version = "0.1.0"
+description = "A safe Rust DS over melonDS (goldlink-core-sys): ROM, save, input, RAM, screens, audio"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# Wraps the FFI; every unsafe block says why it holds.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[dependencies]
+goldlink-core-sys = { path = "../goldlink-core-sys" }
+goldlink-abi = { path = "../goldlink-abi" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+goldlink-rom = { path = "../goldlink-rom" }

@@ -1,5 +1,6 @@
-# The unified client's crates (UC0): the shared wire protocol and the ROM interface, plus the
-# relay on the shared protocol crate. Runs on pushes and pull requests that touch them.
+# The unified client's crates: the shared wire protocol and the ROM interface (UC0), the melonDS
+# core, the in-memory ROM step and the dev binary (UC1), plus the relay on the shared protocol
+# crate. Runs on pushes and pull requests that touch them.
 name: Unified client
 
 on:
@@ -16,13 +17,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true # melonDS (crates/goldlink-core-sys/melonDS)
       - name: Toolchain
         run: |
           rustup update stable --no-self-update
           rustup default stable
           sudo apt-get update -q
           sudo apt-get install -y -q libclang-dev
-      - name: Workspace tests (goldlink-proto, goldlink-abi; no libclang needed)
+      - name: Workspace tests (melonDS builds with CMake; the tests that need a ROM stay ignored)
         run: cargo test --locked --workspace --exclude goldlink-abi-gen
       - name: Relay tests on the shared protocol crate
         run: cargo test --locked --manifest-path coop-relay/Cargo.toml

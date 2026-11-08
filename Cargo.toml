@@ -3,9 +3,25 @@
 # release and probe scripts find their binaries under coop-relay/target and coop-launcher/target.
 [workspace]
 resolver = "3"
-members = ["crates/goldlink-proto", "crates/goldlink-abi", "crates/goldlink-abi-gen"]
-# The generator needs bindgen; `cargo test` at the root builds only the libraries.
-default-members = ["crates/goldlink-proto", "crates/goldlink-abi"]
+members = [
+    "crates/goldlink-proto",
+    "crates/goldlink-abi",
+    "crates/goldlink-abi-gen",
+    "crates/goldlink-rom",
+    "crates/goldlink-core-sys",
+    "crates/goldlink-core",
+    "crates/goldlink-dev",
+]
+# The generator needs bindgen; `cargo test` at the root builds everything else (melonDS needs
+# CMake and a C++17 compiler).
+default-members = [
+    "crates/goldlink-proto",
+    "crates/goldlink-abi",
+    "crates/goldlink-rom",
+    "crates/goldlink-core-sys",
+    "crates/goldlink-core",
+    "crates/goldlink-dev",
+]
 exclude = ["coop-relay", "coop-launcher", "hg-engine"]
 
 [workspace.package]
