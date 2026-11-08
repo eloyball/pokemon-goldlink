@@ -31,6 +31,11 @@ pub fn lock(b: &SharedBridge) -> MutexGuard<'_, Bridge> {
     b.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Runs the bridge's before-frame work on a bare DS (the dev binary's Lua runs).
+pub fn before_frame(bridge: &SharedBridge, nds: &mut Nds, mailbox: usize) {
+    lock(bridge).pre_frame(nds.main_ram_mut(), mailbox);
+}
+
 /// Runs the bridge's after-frame work on a bare DS (the dev binary's Lua runs): what
 /// [`BridgeHook`] does on the emulation thread.
 pub fn after_frame(bridge: &SharedBridge, nds: &mut Nds, mailbox: usize) -> crate::Actions {
@@ -42,6 +47,11 @@ pub struct BridgeHook {
 }
 
 impl FrameHook for BridgeHook {
+    fn pre_frame(&mut self, emu: &mut Emulator, _input: &mut goldlink_runtime::Input) {
+        let mailbox = emu.mailbox_offset();
+        lock(&self.bridge).pre_frame(emu.nds.main_ram_mut(), mailbox);
+    }
+
     fn post_frame(&mut self, emu: &mut Emulator) {
         let mailbox = emu.mailbox_offset();
         let actions = lock(&self.bridge).post_frame(&mut NdsMachine(&mut emu.nds), mailbox);

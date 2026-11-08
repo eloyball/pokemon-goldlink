@@ -12,6 +12,7 @@ use goldlink_proto as wire;
 use crate::avatars::{self, AvatarChoice};
 use crate::config::{NetConfig, random_u64};
 use crate::layout::*;
+use crate::link::{self, LinkCarrier};
 use crate::net::{self, RelayClient};
 use crate::sanitize::{self, Limits};
 use crate::slots::{self, SaveSlots};
@@ -110,6 +111,7 @@ pub struct Bridge {
     heartbeat_rom: u32,
     limits: Limits,
     room_rules: Option<(u16, u8)>,
+    link_carrier: LinkCarrier,
 
     slots: SaveSlots,
     slot_state: SlotState,
@@ -171,6 +173,7 @@ impl Bridge {
                 species: 0,
             },
             room_rules: None,
+            link_carrier: LinkCarrier::new(),
             slots: SaveSlots::new(&saves),
             slot_state: SlotState::None,
             slot_key: None,
@@ -388,8 +391,18 @@ impl Bridge {
     }
 
     // ------------------------------------------------------------------
-    // After every frame (the emulation thread)
+    // Around every frame (the emulation thread)
     // ------------------------------------------------------------------
+
+    /// Before a frame: only the link's incoming messages (they reach the game a frame sooner).
+    pub fn pre_frame(&mut self, ram: &mut [u8], _mailbox: usize) {
+        if self.link == LinkState::Connected {
+            for p in self.net.take_ok_packets() {
+                self.link_carrier.on_server_packet(&p);
+            }
+            self.link_carrier.pump_in(ram, self.assigned_slot);
+        }
+    }
 
     pub fn post_frame(&mut self, m: &mut dyn Machine, mailbox: usize) -> Actions {
         let mut actions = Actions::default();
@@ -442,6 +455,8 @@ impl Bridge {
         }
 
         if !matches!(self.link, LinkState::Connecting | LinkState::Connected) {
+            self.net.take_ok_packets();
+            self.link_carrier.pump(m.main_ram(), None, PLAYER_ID_NONE);
             self.clear_rom_connection_state(m.main_ram(), mailbox, self.clear_payload_pending);
             self.copy_mailbox(m.main_ram(), mailbox);
             return actions;
@@ -451,6 +466,14 @@ impl Bridge {
         if self.link == LinkState::Offline {
             self.copy_mailbox(m.main_ram(), mailbox);
             return actions; // the server turned us down
+        }
+        for p in self.net.take_ok_packets() {
+            self.link_carrier.on_server_packet(&p);
+        }
+        {
+            let ram = m.main_ram();
+            let block = link::find(ram, u32_at(ram, mailbox + EXCHANGE_PTR));
+            self.link_carrier.pump(ram, block, self.assigned_slot);
         }
         self.try_take_backup(m, mailbox, &mut actions);
 
@@ -531,7 +554,7 @@ impl Bridge {
     }
 
     /// The client packet, byte for byte the C# bridge's `BuildClientPacket`: the 120-byte
-    /// header, then the trade (while the ROM has one open), the link trailer (UC4) and the
+    /// header, then the trade (while the ROM has one open), the link trailer and the
     /// challenge trailer, always last (the relay finds it from the end).
     pub fn build_client_packet(&mut self, action: u8) -> Vec<u8> {
         let mut tx = vec![0u8; wire::CLIENT_PACKET_SIZE];
@@ -555,6 +578,9 @@ impl Bridge {
         tx[112..112 + SESSION_OUT_SIZE].copy_from_slice(&self.session_out);
         if let Some(t) = &self.trade_out {
             tx.extend_from_slice(t);
+        }
+        if let Some(l) = self.link_carrier.build_trailer(Instant::now()) {
+            tx.extend_from_slice(&l);
         }
         if let Some(c) = &self.challenge_up {
             tx.extend_from_slice(c);
@@ -831,7 +857,7 @@ fn find_challenge_sync(ram: &[u8], local_player: &[u8]) -> Option<usize> {
         .then_some(at)
 }
 
-/// A link trailer ("LNK1") at `at` (CoopLink.HasMagic): then there's no trade trailer.
+/// A link trailer ("LNK1") at `at`: then there's no trade trailer.
 fn has_link_magic(pkt: &[u8], at: usize) -> bool {
-    pkt.len() >= at + 4 && u32_at(pkt, at) == wire::LINK_MAGIC
+    link::has_magic(pkt, at)
 }

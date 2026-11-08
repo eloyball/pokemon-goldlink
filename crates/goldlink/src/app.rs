@@ -287,8 +287,9 @@ impl GameApp {
     }
 }
 
-impl eframe::App for GameApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl GameApp {
+    /// One UI frame (the window's, or the launcher shell's once the game runs).
+    pub fn ui(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             match self.world.as_mut() {
                 Some(w) if w.open => w.open = false,
@@ -346,6 +347,17 @@ impl eframe::App for GameApp {
         }
         // The emulator runs on its own clock; draw whenever the display can.
         ctx.request_repaint();
+    }
+
+    /// Leaves the world and writes the save (the window closes).
+    pub fn shutdown(&mut self) {
+        self.stop();
+    }
+}
+
+impl eframe::App for GameApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
     }
 
     #[cfg(not(windows))]
