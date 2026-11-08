@@ -170,7 +170,7 @@ namespace CoopBridge
         public const int MaxHeldMovement = 0x71;     // MapObject_SetHeldMovement limit
         public const byte MoveActionNone = 0xFF;     // no action since the map loaded
         public const int MaxAvatarState = 14;
-        public const int MaxActivity = 4;
+        public const int MaxActivity = 5;             // CoopActivity: COOP_ACTIVITY_EVENT (Milestone 6 §6.1) is the last
 
         // CoopProgressionGates field offsets (relative to Gates)
         public const int GatesSize = 24;
@@ -2238,6 +2238,7 @@ namespace CoopBridge
                 case 2: return $"in a battle · {where}";
                 case 3: return $"in a menu · {where}";
                 case 4: return $"changing maps · {where}";
+                case 5: return $"busy (talking, a sign or a cutscene) · {where}";
             }
             if (state[offset + Mailbox.PsIsActive] != 1) return $"away · {where}";
             string text = $"{where} · {PlayerStateName(state[offset + Mailbox.PsAvatarState])}";
