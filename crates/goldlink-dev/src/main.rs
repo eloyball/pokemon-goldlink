@@ -19,6 +19,7 @@
 //! couldn't be loaded, 64 bad arguments. Runners read the verdict from the probe's log.
 
 mod devbridge;
+mod devpanel;
 mod lua;
 mod machine;
 mod offline;
@@ -127,7 +128,40 @@ fn parse() -> Result<Args, String> {
     Ok(args)
 }
 
+/// `--make-patch <base.nds> <game.nds> <out.bps>`: the release's BPS patch (packaging).
+fn make_patch(args: &[String]) -> ExitCode {
+    let [base, game, out] = args else {
+        return usage("--make-patch <base.nds> <game.nds> <out.bps>");
+    };
+    let read = |p: &str| std::fs::read(p).map_err(|e| format!("{p}: {e}"));
+    let result = read(base).and_then(|b| {
+        let g = read(game)?;
+        let patch = goldlink_rom::bps::create(&b, &g);
+        // Check it before writing: the patch must give the game back.
+        let back = goldlink_rom::bps::apply(&b, &patch).map_err(|e| e.to_string())?;
+        if back != g {
+            return Err("the patch doesn't reproduce the game".into());
+        }
+        std::fs::write(out, &patch).map_err(|e| format!("{out}: {e}"))?;
+        Ok(patch.len())
+    });
+    match result {
+        Ok(n) => {
+            println!("{out}: {n} bytes");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("goldlink-dev: {e}");
+            ExitCode::from(3)
+        }
+    }
+}
+
 fn main() -> ExitCode {
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.first().is_some_and(|a| a == "--make-patch") {
+        return make_patch(&all[1..]);
+    }
     let args = match parse() {
         Ok(a) => a,
         Err(e) => return usage(&e),
@@ -135,6 +169,9 @@ fn main() -> ExitCode {
     let Some(rom_path) = args.rom.clone() else {
         return usage("no ROM given (--rom)");
     };
+    if let Some(dir) = args.data.clone().or(args.config_dir.clone()) {
+        goldlink::crash::install(dir, "dev");
+    }
     if args.window {
         let data = match args.data.clone().map_or_else(goldlink::data_dir, Ok) {
             Ok(d) => d,
@@ -243,6 +280,7 @@ fn window_with_bridge(
 ) -> Result<(), String> {
     let bytes = std::fs::read(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
     let ticker = devbridge::new(&data)?;
+    let panel = devpanel::DevPanel::default();
     let bridge = ticker.bridge.clone();
     goldlink::run(goldlink::Session {
         setup: goldlink_runtime::GameSetup {
@@ -253,7 +291,17 @@ fn window_with_bridge(
         },
         data_dir: data,
         bridge: Some(bridge),
-        hooks: vec![Box::new(devbridge::TickHook(ticker))],
+        hooks: vec![
+            Box::new(devbridge::TickHook(ticker)),
+            Box::new(panel.hook()),
+        ],
         title: "GoldLink (dev)".into(),
+        extra_ui: Some(dev_ui(panel)),
     })
+}
+
+/// The dev panel (F12; GOLDLINK_DEV_PANEL=1 opens it at start), drawn over the window.
+fn dev_ui(panel: devpanel::DevPanel) -> goldlink::ExtraUi {
+    let (mut open, mut warp) = (std::env::var_os("GOLDLINK_DEV_PANEL").is_some(), 0usize);
+    Box::new(move |ctx| panel.ui(ctx, &mut open, &mut warp))
 }

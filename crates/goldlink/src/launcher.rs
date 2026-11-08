@@ -156,7 +156,17 @@ pub enum Next {
 impl Launcher {
     pub fn new(paths: Paths) -> Self {
         let release = load_release(&paths);
-        let message = import_bizhawk(&paths).map(|m| (m, false));
+        let mut message = import_bizhawk(&paths).map(|m| (m, false));
+        let crashes = crate::crash::take_new(&paths.data);
+        if let Some(newest) = crashes.first() {
+            message = Some((
+                format!(
+                    "GoldLink closed unexpectedly last time. A report was saved: {} (Settings → Open your GoldLink folder). Pass it on to whoever helps your group.",
+                    newest.display()
+                ),
+                true,
+            ));
+        }
         // GOLDLINK_NO_UPDATE_CHECK=1 skips it (tests, or anyone who'd rather not).
         let update = match &release {
             Ok(r)

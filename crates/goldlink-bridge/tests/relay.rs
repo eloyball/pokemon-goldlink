@@ -317,3 +317,124 @@ fn another_protocol_version_is_explained() {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// The relay with its QUIC listener: returns it and the address with the fingerprint, read from
+/// its startup line.
+fn start_quic_relay(port: u16, qport: u16, dir: &std::path::Path) -> (Relay, String) {
+    let bin = std::env::var_os("GOLDLINK_RELAY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../coop-relay/target/release/coop-relay")
+        });
+    let log = dir.join("relay.log");
+    let child = Command::new(&bin)
+        .args([
+            "--bind",
+            &format!("127.0.0.1:{port}"),
+            "--quic",
+            &format!("127.0.0.1:{qport}"),
+            "--save-dir",
+        ])
+        .arg(dir.join("campaigns"))
+        .env("NO_COLOR", "1")
+        .stdout(std::fs::File::create(&log).unwrap())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let relay = Relay(child);
+    for _ in 0..50 {
+        std::thread::sleep(Duration::from_millis(100));
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if let Some(fp) = text
+            .split('#')
+            .nth(1)
+            .map(|t| t.chars().take(64).collect::<String>())
+            && fp.len() == 64
+        {
+            return (relay, format!("127.0.0.1:{qport}#{fp}"));
+        }
+    }
+    panic!(
+        "the relay printed no fingerprint: {}",
+        std::fs::read_to_string(&log).unwrap_or_default()
+    );
+}
+
+/// UC6: a player over QUIC and one over UDP share a world; the QUIC player's address changes
+/// (a NAT rebinding) and they keep their seat; a wrong fingerprint is refused.
+#[test]
+#[ignore = "needs the coop-relay binary with --quic"]
+fn quic_and_udp_share_a_world_and_survive_a_rebinding() {
+    let port = 21_000 + (std::process::id() % 500) as u16;
+    let dir = temp("quic");
+    let (_relay, quic_server) = start_quic_relay(port, port + 1, &dir);
+    let udp_server = format!("127.0.0.1:{port}");
+
+    let mut a = Bridge::new(&dir.join("a"), &[]).unwrap();
+    let mut b = Bridge::new(&dir.join("b"), &[]).unwrap();
+    let (mut ga, mut gb) = (
+        FakeGame::new(0x1111_0001, 100),
+        FakeGame::new(0x2222_0002, 110),
+    );
+    a.join(&quic_server, "QUIC01", true);
+    assert!(
+        run(&mut [(&mut a, &mut ga)], 10, |p| p[0].0.link()
+            == LinkState::Connected),
+        "A connects over QUIC"
+    );
+    b.join(&udp_server, "QUIC01", false);
+    let sees = |g: &FakeGame, tid: u32| {
+        (0..REMOTE_SLOTS).any(|s| {
+            u32_at(
+                g.mb(),
+                SERVER_PAYLOAD + s * PLAYER_STATE_SIZE + PS_TRAINER_ID,
+            ) == tid
+        })
+    };
+    assert!(
+        run(&mut [(&mut a, &mut ga), (&mut b, &mut gb)], 10, |p| sees(
+            p[0].1,
+            0x2222_0002
+        )
+            && sees(p[1].1, 0x1111_0001)),
+        "QUIC and UDP players see each other"
+    );
+    let slot = ga.mb()[ASSIGNED_PLAYER_ID];
+
+    // A NAT rebinding: A's packets come from a new port from now on.
+    assert!(a.rebind(), "rebound");
+    // Longer than the relay's 5 s client timeout: a lost seat would show.
+    let end = Instant::now() + Duration::from_secs(7);
+    run(&mut [(&mut a, &mut ga), (&mut b, &mut gb)], 8, |_| {
+        Instant::now() > end
+    });
+    assert_eq!(a.link(), LinkState::Connected);
+    assert_eq!(ga.mb()[ASSIGNED_PLAYER_ID], slot, "the same seat");
+    assert!(sees(&gb, 0x1111_0001), "B still sees A");
+    let log = std::fs::read_to_string(dir.join("relay.log")).unwrap();
+    assert_eq!(
+        log.matches("QUIC connection from").count(),
+        1,
+        "one connection, migrated:\n{log}"
+    );
+
+    // The wrong certificate: never connects.
+    let mut c = Bridge::new(&dir.join("c"), &[]).unwrap();
+    let mut gc = FakeGame::new(0x3333_0003, 120);
+    let wrong = format!(
+        "{}#{}",
+        &quic_server[..quic_server.find('#').unwrap()],
+        "ab".repeat(32)
+    );
+    c.join(&wrong, "QUIC01", false);
+    assert!(run(&mut [(&mut c, &mut gc)], 10, |p| p[0].0.link()
+        == LinkState::Offline
+        && p[0].0.view().message_is_error));
+    assert!(
+        c.view().message.contains("didn't answer"),
+        "{}",
+        c.view().message
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -54,6 +54,9 @@ fn main() -> ExitCode {
             }
         }
     }
+    if let Ok(data) = goldlink::data_dir() {
+        goldlink::crash::install(data, env!("CARGO_PKG_VERSION"));
+    }
     let result = (|| {
         let Some(rom) = rom else {
             return goldlink::run_release(play);
@@ -73,6 +76,7 @@ fn main() -> ExitCode {
             bridge: Some(Arc::new(Mutex::new(bridge))),
             hooks: Vec::new(),
             title: "GoldLink".into(),
+            extra_ui: None,
         })
     })();
     match result {
