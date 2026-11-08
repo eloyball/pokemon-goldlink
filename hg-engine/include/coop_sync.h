@@ -211,11 +211,18 @@ struct CoopDebugMonBuffer
     u16 hp_icon_kind;      // 0 none, 1 caught, 2 already met here
     u16 hp_icon_count;     // icons drawn since boot
     u32 hp_icon_addr;      // the VRAM address of its tile
+    // Link battle rework phase 0 (link_e2e_probe.lua, at +0x120): the battle script's waits for
+    // the link queue (waitmessage) in link battles since boot, and the script steps they took.
+    u16 link_waits;
+    u8  link_wait_open;    // a wait in progress
+    u8  pad_link;
+    u32 link_wait_steps;
 };
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, wild_original) == 0xFC, "m5_probe.lua reads the wild log at +0xFC");
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, ball_vanilla) == 0x10E, "m5_probe.lua reads the ball log at +0x10E");
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, hp_icon_kind) == 0x116, "m5_probe.lua reads the icon log at +0x116");
 _Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, hp_icon_addr) == 0x11C, "m5_probe.lua reads the icon address at +0x11C");
+_Static_assert(__builtin_offsetof(struct CoopDebugMonBuffer, link_waits) == 0x120, "link_e2e_probe.lua reads the wait counters at +0x120");
 extern struct CoopDebugMonBuffer gCoopDebugMonBuffer;
 struct BATTLE_PARAM;
 void Coop_DebugTeamBattle(struct BATTLE_PARAM *bp, int num); // Overlay 131, called by hg-engine MakeTrainerPokemonParty

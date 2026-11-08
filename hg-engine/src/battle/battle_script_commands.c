@@ -1,6 +1,7 @@
 #include "config.h"
 #include "debug.h"
 #include "types.h"
+#include "coop_sync.h"
 
 #include "constants/ability.h"
 #include "constants/battle_message_constants.h"
@@ -942,7 +943,23 @@ BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
  */
 BOOL btl_scr_cmd_0E_waitmessage(void *bw UNUSED, struct BattleStruct *sp)
 {
-    if (Link_QueueIsEmpty(sp)) {
+    BOOL empty = Link_QueueIsEmpty(sp);
+
+#if COOP_DEBUG_TOOLS
+    // Link battle rework phase 0: how many waits, and how long, per link battle.
+    if (BattleTypeGet(bw) & BATTLE_TYPE_LINK) {
+        if (!empty) {
+            if (!gCoopDebugMonBuffer.link_wait_open) {
+                gCoopDebugMonBuffer.link_wait_open = 1;
+                gCoopDebugMonBuffer.link_waits++;
+            }
+            gCoopDebugMonBuffer.link_wait_steps++;
+        } else {
+            gCoopDebugMonBuffer.link_wait_open = 0;
+        }
+    }
+#endif
+    if (empty) {
         IncrementBattleScriptPtr(sp, 1);
     } else {
         Link_CheckTimeout(sp);
