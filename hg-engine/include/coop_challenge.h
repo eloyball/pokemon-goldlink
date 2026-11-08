@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: CC-BY-NC-SA-4.0 OR MIT
 #ifndef COOP_CHALLENGE_H
 #define COOP_CHALLENGE_H
 

@@ -9,6 +9,12 @@ to `hg-engine/`, the scripts and the documentation) is licensed under the
 you may share and adapt it, giving credit, not for commercial purposes, and under the same
 license.
 
+**Interface files, also under MIT.** Four files define the interface between the ROM patch, the
+relay and the GoldLink client. Besides CC BY-NC-SA 4.0, they are available under the MIT license
+([LICENSES/MIT.txt](LICENSES/MIT.txt)), at your choice: `hg-engine/include/coop_sync.h`,
+`hg-engine/include/coop_challenge.h`, `coop-relay/src/protocol.rs` and `coop_offsets.json`. Each
+says so in an SPDX line (`coop_offsets.json` in `coop_offsets.json.license`).
+
 **hg-engine** (`hg-engine/`, https://github.com/BluRosie/hg-engine), which GoldLink builds on,
 has no license file; it is used under its authors' terms, quoted from its README:
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: CC-BY-NC-SA-4.0 OR MIT
 use std::fmt;
 
 pub const COOP_MAGIC: u32 = 0x434F_4F50; // 'COOP'
