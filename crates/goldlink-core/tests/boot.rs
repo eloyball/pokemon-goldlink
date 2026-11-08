@@ -109,6 +109,7 @@ fn patches_the_base_rom_in_memory() {
         rom_sha1: goldlink_rom::sha1_hex(&base),
         patched_sha1: goldlink_rom::sha1_hex(&game),
         patch: "goldlink.bps".into(),
+        repository: String::new(),
     };
     let patched = goldlink_rom::prepare(&base, &patch, &release).expect("the base ROM patches");
     assert!(patched == game, "the patched bytes are the co-op ROM");

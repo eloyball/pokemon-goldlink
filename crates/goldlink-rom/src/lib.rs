@@ -15,6 +15,9 @@ pub struct Release {
     pub patched_sha1: String,
     /// The patch's file name, next to `release.json`.
     pub patch: String,
+    /// `owner/name` on GitHub, for the update check ("" = none).
+    #[serde(default)]
+    pub repository: String,
 }
 
 impl Release {
@@ -32,9 +35,26 @@ pub struct NdsHeader {
     pub revision: u8,
 }
 
+/// The DS header's own checksum (CRC-16/MODBUS over bytes 0..0x15E, stored at 0x15E): a file
+/// whose header doesn't match it isn't a DS ROM.
+pub fn header_crc(rom: &[u8]) -> u16 {
+    let mut crc: u16 = 0xFFFF;
+    for &b in &rom[..0x15E] {
+        crc ^= u16::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xA001
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    crc
+}
+
 impl NdsHeader {
     pub fn parse(rom: &[u8]) -> Option<Self> {
-        if rom.len() < 0x200 {
+        if rom.len() < 0x200 || u16::from_le_bytes([rom[0x15E], rom[0x15F]]) != header_crc(rom) {
             return None;
         }
         let title = rom[..12]
@@ -130,10 +150,9 @@ impl std::fmt::Display for RomError {
 
 impl std::error::Error for RomError {}
 
-/// Checks the player's ROM against the release, applies the patch and checks the result.
-/// Hashes the bytes it was given (never the file twice), so a file that changes while it's read
-/// can't slip through.
-pub fn prepare(base: &[u8], patch: &[u8], release: &Release) -> Result<Vec<u8>, RomError> {
+/// Checks the player's ROM against the release: an unmodified HeartGold (USA) of the expected
+/// dump. The header explains a wrong pick.
+pub fn check_base(base: &[u8], release: &Release) -> Result<(), RomError> {
     let header = NdsHeader::parse(base).ok_or(RomError::NotAnNdsRom)?;
     let sha1 = sha1_hex(base);
     if sha1.eq_ignore_ascii_case(&release.patched_sha1) {
@@ -148,6 +167,14 @@ pub fn prepare(base: &[u8], patch: &[u8], release: &Release) -> Result<Vec<u8>, 
             want: release.rom_sha1.to_ascii_lowercase(),
         });
     }
+    Ok(())
+}
+
+/// Checks the player's ROM against the release, applies the patch and checks the result.
+/// Hashes the bytes it was given (never the file twice), so a file that changes while it's read
+/// can't slip through.
+pub fn prepare(base: &[u8], patch: &[u8], release: &Release) -> Result<Vec<u8>, RomError> {
+    check_base(base, release)?;
     let game = bps::apply(base, patch).map_err(|e| RomError::Patch(e.to_string()))?;
     if !sha1_hex(&game).eq_ignore_ascii_case(&release.patched_sha1) {
         return Err(RomError::PatchMismatch);
@@ -163,6 +190,8 @@ mod tests {
         let mut r = vec![fill; 0x400];
         r[..12].copy_from_slice(b"POKEMON HG\0\0");
         r[0x0C..0x10].copy_from_slice(code);
+        let crc = header_crc(&r);
+        r[0x15E..0x160].copy_from_slice(&crc.to_le_bytes());
         r
     }
 
@@ -172,6 +201,7 @@ mod tests {
             rom_sha1: sha1_hex(base),
             patched_sha1: sha1_hex(game),
             patch: "goldlink.bps".into(),
+            repository: String::new(),
         }
     }
 

@@ -96,6 +96,9 @@ impl Machine {
     pub fn frame(&mut self) {
         let touch = self.touching.then_some(self.touch);
         self.nds.set_input(self.keys, touch);
+        if let Some(d) = self.bridge.as_ref() {
+            goldlink::goldlink_bridge::hook::before_frame(&d.bridge, &mut self.nds, crate::MAILBOX);
+        }
         self.nds.run_frame();
         if let Some(d) = self.bridge.as_mut() {
             // A world's save swapped into the cart reaches the .SaveRAM when the run ends, as

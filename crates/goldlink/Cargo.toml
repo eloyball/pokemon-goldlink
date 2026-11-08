@@ -7,8 +7,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[lints]
-workspace = true
+# The workspace forbids unsafe code; here it's denied, so the one Win32 call (attaching to the
+# console for --status / --setup) can be allowed where it is.
+[lints.rust]
+unsafe_code = "deny"
 
 [lib]
 path = "src/lib.rs"
@@ -22,6 +24,10 @@ goldlink-core = { path = "../goldlink-core" }
 goldlink-runtime = { path = "../goldlink-runtime" }
 goldlink-bridge = { path = "../goldlink-bridge" }
 goldlink-proto = { path = "../goldlink-proto" }
+goldlink-rom = { path = "../goldlink-rom" }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+serde_json = "1"
+ureq = "3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 dirs = "6"
@@ -35,3 +41,6 @@ eframe = { version = "0.31", default-features = false, features = ["glow", "defa
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
 wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
+
+[dev-dependencies]
+serde_json = "1"
