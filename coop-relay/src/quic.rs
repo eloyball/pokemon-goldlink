@@ -111,6 +111,11 @@ impl QuicServer {
         let mut transport = quinn::TransportConfig::default();
         transport.max_idle_timeout(Some(std::time::Duration::from_secs(10).try_into()?));
         transport.datagram_receive_buffer_size(Some(1 << 20));
+        // Real-time traffic: a stale packet is worth less than a fresh one. A small send buffer
+        // drops the oldest instead of queueing seconds behind the congestion window, and BBR
+        // doesn't read random loss (Wi-Fi, the internet) as congestion the way the default does.
+        transport.datagram_send_buffer_size(16 * 1024);
+        transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
         config.transport_config(Arc::new(transport));
         let endpoint = Endpoint::server(config, bind)?;
         let (tx, rx) = mpsc::channel(4096);

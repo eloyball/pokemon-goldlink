@@ -131,6 +131,11 @@ impl RelayClient {
         self.quic.as_ref().is_some_and(|(_, q)| q.rebind())
     }
 
+    /// The QUIC connection's counters (None over UDP).
+    pub fn quic_stats(&self) -> Option<String> {
+        self.quic.as_ref().map(|(_, q)| q.stats.line())
+    }
+
     /// Talking to the relay over QUIC.
     pub fn is_quic(&self) -> bool {
         self.quic.is_some()
