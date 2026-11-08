@@ -14,6 +14,8 @@ pub const TOUCH_CENTRE: (u16, u16) = (128, 96);
 
 pub struct Machine {
     pub nds: Nds,
+    /// The real co-op bridge (EmuHawk's form with `--open-ext-tool-dll`), run after every frame.
+    pub bridge: Option<crate::devbridge::DevTicker>,
     rom: Vec<u8>,
     save_path: Option<PathBuf>,
     pub rtc: Option<chrono::NaiveDateTime>,
@@ -37,6 +39,7 @@ impl Machine {
         let nds = Nds::new(&FirmwareUser::default(), None).map_err(|e| e.to_string())?;
         let mut m = Self {
             nds,
+            bridge: None,
             rom,
             save_path,
             rtc,
@@ -94,6 +97,12 @@ impl Machine {
         let touch = self.touching.then_some(self.touch);
         self.nds.set_input(self.keys, touch);
         self.nds.run_frame();
+        if let Some(d) = self.bridge.as_mut() {
+            // A world's save swapped into the cart reaches the .SaveRAM when the run ends, as
+            // BizHawk writes it on close.
+            goldlink::goldlink_bridge::hook::after_frame(&d.bridge, &mut self.nds, crate::MAILBOX);
+            d.tick();
+        }
         self.keys = Keys::NONE;
         self.touching = false;
         self.touch = TOUCH_CENTRE;

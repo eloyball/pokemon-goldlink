@@ -1140,10 +1140,13 @@ dependencies = [
 name = "goldlink"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "dirs",
  "eframe",
  "gilrs",
+ "goldlink-bridge",
  "goldlink-core",
+ "goldlink-proto",
  "goldlink-runtime",
  "wgpu",
 ]
@@ -1163,6 +1166,21 @@ dependencies = [
  "prettyplease",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "goldlink-bridge"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.4",
+ "goldlink-abi",
+ "goldlink-core",
+ "goldlink-proto",
+ "goldlink-runtime",
+ "serde",
+ "serde_json",
+ "sha1",
 ]
 
 [[package]]

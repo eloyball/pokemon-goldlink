@@ -38,7 +38,8 @@ impl FrameHook for OfflineWorld {
     }
 }
 
-/// Opens the window on `rom` with the offline world. Saves go to `<data>/coop_saves/<world>.sav`.
+/// Opens the window on `rom` with the offline world. The cart's save is
+/// `<data>/coop_saves/<world>.sav`.
 pub fn run(
     rom: PathBuf,
     data: PathBuf,
@@ -48,15 +49,15 @@ pub fn run(
     let bytes = std::fs::read(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
     let setup = GameSetup {
         rom: Arc::new(bytes),
-        data_dir: data,
-        world,
+        cart_save: Some(data.join("coop_saves").join(format!("{world}.sav"))),
         mailbox_offset: crate::MAILBOX,
         rtc,
-        backups: true,
     };
-    goldlink::run(
+    goldlink::run(goldlink::Session {
         setup,
-        vec![Box::new(OfflineWorld { heartbeat: 0 })],
-        "GoldLink (dev, offline world)",
-    )
+        data_dir: data,
+        bridge: None,
+        hooks: vec![Box::new(OfflineWorld { heartbeat: 0 })],
+        title: "GoldLink (dev, offline world)".into(),
+    })
 }

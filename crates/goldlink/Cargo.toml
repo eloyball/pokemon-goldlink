@@ -20,6 +20,9 @@ path = "src/main.rs"
 [dependencies]
 goldlink-core = { path = "../goldlink-core" }
 goldlink-runtime = { path = "../goldlink-runtime" }
+goldlink-bridge = { path = "../goldlink-bridge" }
+goldlink-proto = { path = "../goldlink-proto" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 dirs = "6"
 
