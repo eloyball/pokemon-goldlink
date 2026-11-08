@@ -1,0 +1,19 @@
+Third-party software in GoldLink {{VERSION}}
+=============================================
+
+GoldLink (the program): GPL-3.0-or-later (LICENSES/COPYING). Its exact source: SOURCE.txt.
+The co-op game data (goldlink.bps) and GoldLink's other work: CC BY-NC-SA 4.0
+(GoldLink-LICENSE.txt); see NOTICE.md and ../CREDITS.md.
+
+melonDS {{MELONDS_VERSION}} (built into the program)
+  https://github.com/melonDS-emu/melonDS
+  GPL-3.0-or-later (LICENSES/COPYING). Unchanged; its source is in GoldLink's source
+  (crates/goldlink-core-sys/melonDS, the tag {{MELONDS_VERSION}}).
+
+hg-engine (in goldlink.bps, compiled into the game)
+  https://github.com/BluRosie/hg-engine
+  No license file; used under its README's terms (quoted in NOTICE.md): no money involved,
+  freely accessible, credits kept.
+
+The program's Rust libraries
+  Their licenses, as each library ships them: LICENSES/libraries.txt
