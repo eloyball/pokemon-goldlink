@@ -15,6 +15,7 @@ struct LinkedOverlayList gLinkedOverlayList[] = {
     { OVERLAY_POKEATHLON, OVERLAY_FIELD_EXTENSION },
     { OVERLAY_POKEWALKER, OVERLAY_FIELD_EXTENSION },
     { OVERLAY_POKEDEX, OVERLAY_POKEDEX_EXTENSION },
+    { OVERLAY_POKEGEAR_APP, OVERLAY_POKEGEAR_EXTENSION }, // Milestone 6 §6.2 (0x023C4000: no field or battle in an app)
 };
 
 // entirely clean up overlays if the first one is being unloaded

@@ -945,6 +945,17 @@ Task_RunScripts = 0x0203FF44 | 1;
 /* Milestone 6 §6.1: the Start menu's task (pret src/start_menu.c; history label sub_0203BEF0,
    commit 6755c241b "start menu documentation, 1"). */
 Task_StartMenu = 0x0203BEF0 | 1;
+/* Milestone 6 §6.2, players on the Pokegear map (src/pokegear/). Labels from pret history:
+   ov101_021E88D8 = PokegearMap_CreatePersistentSprites and ov100_021E6EF4 =
+   PokegearObjectsManager_Reset (commits 147c6d5a1 / a51613efc); SpriteSystem_CreateSpriteFromResourceHeader
+   was sub_0200D2B4, Sprite_Delete sub_02024758, Sprite_SetPositionXY sub_0200DD88 (Sprite_SetAnimationFrame
+   is CLACT_AnmFrameSet above); MapHeader_GetWorldMapCoords is labelled 0x0203B518. */
+ov101_021E88D8 = 0x021E88D8 | 1;
+ov100_021E6EF4 = 0x021E6EF4 | 1;
+SpriteSystem_CreateSpriteFromResourceHeader = 0x0200D2B4 | 1;
+Sprite_Delete = 0x02024758 | 1;
+Sprite_SetPositionXY = 0x0200DD88 | 1;
+MapHeader_GetWorldMapCoords = 0x0203B518 | 1;
 ScriptEnvironment_New = 0x0204001C | 1;
 SetupScriptEngine = 0x0204005C | 1;
 FieldSystem_CreateTask = 0x020504F0 | 1;

@@ -89,10 +89,18 @@ def normalize_sheet(path, fallback=True):
     fallback=False keeps a column identical to Ethan's (the cutter's round-trip check)."""
     layout = load_layout()
     sheet = Image.open(path).convert("RGBA")
-    if list(sheet.size) != layout["image_size"]:
-        raise SystemExit("%s is %dx%d; the template layout is %dx%d" % (path, *sheet.size, *layout["image_size"]))
     guide = Image.open(os.path.join(TEMPLATE, "avatar_template_guide.png")).convert("RGBA")
     template = Image.open(os.path.join(TEMPLATE, "avatar_template.png")).convert("RGBA")
+    if list(sheet.size) != layout["image_size"]:
+        # A sheet drawn on an older template: columns only ever get added on the right (the map
+        # head, Milestone 6), so lay it over the blank template; the new columns are empty.
+        if sheet.size[0] > layout["image_size"][0] or sheet.size[1] > layout["image_size"][1]:
+            raise SystemExit("%s is %dx%d; the template layout is %dx%d" % (path, *sheet.size, *layout["image_size"]))
+        # Up to the right edge of its last whole column: its margin would reach into the new ones.
+        edge = max(x + w for col in layout["columns"] for x, _, w, _ in col["frames"] if x + w <= sheet.size[0])
+        padded = template.copy()
+        padded.paste(sheet.crop((0, 0, edge, sheet.size[1])), (0, 0))
+        sheet = padded
     notes = []
 
     # Drawing outside the cells: compare with the blank template, column by column.

@@ -149,6 +149,8 @@
 #define OVERLAY_PARTY_HANDLEUSEITEMONMON             149
 #define OVERLAY_INHERITMOVES                         150
 #define OVERLAY_CREATETRADEMON                       151
+#define OVERLAY_POKEGEAR_APP                         101 // vanilla pokegear_app: the Pokegear's map, phone, radio, configure; the Fly map
+#define OVERLAY_POKEGEAR_EXTENSION                   152 // Milestone 6 §6.2: players on the Pokegear map (src/pokegear/)
 
 #define MAX_ACTIVE_OVERLAYS 8
 

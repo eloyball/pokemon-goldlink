@@ -1438,10 +1438,29 @@
      64
     ]
    ]
+  },
+  {
+   "key": "map_head",
+   "label": "Map head",
+   "priority": "optional",
+   "kind": "map_head",
+   "source": "base/root/a/1/4/4 members 0-3 (palette 0, cell 2)",
+   "frame_size": [
+    16,
+    16
+   ],
+   "frames": [
+    [
+     1140,
+     162,
+     16,
+     16
+    ]
+   ]
   }
  ],
  "image_size": [
-  1144,
+  1176,
   1050
  ]
 }

@@ -59,6 +59,9 @@ BATTLE = [
 # The player's face in the Elite Four / Champion intro (ccd encounter_effect_leaders.c: Ethan's
 # palette, pixels, cells at members 207-209 of NARC a/1/0/9).
 VS_FACE = ("vs_face", "a/1/0/9", 207, "VS face", "should")
+# The player's head on the Pokegear map (Milestone 6 §6.2; pret pgmap_gra, NARC a/1/4/4: palette 0,
+# characters 1, cells 2; Ethan is cell 2, Lyra cell 3). A custom head uses that same palette.
+MAP_HEAD = ("map_head", "a/1/4/4", 0, "Map head", "optional")
 
 OW, BW = 32, 80       # overworld and battle frame sizes
 GUTTER = 16           # between columns: frame numbers go here
@@ -164,6 +167,50 @@ def vs_face_raw():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def map_head_raw():
+    """Ethan's Pokegear map head as the game stores it: (the characters as an indexed 8-pixel-wide
+    tile strip, in the head's palette, cell 2), unpacked with narcpy and nitrogfx."""
+    _, narc, _, _, _ = MAP_HEAD
+    tmp = tempfile.mkdtemp(prefix="avatar_head_")
+    try:
+        subprocess.run(["python3", os.path.join(ENGINE, "tools", "narcpy.py"), "extract",
+                        os.path.join(ENGINE, "base", "root", narc), "-o", tmp, "-nf"],
+                       check=True, capture_output=True)
+        for n, ext in ((0, "NCLR"), (1, "NCGR"), (2, "NCER")):
+            shutil.copy(os.path.join(tmp, "4_%02d" % n), os.path.join(tmp, "head." + ext))
+        gfx = os.path.join(ENGINE, "tools", "nitrogfx")
+        subprocess.run([gfx, os.path.join(tmp, "head.NCGR"), os.path.join(tmp, "head.png"), "-palette",
+                        os.path.join(tmp, "head.NCLR")], check=True, capture_output=True)
+        subprocess.run([gfx, os.path.join(tmp, "head.NCER"), os.path.join(tmp, "head.json")],
+                       check=True, capture_output=True)
+        raw = Image.open(os.path.join(tmp, "head.png"))
+        raw.load()
+        cell = json.load(open(os.path.join(tmp, "head.json")))["cells"][2]
+        return raw, cell
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def map_head_palette():
+    """The fifteen colours a map head may use (the vanilla head's palette, without colour 0)."""
+    raw, _ = map_head_raw()
+    pal = raw.getpalette()[:48]
+    return [tuple(pal[i * 3:i * 3 + 3]) for i in range(1, 16)]
+
+
+def map_head():
+    """Ethan's map head, reassembled from its OAM piece (16x16)."""
+    raw, cell = map_head_raw()
+    w, h = cell["maxX"] - cell["minX"] + 1, cell["maxY"] - cell["minY"] + 1
+    head = Image.new("P", (w, h), 0)
+    head.putpalette(raw.getpalette())
+    tiles = tiles_of(raw)
+    for oam in cell["OAM"]:
+        place(head, tiles, oam, oam["Attr2"]["CharName"],
+              oam["Attr1"]["XCoordinate"] - cell["minX"], oam["Attr0"]["YCoordinate"] - cell["minY"])
+    return to_rgba(head)
+
+
 def main():
     columns = []
     for key, src, label, prio in OVERWORLD:
@@ -182,6 +229,11 @@ def main():
     columns.append({"key": key, "label": label, "priority": prio, "kind": "vs_face",
                     "source": "base/root/%s members %d-%d" % (narc, first, first + 3),
                     "w": face.size[0], "h": face.size[1], "frames": [face], "offsets": None})
+    key, narc, first, label, prio = MAP_HEAD
+    head = map_head()
+    columns.append({"key": key, "label": label, "priority": prio, "kind": "map_head",
+                    "source": "base/root/%s members 0-3 (palette 0, cell 2)" % narc,
+                    "w": head.size[0], "h": head.size[1], "frames": [head], "offsets": None})
 
     x = MARGIN + GUTTER
     for col in columns:
@@ -218,6 +270,15 @@ def main():
         if col["offsets"] is not None:
             entry["offsets"] = col["offsets"]  # where the game draws each frame (vanilla's shift)
         layout["columns"].append(entry)
+
+    # Under the map head's cell: its fifteen colours (a head may use only these).
+    for col in columns:
+        if col["kind"] == "map_head":
+            x0, y0, w, h = col["cells"][0]
+            draw.text((x0 - GUTTER + 2, y0 + h + 4), "use:", fill=TEXT, font=font)
+            for i, rgb in enumerate(map_head_palette()):
+                sy = y0 + h + 16 + i * 10
+                draw.rectangle((x0, sy, x0 + 15, sy + 7), fill=rgb + (255,), outline=LINE)
 
     # The cells are cleared last: no border or number may reach into them.
     for col in columns:

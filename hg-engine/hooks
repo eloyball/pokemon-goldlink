@@ -746,3 +746,9 @@ arm9 Coop_ScrCmd_CopyVar 02040F38 1
 # 131: both are only called in the field). r2 / r1: not arguments.
 arm9 Coop_GetIdxOfFirstPartyMonWithMove 020542E8 2
 arm9 ScrCmd_GetPartySlotWithMove 0204D3CC 1
+
+# co-op (Milestone 6 §6.2): players on the Pokegear map (src/pokegear/, Overlay 152, loaded with
+# Overlay 101). pret PokegearMap_LoadSprites (ov101_021E8E34, 8 bytes) and
+# PokegearMap_RemoveAllSprites (ov101_021E8E4C). r1: one argument (mapApp).
+0101 Coop_PgMap_LoadSprites 021E8E34 1
+0101 Coop_PgMap_RemoveAllSprites 021E8E4C 1

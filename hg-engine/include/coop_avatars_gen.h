@@ -105,4 +105,8 @@
 // (characters, cell, animation follow), 0xFFFF where the VS face wasn't drawn.
 #define COOP_AVATAR_VSFACE { 242, 246, 250, 254 }
 
+// The Pokegear map head per custom avatar (Milestone 6 §6.2): its row in
+// COOP_AVATAR_MAP_HEAD_TILES, 0xFF where the column wasn't drawn (Ethan's or Lyra's head).
+#define COOP_AVATAR_MAP_HEAD { 0xFF, 0xFF, 0xFF, 0xFF }
+
 #endif // COOP_AVATARS_GEN_H

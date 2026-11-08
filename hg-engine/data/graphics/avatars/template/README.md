@@ -16,7 +16,8 @@ finished sheet into the game's files using `avatar_layout.json`. Regenerate all 
   - open the guide itself and paint over Ethan. Anything of Ethan left in a cell ends up in the
     game.
 - **Transparency:** whatever isn't drawn stays transparent (alpha 0). No background colour.
-- **Colours:** at most **15 colours plus transparency per column**. Each overworld state and each
+- **Colours:** at most **15 colours plus transparency per column**. The map head is the exception: it
+  shares the map's palette, so it can use only the 15 colours under its cell. Each overworld state and each
   battle picture gets its own palette, so different columns may use different colours. No
   anti-aliasing or half-transparent pixels: each pixel is fully opaque or fully transparent.
 - **Same poses, same order:** each frame must show the same pose and facing as Ethan's frame in
@@ -29,6 +30,7 @@ finished sheet into the game's files using `avatar_layout.json`. Regenerate all 
     frames shifted (frames 3-7 move up to 16 px right as the arm reaches out); keep the body where
     Ethan's is in each cell and the shift is applied for you (`offsets` in the layout).
   - The VS face is one 96x64 picture.
+  - The map head is one 16x16 picture, like Ethan's in the guide.
 
 ## Columns
 
@@ -54,3 +56,4 @@ Red label = must, black = should / optional. A column left empty falls back to t
 | Throw | 8 | your back picture throwing a Poke Ball (must) |
 | Throw (link) | 8 | the same in link battles (PvP, team battles); empty = uses "Throw" |
 | VS face | 1 | the face in the PvP battle intro (1v1): yours on the left, mirrored on the right for your opponent, so draw it looking right. Empty = Ethan's or Lyra's, by the save |
+| Map head | 1 | your head on the other players' Pokégear maps: 16x16, **only the 15 colours shown under the cell** (the map's own palette; other colours are moved to the nearest one). Empty = Ethan's or Lyra's, by the save |

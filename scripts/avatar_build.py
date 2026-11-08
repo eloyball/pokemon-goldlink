@@ -316,6 +316,43 @@ def cut_vsface(columns):
     return png_bytes(pic, bits=4)
 
 
+_MAP_HEAD_PALETTE = []
+
+
+def cut_map_head(columns):
+    """The Pokegear map head (Milestone 6 §6.2) as 128 bytes of 4bpp characters in the game's order
+    (16x16, 1D: top left, top right, bottom left, bottom right), in the map's own head palette;
+    None when the column isn't drawn (Ethan's or Lyra's head). Also returns notes."""
+    col = columns.get("map_head")
+    if col is None or col["vanilla"]:
+        return None, []
+    if not _MAP_HEAD_PALETTE:
+        _MAP_HEAD_PALETTE.extend(avatar_template.map_head_palette())
+    pal = [avatar_sheet.ds_colour(c) for c in _MAP_HEAD_PALETTE]
+    head = col["frames"][0]
+    px = head.load()
+    index = [[0] * 16 for _ in range(16)]
+    off = 0
+    for y in range(16):
+        for x in range(16):
+            p = px[x, y]
+            if not p[3]:
+                continue
+            rgb = avatar_sheet.ds_colour(p[:3])
+            best = min(range(15), key=lambda i: avatar_sheet.distance(rgb, pal[i]))
+            if pal[best] != rgb:
+                off += 1
+            index[y][x] = best + 1
+    data = bytearray()
+    for t in range(4):
+        tx, ty = (t % 2) * 8, (t // 2) * 8
+        for y in range(8):
+            for x in range(0, 8, 2):
+                data.append(index[ty + y][tx + x] | (index[ty + y][tx + x + 1] << 4))
+    notes = ["map head: %d px not in the map's palette, moved to the nearest colour" % off] if off else []
+    return bytes(data), notes
+
+
 def front_preview(columns):
     """The bridge's preview: the battle front picture, else the first walking frame."""
     for key in ("front", "walk"):
@@ -435,8 +472,12 @@ def main():
         cutin, cutin_notes = cut_cutin(columns, layout)
         for note in cutin_notes:
             print("avatar %s: %s" % (name, note))
+        head, head_notes = cut_map_head(columns)
+        for note in head_notes:
+            print("avatar %s: %s" % (name, note))
         avatars.append({"name": name, "id": FIRST_CUSTOM_ID + k, "stem": "av%02d" % k, "drawn": drawn,
-                        "preview": front_preview(columns), "cutin": cutin, "vsface": cut_vsface(columns)})
+                        "preview": front_preview(columns), "cutin": cutin, "vsface": cut_vsface(columns),
+                        "map_head": head})
 
     # The custom folder: ours are av*; anything else there is another custom NPC and keeps its place.
     changed = 0
@@ -576,6 +617,19 @@ def main():
         h += ["// The VS face per custom avatar (Phase 6, the PvP intro): NARC a/1/0/9 member of its palette",
               "// (characters, cell, animation follow), 0xFFFF where the VS face wasn't drawn.",
               "#define COOP_AVATAR_VSFACE { %s }" % ", ".join("%d" % a["vsface_member"] for a in avatars), ""]
+        heads = [a for a in avatars if a["map_head"] is not None]
+        h += ["// The Pokegear map head per custom avatar (Milestone 6 §6.2): its row in",
+              "// COOP_AVATAR_MAP_HEAD_TILES, 0xFF where the column wasn't drawn (Ethan's or Lyra's head).",
+              "#define COOP_AVATAR_MAP_HEAD { %s }" % ", ".join(
+                  "%d" % heads.index(a) if a["map_head"] is not None else "0xFF" for a in avatars), ""]
+        if heads:
+            h += ["// 16x16 4bpp characters (top left, top right, bottom left, bottom right) in the map's head",
+                  "// palette (pret pgmap_gra, NARC a/1/4/4, palette 0).",
+                  "#define COOP_AVATAR_MAP_HEAD_TILES { \\"]
+            for a in heads:
+                hexes = ", ".join("0x%02X" % b for b in a["map_head"])
+                h.append("    { %s }, /* %d %s */ \\" % (hexes, a["id"], a["name"]))
+            h += ["}", ""]
     h += ["#endif // COOP_AVATARS_GEN_H", ""]
     changed += write_if_changed(HEADER, "\n".join(h).encode())
 
