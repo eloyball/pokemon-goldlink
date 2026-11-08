@@ -1,0 +1,17 @@
+# The unified client's crates (dev/docs/unified-client, UC0). The relay and the launcher stay
+# standalone packages with their own Cargo.lock and target/ until the BizHawk path is retired:
+# release and probe scripts find their binaries under coop-relay/target and coop-launcher/target.
+[workspace]
+resolver = "3"
+members = ["crates/goldlink-proto", "crates/goldlink-abi", "crates/goldlink-abi-gen"]
+# The generator needs bindgen; `cargo test` at the root builds only the libraries.
+default-members = ["crates/goldlink-proto", "crates/goldlink-abi"]
+exclude = ["coop-relay", "coop-launcher", "hg-engine"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,18 @@
+[package]
+name = "goldlink-abi"
+version = "0.1.0"
+description = "The ROM's co-op mailbox layout (hg-engine coop_sync.h / coop_challenge.h) as Rust types"
+license = "MIT OR CC-BY-NC-SA-4.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# tests/layout.rs also checks the repository's coop_offsets.json (the build's mailbox symbol).
+offsets-json = []
+
+[dev-dependencies]
+goldlink-proto = { path = "../goldlink-proto" }

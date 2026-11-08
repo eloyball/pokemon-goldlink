@@ -1,0 +1,30 @@
+# The unified client's crates (UC0): the shared wire protocol and the ROM interface, plus the
+# relay on the shared protocol crate. Runs on pushes and pull requests that touch them.
+name: Unified client
+
+on:
+  push:
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "coop-relay/**", "hg-engine/include/coop_*.h", ".github/workflows/unified-client.yml"]
+  pull_request:
+    paths: ["crates/**", "Cargo.toml", "Cargo.lock", "coop-relay/**", "hg-engine/include/coop_*.h", ".github/workflows/unified-client.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          sudo apt-get update -q
+          sudo apt-get install -y -q libclang-dev
+      - name: Workspace tests (goldlink-proto, goldlink-abi; no libclang needed)
+        run: cargo test --locked --workspace --exclude goldlink-abi-gen
+      - name: Relay tests on the shared protocol crate
+        run: cargo test --locked --manifest-path coop-relay/Cargo.toml
+      - name: The ROM interface is up to date with hg-engine's headers (libclang)
+        run: cargo run --locked -p goldlink-abi-gen -- --check

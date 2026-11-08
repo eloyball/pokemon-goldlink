@@ -24,6 +24,9 @@
 /dev/
 /docs
 
+# --- Rust workspace build outputs (Cargo.toml at the root; the relay and launcher keep their own) ---
+/target/
+
 # --- coop-bridge build outputs ---
 /coop-bridge/src/bin/
 /coop-bridge/src/obj/

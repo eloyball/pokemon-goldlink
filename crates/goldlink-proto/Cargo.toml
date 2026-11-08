@@ -1,0 +1,11 @@
+[package]
+name = "goldlink-proto"
+version = "0.1.0"
+description = "GoldLink relay wire protocol, shared by coop-relay and the unified client"
+license = "MIT OR CC-BY-NC-SA-4.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

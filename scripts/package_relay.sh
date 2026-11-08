@@ -39,7 +39,9 @@ for t in "${TARGETS[@]}"; do
 done
 command -v x86_64-w64-mingw32-gcc > /dev/null || die "x86_64-w64-mingw32-gcc is missing (mingw-w64-gcc)"
 COMMIT="$(git rev-parse HEAD)"
-if ! git diff --quiet HEAD -- coop-relay scripts/package_relay.sh LICENSE NOTICE.md; then
+# crates/goldlink-proto is the relay's wire protocol (compiled from coop-relay/src/protocol.rs);
+# the root Cargo.toml is the workspace it inherits its edition from.
+if ! git diff --quiet HEAD -- coop-relay crates/goldlink-proto Cargo.toml scripts/package_relay.sh LICENSE NOTICE.md; then
     [[ "${ALLOW_DIRTY:-0}" == 1 && $PUBLISH == 0 ]] || die "uncommitted changes: a release is built from a commit"
     echo "[!] ALLOW_DIRTY=1: built with uncommitted changes (a test package, never published)"
 fi
