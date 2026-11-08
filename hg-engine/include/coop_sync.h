@@ -313,6 +313,7 @@ enum CoopActivity
     COOP_ACTIVITY_BATTLE = 2,
     COOP_ACTIVITY_MENU = 3,       // bag, party, Pokedex or another app over the field
     COOP_ACTIVITY_TRANSITION = 4, // warp, map load
+    COOP_ACTIVITY_EVENT = 5,      // Milestone 6 §6.1: in the field, a script runs (talking, a sign, a cutscene)
 };
 
 // Whether the loaded save may join a room that has not started yet

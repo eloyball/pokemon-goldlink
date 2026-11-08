@@ -942,6 +942,9 @@ BattleSetup_InitForLinkBattle = 0x020522F0 | 1;
    and SetupAndStartTrainerBattle (0x02051370) are hooked (`hooks`). */
 QueueScript = 0x0203FED4 | 1;
 Task_RunScripts = 0x0203FF44 | 1;
+/* Milestone 6 §6.1: the Start menu's task (pret src/start_menu.c; history label sub_0203BEF0,
+   commit 6755c241b "start menu documentation, 1"). */
+Task_StartMenu = 0x0203BEF0 | 1;
 ScriptEnvironment_New = 0x0204001C | 1;
 SetupScriptEngine = 0x0204005C | 1;
 FieldSystem_CreateTask = 0x020504F0 | 1;

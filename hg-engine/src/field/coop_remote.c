@@ -62,7 +62,7 @@ BOOL LONG_CALL Coop_ReadRemotePlayer(u32 remoteSlot, struct CoopPlayerState *out
         || !Coop_IsValidMoveAction(out->move_action)
         || out->is_active > 1 || out->client_ready > 1 || out->gender > 1
         || out->save_status > COOP_SAVE_IN_PROGRESS
-        || out->activity > COOP_ACTIVITY_TRANSITION)
+        || out->activity > COOP_ACTIVITY_EVENT)
     {
         Coop_Zero(out, sizeof(*out));
         return FALSE;

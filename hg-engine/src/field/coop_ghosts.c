@@ -1357,6 +1357,26 @@ static void Coop_BuildFollower(FieldSystem *fsys, struct CoopPlayerState *ps, co
                                              last->follower_move_seq, &gCoopCommBlock.track_follower_step);
 }
 
+// Milestone 6 §6.1: what the player does while the field runs. The Start menu
+// is a menu (others see "!"); a script on the task chain (talking, a sign, a
+// cutscene; the task it calls sits on top) is an event, also "!". Both keep
+// the position live, so a cutscene's walk still replays.
+BOOL LONG_CALL Task_RunScripts(TaskManager *taskman);
+BOOL LONG_CALL Task_StartMenu(TaskManager *taskman);
+
+static u8 Coop_FieldActivity(FieldSystem *fsys)
+{
+    TaskManager *tm = fsys->taskman;
+    u32 depth;
+
+    if (tm != NULL && tm->func == Task_StartMenu)
+        return COOP_ACTIVITY_MENU;
+    for (depth = 0; tm != NULL && depth < 8; tm = tm->prev, depth++)
+        if (tm->func == Task_RunScripts)
+            return COOP_ACTIVITY_EVENT;
+    return COOP_ACTIVITY_FIELD;
+}
+
 static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player, struct CoopPlayerState *ps, u16 *badgeMask)
 {
     struct CoopPlayerState last;
@@ -1386,7 +1406,7 @@ static void Coop_BuildLocalPlayerState(FieldSystem *fsys, LocalMapObject *player
     ps->move_seq = Coop_NextMoveSeq(player, lastValid, last.x, last.z, last.move_action, last.move_seq,
                                     &gCoopCommBlock.track_player_step);
     ps->is_active = 1;
-    ps->activity = COOP_ACTIVITY_FIELD;
+    ps->activity = Coop_FieldActivity(fsys);
     // Others see "busy" instead of the session menu when they talk to us. A
     // roaming spirit's task owns the input, but teammates may still revive it.
     ps->field_busy = (fsys->taskman != NULL || fsys->textbox_open) && !Coop_SpiritIsRoaming(fsys) ? 1 : 0;
@@ -2171,7 +2191,9 @@ static void Coop_ClearMark(LocalMapObject *ghost)
 // A remote in a battle or a menu: the ghost stays on its last tile under a
 // steady "!!" (battle) or "!" (menu, bag, other app). HGSS has "?" only in
 // the emote balloon, which shows one balloon at a time and animates out.
-// Map transitions and the field show none.
+// The Start menu and an event (a script: talking, a sign, a cutscene) show
+// "!" too while the ghost keeps moving (Milestone 6 §6.1). Map transitions
+// and the field show none.
 static void Coop_UpdateMark(LocalMapObject *ghost, const struct CoopPlayerState *remote)
 {
     u32 mark = (u32)COOP_GHOST_MARK(ghost);
@@ -2180,7 +2202,7 @@ static void Coop_UpdateMark(LocalMapObject *ghost, const struct CoopPlayerState 
 
     if (!remote->is_active && remote->activity == COOP_ACTIVITY_BATTLE)
         kind = COOP_MARK_DOUBLE;
-    else if (!remote->is_active && remote->activity == COOP_ACTIVITY_MENU)
+    else if (remote->activity == COOP_ACTIVITY_MENU || remote->activity == COOP_ACTIVITY_EVENT)
         kind = COOP_MARK_EXCLAMATION;
     if (mark != 0 && (mark & 1u) == kind)
         return;

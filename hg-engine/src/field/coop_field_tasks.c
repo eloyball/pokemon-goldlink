@@ -580,7 +580,7 @@ BOOL LONG_CALL Coop_StartTalkDialog(FieldSystem *fsys, const u16 *name, u32 acti
 
     if (activity == COOP_ACTIVITY_BATTLE)
         page2 = "Looks like they're in the\nmiddle of a battle!";
-    else if (activity == COOP_ACTIVITY_MENU)
+    else if (activity == COOP_ACTIVITY_MENU || activity == COOP_ACTIVITY_EVENT)
         page2 = "Looks like they're busy\nright now.";
     if (!Coop_StartFieldBlock(fsys, "It's @!", page2, COOP_MOVEMENT_STEP_END))
         return FALSE;
