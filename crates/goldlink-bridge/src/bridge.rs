@@ -236,14 +236,6 @@ impl Bridge {
         self.config.challenge_rules = wire::sanitize_challenge_rules(rules);
     }
 
-    /// A trade or link session is open (the ROM's exchange pointer is set): link scenes run at
-    /// 1x for everyone (RFC §4.4), so fast-forward waits.
-    pub fn in_link_scene(&self) -> bool {
-        self.mailbox_copy
-            .as_ref()
-            .is_some_and(|mb| u32_at(mb, EXCHANGE_PTR) != 0)
-    }
-
     /// The local player's current activity (CoopActivity), from the last snapshot.
     pub fn local_activity(&self) -> u8 {
         self.local_player[PS_ACTIVITY]
