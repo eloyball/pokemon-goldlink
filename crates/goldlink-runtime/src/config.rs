@@ -17,8 +17,6 @@ pub struct Config {
     pub keys: Bindings,
     /// Gamepad buttons per DS button, by gilrs button name ("South", "DPadUp", "Start", …).
     pub pad: Bindings,
-    /// Held: run faster than the DS, where allowed.
-    pub fast_forward_keys: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,8 +99,8 @@ impl Default for Audio {
 }
 
 impl Bindings {
-    /// The release's BizHawk keyboard controls (scripts/bizhawk_defaults.py), without the Tab and
-    /// Shift extras that clash with fast-forward.
+    /// The release's BizHawk keyboard controls (scripts/bizhawk_defaults.py), without BizHawk's
+    /// Tab (fast-forward) and Shift extras: the game always runs at the DS's speed (D5.6).
     pub fn keyboard() -> Self {
         Self {
             a: names(&["X", "K"]),
@@ -173,7 +171,6 @@ impl Default for Config {
             audio: Audio::default(),
             keys: Bindings::keyboard(),
             pad: Bindings::gamepad(),
-            fast_forward_keys: names(&["Tab"]),
         }
     }
 }

@@ -24,8 +24,8 @@ Controls
 --------
 A = X or K, B = Z or J, X = V, Y = C, L = Q, R = E, Start = Enter, Select = Space,
 the arrows or WASD, the mouse on the bottom screen. Gamepads work too (Xbox layout).
-Hold Tab to speed up (not during trades and link battles). Change them in goldlink.toml
-in your GoldLink folder.
+Change them in goldlink.toml in your GoldLink folder. The game always runs at the DS's
+speed: there is no fast-forward.
 
 Your files
 ----------

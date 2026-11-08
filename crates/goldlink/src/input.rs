@@ -9,11 +9,10 @@ use goldlink_runtime::config::Bindings;
 pub struct Controls {
     keys: Vec<(Keys, Vec<egui::Key>)>,
     pad: Vec<(Keys, Vec<gilrs::Button>)>,
-    fast_forward: Vec<egui::Key>,
 }
 
 impl Controls {
-    pub fn new(keys: &Bindings, pad: &Bindings, fast_forward: &[String]) -> Self {
+    pub fn new(keys: &Bindings, pad: &Bindings) -> Self {
         Self {
             keys: keys
                 .iter()
@@ -31,10 +30,6 @@ impl Controls {
                 .iter()
                 .map(|(k, names)| (k, names.iter().filter_map(|n| pad_button(n)).collect()))
                 .collect(),
-            fast_forward: fast_forward
-                .iter()
-                .filter_map(|n| egui::Key::from_name(n))
-                .collect(),
         }
     }
 
@@ -47,10 +42,6 @@ impl Controls {
             }
         }
         out
-    }
-
-    pub fn fast_forward(&self, held: &std::collections::HashSet<egui::Key>) -> bool {
-        self.fast_forward.iter().any(|k| held.contains(k))
     }
 
     /// The DS buttons held on any connected gamepad (sticks count as the d-pad).
@@ -123,7 +114,7 @@ mod tests {
 
     #[test]
     fn default_bindings_resolve() {
-        let c = Controls::new(&Bindings::keyboard(), &Bindings::gamepad(), &["Tab".into()]);
+        let c = Controls::new(&Bindings::keyboard(), &Bindings::gamepad());
         assert!(
             c.keys.iter().all(|(_, keys)| !keys.is_empty()),
             "every key name is egui's"
@@ -134,7 +125,6 @@ mod tests {
         );
         let held: std::collections::HashSet<_> = [egui::Key::X, egui::Key::ArrowUp].into();
         assert_eq!(c.keyboard(&held), Keys::A | Keys::UP);
-        assert!(c.fast_forward(&[egui::Key::Tab].into()));
     }
 
     #[test]

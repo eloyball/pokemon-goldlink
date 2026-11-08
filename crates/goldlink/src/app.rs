@@ -16,9 +16,6 @@ use crate::layout;
 use crate::world_ui::WorldPanel;
 use goldlink_bridge::SharedBridge;
 
-/// Fast-forward speed while the key is held (percent).
-const FAST_FORWARD: f64 = 400.0;
-
 struct Message {
     text: String,
     error: bool,
@@ -38,9 +35,6 @@ pub struct GameApp {
     last_seq: u64,
     bottom: egui::Rect,
     settings_open: bool,
-    fast: bool,
-    /// Fast-forward is allowed (in a world it becomes the world's decision, UC5).
-    pub fast_forward_allowed: bool,
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
     pub extra_ui: Option<crate::ExtraUi>,
@@ -77,7 +71,7 @@ impl GameApp {
         };
         let gilrs = gilrs::Gilrs::new().ok();
         Self {
-            controls: Controls::new(&config.keys, &config.pad, &config.fast_forward_keys),
+            controls: Controls::new(&config.keys, &config.pad),
             runner: Some(runner),
             world: bridge.as_ref().map(WorldPanel::new),
             bridge,
@@ -89,8 +83,6 @@ impl GameApp {
             last_seq: u64::MAX,
             bottom: egui::Rect::NOTHING,
             settings_open: false,
-            fast: false,
-            fast_forward_allowed: true,
             messages,
             extra_ui: None,
         }
@@ -135,10 +127,8 @@ impl GameApp {
             )
         });
         let mut keys = goldlink_core::Keys::NONE;
-        let mut fast = false;
         if focused && !self.settings_open && !typing {
             keys |= self.controls.keyboard(&held);
-            fast = self.controls.fast_forward(&held);
         }
         if let Some(g) = &mut self.gilrs {
             while g.next_event().is_some() {}
@@ -151,21 +141,6 @@ impl GameApp {
             _ => None,
         };
         *lock(&runner.shared.input) = Input { keys, touch };
-
-        // Link scenes (a trade, a link battle) run at 1x for everyone (RFC §4.4).
-        let link_scene = self
-            .bridge
-            .as_ref()
-            .is_some_and(|b| goldlink_bridge::hook::lock(b).in_link_scene());
-        let fast = fast && self.fast_forward_allowed && !link_scene;
-        if fast != self.fast {
-            self.fast = fast;
-            runner.send(Command::Speed(Some(if fast {
-                FAST_FORWARD
-            } else {
-                100.0
-            })));
-        }
     }
 
     fn update_texture(&mut self, ctx: &egui::Context) {
@@ -254,7 +229,7 @@ impl GameApp {
                 changed |= ui.add(egui::Slider::new(&mut a.volume, 0..=100).text("Volume")).changed();
                 changed |= ui.checkbox(&mut a.muted, "Mute").changed();
                 ui.separator();
-                ui.label("Controls: A = X or K, B = Z or J, X = V, Y = C, L = Q, R = E, Start = Enter, Select = Space, arrows or WASD, the mouse on the bottom screen. Hold Tab to speed up.");
+                ui.label("Controls: A = X or K, B = Z or J, X = V, Y = C, L = Q, R = E, Start = Enter, Select = Space, arrows or WASD, the mouse on the bottom screen.");
                 ui.small(format!("Change them in {}", self.config_dir.join(goldlink_runtime::config::FILE).display()));
                 ui.separator();
                 ui.horizontal(|ui| {
