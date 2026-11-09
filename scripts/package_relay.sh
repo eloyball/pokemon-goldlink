@@ -111,8 +111,8 @@ player together.
 | \`$NAME-linux-aarch64.tar.gz\` | Linux, ARM64 (Raspberry Pi, Oracle Cloud Ampere...) |
 | \`$NAME-windows.zip\` | Windows, 64-bit |
 
-Each archive's \`README.md\` covers running it, opening UDP ports 7777 and 7778 (the encrypted
-port), systemd, Docker, the options and backing up the campaigns and the certificate. GoldLink is free: CC BY-NC-SA 4.0, on hg-engine's terms (no
+Each archive's \`README.md\` covers running it, opening UDP port 7777 (plain and encrypted
+connections share it), systemd, Docker, the options and backing up the campaigns and the certificate. GoldLink is free: CC BY-NC-SA 4.0, on hg-engine's terms (no
 money involved, donations included).
 
 ## Changes

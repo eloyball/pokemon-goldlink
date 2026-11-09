@@ -12,14 +12,27 @@
 //! Protocol 9 (dev/docs/LINK_BATTLE_REWORK.md §7.1): a player's link messages travel on one
 //! bidirectional stream per link block (`LINK_STREAM_MAGIC`, then the epoch, then frames both
 //! ways), QUIC's retransmission and ordering instead of the trailer's go-back-N.
+//!
+//! By default QUIC shares the relay's UDP port (`start_shared`): QUIC owns the socket, and every
+//! datagram that starts with the relay's own packet marker (`COOP_MAGIC`) goes to the relay
+//! instead. No QUIC packet sent to the relay can start with it: long headers have the top bit
+//! set, and short headers start with a connection ID this relay picked (`NoMarkerCids`).
 
 use std::collections::HashMap;
+use std::io::{self, IoSliceMut};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, ready};
 
-use quinn::{Connection, Endpoint, RecvStream, SendStream};
+use quinn::udp::{RecvMeta, Transmit};
+use quinn::{
+    AsyncUdpSocket, Connection, ConnectionId, ConnectionIdGenerator, Endpoint, EndpointConfig,
+    RecvStream, Runtime, SendStream, TokioRuntime, UdpPoller,
+};
+use rustls::crypto::SecureRandom;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -27,8 +40,8 @@ use tracing::{debug, info};
 
 use crate::lobby::{LinkStreamEvent, TradeStreamEvent};
 use crate::protocol::{
-    LINK_STREAM_MAGIC, LinkMsg, TRADE_OUT_SIZE, TRADE_STREAM_MAGIC, TradeOut, encode_link_frame,
-    link_frame_len,
+    COOP_MAGIC, LINK_STREAM_MAGIC, LinkMsg, TRADE_OUT_SIZE, TRADE_STREAM_MAGIC, TradeOut,
+    encode_link_frame, link_frame_len,
 };
 
 /// ALPN: the relay protocol over QUIC (the packets inside carry their own version).
@@ -97,6 +110,132 @@ pub fn load_or_create_cert(
 /// the bridge's 65 s, so a paused player's link stream outlives the referee's decision.
 pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
 
+/// A relay packet (not QUIC) on the shared port: it starts with the relay's marker.
+pub fn is_relay_packet(data: &[u8]) -> bool {
+    data.len() >= 4 && data[..4] == COOP_MAGIC.to_le_bytes()
+}
+
+/// A datagram for the relay itself, from the shared port: (sender, bytes).
+pub type PlainPacket = (SocketAddr, Vec<u8>);
+
+/// Connection IDs that never start with the marker's last three bytes. A short-header QUIC
+/// packet is one byte (which can be the marker's first, `P`) and then the connection ID the
+/// relay picked, so on the shared port it never reads as a relay packet.
+struct NoMarkerCids {
+    rng: &'static dyn SecureRandom,
+}
+
+const CID_LEN: usize = 8;
+
+impl ConnectionIdGenerator for NoMarkerCids {
+    fn generate_cid(&mut self) -> ConnectionId {
+        let marker = COOP_MAGIC.to_le_bytes();
+        loop {
+            let mut b = [0u8; CID_LEN];
+            self.rng
+                .fill(&mut b)
+                .expect("the system's random number generator failed");
+            if b[..3] != marker[1..] {
+                return ConnectionId::new(&b);
+            }
+        }
+    }
+
+    fn cid_len(&self) -> usize {
+        CID_LEN
+    }
+
+    fn cid_lifetime(&self) -> Option<std::time::Duration> {
+        None
+    }
+}
+
+fn endpoint_config() -> EndpointConfig {
+    let mut config = EndpointConfig::default();
+    config.cid_generator(|| {
+        Box::new(NoMarkerCids {
+            rng: rustls::crypto::ring::default_provider().secure_random,
+        })
+    });
+    config
+}
+
+/// The shared port's socket as QUIC sees it: the real one, minus the relay's own packets, which
+/// go to `plain` (dropped if the relay is that far behind, as a full socket buffer would).
+#[derive(Debug)]
+struct SharedSocket {
+    inner: Arc<dyn AsyncUdpSocket>,
+    plain: mpsc::Sender<PlainPacket>,
+}
+
+impl AsyncUdpSocket for SharedSocket {
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+        self.inner.clone().create_io_poller()
+    }
+
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
+        self.inner.try_send(transmit)
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            let n = ready!(self.inner.poll_recv(cx, bufs, meta))?;
+            let mut kept = 0;
+            for i in 0..n {
+                let m = meta[i];
+                let data = &bufs[i][..m.len];
+                if is_relay_packet(data) {
+                    // Coalesced datagrams (GRO) come from one sender, `stride` bytes each.
+                    let stride = if m.stride == 0 { m.len } else { m.stride };
+                    for d in data.chunks(stride) {
+                        let _ = self.plain.try_send((m.addr, d.to_vec()));
+                    }
+                    continue;
+                }
+                if kept != i {
+                    let (head, tail) = bufs.split_at_mut(i);
+                    if head[kept].len() < m.len {
+                        continue;
+                    }
+                    head[kept][..m.len].copy_from_slice(&tail[0][..m.len]);
+                    meta[kept] = m;
+                }
+                kept += 1;
+            }
+            if kept > 0 {
+                return Poll::Ready(Ok(kept));
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        self.inner.max_transmit_segments()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.inner.max_receive_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.inner.may_fragment()
+    }
+}
+
+/// On a shared port: the relay's own packets, and a handle on that port to send them.
+pub struct SharedPort {
+    pub plain: mpsc::Receiver<PlainPacket>,
+    pub socket: tokio::net::UdpSocket,
+}
+
 /// What a QUIC connection did, under its stand-in address.
 #[derive(Debug)]
 pub enum Incoming {
@@ -113,40 +252,105 @@ struct Conn {
     trade: Option<mpsc::UnboundedSender<Vec<u8>>>,
 }
 
+/// TLS 1.3 with the relay's certificate, and the transport settings for real-time packets.
+fn server_config(
+    save_dir: &Path,
+) -> Result<(quinn::ServerConfig, [u8; 32]), Box<dyn std::error::Error>> {
+    let (cert, key) = load_or_create_cert(save_dir)?;
+    let fp = fingerprint(&cert);
+    let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_protocol_versions(&[&rustls::version::TLS13])?
+    .with_no_client_auth()
+    .with_single_cert(vec![cert], key)?;
+    tls.alpn_protocols = vec![ALPN.to_vec()];
+    let mut config = quinn::ServerConfig::with_crypto(Arc::new(
+        quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
+    ));
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?));
+    transport.datagram_receive_buffer_size(Some(1 << 20));
+    // Real-time traffic: a stale packet is worth less than a fresh one. A small send buffer
+    // drops the oldest instead of queueing seconds behind the congestion window, and BBR
+    // doesn't read random loss (Wi-Fi, the internet) as congestion the way the default does.
+    transport.datagram_send_buffer_size(16 * 1024);
+    transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
+    config.transport_config(Arc::new(transport));
+    Ok((config, fp))
+}
+
+/// A started QUIC listener: the server, what its connections did, its certificate's
+/// fingerprint, and on a shared port the relay's own packets and socket.
+pub struct Started {
+    pub server: QuicServer,
+    pub incoming: mpsc::Receiver<Incoming>,
+    pub fingerprint: [u8; 32],
+    pub shared: Option<SharedPort>,
+}
+
 #[derive(Clone)]
 pub struct QuicServer {
     conns: Arc<Mutex<HashMap<SocketAddr, Conn>>>,
 }
 
 impl QuicServer {
-    /// Listens on `bind`. Packets arrive on the returned channel.
+    /// Listens on its own port, `bind`. Packets arrive on `Started::incoming`.
     pub fn start(
         bind: SocketAddr,
         save_dir: &Path,
         max_packet: usize,
-    ) -> Result<(Self, mpsc::Receiver<Incoming>, [u8; 32]), Box<dyn std::error::Error>> {
-        let (cert, key) = load_or_create_cert(save_dir)?;
-        let fp = fingerprint(&cert);
-        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)?;
-        tls.alpn_protocols = vec![ALPN.to_vec()];
-        let mut config = quinn::ServerConfig::with_crypto(Arc::new(
-            quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
-        ));
-        let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?));
-        transport.datagram_receive_buffer_size(Some(1 << 20));
-        // Real-time traffic: a stale packet is worth less than a fresh one. A small send buffer
-        // drops the oldest instead of queueing seconds behind the congestion window, and BBR
-        // doesn't read random loss (Wi-Fi, the internet) as congestion the way the default does.
-        transport.datagram_send_buffer_size(16 * 1024);
-        transport.congestion_controller_factory(Arc::new(quinn::congestion::BbrConfig::default()));
-        config.transport_config(Arc::new(transport));
-        let endpoint = Endpoint::server(config, bind)?;
+    ) -> Result<Started, Box<dyn std::error::Error>> {
+        let (config, fp) = server_config(save_dir)?;
+        let endpoint = Endpoint::new(
+            endpoint_config(),
+            Some(config),
+            std::net::UdpSocket::bind(bind)?,
+            Arc::new(TokioRuntime),
+        )?;
+        let (server, incoming) = Self::accept(endpoint, max_packet);
+        Ok(Started {
+            server,
+            incoming,
+            fingerprint: fp,
+            shared: None,
+        })
+    }
+
+    /// Listens on the relay's own UDP port, `bind`, shared with the relay's packets (the
+    /// default): those come back in `Started::shared`.
+    pub fn start_shared(
+        bind: SocketAddr,
+        save_dir: &Path,
+        max_packet: usize,
+    ) -> Result<Started, Box<dyn std::error::Error>> {
+        let (config, fp) = server_config(save_dir)?;
+        let std_socket = std::net::UdpSocket::bind(bind)?;
+        // A second handle on the same socket, for the relay's sends; it never reads.
+        let send = std_socket.try_clone()?;
+        send.set_nonblocking(true)?;
+        let socket = tokio::net::UdpSocket::from_std(send)?;
+        let (plain_tx, plain) = mpsc::channel(4096);
+        let shared = SharedSocket {
+            inner: TokioRuntime.wrap_udp_socket(std_socket)?,
+            plain: plain_tx,
+        };
+        let endpoint = Endpoint::new_with_abstract_socket(
+            endpoint_config(),
+            Some(config),
+            Arc::new(shared),
+            Arc::new(TokioRuntime),
+        )?;
+        let (server, incoming) = Self::accept(endpoint, max_packet);
+        Ok(Started {
+            server,
+            incoming,
+            fingerprint: fp,
+            shared: Some(SharedPort { plain, socket }),
+        })
+    }
+
+    fn accept(endpoint: Endpoint, max_packet: usize) -> (Self, mpsc::Receiver<Incoming>) {
         let (tx, rx) = mpsc::channel(4096);
         let server = Self {
             conns: Arc::default(),
@@ -174,7 +378,7 @@ impl QuicServer {
                 });
             }
         });
-        Ok((server, rx, fp))
+        (server, rx)
     }
 
     /// Sends a packet to a QUIC player (dropped if the connection is gone).
@@ -383,6 +587,26 @@ async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shared_port_sorts_by_the_marker() {
+        let mut relay = COOP_MAGIC.to_le_bytes().to_vec();
+        relay.extend_from_slice(&[0; 12]);
+        assert!(is_relay_packet(&relay));
+        assert!(!is_relay_packet(&relay[..3]));
+        // QUIC long headers have the top bit set; a short header is 0x40.. then our CID.
+        assert!(!is_relay_packet(&[0xC0, b'O', b'O', b'C']));
+        let mut cids = NoMarkerCids {
+            rng: rustls::crypto::ring::default_provider().secure_random,
+        };
+        for _ in 0..10_000 {
+            let cid = cids.generate_cid();
+            assert_eq!(cid.len(), CID_LEN);
+            let mut short = vec![b'P'];
+            short.extend_from_slice(&cid);
+            assert!(!is_relay_packet(&short));
+        }
+    }
 
     #[test]
     fn stand_in_addresses() {

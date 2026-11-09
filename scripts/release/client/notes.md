@@ -22,9 +22,9 @@ Windows shows an "unknown publisher" warning for this unsigned program: **More i
   older GoldLink releases (v0.3 speaks protocol 8): they can't join, and get a message saying
   which side is behind. Update the relay and every player at the same time. Your worlds, saves
   and places in them carry over.
-- GoldLink connects encrypted (QUIC) by default: the relay listens on its port + 1 too (7778
-  beside 7777), which its host must open. A relay run with `--no-quic` is played over plain UDP.
-  The first connection to a world trusts the relay's certificate and keeps it with the world.
+- GoldLink connects encrypted (QUIC) by default, on the relay's usual port (7777): nothing new
+  to open. A relay run with `--no-quic` is played over plain UDP. The first connection to a
+  world trusts the relay's certificate and keeps it with the world.
 - The ROM it accepts: SHA-1 `{{ROM_SHA1}}`.
 
 ## Changes
