@@ -101,7 +101,9 @@ pack x86_64-pc-windows-gnu windows
 
 cat > "$OUT/notes.md" <<EOF
 The GoldLink relay server, **relay protocol $WIRE**: for the GoldLink player releases that need
-protocol $WIRE (their release notes say).
+protocol $WIRE (their release notes say). A relay for protocol $WIRE refuses players of releases for
+another protocol (they get a message saying which side is behind): update the relay and every
+player together.
 
 | File | For |
 | :--- | :--- |
@@ -109,8 +111,8 @@ protocol $WIRE (their release notes say).
 | \`$NAME-linux-aarch64.tar.gz\` | Linux, ARM64 (Raspberry Pi, Oracle Cloud Ampere...) |
 | \`$NAME-windows.zip\` | Windows, 64-bit |
 
-Each archive's \`README.md\` covers running it, opening UDP port 7777, systemd, Docker, the
-options and backing up campaigns. GoldLink is free: CC BY-NC-SA 4.0, on hg-engine's terms (no
+Each archive's \`README.md\` covers running it, opening UDP ports 7777 and 7778 (the encrypted
+port), systemd, Docker, the options and backing up the campaigns and the certificate. GoldLink is free: CC BY-NC-SA 4.0, on hg-engine's terms (no
 money involved, donations included).
 
 ## Changes
