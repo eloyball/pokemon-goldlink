@@ -17,4 +17,24 @@ void LONG_CALL Coop_LinkBattleWatchdog(struct FieldSystem *fsys);
 // fewer means the link is lost.
 extern u8 gCoopLinkBattleChildren;
 
+// TRUE when the running link battle's link is lost (src/coop_link.c).
+BOOL LONG_CALL Coop_LinkBattleIsLost(void);
+
+// The battle extension's header (Overlay 130, src/battle/coop_link_battle.c),
+// first in the overlay: what resident code calls while the battle app runs.
+// The field extension and the Pokegear's share the address: check the app
+// and the magic first.
+// Frames a battle's link stays lost before the watchdog ends the battle (src/battle/coop_link_battle.c).
+#define COOP_LINK_BATTLE_LOST_FRAMES 30
+
+#define COOP_BATTLE_EXT_MAGIC 0x31544243 // "CBT1"
+
+struct CoopBattleExt
+{
+    u32 magic;
+    void (*linkWatchdog)(u8 *app); // every frame of a co-op link battle's app
+};
+
+#define COOP_BATTLE_EXT ((const struct CoopBattleExt *)0x023C4000)
+
 #endif

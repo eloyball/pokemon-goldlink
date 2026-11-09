@@ -32,6 +32,7 @@ namespace CoopBridge
 
         // Trailer (coop-relay/src/protocol.rs LinkUp / LinkDown).
         private const uint TrailerMagic = 0x314B4E4C; // "LNK1"
+        private const int HeaderSize = 14; // relay -> bridge: ... epoch, 1, waiting, called off by (protocol 9)
         private const int MaxMsgsPerTrailer = 16;
         private const int SendBudget = 1000;
         private const int ResendMs = 150;
@@ -55,6 +56,21 @@ namespace CoopBridge
         private ushort _inNext;
         private readonly Queue<byte[]> _inbox = new Queue<byte[]>(); // kind, aid, data...
         private readonly Queue<byte[]> _received = new Queue<byte[]>(); // raw trailers from the network thread
+        private byte _waiting;          // the relay's referee: players my battle waits for (bitmap)
+        private byte _calledOffBy = NoPlayer; // the player whose loss called my battle off
+
+        /// <summary>No player (the relay's LINK_NOBODY).</summary>
+        public const byte NoPlayer = 0xFF;
+
+        /// <summary>
+        /// The relay's referee (dev/docs/LINK_BATTLE_REWORK.md part 3): the players of my link
+        /// group the battle waits for (a bitmap of player ids), and the player whose loss
+        /// called it off (<see cref="NoPlayer"/>: none). Both clear with the link block.
+        /// </summary>
+        public (byte Waiting, byte CalledOffBy) Referee
+        {
+            get { lock (_lock) return (_active ? _waiting : (byte)0, _active ? _calledOffBy : NoPlayer); }
+        }
 
         /// <summary>Main RAM offset of a valid link block, or null.</summary>
         public static uint? Find(IMemoryApi mem, string domain, uint ptr)
@@ -200,6 +216,8 @@ namespace CoopBridge
             _inNext = 0;
             _beacon = null;
             _role = 0;
+            _waiting = 0;
+            _calledOffBy = NoPlayer;
         }
 
         private static byte[] ToArray(IReadOnlyList<byte> list)
@@ -214,11 +232,11 @@ namespace CoopBridge
         /// <summary>Applies one relay trailer; returns its beacon section (raw), or null if malformed.</summary>
         private byte[]? Apply(byte[] t)
         {
-            if (t.Length < 12 || BitConverter.ToUInt32(t, 0) != TrailerMagic) return null;
+            if (t.Length < HeaderSize || BitConverter.ToUInt32(t, 0) != TrailerMagic) return null;
             int beaconCount = t[4], count = t[5];
             ushort ack = BitConverter.ToUInt16(t, 6), firstSeq = BitConverter.ToUInt16(t, 8);
             if (beaconCount > 6 || count > MaxMsgsPerTrailer) return null;
-            int pos = 12, beaconsStart = pos;
+            int pos = HeaderSize, beaconsStart = pos;
             for (int i = 0; i < beaconCount; i++)
             {
                 if (pos + 8 > t.Length || t[pos + 1] > BeaconMax) return null;
@@ -238,6 +256,8 @@ namespace CoopBridge
             // is never from this block either.
             bool otherBlock = t[11] == 1 && t[10] != _epoch;
             if (otherBlock || SeqBefore(_outNext, ack)) return beacons;
+            _waiting = t[12];
+            _calledOffBy = t[13] < 6 ? t[13] : NoPlayer;
             _out.RemoveAll(p => SeqBefore(p.Seq, ack));
             for (int i = 0; i < count; i++)
             {

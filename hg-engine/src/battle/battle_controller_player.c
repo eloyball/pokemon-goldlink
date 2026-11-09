@@ -104,6 +104,12 @@ BOOL LONG_CALL BattleContext_Main(struct BattleSystem *bsys, struct BattleStruct
         }
     }
 
+    // Link battle rework part 2: the server ran ahead of the other games (Link_QueueIsEmpty).
+    // The end (CONTROLLER_COMMAND_44 sends comm command 22, whose BattleLink_RecvEnd ends the
+    // battle on arrival, outside the battle's ordered ring) waits until every game is done.
+    if (ctx->server_seq_no == CONTROLLER_COMMAND_44 && (BattleTypeGet(bsys) & BATTLE_TYPE_LINK) && !Link_QueueIsDrained(ctx)) {
+        return FALSE;
+    }
     sPlayerBattleCommands[ctx->server_seq_no](bsys, ctx);
 #ifdef DEBUG_BATTLE_SCENARIOS
     TestBattle_autoSelectPlayerMoves(bsys, ctx);

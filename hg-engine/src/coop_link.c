@@ -4,6 +4,7 @@
 #include "pokemon.h"
 #include "coop_sync.h"
 #include "coop_link.h"
+#include "coop_link_internal.h"
 #include "system.h"
 
 // ---------------------------------------------------------------------------
@@ -14,8 +15,8 @@
 // manager's internal functions that would call NitroSDK WM_* are hooked
 // (`hooks`): each does its job against the link block instead, and leaves
 // the matching vanilla callback for Coop_LinkUpdate to deliver next frame,
-// as the radio would answer. Everything above (CommWireless, the comm core,
-// CommState) runs unchanged.
+// as the radio would answer. Everything above (CommWireless, CommState, the
+// comm core but for its frame sends: the message link below) runs unchanged.
 //
 // Callbacks that would call WM_* themselves are not used: the shim applies
 // their success outcome (OnInitialized, OnEnded, the channel measurement).
@@ -24,57 +25,6 @@
 // buffer WM_Initialize would use: zeroed by CommWireless_Init, freed with the
 // session. The bridge carries it over the network (exchange_ptr).
 // ---------------------------------------------------------------------------
-
-// ccd WirelessWork (the manager's work buffer, 0x1380 bytes).
-struct CoopWirelessWork
-{
-    u8 parentParam[0x40];   // 0x0000 WmParentParam
-    u8 systemBuffer[0xF00]; // 0x0040 WM_Initialize: our link block
-    u8 sendBuffer[0xE0];    // 0x0F40
-    u8 receiveBuffer[0x200];// 0x1020
-    u8 parentInfo[0xC0];    // 0x1220 WMBssDesc of the parent found / joined
-    u8 scanParam[0x10];     // 0x12E0 buffer, channel, time, bssid[3]
-    u8 unk_12F0[0x10];
-    void *parentFoundCallback; // 0x1300
-    u32 sendBufferSize;
-    u32 receiveBufferSize;
-    u16 scanChannel;
-    u16 connectAfterScan;
-    u32 state;              // 0x1310
-    u32 mode;               // 0x1314
-    void (*receiveCallback)(u16 aid, void *data, u16 length); // 0x1318
-    u32 unk_131C;
-    void *beaconCallback;   // 0x1320
-    void *childLeftCallback;
-    void *childJoinedCallback;
-    u16 aid;                // 0x132C
-    u16 connectedBitmap;    // 0x132E
-    u32 error;              // 0x1330
-    u8 maxEntries;          // 0x1334
-    u8 connectBlocked;
-    u8 unk_1336[2];
-    u32 random;             // 0x1338
-    u16 channel;
-    u16 minBusyRatio;
-    u16 quietChannels;      // 0x1340
-    u8 entryLocked;         // 0x1342
-    u8 entryClosed;
-    u8 entrySet;            // 0x1344
-    u8 beaconCount;         // 0x1345
-    u8 unk_1346[0x3A];
-};
-
-_Static_assert(sizeof(struct CoopWirelessWork) == 0x1380, "ccd WirelessWork size");
-_Static_assert(__builtin_offsetof(struct CoopWirelessWork, state) == 0x1310, "WirelessWork.state");
-_Static_assert(__builtin_offsetof(struct CoopWirelessWork, connectedBitmap) == 0x132E, "WirelessWork.connectedBitmap");
-_Static_assert(__builtin_offsetof(struct CoopWirelessWork, beaconCount) == 0x1345, "WirelessWork.beaconCount");
-_Static_assert(sizeof(struct CoopLinkBlock) <= 0xF00, "the link block fits in the WM system buffer");
-
-// WmParentParam fields the shim reads (ccd lib/include/nitro/wm/wm_internal.h).
-#define PARAM_GAME_INFO(w)     (*(const u8 **)&(w)->parentParam[0x00])
-#define PARAM_GAME_INFO_LEN(w) (*(u16 *)&(w)->parentParam[0x04])
-#define PARAM_GGID(w)          (*(u32 *)&(w)->parentParam[0x08])
-#define PARAM_ENTRY(w)         (*(u16 *)&(w)->parentParam[0x0E])
 
 // ccd wireless_manager.c WIRELESS_STATE_*.
 #define WS_STOPPED  0
@@ -111,7 +61,6 @@ void LONG_CALL Wireless_OnParentEvent(void *event);
 void LONG_CALL Wireless_OnParentMPEvent(void *event);
 void LONG_CALL Wireless_OnParentMPEnded(void *event);
 void LONG_CALL Wireless_OnParentEnded(void *event);
-void LONG_CALL Wireless_OnScanEvent(void *event);
 void LONG_CALL Wireless_OnScanEnded(void *event);
 void LONG_CALL Wireless_OnConnectEvent(void *event);
 void LONG_CALL Wireless_OnChildMPEvent(void *event);
@@ -147,23 +96,6 @@ enum
 #define COOP_BEACON_INTERVAL  8         // frames between "beacon sent" events
 
 static const u8 sCoopConnectTag[3] = { 'D', 'P', 0 }; // ccd sWirelessConnectTag
-
-// gSystem.vblankCounter at the last Coop_LinkUpdate: the DATA a sender may deliver
-// (KNOWN_RISKS #89). In .data: Overlay 129's .bss is never zeroed.
-static u32 sCoopLinkLastVblank __attribute__((section(".data"))) = 0;
-
-// Writes a data-cache range back to memory (CP15 "clean line", then "drain
-// write buffer"). The radio writes parentInfo straight to memory, so the scan
-// callback invalidates its cache lines before reading it; what the shim
-// wrote there must reach memory first. NitroSDK's DC_FlushRange is unmapped.
-__attribute__((target("arm"), noinline)) static void Coop_LinkCleanCache(const void *start, u32 size)
-{
-    u32 line = (u32)start & ~31u, end = (u32)start + size;
-
-    for (; line < end; line += 32)
-        __asm__ volatile("mcr p15, 0, %0, c7, c10, 1" : : "r"(line) : "memory");
-    __asm__ volatile("mcr p15, 0, %0, c7, c10, 4" : : "r"(0) : "memory");
-}
 
 static BOOL Coop_LinkSameBytes(const u8 *a, const u8 *b, u32 size)
 {
@@ -244,6 +176,14 @@ static BOOL Coop_LinkPush(struct CoopLinkBlock *blk, u32 type, u32 aid, const vo
     blk->out_head++; // last: the bridge reads up to out_head
     OS_RestoreInterrupts(intr);
     return TRUE;
+}
+
+// Frees the in ring's slots up to the first message still unread (handled
+// messages are marked NONE, wherever they were).
+static void Coop_LinkReleaseIn(struct CoopLinkBlock *blk)
+{
+    while (blk->in_tail != blk->in_head && blk->in[blk->in_tail % COOP_LINK_IN_SLOTS].type == COOP_LINK_MSG_NONE)
+        blk->in_tail++;
 }
 
 // The parent's game info, as the radio would broadcast it.
@@ -459,17 +399,11 @@ BOOL Coop_Link_Reset(void)
     return TRUE;
 }
 
-// Wireless_SetSendData: WM_SetMPDataToPortEx. The callback learns next frame
-// that it went out; a full ring is "not sent now", the comm core retries.
-BOOL Coop_Link_SetSendData(const void *data, u32 length, int port, void *callback)
+// Wireless_SetSendData: WM_SetMPDataToPortEx. Unused: the comm core's radio
+// frames are replaced by the message link below (Coop_CommUpdate).
+BOOL Coop_Link_SetSendData(void)
 {
-    struct CoopLinkBlock *blk = Coop_LinkBlock();
-
-    (void)port; // the comm core only uses port 14
-    if (blk == NULL || blk->sent_count >= 4 || !Coop_LinkPush(blk, COOP_LINK_MSG_DATA, blk->aid, data, length))
-        return FALSE;
-    blk->sent[blk->sent_count++] = callback;
-    return TRUE;
+    return FALSE;
 }
 
 // Wireless_SetReceiveCallback: WM_SetPortCallback.
@@ -569,82 +503,13 @@ static void Coop_LinkConnectEvent(u32 errcode, u32 state, u32 aid)
     Wireless_OnConnectEvent(words);
 }
 
-// One scan report: the next parent seen (as a WMBssDesc in parentInfo whose
-// address ends with its player id), or "channel done".
-static void Coop_LinkScanReport(struct CoopWirelessWork *work, struct CoopLinkBlock *blk)
-{
-    u32 words[(0x48 + COOP_LINK_BEACON_MAX) / 4];
-    u8 *event = (u8 *)words;
-    const struct CoopLinkBeacon *b = NULL;
-    const u8 *want = &work->scanParam[8]; // bssid looked for (FF..FF: any)
-    u32 i, n;
-
-    __builtin_memset(words, 0, sizeof(words));
-    for (n = 0; n < COOP_LINK_SEEN_SLOTS && b == NULL; n++)
-    {
-        i = (blk->scan_next + n) % COOP_LINK_SEEN_SLOTS;
-        if (blk->seen[i].length < 8 || blk->seen[i].length > COOP_LINK_BEACON_MAX)
-            continue;
-        if (want[0] != 0xFF && want[5] != blk->seen[i].player)
-            continue;
-        b = &blk->seen[i];
-        blk->scan_next = (u8)(i + 1);
-    }
-    if (b == NULL)
-    {
-        event[0x08] = 4; // channel done, nothing found
-        Wireless_OnScanEvent(words);
-        return;
-    }
-    // WMBssDesc: length, rssi, bssid, ..., channel @0x36, gameInfoLength
-    // @0x3C, WMGameInfo @0x40 (ggid @0x44, attribute @0x4B, user data @0x50).
-    __builtin_memset(work->parentInfo, 0, sizeof(work->parentInfo));
-    work->parentInfo[0x00] = sizeof(work->parentInfo) / 2;
-    work->parentInfo[0x04] = 0x02;
-    work->parentInfo[0x05] = 'C';
-    work->parentInfo[0x06] = 'O';
-    work->parentInfo[0x07] = 'O';
-    work->parentInfo[0x08] = 'P';
-    work->parentInfo[0x09] = b->player;
-    work->parentInfo[0x36] = 1;
-    work->parentInfo[0x3C] = (u8)(16 + b->length);
-    __builtin_memcpy(&work->parentInfo[0x44], &b->ggid, 4);
-    work->parentInfo[0x4A] = b->length;
-    work->parentInfo[0x4B] = b->entry ? 1 : 0;
-    __builtin_memcpy(&work->parentInfo[0x50], b->data, b->length);
-    Coop_LinkCleanCache(work->parentInfo, sizeof(work->parentInfo));
-    // WMStartScanCallback: state @8, the address @0xA, gameInfoLength @0x36,
-    // WMGameInfo @0x38 (ggid @0x3C, attribute @0x43, user data @0x48).
-    event[0x08] = 5; // parent found
-    __builtin_memcpy(&event[0x0A], &work->parentInfo[0x04], 6);
-    event[0x36] = (u8)(16 + b->length);
-    __builtin_memcpy(&event[0x3C], &b->ggid, 4);
-    event[0x43] = b->entry ? 1 : 0;
-    __builtin_memcpy(&event[0x48], b->data, b->length);
-    Wireless_OnScanEvent(words);
-}
-
+// A control message (DATA is the comm core's, Coop_CommUpdate).
 static void Coop_LinkDeliver(struct CoopWirelessWork *work, struct CoopLinkBlock *blk, struct CoopLinkMsg *msg)
 {
-    u32 words[0x14 / 4];
-    u8 *event = (u8 *)words;
-    void *data = msg->data;
     u32 bit;
 
     switch (msg->type)
     {
-    case COOP_LINK_MSG_DATA:
-        if (work->state != WS_PARENT && work->state != WS_CHILD)
-            return; // not in MP: the radio would drop it
-        // WMPortRecvCallback: state @4 (0x15 received), data @0xC, length @0x10, aid @0x12.
-        __builtin_memset(words, 0, sizeof(words));
-        event[0x04] = 0x15;
-        __builtin_memcpy(&event[0x0C], &data, 4);
-        __builtin_memcpy(&event[0x10], &msg->length, 2);
-        event[0x12] = msg->aid;
-        Wireless_OnPortEvent(words);
-        break;
-
     case COOP_LINK_MSG_CONNECT:
         if (blk->role != COOP_LINK_ROLE_PARENT || msg->aid == 0 || msg->aid > 15)
             return;
@@ -701,8 +566,8 @@ void Coop_LinkUpdate(void)
 {
     struct CoopWirelessWork *work = Coop_LinkWork();
     struct CoopLinkBlock *blk = Coop_LinkBlock();
-    u32 pending, i, count, intr, budget, once, twice;
-    void *sent[4];
+    u32 pending;
+    u8 i;
 
     if (blk == NULL)
     {
@@ -730,7 +595,14 @@ void Coop_LinkUpdate(void)
     if (pending & PEND_CHILD_MP)
         Coop_LinkEvent(Wireless_OnChildMPEvent, 0, 4, 10);
     if (pending & PEND_SCAN)
-        Coop_LinkScanReport(work, blk);
+    {
+        // The scan runs in the field: its report lives in the field extension.
+        const struct CoopFieldEntryHeader *field = Coop_FieldHeader();
+        if (field != NULL)
+            field->linkScan(work, blk);
+        else
+            blk->pending |= PEND_SCAN; // next frame
+    }
     if (pending & PEND_SCAN_END)
         Coop_LinkOk(Wireless_OnScanEnded);
     if (pending & PEND_ENTRY_SET)
@@ -746,54 +618,18 @@ void Coop_LinkUpdate(void)
     if (pending & PEND_RESET)
         Coop_LinkOk(Wireless_OnReset);
 
-    // Sends of last frame went out. The comm core sends from the VBlank
-    // interrupt (ccd Comm_VBlankSendTask), which can land in the middle of
-    // this: a send between reading the list and clearing it lost its
-    // callback, and that game never sent again (both stalled). Take the
-    // list with interrupts off.
-    intr = OS_DisableInterrupts();
-    count = blk->sent_count;
-    for (i = 0; i < count; i++)
-        sent[i] = blk->sent[i];
-    blk->sent_count = 0;
-    OS_RestoreInterrupts(intr);
-    for (i = 0; i < count; i++)
+    // The others' control messages, wherever they are in the in ring: DATA
+    // waits there for the comm core (Coop_CommUpdate), and a BYE must not wait
+    // behind DATA a screen holds.
+    for (i = blk->in_tail; i != blk->in_head && blk->magic == COOP_LINK_MAGIC; i++)
     {
-        u32 event[0x24 / 4];
-        __builtin_memset(event, 0, sizeof(event));
-        event[0x20 / 4] = (u32)sent[i]; // WMPortSendCallback: the request's argument
-        Wireless_OnDataSent(event);
-    }
-
-    // The others' messages. A sender's DATA at the radio's pace: one per VBlank
-    // since the last update (this runs every other frame while the game's loop
-    // is at 30 Hz), at most two. The comm core's receive rings are sized for
-    // that (ccd ByteRing_Write drops what does not fit): delivering a whole
-    // burst after the internet's jitter lost a battle command and the host
-    // timed out (KNOWN_RISKS #89). The rest stays in the ring, in order.
-    budget = gSystem.vblankCounter - sCoopLinkLastVblank;
-    sCoopLinkLastVblank = gSystem.vblankCounter;
-    once = 0;
-    twice = 0;
-    while (blk->in_tail != blk->in_head && blk->magic == COOP_LINK_MAGIC)
-    {
-        struct CoopLinkMsg *msg = &blk->in[blk->in_tail % COOP_LINK_IN_SLOTS];
+        struct CoopLinkMsg *msg = &blk->in[i % COOP_LINK_IN_SLOTS];
         if (msg->type == COOP_LINK_MSG_DATA)
-        {
-            u32 bit = 1u << (msg->aid & 15);
-            if (once & bit)
-            {
-                if (budget < 2 || (twice & bit))
-                    break;
-                twice |= bit;
-            }
-            once |= bit;
-        }
-        if (msg->length > COOP_LINK_DATA_MAX)
-            msg->length = COOP_LINK_DATA_MAX;
+            continue;
         Coop_LinkDeliver(work, blk, msg);
-        blk->in_tail++;
+        msg->type = COOP_LINK_MSG_NONE;
     }
+    Coop_LinkReleaseIn(blk);
 
     if (blk->role == COOP_LINK_ROLE_PARENT && work->state == WS_PARENT)
     {
@@ -824,55 +660,260 @@ void Coop_LinkUpdate(void)
 }
 
 // ---------------------------------------------------------------------------
+// The message link (docs/LINK_BATTLE_REWORK.md part 1)
+//
+// The comm core's commands travel as DATA messages instead of radio frames.
+// Its per-frame child send step (Comm_UpdateChildSend) is replaced: the
+// packet pool is drained with vanilla's own serializer into messages for
+// every other member (the relay fans them out) and into my own receive ring,
+// as transfer mode 1's parent frames did (every command reaches every game,
+// its sender included); the others' messages are written into their
+// receive rings. Then vanilla's Comm_ReceiveFromChildren parses them, in the
+// same Comm_Update. The parent's frame step (Comm_UpdateParentSend) is a
+// no-op, and the send stages stay idle, so no radio frame is ever built.
+//
+// A message is written into a receive ring only whole and only when the
+// ring has room (ccd ByteRing_Write raises a link error otherwise, #89). The
+// screen's own commands (22 and up) are only understood with the screen's
+// command table, so a message holds either the comm core's base commands or
+// a screen's, and the latter is stamped with the sender's table: a receiver
+// not on that screen holds the message until it is (#90's class). Held
+// messages keep each sender's order. (Nothing is dropped: a sender's commands
+// for a screen come before what makes the others leave it, so a receiver
+// never leaves a screen with its commands still on the way.)
+// ---------------------------------------------------------------------------
+
+#define COMM_BASE_COMMAND_COUNT 22
+
+// ccd ByteRing / PacketNode / PacketPool (communication_packet_pool.h).
+struct CoopByteRing
+{
+    u8 *data;
+    s16 read;
+    s16 limit;
+    s16 write;
+    s16 capacity;
+};
+
+struct CoopPacketNode
+{
+    u8 *data;
+    struct CoopPacketNode *prev;
+    struct CoopPacketNode *next;
+    u16 size;   // left to write
+    u8 command; // 0: free
+    u8 flags;   // bit 0: header written
+};
+
+struct CoopPacketPool
+{
+    struct CoopPacketNode *head; // queue
+    struct CoopPacketNode *tail;
+    struct CoopPacketNode *head2; // queue2 (unused by the senders)
+    struct CoopPacketNode *tail2;
+    struct CoopPacketNode *current; // partly written
+    void *ring;
+    void *nodes;
+    int count;
+};
+
+struct CoopByteWriter
+{
+    u8 *dest;
+    int remaining;
+};
+
+// ccd CommWork (communication_core_internal.h), the fields used here at the
+// offsets pret's asm/unk_02035900.s uses (recvRings 0x51C, childQueue
+// 0x580, connectedNetIds 0x694, transferMode 0x6AD).
+struct CoopCommWork
+{
+    u8 unk_000[0x51C];
+    struct CoopByteRing recvRings[8]; // 0x51C commands received from each net id
+    void *sendTask;                   // 0x57C
+    struct CoopPacketPool childQueue; // 0x580
+    u8 unk_5A0[0x694 - 0x5A0];
+    u16 connectedNetIds;              // 0x694 a child's view of who is linked
+    u8 unk_696[0x6AD - 0x696];
+    u8 transferMode;                  // 0x6AD 1: data (co-op), 2: back to 0
+};
+
+_Static_assert(__builtin_offsetof(struct CoopCommWork, recvRings) == 0x51C, "CommWork.recvRings");
+_Static_assert(__builtin_offsetof(struct CoopCommWork, childQueue) == 0x580, "CommWork.childQueue");
+_Static_assert(__builtin_offsetof(struct CoopCommWork, connectedNetIds) == 0x694, "CommWork.connectedNetIds");
+_Static_assert(__builtin_offsetof(struct CoopCommWork, transferMode) == 0x6AD, "CommWork.transferMode");
+
+struct CoopCommCore // ccd CommCore
+{
+    u8 initialized;
+    u8 updateLock;
+    u8 unk_02[2];
+    void *allocation;
+    struct CoopCommWork *work;
+};
+
+struct CoopCommCommandTable // ccd CommCommandTable (head)
+{
+    const void *commands;
+};
+
+extern struct CoopCommCore sCommCore;                  // 0x021D4140
+extern struct CoopCommCommandTable *sCommCommandTable; // 0x021D412C
+
+BOOL LONG_CALL PacketPool_WriteFrame(struct CoopPacketPool *pool, struct CoopByteWriter *writer, int next);
+void LONG_CALL ByteRing_Write(struct CoopByteRing *ring, const u8 *src, int count, int unused);
+u32 LONG_CALL Comm_GetCommandSize(int command);
+
+// ROM-private state after the link block, in the WM system buffer
+// (CommWireless_Init zeroes it with the session).
+struct CoopLinkComm
+{
+    const void *table; // my screen's command table (the last one registered)
+    u8 bitmap;         // parent: the members in my last message
+};
+
+_Static_assert(sizeof(struct CoopLinkBlock) + sizeof(struct CoopLinkComm) <= 0xF00, "the message link state fits in the WM system buffer");
+
+// A DATA message: this header, then the command bytes.
+struct CoopCommHeader
+{
+    u8 bitmap;         // the parent's members (a child's Comm_IsNetIdConnected)
+    u8 screen;         // 0: base commands; 1: the screen of `table`
+    u16 unused;
+    const void *table; // the sender's command table
+};
+
+#define COOP_COMM_DATA_MAX (COOP_LINK_DATA_MAX - sizeof(struct CoopCommHeader))
+
+// Writes into a receive ring only what fits whole (ccd ByteRing_Write raises a
+// link error otherwise); FALSE when it doesn't.
+__attribute__((noinline)) static BOOL Coop_CommRingPut(struct CoopByteRing *ring, const u8 *src, u32 len, BOOL write)
+{
+    s32 room = ring->read > ring->write ? ring->read - ring->write : ring->capacity - (ring->write - ring->read);
+
+    if (room <= (s32)len)
+        return FALSE;
+    if (write && len != 0)
+        ByteRing_Write(ring, src, (int)len, 0);
+    return TRUE;
+}
+
+// Comm_UpdateChildSend, every frame of a comm session.
+void Coop_CommUpdate(void)
+{
+    struct CoopWirelessWork *work = Coop_LinkWork();
+    struct CoopLinkBlock *blk = Coop_LinkBlock();
+    struct CoopCommWork *cw = sCommCore.work;
+    struct CoopLinkComm *lc;
+    struct CoopPacketPool *pool;
+    struct CoopPacketNode *node;
+    struct CoopByteWriter writer;
+    struct CoopCommHeader hdr;
+    u32 blocked, user, len;
+    u32 buf[COOP_LINK_DATA_MAX / 4];
+    u8 slot;
+
+    // Unlinked, nothing goes out; but once a battle's lost link is decided (the watchdog's
+    // count), my own commands still loop back: the host's battle ends only when its own
+    // game has done them (src/battle/coop_link_battle.c).
+    if (blk == NULL || (!blk->linked && gCoopCommBlock.track_link_lost_frames < COOP_LINK_BATTLE_LOST_FRAMES)
+        || cw == NULL || (cw->transferMode != 1 && cw->transferMode != 2))
+        return;
+    lc = (struct CoopLinkComm *)(blk + 1);
+    pool = &cw->childQueue;
+
+    // My screen (while a table is freed, the last one: its commands still go out).
+    if (sCommCommandTable != NULL)
+        lc->table = sCommCommandTable->commands;
+
+    // Send: one run of base or screen commands per message, while the out
+    // ring and my own receive ring have room. The parent's messages also
+    // tell the children who is linked.
+    hdr.bitmap = blk->role == COOP_LINK_ROLE_PARENT ? (u8)work->connectedBitmap : 0;
+    hdr.table = lc->table;
+    for (;;)
+    {
+        node = pool->current != NULL ? pool->current : pool->head;
+        if ((node == NULL && hdr.bitmap == lc->bitmap) || (u8)(blk->out_head - blk->out_tail) >= COOP_LINK_OUT_SLOTS)
+            break;
+        user = node != NULL && node->command >= COMM_BASE_COMMAND_COUNT;
+        for (len = 0; node != NULL && len < COOP_COMM_DATA_MAX && (node->command >= COMM_BASE_COMMAND_COUNT) == user;
+             node = node == pool->current ? pool->head : node->next)
+        {
+            len += node->size;
+            if (!(node->flags & 1))
+                len += Comm_GetCommandSize(node->command) == 0xFFFF ? 3 : 1;
+        }
+        if (len > COOP_COMM_DATA_MAX)
+            len = COOP_COMM_DATA_MAX;
+        if (!Coop_CommRingPut(&cw->recvRings[blk->aid], NULL, len, FALSE))
+            break; // my own ring is full: next frame
+        writer.dest = (u8 *)buf + sizeof(hdr);
+        writer.remaining = (int)len;
+        if (len != 0)
+            PacketPool_WriteFrame(pool, &writer, 1);
+        hdr.screen = (u8)user;
+        __builtin_memcpy(buf, &hdr, sizeof(hdr));
+        (void)Coop_LinkPush(blk, COOP_LINK_MSG_DATA, blk->aid, buf, sizeof(hdr) + len);
+        (void)Coop_CommRingPut(&cw->recvRings[blk->aid], (u8 *)buf + sizeof(hdr), len, TRUE);
+        lc->bitmap = hdr.bitmap;
+    }
+
+    // Receive, in each sender's order.
+    blocked = 0;
+    for (slot = blk->in_tail; slot != blk->in_head; slot++)
+    {
+        struct CoopLinkMsg *msg = &blk->in[slot % COOP_LINK_IN_SLOTS];
+        u32 bit = 1u << (msg->aid & 7);
+        if (msg->type != COOP_LINK_MSG_DATA || (blocked & bit))
+            continue;
+        __builtin_memcpy(&hdr, msg->data, sizeof(hdr));
+        len = msg->length > sizeof(hdr) ? msg->length - sizeof(hdr) : 0;
+        if (len > COOP_COMM_DATA_MAX)
+            len = COOP_COMM_DATA_MAX;
+        if (hdr.screen && (sCommCommandTable == NULL || sCommCommandTable->commands != hdr.table))
+            len = 0xFFFF; // not on that screen (yet): held
+        if (len == 0xFFFF || !Coop_CommRingPut(&cw->recvRings[msg->aid & 7], &msg->data[sizeof(hdr)], len, TRUE))
+        {
+            blocked |= bit;
+            continue;
+        }
+        if (msg->aid == 0 && blk->role == COOP_LINK_ROLE_CHILD)
+            cw->connectedNetIds = hdr.bitmap | 1;
+        msg->type = COOP_LINK_MSG_NONE;
+    }
+    Coop_LinkReleaseIn(blk);
+}
+
+// Comm_UpdateParentSend: no parent frames (Coop_CommUpdate).
+void Coop_CommNoop(void)
+{
+}
+
+// ---------------------------------------------------------------------------
 // Link battle watchdog (docs/MILESTONE3_PLAN.md §17)
 // ---------------------------------------------------------------------------
 
 // Our sessions report no errors (vanilla's error screen resets the console),
 // so a link lost in a battle would leave both games waiting forever. While a
-// co-op battle runs (src/field/coop_battle.c), a link lost for a moment ends
-// it the way vanilla's BattleLink_RecvEnd does when the server is done: the
-// link tasks stop and the battle finishes; an undecided battle is a draw.
-// The link result screen's sync is then completed locally.
-// Lost: the relay's BYE (the other bridge went quiet or left), or our own
-// bridge gone or out of the room.
+// co-op battle runs (src/field/coop_battle.c), the battle extension ends it
+// (src/battle/coop_link_battle.c, through its header at 0x023C4000); after
+// it, the link result screen's sync is completed here.
 
-#define COOP_LINK_BATTLE_LOST_FRAMES 30
-#define COOP_OVY_BATTLE              12 // FS_OVERLAY_ID(OVY_12): the battle app
-#define COOP_BSTATE_BATTLE_MAIN      9  // ccd battle_022378C0.c BattleState
-
-// ccd OverlayManager: the template's overlay id, the app's state, its data.
-#define OVM_OVY_ID     0x0C
-#define OVM_PROC_STATE 0x14
-#define OVM_DATA       0x1C
-// pret BattleSystem (include/battle/battle.h; hg-engine pads these): the link
-// tasks' state pointers, battleFinished (ov12_0223BC2C), battleOutcomeFlag.
-#define BSYS_LINK_SEND_STATE 0x23F4
-#define BSYS_LINK_RECV_STATE 0x23F8
-#define BSYS_BG_TILES        0x220 // bgTiles (then bgPalette, 0x224): allocated by the server's
-                                   // SetBattleBackground command (ccd battle_system.c)
-#define BSYS_FINISHED        0x23FE
-#define BSYS_OUTCOME         0x2420
-#define BATTLE_LINK_STATE_END 0xFF
-#define BATTLE_OUTCOME_DRAW   3
+#define COOP_OVY_BATTLE       12   // FS_OVERLAY_ID(OVY_12): the battle app (the battle extension comes with it)
+#define OVM_OVY_ID            0x0C // ccd OverlayManager: the template's overlay id
 #define COOP_SYNC_LINK_SCREEN 0x3E // ccd link_battle_screen.c: "waiting for partner"
 
 BOOL LONG_CALL LinkSync_Exists(void);
 void LONG_CALL LinkSync_RecvDone(int sender, int size, void *data, void *context);
 
-// A word of a vanilla struct hg-engine does not declare (no type-punning).
-static u32 Coop_LinkReadWord(const u8 *p)
-{
-    u32 v;
-
-    __builtin_memcpy(&v, p, 4);
-    return v;
-}
-
 // Children the parent links with in the running battle (src/field/coop_battle.c
 // sets it): 1, or 3 in a team battle. In .data (Overlay 129 is never zeroed).
 u8 gCoopLinkBattleChildren = 1;
 
-static BOOL Coop_LinkBattleIsLost(void)
+// Lost: the relay's BYE (the other bridge went quiet or left), or our own
+// bridge gone or out of the room.
+BOOL Coop_LinkBattleIsLost(void)
 {
     struct CoopWirelessWork *work = Coop_LinkWork();
     struct CoopLinkBlock *blk = Coop_LinkBlock();
@@ -887,8 +928,8 @@ static BOOL Coop_LinkBattleIsLost(void)
 void Coop_LinkBattleWatchdog(FieldSystem *fsys)
 {
     FieldProcessManager *pm;
-    u8 *app, *bsys, *send, *recv;
-    u32 state;
+    u8 *app;
+    u32 ovy;
 
     if (gCoopCommBlock.track_link_battle == COOP_LINK_BATTLE_LOST)
     {
@@ -899,46 +940,11 @@ void Coop_LinkBattleWatchdog(FieldSystem *fsys)
             LinkSync_RecvDone(0, 1, &done, NULL);
         return;
     }
-    if (gCoopCommBlock.track_link_battle != COOP_LINK_BATTLE_RUNNING)
-        return;
-    if (!Coop_LinkBattleIsLost())
-    {
-        gCoopCommBlock.track_link_lost_frames = 0;
-        return;
-    }
-    if (gCoopCommBlock.track_link_lost_frames < COOP_LINK_BATTLE_LOST_FRAMES)
-    {
-        gCoopCommBlock.track_link_lost_frames++;
-        return;
-    }
-    // The battle app: before its main phase (the exchange of parties,
-    // profiles and LinkSync) or in it; after it, the link screen needs no link.
     pm = fsys != NULL ? fsys->processManager : NULL;
     app = pm != NULL ? pm->child : NULL;
-    if (app == NULL || Coop_LinkReadWord(app + OVM_OVY_ID) != COOP_OVY_BATTLE
-        || (state = Coop_LinkReadWord(app + OVM_PROC_STATE)) > COOP_BSTATE_BATTLE_MAIN)
+    if (gCoopCommBlock.track_link_battle != COOP_LINK_BATTLE_RUNNING || app == NULL)
         return;
-    bsys = (u8 *)Coop_LinkReadWord(app + OVM_DATA);
-    // Lost before the battle could end cleanly: in the exchange before it
-    // (docs/KNOWN_RISKS.md #30), or in its intro, before the server's
-    // SetBattleBackground command came (the battle's exit would free its NULL
-    // background buffers and crash both games: black screens, #52). Back to
-    // the title screen instead, as a disconnect on the field does: every
-    // co-op battle saved just before it started, so nothing is lost.
-    // (Vanilla's error screen cannot be used: its reset waits for the radio
-    // to stop, which ours only reports from this SysTask.)
-    if (state != COOP_BSTATE_BATTLE_MAIN || Coop_LinkReadWord(bsys + BSYS_BG_TILES) == 0) // bgPalette follows it
-        OS_ResetSystem(0);
-    if (bsys[BSYS_FINISHED])
-        return;
-    send = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_SEND_STATE);
-    recv = (u8 *)Coop_LinkReadWord(bsys + BSYS_LINK_RECV_STATE);
-    if (send != NULL)
-        *send = BATTLE_LINK_STATE_END;
-    if (recv != NULL)
-        *recv = BATTLE_LINK_STATE_END;
-    if (bsys[BSYS_OUTCOME] == 0)
-        bsys[BSYS_OUTCOME] = BATTLE_OUTCOME_DRAW;
-    bsys[BSYS_FINISHED] = 1;
-    gCoopCommBlock.track_link_battle = COOP_LINK_BATTLE_LOST;
+    __builtin_memcpy(&ovy, app + OVM_OVY_ID, 4);
+    if (ovy == COOP_OVY_BATTLE && COOP_BATTLE_EXT->magic == COOP_BATTLE_EXT_MAGIC)
+        COOP_BATTLE_EXT->linkWatchdog(app);
 }

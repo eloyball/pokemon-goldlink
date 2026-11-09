@@ -35,7 +35,7 @@ use crate::protocol::{
 
 mod link;
 mod trade;
-pub use link::{LINK_RESEND, LINK_SILENCE};
+pub use link::{LINK_DEADLINE, LINK_RESEND, LINK_SILENCE, LINK_STALL};
 pub use trade::{PendingTrade, TRADE_IDLE_TIMEOUT, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 
 /// A request nobody answers expires after this long.
@@ -232,6 +232,8 @@ pub struct LobbyState {
     trade_notices: Vec<trade::TradeNotice>,
     /// Virtual link state per slot (Milestone 3 Phase 3).
     links: [link::LinkPeer; MAX_PLAYERS],
+    /// Members whose link battle was called off while they were quiet (the referee).
+    link_called_off: [Option<link::CalledOff>; MAX_PLAYERS],
     /// Milestone 5 room rules (CHALLENGE_RULE_*): set by the host while the
     /// room forms, fixed once the roster locks.
     rules: u16,
@@ -286,6 +288,7 @@ impl LobbyState {
             pending_trades: Vec::new(),
             trade_notices: Vec::new(),
             links: Default::default(),
+            link_called_off: Default::default(),
             rules: 0,
             run_lost: false,
         };
@@ -859,9 +862,18 @@ impl LobbyState {
     pub fn prune_stale_clients(&mut self) {
         let now = Instant::now();
         let room_str = room_code_to_string(&self.room_code);
+        // A link battle waits for a quiet player up to the referee's deadline, and a
+        // called-off one may still come back for its BYEs: keep its slot meanwhile.
+        let timeouts: [Duration; MAX_PLAYERS] = std::array::from_fn(|i| {
+            if self.link_holds_slot(i) {
+                self.client_timeout.max(LINK_DEADLINE * 2)
+            } else {
+                self.client_timeout
+            }
+        });
         for (idx, slot) in self.slots.iter_mut().enumerate() {
             if let Some(player) = slot
-                && now.duration_since(player.last_seen) > self.client_timeout
+                && now.duration_since(player.last_seen) > timeouts[idx]
             {
                 info!(
                     "[Room {room_str} | TIMEOUT] Slot P{idx} ({}) went offline",
