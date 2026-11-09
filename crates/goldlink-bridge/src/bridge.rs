@@ -73,6 +73,13 @@ pub struct View {
 }
 
 const SERVER_TIMEOUT: Duration = Duration::from_secs(3);
+/// In a link session (dev/docs/LINK_BATTLE_REWORK.md part 3): past the relay's 30 s deadline and
+/// the 60 s it keeps a called-off player's slot, so the relay decides, and this game hears it,
+/// whenever the network comes back in time.
+const LINK_SERVER_TIMEOUT: Duration = Duration::from_secs(65);
+/// In a link session, a server quiet this long shows "Waiting for the server…".
+const LINK_SERVER_QUIET: Duration = Duration::from_secs(1);
+const CALLED_OFF: &str = "The battle was called off";
 /// Challenges prove the relay is reachable, but must lead to a real OK packet within this long
 /// (a NAT that changes our port per packet would otherwise keep us "connecting" forever).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -111,6 +118,12 @@ pub struct Bridge {
     limits: Limits,
     room_rules: Option<(u16, u8)>,
     link_carrier: LinkCarrier,
+    /// The referee's line on the status bar while shown, and what it replaced.
+    link_status: Option<String>,
+    status_before_link: String,
+    /// The last post_frame: a game frozen longer than SERVER_TIMEOUT gives the server a fresh
+    /// window when it resumes (the silence was ours).
+    last_frame: Option<Instant>,
 
     slots: SaveSlots,
     slot_state: SlotState,
@@ -173,6 +186,9 @@ impl Bridge {
             },
             room_rules: None,
             link_carrier: LinkCarrier::new(),
+            link_status: None,
+            status_before_link: String::new(),
+            last_frame: None,
             slots: SaveSlots::new(&saves),
             slot_state: SlotState::None,
             slot_key: None,
@@ -416,6 +432,17 @@ impl Bridge {
     pub fn post_frame(&mut self, m: &mut dyn Machine, mailbox: usize) -> Actions {
         let mut actions = Actions::default();
         self.poll_resolve();
+        // This game was frozen (a sleeping machine, a stalled process): the server's silence
+        // meanwhile was ours, so it gets a fresh window to answer (link rework part 3).
+        let frame_at = Instant::now();
+        if self.link == LinkState::Connected
+            && self
+                .last_frame
+                .is_some_and(|t| frame_at.duration_since(t) > SERVER_TIMEOUT)
+        {
+            self.last_server_packet = frame_at;
+        }
+        self.last_frame = Some(frame_at);
 
         if let Some(path) = self.pending_restore.take() {
             let loaded = std::fs::read(&path)
@@ -479,11 +506,13 @@ impl Bridge {
         for p in self.net.take_ok_packets() {
             self.link_carrier.on_server_packet(&p);
         }
-        {
+        let in_link = {
             let ram = m.main_ram();
             let block = link::find(ram, u32_at(ram, mailbox + EXCHANGE_PTR));
             self.link_carrier.pump(ram, block, self.assigned_slot);
-        }
+            block.is_some()
+        };
+        self.show_link_referee(m.main_ram(), mailbox, in_link);
         self.try_take_backup(m, mailbox, &mut actions);
 
         let now = Instant::now();
@@ -492,7 +521,14 @@ impl Bridge {
             .last_challenge()
             .is_some_and(|t| now.duration_since(t) <= SERVER_TIMEOUT)
             && now.duration_since(self.last_server_packet) <= HANDSHAKE_TIMEOUT;
-        if !handshaking && now.duration_since(self.last_server_packet) > SERVER_TIMEOUT {
+        // In a link session the relay is the referee: a quiet server is waited for past its
+        // deadline, then this game ends its battle on its own (the ROM sees the room gone).
+        let server_timeout = if in_link {
+            LINK_SERVER_TIMEOUT
+        } else {
+            SERVER_TIMEOUT
+        };
+        if !handshaking && now.duration_since(self.last_server_packet) > server_timeout {
             // Never connected: no answer at all. Besides a wrong address or a closed port, an old
             // relay drops another version's packets without a word.
             let reason = if self.link == LinkState::Connecting {
@@ -510,6 +546,75 @@ impl Bridge {
         self.net.send(&pkt);
         self.copy_mailbox(m.main_ram(), mailbox);
         actions
+    }
+
+    /// The relay's referee on the status line (dev/docs/LINK_BATTLE_REWORK.md part 3): who a
+    /// link battle waits for, a quiet server, and who its being called off is down to. The
+    /// "called off" line stays after the link session ends; a "waiting" line gives way to what
+    /// it replaced.
+    fn show_link_referee(&mut self, ram: &[u8], mailbox: usize, in_link: bool) {
+        let mut status = None;
+        let mut error = false;
+        if in_link {
+            let (waiting, called_off_by) = self.link_carrier.referee();
+            if let Some(p) = called_off_by {
+                status = Some(if p == self.assigned_slot {
+                    format!("{CALLED_OFF}: you lost the connection.")
+                } else {
+                    format!(
+                        "{CALLED_OFF}: {} lost the connection.",
+                        self.player_name(ram, mailbox, p)
+                    )
+                });
+                error = true;
+            } else if self.last_server_packet.elapsed() > LINK_SERVER_QUIET {
+                status = Some("Waiting for the server…".to_owned());
+            } else if waiting != 0 {
+                let names: Vec<String> = (0..wire::MAX_PLAYERS as u8)
+                    .filter(|p| waiting & (1 << p) != 0)
+                    .map(|p| self.player_name(ram, mailbox, p))
+                    .collect();
+                status = Some(format!("Waiting for {}…", names.join(", ")));
+            }
+        }
+        if status == self.link_status {
+            return;
+        }
+        let was_called_off = self
+            .link_status
+            .as_deref()
+            .is_some_and(|s| s.starts_with(CALLED_OFF));
+        if self.link_status.is_none() {
+            self.status_before_link = self.message.clone();
+        }
+        match &status {
+            Some(s) => self.set_status(s.clone(), error),
+            None if !was_called_off => {
+                let before = self.status_before_link.clone();
+                self.set_status(before, false);
+            }
+            None => {}
+        }
+        self.link_status = status;
+    }
+
+    /// A player's trainer name from the relay payload (mine from my own state).
+    fn player_name(&self, ram: &[u8], mailbox: usize, player: u8) -> String {
+        let me = self.assigned_slot;
+        let state: Option<&[u8]> = if player == me {
+            Some(&self.local_player[..])
+        } else if (player as usize) < wire::MAX_PLAYERS && (me as usize) < wire::MAX_PLAYERS {
+            let remote = if player < me { player } else { player - 1 } as usize;
+            let at = mailbox + SERVER_PAYLOAD + remote * PLAYER_STATE_SIZE;
+            ram.get(at..at + PLAYER_STATE_SIZE)
+                .filter(|st| u32_at(st, PS_TRAINER_ID) != 0)
+        } else {
+            None
+        };
+        match state {
+            Some(st) => text::decode_name(st),
+            None => format!("player {}", player + 1),
+        }
     }
 
     fn copy_mailbox(&mut self, ram: &[u8], mailbox: usize) {
