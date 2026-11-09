@@ -3,10 +3,10 @@
 
 use std::time::{Duration, Instant};
 
-use crate::lobby::{LINK_RESEND, LINK_SILENCE, LobbyState};
+use crate::lobby::{LINK_DEADLINE, LINK_RESEND, LINK_SILENCE, LINK_STALL, LobbyState};
 use crate::protocol::{
     CLIENT_PACKET_SIZE, ClientToServerPacket, LINK_BEACON_MAX, LINK_DATA_MAX, LINK_MSG_ACCEPT,
-    LINK_MSG_BYE, LINK_MSG_CONNECT, LINK_MSG_DATA, LINK_MSG_REFUSE, LINK_ROLE_CHILD,
+    LINK_MSG_BYE, LINK_MSG_CONNECT, LINK_MSG_DATA, LINK_MSG_REFUSE, LINK_NOBODY, LINK_ROLE_CHILD,
     LINK_ROLE_PARENT, LinkBeacon, LinkDown, LinkMsg, LinkUp, SERVER_PACKET_SIZE, SessionOut,
     TRADE_MON_SIZE, TRADE_OUT_SIZE, TradeOut,
 };
@@ -138,6 +138,8 @@ fn test_link_trailers_round_trip_and_reject_bad_input() {
         ack: 5,
         first_seq: 9,
         epoch: Some(3),
+        waiting: 0b10,
+        called_off_by: Some(1),
         beacons: vec![(2, beacon())],
         msgs: vec![msg(LINK_MSG_ACCEPT, 1, &[])],
     };
@@ -149,6 +151,14 @@ fn test_link_trailers_round_trip_and_reject_bad_input() {
     old[10] = 0;
     old[11] = 0;
     assert_eq!(LinkDown::decode(&old).unwrap().epoch, None);
+    let nobody = LinkDown {
+        called_off_by: None,
+        ..down.clone()
+    };
+    let mut buf = Vec::new();
+    nobody.encode(&mut buf);
+    assert_eq!(buf[13], LINK_NOBODY);
+    assert_eq!(LinkDown::decode(&buf), Some(nobody));
 
     // In a client packet: alone at byte 120, or after a trade trailer.
     let mut pkt: ClientToServerPacket = packet(0, SessionOut::default(), true);
@@ -488,4 +498,145 @@ fn test_link_flush_sends_new_messages_at_once() {
     // The tick right after: the child's trailer has no messages to repeat.
     assert!(down(&mut lobby, 1).unwrap().msgs.is_empty(), "already sent");
     assert!(lobby.build_link_flush().is_empty());
+}
+
+/// The referee (dev/docs/LINK_BATTLE_REWORK.md part 3): a quiet client is
+/// waited for, then called off at the deadline; it gets its BYE when it comes back.
+#[test]
+fn test_link_referee_waits_then_calls_off() {
+    // The child's whole client goes quiet (a paused game): the battle waits, and the
+    // parent is told who it waits for.
+    let (mut lobby, mut p, mut c, _) = linked_room();
+    lobby.set_client_timeout(Duration::from_secs(5)); // the relay's default
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_DATA, 1, &[1])],
+    );
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_DATA, 1, &[1])]);
+    let parent_waits_for = |lobby: &mut LobbyState| {
+        lobby
+            .link_down_for(0, Instant::now())
+            .map(|d| (d.waiting, d.called_off_by))
+    };
+    assert_eq!(parent_waits_for(&mut lobby), Some((0, None)));
+    lobby.backdate_client(1, LINK_STALL + Duration::from_millis(10));
+    assert_eq!(parent_waits_for(&mut lobby), Some((0b10, None)));
+    lobby.backdate_client(1, LINK_DEADLINE - LINK_STALL - Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    lobby.prune_stale_clients();
+    assert_eq!(
+        lobby.link_parent(1),
+        Some((0, 1, true)),
+        "still waiting before the deadline"
+    );
+    assert!(
+        lobby.is_slot_occupied(1),
+        "the room keeps a quiet link member's slot"
+    );
+
+    // Back in time: the stream goes on where it stopped.
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_DATA, 1, &[2])],
+    );
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_DATA, 1, &[2])]);
+    assert_eq!(parent_waits_for(&mut lobby), Some((0, None)));
+
+    // Past the deadline: called off. The parent gets BYE and who; the child, still
+    // quiet, keeps its slot for its BYE.
+    lobby.backdate_client(1, LINK_DEADLINE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    lobby.prune_stale_clients();
+    assert_eq!(lobby.link_parent(1), None);
+    assert!(lobby.is_slot_occupied(1));
+    let (d, fresh) = p.recv(&mut lobby, 0);
+    assert_eq!(fresh, vec![msg(LINK_MSG_BYE, 1, &[])]);
+    assert_eq!(d.unwrap().called_off_by, Some(1));
+
+    // The child comes back with the same link block and numbers the relay forgot:
+    // it gets BYE (the parent is gone) on its own stream, and its stale data goes nowhere.
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_DATA, 1, &[3])],
+    );
+    let (d, fresh) = c.recv(&mut lobby, 1);
+    assert_eq!(fresh, vec![msg(LINK_MSG_BYE, 0, &[])]);
+    assert_eq!(d.unwrap().called_off_by, Some(1));
+    assert!(p.recv(&mut lobby, 0).1.is_empty());
+
+    // The same, but the client read relay packets queued from before the call-off after
+    // the trailer the relay picked its stream up from: its ack runs past the BYE's number.
+    let (mut lobby, mut p, mut c, _) = linked_room();
+    lobby.set_client_timeout(Duration::from_secs(5));
+    p.send(
+        &mut lobby,
+        0,
+        LINK_ROLE_PARENT,
+        None,
+        vec![msg(LINK_MSG_DATA, 0, &[7]), msg(LINK_MSG_DATA, 0, &[8])],
+    );
+    let stale = lobby.link_down_for(1, Instant::now()).unwrap(); // still in flight
+    lobby.backdate_client(1, LINK_DEADLINE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]); // back: the relay picks it up
+    c.recv_next = c.recv_next.wrapping_add(stale.msgs.len() as u16); // then reads the stale ones
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]);
+    let (_, fresh) = c.recv(&mut lobby, 1);
+    assert_eq!(
+        fresh,
+        vec![msg(LINK_MSG_BYE, 0, &[])],
+        "the BYE is renumbered, not lost"
+    );
+
+    // Any link block holds the slot past the usual timeout (the bystander child too);
+    // a player without one is pruned at it.
+    lobby.backdate_client(2, Duration::from_secs(6));
+    lobby.prune_stale_clients();
+    assert!(lobby.is_slot_occupied(2));
+    let no_trailer = packet(2, SessionOut::default(), true); // its link block closed
+    lobby.handle_client_packet(addr(2), no_trailer).unwrap();
+    lobby.backdate_link(2, LINK_SILENCE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    lobby.backdate_client(2, Duration::from_secs(6));
+    lobby.prune_stale_clients();
+    assert!(!lobby.is_slot_occupied(2));
+
+    // The parent goes quiet instead: every child gets BYE at the deadline, and the
+    // parent its children's BYEs when it comes back.
+    let (mut lobby, mut p, mut c, _) = linked_room();
+    lobby.backdate_client(0, LINK_DEADLINE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    let (d, fresh) = c.recv(&mut lobby, 1);
+    assert_eq!(fresh, vec![msg(LINK_MSG_BYE, 0, &[])]);
+    assert_eq!(d.unwrap().called_off_by, Some(0));
+    p.send(&mut lobby, 0, LINK_ROLE_PARENT, None, vec![]);
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_BYE, 1, &[])]);
+
+    // A quiet member that left the room for good is called off the same way.
+    let (mut lobby, _p, mut c, _) = linked_room();
+    lobby.remove_client_by_addr(addr(0));
+    let (d, fresh) = c.recv(&mut lobby, 1);
+    assert_eq!(fresh, vec![msg(LINK_MSG_BYE, 0, &[])]);
+    assert_eq!(d.unwrap().called_off_by, Some(0));
+
+    // A new link block (another epoch) is a new session: no stale BYE.
+    let (mut lobby, mut p, _c, _) = linked_room();
+    lobby.backdate_client(0, LINK_DEADLINE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    p.epoch = p.epoch.wrapping_add(1);
+    p.next_seq = 0;
+    p.recv_next = 0;
+    p.send(&mut lobby, 0, LINK_ROLE_PARENT, None, vec![]);
+    let (d, fresh) = p.recv(&mut lobby, 0);
+    assert!(fresh.is_empty());
+    assert_eq!(d.unwrap().called_off_by, None);
 }

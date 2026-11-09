@@ -813,7 +813,11 @@ void Coop_CommUpdate(void)
     u32 buf[COOP_LINK_DATA_MAX / 4];
     u8 slot;
 
-    if (blk == NULL || !blk->linked || cw == NULL || (cw->transferMode != 1 && cw->transferMode != 2))
+    // Unlinked, nothing goes out; but once a battle's lost link is decided (the watchdog's
+    // count), my own commands still loop back: the host's battle ends only when its own
+    // game has done them (src/battle/coop_link_battle.c).
+    if (blk == NULL || (!blk->linked && gCoopCommBlock.track_link_lost_frames < COOP_LINK_BATTLE_LOST_FRAMES)
+        || cw == NULL || (cw->transferMode != 1 && cw->transferMode != 2))
         return;
     lc = (struct CoopLinkComm *)(blk + 1);
     pool = &cw->childQueue;

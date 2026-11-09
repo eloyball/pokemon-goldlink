@@ -5,6 +5,7 @@
 #include "coop_sync.h"
 #include "coop_link.h"
 #include "system.h"
+#include "battle.h"
 
 // ---------------------------------------------------------------------------
 // Link battle watchdog, battle side (docs/MILESTONE3_PLAN.md §17). In the
@@ -12,12 +13,13 @@
 // code (src/coop_link.c Coop_LinkBattleWatchdog) calls it through the header
 // below every frame of a co-op link battle's app.
 //
-// A link lost for a moment ends the battle the way vanilla's
-// BattleLink_RecvEnd does when the server is done: the link tasks stop and
-// the battle finishes; an undecided battle is a draw.
+// A lost link is decided by the relay (the referee, docs/LINK_BATTLE_REWORK.md
+// part 3): its BYE, or this game out of the room. Then the host ends the
+// battle the way vanilla's BattleLink_RecvEnd does once its own game is done:
+// the link tasks stop and the battle finishes; an undecided battle is a draw.
+// The other games, which can't see their own commands, go back to the title.
 // ---------------------------------------------------------------------------
 
-#define COOP_LINK_BATTLE_LOST_FRAMES 30
 #define COOP_BSTATE_BATTLE_MAIN      9 // ccd battle_022378C0.c BattleState
 
 // ccd OverlayManager: the app's state, its data.
@@ -29,6 +31,7 @@
 #define BSYS_LINK_RECV_STATE 0x23F8
 #define BSYS_BG_TILES        0x220 // bgTiles (then bgPalette, 0x224): allocated by the server's
                                    // SetBattleBackground command (ccd battle_system.c)
+#define BSYS_IS_SERVER       0x23FC // isServer (ccd BattleSystem): the host runs the battle
 #define BSYS_FINISHED        0x23FE
 #define BSYS_OUTCOME         0x2420
 #define BATTLE_LINK_STATE_END 0xFF
@@ -41,6 +44,20 @@ static u32 Coop_ReadWord(const u8 *p)
 
     __builtin_memcpy(&v, p, 4);
     return v;
+}
+
+// The host's own game has done every command its server sent it (ServerQue[0]: an entry
+// per command sent, cleared when that game reports it done; src/battle/battle_script_commands.c).
+static BOOL Coop_HostGameIdle(const u8 *bsys)
+{
+    const struct BattleStruct *sp = ((const struct BattleSystem *)bsys)->sp;
+    int battler, j;
+
+    for (battler = 0; battler < 4; battler++)
+        for (j = 0; j < 16; j++)
+            if (sp->ServerQue[0][battler][j] != 0)
+                return FALSE;
+    return TRUE;
 }
 
 static void Coop_LinkBattleLost(u8 *app)
@@ -75,6 +92,15 @@ static void Coop_LinkBattleLost(u8 *app)
     if (state != COOP_BSTATE_BATTLE_MAIN || Coop_ReadWord(bsys + BSYS_BG_TILES) == 0) // bgPalette follows it
         OS_ResetSystem(0);
     if (bsys[BSYS_FINISHED])
+        return;
+    // The battle's exit frees its menus and sprites under any task still running a command:
+    // a player choosing a move when the link was lost crashed the game (a data abort in
+    // BattleInput_CheckTouch, link rework phase 3). The host sees its own game's commands and
+    // ends once they are done (a choice in progress ends with the player's choice, which goes
+    // nowhere). The other games can't tell theirs: they go back to the title as above.
+    if (!bsys[BSYS_IS_SERVER])
+        OS_ResetSystem(0);
+    if (!Coop_HostGameIdle(bsys))
         return;
     send = (u8 *)Coop_ReadWord(bsys + BSYS_LINK_SEND_STATE);
     recv = (u8 *)Coop_ReadWord(bsys + BSYS_LINK_RECV_STATE);

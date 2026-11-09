@@ -24,6 +24,9 @@ BOOL LONG_CALL Coop_LinkBattleIsLost(void);
 // first in the overlay: what resident code calls while the battle app runs.
 // The field extension and the Pokegear's share the address: check the app
 // and the magic first.
+// Frames a battle's link stays lost before the watchdog ends the battle (src/battle/coop_link_battle.c).
+#define COOP_LINK_BATTLE_LOST_FRAMES 30
+
 #define COOP_BATTLE_EXT_MAGIC 0x31544243 // "CBT1"
 
 struct CoopBattleExt

@@ -217,7 +217,10 @@ BOOL Coop_Task_BossBattle(TaskManager *taskman)
         gCoopBoss.linkLost = gCoopCommBlock.track_link_battle == COOP_LINK_BATTLE_LOST;
         gCoopCommBlock.track_link_battle = COOP_LINK_BATTLE_NONE;
         // Only the Pokemon that went in come back, each to its own slot; the
-        // rest of the save's party stays as it was.
+        // rest of the save's party stays as it was. A called-off battle (the
+        // link was lost) leaves the party as before it: nothing fainted in it
+        // counts (Nuzlocke: no Pokemon dies on a disconnect).
+        if (!gCoopBoss.linkLost)
         {
             struct Party *save = SaveArray_Party_Get(fsys->savedata);
             struct Party *fought = env->setup->party[env->seat];

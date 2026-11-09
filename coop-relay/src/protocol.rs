@@ -495,9 +495,17 @@ pub struct LinkDown {
     /// A late trailer of an earlier block must not ack or deliver into the next one (the
     /// stream restarts at 0). Relays before it sent 0, 0 there: no epoch, accepted.
     pub epoch: Option<u8>,
+    /// Bytes 12-13 (protocol 9, the referee, dev/docs/LINK_BATTLE_REWORK.md part 3): the
+    /// player ids of my link group the battle waits for (silent for a moment), a bitmap;
+    /// and the player whose loss called my battle off (`LINK_NOBODY`: none).
+    pub waiting: u8,
+    pub called_off_by: Option<u8>,
     pub beacons: Vec<(u8, LinkBeacon)>, // (absolute player id, beacon) of the room's parents
     pub msgs: Vec<LinkMsg>,
 }
+
+/// `LinkDown::called_off_by` on the wire when nobody called the battle off.
+pub const LINK_NOBODY: u8 = 0xFF;
 
 fn put_msgs(buf: &mut Vec<u8>, msgs: &[LinkMsg]) {
     for m in msgs {
@@ -626,6 +634,8 @@ impl LinkDown {
             Some(e) => buf.extend_from_slice(&[e, 1]),
             None => buf.extend_from_slice(&[0, 0]),
         }
+        buf.push(self.waiting);
+        buf.push(self.called_off_by.unwrap_or(LINK_NOBODY));
         for (player, b) in &self.beacons {
             buf.push(*player);
             buf.push(b.data.len() as u8);
@@ -648,6 +658,8 @@ impl LinkDown {
         let first_seq = r.u16()?;
         let epoch_byte = r.u8()?;
         let epoch = if r.u8()? == 1 { Some(epoch_byte) } else { None };
+        let waiting = r.u8()?;
+        let called_off_by = Some(r.u8()?).filter(|&p| p != LINK_NOBODY);
         if beacon_count > MAX_PLAYERS {
             return None;
         }
@@ -676,6 +688,8 @@ impl LinkDown {
             ack,
             first_seq,
             epoch,
+            waiting,
+            called_off_by,
             beacons,
             msgs,
         })

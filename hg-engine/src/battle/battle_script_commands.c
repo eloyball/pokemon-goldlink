@@ -996,10 +996,11 @@ BOOL btl_scr_cmd_0E_waitmessage(void *bw UNUSED, struct BattleStruct *sp)
         }
     }
 #endif
+    // No Link_CheckTimeout (vanilla: an error after 1800 frames of waiting): in a co-op link
+    // battle the relay decides when a quiet game is gone (docs/LINK_BATTLE_REWORK.md part 3),
+    // and its decision ends the battle on every game (src/battle/coop_link_battle.c).
     if (empty) {
         IncrementBattleScriptPtr(sp, 1);
-    } else {
-        Link_CheckTimeout(sp);
     }
 
     sp->battle_progress_flag = 1;

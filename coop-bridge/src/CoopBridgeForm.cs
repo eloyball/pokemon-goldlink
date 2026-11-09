@@ -484,6 +484,11 @@ namespace CoopBridge
                 Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".", "..", ConfigFileName));
         private const string OffsetsFileName = "coop_offsets.json";
         private const double ServerTimeoutSeconds = 3.0;
+        // In a link session (dev/docs/LINK_BATTLE_REWORK.md part 3): past the relay's 30 s
+        // deadline and the 60 s it keeps a called-off player's slot (coop-relay LINK_DEADLINE),
+        // so the relay decides, and this game hears it, whenever the network comes back in time.
+        private const double LinkServerTimeoutSeconds = 65.0;
+        private const double LinkServerQuietSeconds = 1.0;
         // Challenges prove the relay is reachable, but must lead to a real
         // OK packet within this long (e.g. a NAT that changes our port per
         // packet would otherwise keep us "connecting" forever).
@@ -1275,6 +1280,68 @@ namespace CoopBridge
             UpdateControls();
         }
 
+        private string? _linkStatus;            // the referee's line on the status bar, while shown
+        private string _statusBeforeLink = "";  // what it replaced
+
+        /// <summary>
+        /// The relay's referee on the status line (dev/docs/LINK_BATTLE_REWORK.md part 3): who a
+        /// link battle waits for, a quiet server, and who its being called off is down to. The
+        /// "called off" line stays after the link session ends; a "waiting" line gives way to
+        /// what it replaced.
+        /// </summary>
+        private void ShowLinkReferee(uint mb, bool inLink)
+        {
+            string? status = null;
+            bool error = false;
+            if (inLink)
+            {
+                var (waiting, calledOffBy) = _linkCarrier.Referee;
+                if (calledOffBy != CoopLink.NoPlayer)
+                {
+                    status = calledOffBy == _assignedSlot
+                        ? "The battle was called off: you lost the connection."
+                        : $"The battle was called off: {PlayerName(mb, calledOffBy)} lost the connection.";
+                    error = true;
+                }
+                else if ((DateTime.UtcNow - _lastServerPacketUtc).TotalSeconds > LinkServerQuietSeconds)
+                {
+                    status = "Waiting for the server…";
+                }
+                else if (waiting != 0)
+                {
+                    var names = new List<string>();
+                    for (byte p = 0; p < 6; p++)
+                        if ((waiting & (1 << p)) != 0) names.Add(PlayerName(mb, p));
+                    status = $"Waiting for {string.Join(", ", names)}…";
+                }
+            }
+            if (status == _linkStatus) return;
+            bool wasCalledOff = _linkStatus != null && _linkStatus.StartsWith("The battle was called off", StringComparison.Ordinal);
+            if (_linkStatus == null) _statusBeforeLink = _message;
+            if (status != null) SetStatus(status, error);
+            else if (!wasCalledOff) SetStatus(_statusBeforeLink, isError: false);
+            _linkStatus = status;
+        }
+
+        /// <summary>A player's trainer name from the relay payload (mine from my own state).</summary>
+        private string PlayerName(uint mb, byte player)
+        {
+            string name = "";
+            if (player == _assignedSlot)
+            {
+                name = DecodeName(_localPlayer, 0);
+            }
+            else if (player < 6 && _assignedSlot < 6)
+            {
+                int remote = player < _assignedSlot ? player : player - 1;
+                var raw = _memoryApi!.ReadByteRange(mb + Mailbox.ServerPayload + (uint)(remote * Mailbox.PlayerStateSize), Mailbox.PlayerStateSize, MemoryDomain);
+                byte[] state = new byte[Mailbox.PlayerStateSize];
+                for (int i = 0; i < state.Length && i < raw.Count; i++) state[i] = raw[i];
+                if (BitConverter.ToUInt32(state, Mailbox.PsTrainerId) != 0) name = DecodeName(state, 0);
+            }
+            return name.Length > 0 ? name : $"player {player + 1}";
+        }
+
         /// <summary>Single place that maps the link state onto every control.</summary>
         private void UpdateControls()
         {
@@ -1787,7 +1854,12 @@ namespace CoopBridge
             }
             if (type != ToolFormUpdateType.PostFrame && type != ToolFormUpdateType.FastPostFrame) return;
             if (_closing) return;
-            _lastFrameUtc = DateTime.UtcNow;
+            DateTime frameUtc = DateTime.UtcNow;
+            // This game was frozen (a paused emulator, a sleeping machine): the server's silence
+            // meanwhile was ours, so it gets a fresh window to answer (link rework part 3).
+            if (_link == LinkState.Connected && (frameUtc - _lastFrameUtc).TotalSeconds > ServerTimeoutSeconds)
+                _lastServerPacketUtc = frameUtc;
+            _lastFrameUtc = frameUtc;
 
             try
             {
@@ -1829,6 +1901,7 @@ namespace CoopBridge
                 if (_link == LinkState.Offline) return; // server rejected us
                 uint? linkBlock = CoopLink.Find(_memoryApi, MemoryDomain, _memoryApi.ReadU32(mb + Mailbox.ExchangePtr, MemoryDomain));
                 _linkCarrier.Pump(_memoryApi, MemoryDomain, linkBlock, _assignedSlot);
+                ShowLinkReferee(mb, linkBlock != null);
                 TryTakeBackup(mb);
 #if !COOP_SHIP // the debug tools: compiled out of releases (docs/RELEASE_PLAN.md §11 D3)
                 DevMaybeLeaveInBattle();
@@ -1839,7 +1912,10 @@ namespace CoopBridge
                 bool handshaking = (now - lastChallenge).TotalSeconds <= ServerTimeoutSeconds
                     && (now - _lastServerPacketUtc).TotalSeconds <= HandshakeTimeoutSeconds;
 
-                if (!handshaking && (now - _lastServerPacketUtc).TotalSeconds > ServerTimeoutSeconds)
+                // In a link session the relay is the referee: a quiet server is waited for past its
+                // deadline, then this game ends its battle on its own (the ROM sees the room gone).
+                double serverTimeout = linkBlock != null ? LinkServerTimeoutSeconds : ServerTimeoutSeconds;
+                if (!handshaking && (now - _lastServerPacketUtc).TotalSeconds > serverTimeout)
                 {
                     // Never connected: no answer at all. Besides a wrong address or a closed port,
                     // an old relay drops another version's packets without a word.
