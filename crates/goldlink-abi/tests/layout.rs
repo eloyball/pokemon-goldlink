@@ -43,8 +43,8 @@ fn trade_and_link_block_sizes() {
     assert_eq!(size_of::<CoopLinkMsg>(), 0xC4);
     assert_eq!(size_of::<CoopLinkBeacon>(), 0x78);
     assert_eq!(size_of::<CoopLinkBlock>(), 0xDB0);
-    // Pointers are ARM9 addresses (u32): the send callbacks at 0xD9C.
-    assert_eq!(offset_of!(CoopLinkBlock, sent), 0xD9C);
+    // The message link (link battle rework phase 1) retired the send callbacks: 0xD9C is unused.
+    assert_eq!(offset_of!(CoopLinkBlock, unused_d9c), 0xD9C);
 }
 
 #[test]

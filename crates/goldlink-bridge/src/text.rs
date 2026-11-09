@@ -193,7 +193,8 @@ mod tests {
             describe_rules(0x0010 | (1 << 5) | 0x0080 | 0x0200 | 1 | 4, 9),
             "Random encounters: Semi-random, legends in the wild; Nuzlocke, Soul-Link world-wide; Monolocke (Fairy); Random items"
         );
-        assert!(protocol_mismatch(7).contains("older"));
-        assert!(protocol_mismatch(9).contains("newer"));
+        let ours = goldlink_proto::PROTOCOL_VERSION;
+        assert!(protocol_mismatch(ours - 1).contains("older"));
+        assert!(protocol_mismatch(ours + 1).contains("newer"));
     }
 }
