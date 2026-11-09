@@ -276,7 +276,7 @@ namespace CoopBridge
     /// <summary>UDP wire format. Must match coop-relay/src/protocol.rs.</summary>
     internal static class Wire
     {
-        public const ushort ProtocolVersion = 8;
+        public const ushort ProtocolVersion = 9;
         public const int ClientPacketSize = 120;   // + Mailbox.TradeOutSize while the ROM has a trade open, + a link trailer (CoopLink), + the challenge trailer (always last)
         public const int ServerPacketSize = 360;
         public const int ErrorPacketSize = 16;
