@@ -56,6 +56,15 @@ struct Pending {
 /// One routed message for the in ring: kind, aid, data.
 type InMsg = (u8, u8, Vec<u8>);
 
+/// What the carrier asks of a QUIC connection's link stream (protocol 9, the rework plan
+/// §7.1): one per link block, opened with the block, finished with it (the BYE).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamCmd {
+    Open(u8),
+    Send(u8, wire::LinkMsg),
+    Close(u8),
+}
+
 #[derive(Default)]
 pub struct LinkCarrier {
     active: bool,
@@ -74,6 +83,11 @@ pub struct LinkCarrier {
     /// the battle waits for (a bitmap), and the player whose loss called it off.
     waiting: u8,
     called_off_by: Option<u8>,
+    /// This block's messages travel on a QUIC link stream (no numbers, no resends: QUIC's);
+    /// `want_stream` decides it for the next block.
+    stream: bool,
+    want_stream: bool,
+    stream_cmds: Vec<StreamCmd>,
 }
 
 /// Main-RAM offset of a valid link block at ARM9 address `ptr`, or None.
@@ -131,6 +145,7 @@ impl LinkCarrier {
         self.role = 0;
         self.waiting = 0;
         self.called_off_by = None;
+        self.stream = false;
     }
 
     /// The relay's referee for my link session: who the battle waits for (a player bitmap) and
@@ -143,20 +158,57 @@ impl LinkCarrier {
         }
     }
 
+    /// Whether the next link block's messages go on a QUIC link stream (the connection is
+    /// QUIC). A block keeps the way it started with.
+    pub fn set_stream(&mut self, on: bool) {
+        self.want_stream = on;
+    }
+
+    /// What the link stream must do (open, send, close), in order, since the last call.
+    pub fn take_stream_cmds(&mut self) -> Vec<StreamCmd> {
+        std::mem::take(&mut self.stream_cmds)
+    }
+
+    /// Messages from QUIC link streams: those of this block's go to the in ring as they make
+    /// room (nothing is dropped: QUIC already delivered them in order).
+    pub fn on_stream_msgs(&mut self, msgs: Vec<(u8, wire::LinkMsg)>) {
+        for (epoch, m) in msgs {
+            if self.active
+                && self.stream
+                && epoch == self.epoch
+                && (1..=MSG_KIND_MAX).contains(&m.kind)
+                && m.aid <= 15
+            {
+                self.inbox.push_back((m.kind, m.aid, m.data));
+            }
+        }
+    }
+
+    fn end_block(&mut self) {
+        if self.active && self.stream {
+            self.stream_cmds.push(StreamCmd::Close(self.epoch));
+        }
+        self.reset();
+    }
+
     /// After a frame. `block`: the link block's main-RAM offset (None: no link session).
     pub fn pump(&mut self, ram: &mut [u8], block: Option<usize>, my_player: u8) {
         let Some(blk) = block else {
             if self.active {
-                self.reset();
+                self.end_block();
             }
             self.received.clear();
             return;
         };
         if !self.active || blk != self.block {
-            self.reset();
+            self.end_block();
             self.active = true;
             self.block = blk;
             self.epoch = self.epoch.wrapping_add(1);
+            self.stream = self.want_stream;
+            if self.stream {
+                self.stream_cmds.push(StreamCmd::Open(self.epoch));
+            }
         }
 
         // My messages and beacon.
@@ -166,6 +218,18 @@ impl LinkCarrier {
         while tail != head && self.out.len() < 256 {
             let m = blk + OFF_OUT + (tail % OUT_SLOTS) as usize * MSG_SIZE;
             let len = (u16_at(ram, m + 2) as usize).min(DATA_MAX);
+            if self.stream {
+                self.stream_cmds.push(StreamCmd::Send(
+                    self.epoch,
+                    wire::LinkMsg {
+                        kind: ram[m],
+                        aid: ram[m + 1],
+                        data: ram[m + 4..m + 4 + len].to_vec(),
+                    },
+                ));
+                tail = tail.wrapping_add(1);
+                continue;
+            }
             self.out.push(Pending {
                 seq: self.out_next,
                 kind: ram[m],
@@ -197,7 +261,7 @@ impl LinkCarrier {
     /// since the last frame goes into the in ring now, so the game handles it this frame. Only
     /// the receiving half, on the block the last pump validated (the game hasn't run since).
     pub fn pump_in(&mut self, ram: &mut [u8], my_player: u8) {
-        if self.active && !self.received.is_empty() {
+        if self.active && (!self.received.is_empty() || !self.inbox.is_empty()) {
             let blk = self.block;
             self.deliver_in(ram, blk, my_player);
         }
@@ -264,6 +328,9 @@ impl LinkCarrier {
         }
         self.waiting = t[12];
         self.called_off_by = (t[13] < wire::MAX_PLAYERS as u8).then_some(t[13]);
+        if self.stream {
+            return Some(beacons); // the messages come on the link stream
+        }
         self.out.retain(|p| !seq_before(p.seq, ack));
         for i in 0..count {
             if pos + 4 > t.len() {
@@ -545,5 +612,36 @@ mod tests {
         assert_eq!(c.referee(), (0b10, Some(1)));
         c.pump(&mut ram, None, 0);
         assert_eq!(c.referee(), (0, None), "cleared with the link block");
+    }
+
+    /// Protocol 9: a QUIC block's messages go on its link stream, not the trailer.
+    #[test]
+    fn a_stream_block() {
+        let (mut ram, blk) = ram_with_block();
+        let mut c = LinkCarrier::new();
+        c.set_stream(true);
+        c.pump(&mut ram, Some(blk), 1);
+        assert_eq!(c.take_stream_cmds(), vec![StreamCmd::Open(1)]);
+        put_out(&mut ram, blk, 0, wire::LINK_MSG_DATA, b"hi");
+        ram[blk + OFF_OUT_HEAD] = 1;
+        c.pump(&mut ram, Some(blk), 1);
+        let hi = wire::LinkMsg {
+            kind: wire::LINK_MSG_DATA,
+            aid: 0,
+            data: b"hi".to_vec(),
+        };
+        assert_eq!(c.take_stream_cmds(), vec![StreamCmd::Send(1, hi.clone())]);
+        let t = c.build_trailer(Instant::now()).unwrap();
+        assert_eq!(t[7], 0, "no messages in the trailer");
+        // A relay trailer's messages are ignored; the stream's (this block's) reach the ring.
+        let pkt = |t: Vec<u8>| [vec![0u8; wire::SERVER_PACKET_SIZE], t].concat();
+        c.on_server_packet(&pkt(down(1, 0, 0, &[b"x"])));
+        c.on_stream_msgs(vec![(0, hi.clone()), (1, hi.clone())]);
+        c.pump_in(&mut ram, 1);
+        assert_eq!(ram[blk + OFF_IN_HEAD], 1);
+        assert_eq!(&ram[blk + OFF_IN + 4..blk + OFF_IN + 6], b"hi");
+        // The block ends: the stream is finished (the BYE).
+        c.pump(&mut ram, None, 1);
+        assert_eq!(c.take_stream_cmds(), vec![StreamCmd::Close(1)]);
     }
 }

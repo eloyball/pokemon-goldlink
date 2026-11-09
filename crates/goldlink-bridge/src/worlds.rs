@@ -23,6 +23,17 @@ pub struct WorldEntry {
     /// Unix seconds (0 = unknown).
     #[serde(default)]
     pub last_played: i64,
+    /// The relay's QUIC certificate fingerprint (SHA-256, hex; "" = none yet), pinned on the
+    /// first connection (protocol 9, trust on first use): from then on it is required.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pin: String,
+    /// The relay's QUIC port, learned with the pin.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub quic_port: u16,
+}
+
+fn is_zero(v: &u16) -> bool {
+    *v == 0
 }
 
 impl WorldEntry {
@@ -91,11 +102,33 @@ impl WorldList {
                 server: server.to_owned(),
                 created,
                 last_played: now,
+                pin: String::new(),
+                quic_port: 0,
             }),
         }
         self.sort();
         self.entries.truncate(MAX_ENTRIES);
         self.save();
+    }
+
+    /// Pins the relay's QUIC certificate (hex) and port for a world on `server` (a world that
+    /// moved to another server starts over: no pin carries across servers).
+    pub fn set_pin(&mut self, code: &str, server: &str, pin: &str, quic_port: u16) {
+        if let Some(e) = self.entries.iter_mut().find(|e| e.code == code) {
+            if e.server != server {
+                e.server = server.to_owned();
+            }
+            e.pin = pin.to_owned();
+            e.quic_port = quic_port;
+            self.save();
+        }
+    }
+
+    /// The pin and QUIC port recorded for a world on `server`, if any.
+    pub fn pin_for(&self, code: &str, server: &str) -> Option<(String, u16)> {
+        self.find(code)
+            .filter(|e| e.server == server && !e.pin.is_empty() && e.quic_port != 0)
+            .map(|e| (e.pin.clone(), e.quic_port))
     }
 
     pub fn forget(&mut self, code: &str) {
@@ -142,6 +175,8 @@ impl WorldList {
                 server: String::new(),
                 created: false,
                 last_played: modified,
+                pin: String::new(),
+                quic_port: 0,
             });
         }
         self.sort();

@@ -9,8 +9,8 @@ use tracing::{debug, info, warn};
 
 use coop_relay::lobby::{Rejection, RoomManager, DEFAULT_MAX_ROOMS};
 use coop_relay::protocol::{
-    ClientToServerPacket, ProtocolError, ServerToClientPacket, CLIENT_PACKET_MAX,
-    ERROR_PACKET_SIZE, PROTOCOL_VERSION, ROOM_STATUS_ERR_PROTOCOL,
+    challenge_with_offer, ClientToServerPacket, ProtocolError, QuicOffer, ServerToClientPacket,
+    CLIENT_PACKET_MAX, ERROR_PACKET_SIZE, PROTOCOL_VERSION, ROOM_STATUS_ERR_PROTOCOL,
 };
 use coop_relay::quic::{self, QuicServer};
 
@@ -54,10 +54,14 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_MAX_ROOMS)]
     max_rooms: usize,
 
-    /// Also listen for QUIC (encrypted; the unified client) on this address and UDP port, e.g.
-    /// 0.0.0.0:7778. Players add the fingerprint printed at startup to the server address.
+    /// Listen for QUIC (encrypted; the unified client) on this address and UDP port instead of
+    /// the default, the bind address's port + 1 (7778 next to 7777).
     #[arg(long)]
     quic: Option<SocketAddr>,
+
+    /// Don't listen for QUIC: players connect over plain UDP only.
+    #[arg(long, conflicts_with = "quic")]
+    no_quic: bool,
 }
 
 /// Sends a packet to a player: over QUIC to a QUIC player's stand-in address, else UDP.
@@ -71,21 +75,34 @@ async fn send(socket: &UdpSocket, quic: Option<&QuicServer>, addr: SocketAddr, p
     }
 }
 
+/// What the lobby queued for QUIC players' link and trade streams (protocol 9).
+fn flush_streams(manager: &mut RoomManager, quic: Option<&QuicServer>) {
+    let links = manager.take_link_stream_out();
+    let trades = manager.take_trade_stream_out();
+    if let Some(q) = quic {
+        for o in links {
+            q.send_link(o.addr, o.epoch, &o.msg);
+        }
+        for o in trades {
+            q.send_trade(o.addr, o.frame);
+        }
+    }
+}
+
 /// One packet from a player, by UDP or QUIC: the replies to send.
 fn handle(
     manager: &mut RoomManager,
     data: &[u8],
     peer_addr: SocketAddr,
+    offer: Option<QuicOffer>,
 ) -> Vec<(SocketAddr, Vec<u8>)> {
     match ClientToServerPacket::decode_le(data) {
         Ok(pkt) => match manager.handle_client_packet(peer_addr, pkt) {
             Ok(_) => manager.take_immediate(),
             // Both replies are smaller than the request (no amplification).
+            // Protocol 9: with the QUIC offer (port, fingerprint) before any secret is sent.
             Err(Rejection::Challenge(cookie)) => {
-                vec![(
-                    peer_addr,
-                    ServerToClientPacket::create_challenge_response(cookie).to_vec(),
-                )]
+                vec![(peer_addr, challenge_with_offer(cookie, offer))]
             }
             Err(Rejection::Status(status)) => {
                 vec![(
@@ -145,16 +162,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.save_dir
     );
 
-    let (quic_server, mut quic_rx) = match args.quic {
+    // QUIC by default (protocol 9, rework plan §7.3): on the bind address's port + 1.
+    let quic_addr = match (args.no_quic, args.quic) {
+        (true, _) => None,
+        (false, Some(addr)) => Some(addr),
+        (false, None) => {
+            let mut a = args.bind;
+            a.set_port(args.bind.port().wrapping_add(1));
+            Some(a)
+        }
+    };
+    let (quic_server, mut quic_rx, offer) = match quic_addr {
         Some(addr) => {
             let (server, rx, fp) = QuicServer::start(addr, &args.save_dir, CLIENT_PACKET_MAX)?;
             info!(
-                "QUIC on UDP {addr}: players join with <host>:{}#{fp}",
-                addr.port()
+                "QUIC on UDP {addr} (open this port too): players join with <host>:{} and trust \
+                 this certificate on first use, or pin it with <host>:{}#{}",
+                args.bind.port(),
+                addr.port(),
+                quic::fingerprint_hex(&fp)
             );
-            (Some(server), Some(rx))
+            let offer = QuicOffer {
+                port: addr.port(),
+                fingerprint: fp,
+            };
+            (Some(server), Some(rx), Some(offer))
         }
-        None => (None, None),
+        None => {
+            info!("QUIC off (--no-quic): players connect over plain UDP");
+            (None, None, None)
+        }
     };
 
     let mut manager = RoomManager::new(
@@ -191,9 +228,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         warn!("Dropped an oversized packet from {peer_addr} ({len}+ bytes)");
                     }
                     Ok((len, peer_addr)) => {
-                        for (addr, payload) in handle(&mut manager, &recv_buf[..len], peer_addr) {
+                        for (addr, payload) in handle(&mut manager, &recv_buf[..len], peer_addr, offer) {
                             send(&socket, quic_server.as_ref(), addr, payload).await;
                         }
+                        flush_streams(&mut manager, quic_server.as_ref());
                     }
                     Err(err) => {
                         warn!("UDP socket receive error: {err}");
@@ -201,10 +239,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            Some((peer_addr, data)) = async { quic_rx.as_mut()?.recv().await }, if quic_rx.is_some() => {
-                for (addr, payload) in handle(&mut manager, &data, peer_addr) {
+            Some(event) = async { quic_rx.as_mut()?.recv().await }, if quic_rx.is_some() => {
+                let replies = match event {
+                    quic::Incoming::Packet(peer_addr, data) => handle(&mut manager, &data, peer_addr, offer),
+                    quic::Incoming::Link(peer_addr, event) => {
+                        manager.link_stream_event(peer_addr, event);
+                        manager.take_immediate()
+                    }
+                    quic::Incoming::Trade(peer_addr, event) => {
+                        manager.trade_stream_event(peer_addr, event);
+                        Vec::new()
+                    }
+                };
+                for (addr, payload) in replies {
                     send(&socket, quic_server.as_ref(), addr, payload).await;
                 }
+                flush_streams(&mut manager, quic_server.as_ref());
             }
 
             _ = broadcast_timer.tick() => {
@@ -212,6 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for (addr, payload) in batch {
                     send(&socket, quic_server.as_ref(), addr, payload).await;
                 }
+                flush_streams(&mut manager, quic_server.as_ref());
             }
 
             _ = summary_timer.tick() => {

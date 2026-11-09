@@ -70,6 +70,22 @@ pub struct View {
     pub room_rules: Option<(u16, u8)>,
     pub save_line: String,
     pub has_backups: bool,
+    /// A world's relay presented another certificate than the pinned one (its fingerprint, hex):
+    /// the world panel offers to trust it.
+    pub identity_change: Option<String>,
+}
+
+/// A world's relay presented another QUIC certificate than the one pinned with it.
+#[derive(Debug, Clone)]
+struct IdentityChange {
+    code: String,
+    server: String,
+    fingerprint: [u8; 32],
+    quic_port: u16,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 const SERVER_TIMEOUT: Duration = Duration::from_secs(3);
@@ -112,6 +128,16 @@ pub struct Bridge {
     local_player: [u8; PLAYER_STATE_SIZE],
     session_out: [u8; SESSION_OUT_SIZE],
     trade_out: Option<[u8; TRADE_OUT_SIZE]>,
+    /// QUIC by default (protocol 9, the rework plan §7.3): a world's first connection says hello
+    /// over UDP without any secret, to learn the relay's QUIC offer (`probe`); what it learned,
+    /// pinned with the world on the first OK; a changed certificate, for the world panel.
+    probe: bool,
+    learned: Option<wire::QuicOffer>,
+    identity_change: Option<IdentityChange>,
+    /// Over QUIC (protocol 9): the trade travels on a trade stream while the ROM has an
+    /// exchange open; the TradeOut last sent on it.
+    trade_stream: bool,
+    trade_sent: Option<[u8; TRADE_OUT_SIZE]>,
     challenge_up: Option<[u8; wire::CHALLENGE_UP_SIZE]>,
     badge_mask_local: u16,
     heartbeat_rom: u32,
@@ -177,6 +203,11 @@ impl Bridge {
             local_player: [0; PLAYER_STATE_SIZE],
             session_out: [0; SESSION_OUT_SIZE],
             trade_out: None,
+            trade_stream: false,
+            trade_sent: None,
+            probe: false,
+            learned: None,
+            identity_change: None,
             challenge_up: None,
             badge_mask_local: 0,
             heartbeat_rom: 0,
@@ -280,6 +311,7 @@ impl Bridge {
             return;
         }
         self.link = LinkState::Resolving;
+        self.identity_change = None;
         self.host_mode = create;
         self.set_status(format!("Looking up {server}…"), false);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -315,7 +347,29 @@ impl Bridge {
             );
             return;
         };
-        self.net.set_server(addr);
+        // QUIC by default (protocol 9, the rework plan §7.3). An address typed with its
+        // fingerprint goes over QUIC as typed; a world played on this server before, over QUIC to
+        // the port and certificate pinned then (never over UDP: no silent fallback); a new one
+        // starts with a hello that carries no secret, which learns the relay's QUIC offer.
+        let mut target = addr;
+        self.probe = false;
+        self.learned = None;
+        if target.pin.is_none() {
+            match self
+                .worlds
+                .pin_for(&code, &server)
+                .and_then(|(p, port)| Some((net::parse_pin(&p)?, port)))
+            {
+                Some((pin, port)) => {
+                    target = net::Target {
+                        addr: std::net::SocketAddr::new(target.addr.ip(), port),
+                        pin: Some(pin),
+                    };
+                }
+                None => self.probe = true,
+            }
+        }
+        self.net.connect_fresh(target);
         self.room_code.copy_from_slice(code.as_bytes());
         self.active_room = code.clone();
         self.active_server = server.clone();
@@ -375,6 +429,8 @@ impl Bridge {
         self.link = LinkState::Offline;
         self.resolving = None;
         self.pending_join = None;
+        self.probe = false;
+        self.learned = None;
         self.next_backup = None;
         self.assigned_slot = PLAYER_ID_NONE;
         self.active_room.clear();
@@ -425,6 +481,7 @@ impl Bridge {
             for p in self.net.take_ok_packets() {
                 self.link_carrier.on_server_packet(&p);
             }
+            self.link_carrier.on_stream_msgs(self.net.take_link_in());
             self.link_carrier.pump_in(ram, self.assigned_slot);
         }
     }
@@ -493,12 +550,17 @@ impl Bridge {
         if !matches!(self.link, LinkState::Connecting | LinkState::Connected) {
             self.net.take_ok_packets();
             self.link_carrier.pump(m.main_ram(), None, PLAYER_ID_NONE);
+            self.send_link_stream_cmds();
             self.clear_rom_connection_state(m.main_ram(), mailbox, self.clear_payload_pending);
             self.copy_mailbox(m.main_ram(), mailbox);
             return actions;
         }
 
         self.process_latest_server_packet(m.main_ram(), mailbox);
+        if self.check_quic(m.main_ram(), mailbox) {
+            self.copy_mailbox(m.main_ram(), mailbox);
+            return actions;
+        }
         if self.link == LinkState::Offline {
             self.copy_mailbox(m.main_ram(), mailbox);
             return actions; // the server turned us down
@@ -509,9 +571,12 @@ impl Bridge {
         let in_link = {
             let ram = m.main_ram();
             let block = link::find(ram, u32_at(ram, mailbox + EXCHANGE_PTR));
+            self.link_carrier.on_stream_msgs(self.net.take_link_in());
+            self.link_carrier.set_stream(self.net.is_quic());
             self.link_carrier.pump(ram, block, self.assigned_slot);
             block.is_some()
         };
+        self.send_link_stream_cmds();
         self.show_link_referee(m.main_ram(), mailbox, in_link);
         self.try_take_backup(m, mailbox, &mut actions);
 
@@ -532,7 +597,13 @@ impl Bridge {
             // Never connected: no answer at all. Besides a wrong address or a closed port, an old
             // relay drops another version's packets without a word.
             let reason = if self.link == LinkState::Connecting {
-                text::no_answer()
+                match self.net.quic_port() {
+                    // No silent fallback to UDP (protocol 9).
+                    Some(port) => format!(
+                        "Couldn't reach the server's encrypted port, UDP {port}: ask the host to open it."
+                    ),
+                    None => text::no_answer(),
+                }
             } else {
                 "Lost the connection to the server.".into()
             };
@@ -542,10 +613,95 @@ impl Bridge {
             return actions;
         }
 
+        self.update_trade_stream();
         let pkt = self.build_client_packet(self.active_action);
         self.net.send(&pkt);
         self.copy_mailbox(m.main_ram(), mailbox);
         actions
+    }
+
+    /// QUIC by default (protocol 9): the relay's offer after the secret-free hello, and a
+    /// certificate that isn't the pinned one. True when it ended the connection.
+    fn check_quic(&mut self, ram: &mut [u8], mailbox: usize) -> bool {
+        if self.probe
+            && let Some(offer) = self.net.take_offer()
+        {
+            self.probe = false;
+            if let (Some(o), Some(server)) = (offer, self.net.server()) {
+                // The relay offers QUIC: on to it, pinned to the certificate it named.
+                self.learned = Some(o);
+                self.net.set_server(net::Target {
+                    addr: std::net::SocketAddr::new(server.ip(), o.port),
+                    pin: Some(o.fingerprint),
+                });
+                self.net.begin_session();
+                self.last_server_packet = Instant::now();
+            }
+            // No offer (a relay run with --no-quic): plain UDP, as before protocol 9.
+        }
+        if let Some(net::QuicError::IdentityChanged(seen)) = self.net.take_quic_error() {
+            self.identity_change = Some(IdentityChange {
+                code: self.active_room.clone(),
+                server: self.active_server.clone(),
+                fingerprint: seen,
+                quic_port: self.net.quic_port().unwrap_or(0),
+            });
+            self.disconnect(
+                "This server's identity changed since you last played. If its host replaced its \
+                 certificate, trust the new one below; otherwise don't play there.",
+                true,
+            );
+            self.clear_rom_connection_state(ram, mailbox, true);
+            return true;
+        }
+        false
+    }
+
+    /// The world panel's "trust the new identity": pins the certificate the relay presented
+    /// (the world's last join failed on it). True if a world was re-pinned.
+    pub fn trust_new_identity(&mut self) -> bool {
+        let Some(ic) = self.identity_change.take() else {
+            return false;
+        };
+        let port = self
+            .worlds
+            .pin_for(&ic.code, &ic.server)
+            .map_or(ic.quic_port, |(_, p)| p);
+        if self.worlds.find(&ic.code).is_none() {
+            return false;
+        }
+        self.worlds
+            .set_pin(&ic.code, &ic.server, &hex(&ic.fingerprint), port);
+        self.set_status("Trusted the server's new identity. Join again.", false);
+        true
+    }
+
+    /// Over QUIC (protocol 9, the rework plan §7.1): a trade stream per trade exchange, the
+    /// ROM's TradeOut on it when it changes.
+    fn update_trade_stream(&mut self) {
+        use crate::quic::TradeCmd;
+        if self.trade_stream && (self.trade_out.is_none() || !self.net.is_quic()) {
+            self.net.trade_cmd(TradeCmd::Close);
+            self.trade_stream = false;
+            self.trade_sent = None;
+        }
+        if !self.trade_stream && self.trade_out.is_some() && self.net.is_quic() {
+            self.net.trade_cmd(TradeCmd::Open);
+            self.trade_stream = true;
+        }
+        if self.trade_stream && self.trade_out != self.trade_sent {
+            if let Some(t) = self.trade_out {
+                self.net.trade_cmd(TradeCmd::Send(t.to_vec()));
+            }
+            self.trade_sent = self.trade_out;
+        }
+    }
+
+    /// What the link carrier asked of the QUIC link stream (protocol 9; nothing over UDP).
+    fn send_link_stream_cmds(&mut self) {
+        for cmd in self.link_carrier.take_stream_cmds() {
+            self.net.link_cmd(cmd);
+        }
     }
 
     /// The relay's referee on the status line (dev/docs/LINK_BATTLE_REWORK.md part 3): who a
@@ -679,6 +835,11 @@ impl Bridge {
         tx[13] = self.assigned_slot;
         tx[14] = u8::from(self.allow_ahead);
         tx[15] = self.config.party_size; // the relay honours it only from the host
+        // The secret-free hello (protocol 9, the rework plan §7.3): until the relay said
+        // whether it offers QUIC, only the header (the challenge's cookie comes back for it).
+        if self.probe {
+            return tx;
+        }
         tx[16..20].copy_from_slice(&self.host_token.to_le_bytes());
         tx[20..22].copy_from_slice(&self.badge_mask_local.to_le_bytes());
         self.sequence = self.sequence.wrapping_add(1);
@@ -690,7 +851,7 @@ impl Bridge {
         tx[96..104].copy_from_slice(&self.net.cookie().to_le_bytes());
         tx[104..112].copy_from_slice(&self.config.player_secret.to_le_bytes());
         tx[112..112 + SESSION_OUT_SIZE].copy_from_slice(&self.session_out);
-        if let Some(t) = &self.trade_out {
+        if let Some(t) = self.trade_out.as_ref().filter(|_| !self.trade_stream) {
             tx.extend_from_slice(t);
         }
         if let Some(l) = self.link_carrier.build_trailer(Instant::now()) {
@@ -752,6 +913,11 @@ impl Bridge {
             self.link = LinkState::Connected;
             let (room, server) = (self.active_room.clone(), self.active_server.clone());
             self.worlds.record(&room, &server, created); // Milestone 6 §4.2
+            if let Some(o) = self.learned.take() {
+                // Trust on first use: from now on this world needs this certificate.
+                self.worlds
+                    .set_pin(&room, &server, &hex(&o.fingerprint), o.port);
+            }
             self.set_status(
                 format!("In world {room}. Start or continue your game."),
                 false,
@@ -776,7 +942,12 @@ impl Bridge {
         };
         let server = wire::SERVER_PACKET_SIZE;
         let mut trade = [0u8; TRADE_IN_SIZE];
-        if pkt.len() >= server + TRADE_IN_SIZE && !has_link_magic(pkt, server) {
+        if self.trade_stream {
+            // The relay's latest on the trade stream (protocol 9).
+            if let Some(f) = self.net.trade_down().filter(|f| f[0] == 1) {
+                trade = sanitize::trade_in(&f[1..]);
+            }
+        } else if pkt.len() >= server + TRADE_IN_SIZE && !has_link_magic(pkt, server) {
             trade = sanitize::trade_in(&pkt[server..]);
         }
         ram[ex + EXCHANGE_IN..ex + EXCHANGE_IN + TRADE_IN_SIZE].copy_from_slice(&trade);
@@ -931,6 +1102,7 @@ impl Bridge {
             room: self.active_room.clone(),
             room_rules: self.room_rules,
             save_line,
+            identity_change: self.identity_change.as_ref().map(|ic| hex(&ic.fingerprint)),
             has_backups: !self.backups().is_empty(),
         }
     }
