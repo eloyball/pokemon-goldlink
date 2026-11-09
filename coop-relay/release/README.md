@@ -24,11 +24,11 @@ Windows (`coop-relay-{{VERSION}}-windows.zip`): unzip, open a terminal in the fo
 `coop-relay.exe`, and allow it through Windows Firewall when Windows asks (private networks,
 or public too if players come from the internet).
 
-It listens on UDP port **7777** on every address, and for encrypted connections (QUIC) on UDP
-port **7778**, and keeps the campaigns in `campaigns/` next to where it was started. Players
-enter `<your address>:7777` as the server address in GoldLink: the first time, GoldLink learns
-the relay's encrypted port and its certificate, and from then on that world plays encrypted and
-only with this relay's certificate. Stop it with Ctrl+C.
+It listens on UDP port **7777** on every address, for plain and encrypted (QUIC) connections
+alike: **one port to open**. It keeps the campaigns in `campaigns/` next to where it was started.
+Players enter `<your address>:7777` as the server address in GoldLink: the first time, GoldLink
+learns the relay's certificate, and from then on that world plays encrypted and only with this
+relay's certificate. Stop it with Ctrl+C.
 
 **Keep the certificate.** It is made on the first start and kept in the campaigns folder
 (`relay-quic-cert.der`, `relay-quic-key.der`). Lose or replace it and every player's GoldLink
@@ -40,14 +40,14 @@ The binaries are static: no runtime or library to install, on any 64-bit Linux d
 
 ## Reaching it from the internet
 
-- **A VPS:** open UDP ports 7777 and 7778 in the provider's firewall (security group / security
-  list) and in the machine's own (`sudo ufw allow 7777:7778/udp`, or `firewalld`:
-  `sudo firewall-cmd --permanent --add-port=7777-7778/udp && sudo firewall-cmd --reload`).
-- **At home:** forward UDP 7777 and 7778 on your router to the machine running the relay, and
-  give players your public address. If that's not possible, a VPN such as Tailscale or ZeroTier
-  lets everyone use the relay machine's VPN address instead.
-- If 7778 is closed, GoldLink says so ("Couldn't reach the server's encrypted port, UDP 7778")
-  instead of playing unencrypted.
+- **A VPS:** open UDP port 7777 in the provider's firewall (security group / security list) and
+  in the machine's own (`sudo ufw allow 7777/udp`, or `firewalld`:
+  `sudo firewall-cmd --permanent --add-port=7777/udp && sudo firewall-cmd --reload`).
+- **At home:** forward UDP 7777 on your router to the machine running the relay, and give
+  players your public address. If that's not possible, a VPN such as Tailscale or ZeroTier lets
+  everyone use the relay machine's VPN address instead.
+- GoldLink never falls back to an unencrypted connection: if the encrypted one doesn't answer,
+  it says so ("Couldn't reach the server over its encrypted connection").
 - It's UDP only: a TCP-only port forward or tunnel doesn't work.
 
 ## Linux server: systemd
@@ -70,7 +70,7 @@ The `Dockerfile` packs the binary beside it into a small Alpine image:
 
 ```
 docker build -t coop-relay .
-docker run -d --name coop-relay --restart unless-stopped -p 7777-7778:7777-7778/udp -v coop-relay:/data coop-relay
+docker run -d --name coop-relay --restart unless-stopped -p 7777:7777/udp -v coop-relay:/data coop-relay
 docker logs -f coop-relay
 ```
 
@@ -82,8 +82,8 @@ builds an ARM image the same way.
 | Option | Default | |
 | :--- | :--- | :--- |
 | `--bind <address:port>` | `0.0.0.0:7777` | where it listens |
-| `--quic <address:port>` | the bind port + 1 | where it listens for encrypted (QUIC) connections |
-| `--no-quic` | off | no encrypted port: players connect over plain UDP |
+| `--quic <address:port>` | the bind port | a separate address and port for encrypted (QUIC) connections |
+| `--no-quic` | off | no encrypted connections: players connect over plain UDP |
 | `--save-dir <folder>` | `campaigns` | the campaign files |
 | `--min-players <n>` | `2` | a room's party size when its creator doesn't set one (2-6) |
 | `--tick-rate <Hz>` | `60` | how often it sends each player the others' state |

@@ -328,14 +328,16 @@ fn start_quic_relay(port: u16, qport: u16, dir: &std::path::Path) -> (Relay, Str
                 .join("../../coop-relay/target/release/coop-relay")
         });
     let log = dir.join("relay.log");
+    // `qport == port`: QUIC on the relay's own port (the default); else `--quic` on its own.
+    let quic_args = if qport == port {
+        Vec::new()
+    } else {
+        vec!["--quic".to_string(), format!("127.0.0.1:{qport}")]
+    };
     let child = Command::new(&bin)
-        .args([
-            "--bind",
-            &format!("127.0.0.1:{port}"),
-            "--quic",
-            &format!("127.0.0.1:{qport}"),
-            "--save-dir",
-        ])
+        .args(["--bind", &format!("127.0.0.1:{port}")])
+        .args(&quic_args)
+        .arg("--save-dir")
         .arg(dir.join("campaigns"))
         .env("NO_COLOR", "1")
         .stdout(std::fs::File::create(&log).unwrap())
@@ -362,13 +364,26 @@ fn start_quic_relay(port: u16, qport: u16, dir: &std::path::Path) -> (Relay, Str
 }
 
 /// UC6: a player over QUIC and one over UDP share a world; the QUIC player's address changes
-/// (a NAT rebinding) and they keep their seat; a wrong fingerprint is refused.
+/// (a NAT rebinding) and they keep their seat; a wrong fingerprint is refused. QUIC on a port
+/// of its own (`--quic`).
 #[test]
 #[ignore = "needs the coop-relay binary with --quic"]
 fn quic_and_udp_share_a_world_and_survive_a_rebinding() {
     let port = 21_000 + (std::process::id() % 500) as u16;
-    let dir = temp("quic");
-    let (_relay, quic_server) = start_quic_relay(port, port + 1, &dir);
+    quic_and_udp_world(port, port + 1, "quic");
+}
+
+/// As above with QUIC and UDP on the relay's one port (the default): the relay sorts them.
+#[test]
+#[ignore = "needs the coop-relay binary (protocol 9)"]
+fn quic_and_udp_share_a_world_on_one_port() {
+    let port = 23_000 + (std::process::id() % 500) as u16;
+    quic_and_udp_world(port, port, "quic1");
+}
+
+fn quic_and_udp_world(port: u16, qport: u16, name: &str) {
+    let dir = temp(name);
+    let (_relay, quic_server) = start_quic_relay(port, qport, &dir);
     let udp_server = format!("127.0.0.1:{port}");
 
     let mut a = Bridge::new(&dir.join("a"), &[]).unwrap();
@@ -441,7 +456,7 @@ fn quic_and_udp_share_a_world_and_survive_a_rebinding() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// A relay started with `args` (protocol 9: QUIC is on by default, on port + 1), its log in
+/// A relay started with `args` (protocol 9: QUIC is on by default, on the same port), its log in
 /// `log`.
 fn start_relay_with(
     port: u16,
@@ -502,7 +517,11 @@ fn quic_by_default_trust_on_first_use() {
     assert!(connected(&mut a, &mut ga), "{}", a.view().message);
     assert!(a.quic_stats().is_some(), "over QUIC");
     let w = a.worlds().find("TOFU01").unwrap().clone();
-    assert_eq!((w.pin.len(), w.quic_port), (64, port + 1), "pinned: {w:?}");
+    assert_eq!(
+        (w.pin.len(), w.quic_port),
+        (64, port),
+        "pinned, one port: {w:?}"
+    );
     let log = std::fs::read_to_string(dir.join("relay1.log")).unwrap();
     assert!(log.contains(&w.pin), "the relay's own fingerprint:\n{log}");
 
@@ -536,7 +555,7 @@ fn quic_by_default_trust_on_first_use() {
     a.join(&server, "TOFU01", true);
     assert!(connected(&mut a, &mut ga), "{}", a.view().message);
 
-    // The QUIC port blocked (here: the relay runs without it): no fallback to UDP.
+    // QUIC not answering (here: the relay runs without it): no fallback to UDP.
     leave(&mut a, &mut ga);
     drop(relay);
     let _relay = start_relay_with(port, &dir, &["--no-quic"], &dir.join("relay3.log"));
@@ -545,7 +564,7 @@ fn quic_by_default_trust_on_first_use() {
         offline_with(
             &mut a,
             &mut ga,
-            &format!("encrypted port, UDP {}", port + 1)
+            &format!("encrypted connection (UDP {port})")
         ),
         "{}",
         a.view().message

@@ -4,15 +4,15 @@ use std::time::Duration;
 
 use clap::Parser;
 use tokio::net::UdpSocket;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{MissedTickBehavior, interval};
 use tracing::{debug, info, warn};
 
-use coop_relay::lobby::{Rejection, RoomManager, DEFAULT_MAX_ROOMS};
+use coop_relay::lobby::{DEFAULT_MAX_ROOMS, Rejection, RoomManager};
 use coop_relay::protocol::{
-    challenge_with_offer, ClientToServerPacket, ProtocolError, QuicOffer, ServerToClientPacket,
-    CLIENT_PACKET_MAX, ERROR_PACKET_SIZE, PROTOCOL_VERSION, ROOM_STATUS_ERR_PROTOCOL,
+    CLIENT_PACKET_MAX, ClientToServerPacket, ERROR_PACKET_SIZE, PROTOCOL_VERSION, ProtocolError,
+    QuicOffer, ROOM_STATUS_ERR_PROTOCOL, ServerToClientPacket, challenge_with_offer,
 };
-use coop_relay::quic::{self, QuicServer};
+use coop_relay::quic::{self, PlainPacket, QuicServer};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -54,8 +54,8 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_MAX_ROOMS)]
     max_rooms: usize,
 
-    /// Listen for QUIC (encrypted; the unified client) on this address and UDP port instead of
-    /// the default, the bind address's port + 1 (7778 next to 7777).
+    /// Listen for QUIC (encrypted; the unified client) on this separate address and UDP port.
+    /// By default QUIC shares the bind address's port with the relay's plain packets.
     #[arg(long)]
     quic: Option<SocketAddr>,
 
@@ -114,7 +114,9 @@ fn handle(
         // Another protocol version: say so (in the frozen 16-byte header, never more bytes than
         // the request), so its bridge can tell the player which versions differ.
         Err(ProtocolError::UnsupportedVersion(version)) if data.len() >= ERROR_PACKET_SIZE => {
-            info!("Refused {peer_addr}: relay protocol {version}, this relay speaks {PROTOCOL_VERSION}");
+            info!(
+                "Refused {peer_addr}: relay protocol {version}, this relay speaks {PROTOCOL_VERSION}"
+            );
             vec![(
                 peer_addr,
                 ServerToClientPacket::create_error_response(ROOM_STATUS_ERR_PROTOCOL).to_vec(),
@@ -152,7 +154,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let args = Args::parse();
-    let socket = UdpSocket::bind(args.bind).await?;
     info!(
         "HGSS Multi-Room Co-op Relay {} (relay protocol {}) listening on UDP {} (Tick: {} Hz | Saves: {:?})",
         env!("CARGO_PKG_VERSION"),
@@ -162,36 +163,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.save_dir
     );
 
-    // QUIC by default (protocol 9, rework plan §7.3): on the bind address's port + 1.
-    let quic_addr = match (args.no_quic, args.quic) {
-        (true, _) => None,
-        (false, Some(addr)) => Some(addr),
-        (false, None) => {
-            let mut a = args.bind;
-            a.set_port(args.bind.port().wrapping_add(1));
-            Some(a)
-        }
+    // QUIC by default (protocol 9, rework plan §7.3), on the relay's own port: one port to
+    // open. `--quic <addr>` puts it on a port of its own; `--no-quic` turns it off.
+    let fp_line = |port: u16, fp: &[u8; 32]| {
+        format!(
+            "players join with <host>:{} and trust this certificate on first use, or pin it \
+             with <host>:{port}#{}",
+            args.bind.port(),
+            quic::fingerprint_hex(fp)
+        )
     };
-    let (quic_server, mut quic_rx, offer) = match quic_addr {
-        Some(addr) => {
-            let (server, rx, fp) = QuicServer::start(addr, &args.save_dir, CLIENT_PACKET_MAX)?;
-            info!(
-                "QUIC on UDP {addr} (open this port too): players join with <host>:{} and trust \
-                 this certificate on first use, or pin it with <host>:{}#{}",
-                args.bind.port(),
-                addr.port(),
-                quic::fingerprint_hex(&fp)
-            );
-            let offer = QuicOffer {
-                port: addr.port(),
-                fingerprint: fp,
-            };
-            (Some(server), Some(rx), Some(offer))
-        }
-        None => {
-            info!("QUIC off (--no-quic): players connect over plain UDP");
-            (None, None, None)
-        }
+    let mut plain_rx: Option<tokio::sync::mpsc::Receiver<PlainPacket>> = None;
+    let (socket, quic_server, mut quic_rx, offer) = if args.no_quic {
+        info!("QUIC off (--no-quic): players connect over plain UDP");
+        (UdpSocket::bind(args.bind).await?, None, None, None)
+    } else if let Some(addr) = args.quic {
+        let started = QuicServer::start(addr, &args.save_dir, CLIENT_PACKET_MAX)?;
+        let fp = started.fingerprint;
+        info!(
+            "QUIC on UDP {addr} (open this port too): {}",
+            fp_line(addr.port(), &fp)
+        );
+        let offer = QuicOffer {
+            port: addr.port(),
+            fingerprint: fp,
+        };
+        let socket = UdpSocket::bind(args.bind).await?;
+        (
+            socket,
+            Some(started.server),
+            Some(started.incoming),
+            Some(offer),
+        )
+    } else {
+        let started = QuicServer::start_shared(args.bind, &args.save_dir, CLIENT_PACKET_MAX)?;
+        let fp = started.fingerprint;
+        let shared = started.shared.expect("a shared port");
+        info!(
+            "QUIC on the same UDP port {}: {}",
+            args.bind.port(),
+            fp_line(args.bind.port(), &fp)
+        );
+        plain_rx = Some(shared.plain);
+        let offer = QuicOffer {
+            port: args.bind.port(),
+            fingerprint: fp,
+        };
+        (
+            shared.socket,
+            Some(started.server),
+            Some(started.incoming),
+            Some(offer),
+        )
     };
 
     let mut manager = RoomManager::new(
@@ -222,7 +245,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     loop {
         tokio::select! {
-            recv_res = socket.recv_from(&mut recv_buf) => {
+            // The relay's own packets: from the socket, or from QUIC's when they share it.
+            recv_res = socket.recv_from(&mut recv_buf), if plain_rx.is_none() => {
                 match recv_res {
                     Ok((len, peer_addr)) if len > CLIENT_PACKET_MAX => {
                         warn!("Dropped an oversized packet from {peer_addr} ({len}+ bytes)");
@@ -236,6 +260,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(err) => {
                         warn!("UDP socket receive error: {err}");
                     }
+                }
+            }
+
+            Some((peer_addr, data)) = async { plain_rx.as_mut()?.recv().await }, if plain_rx.is_some() => {
+                if data.len() > CLIENT_PACKET_MAX {
+                    warn!("Dropped an oversized packet from {peer_addr} ({} bytes)", data.len());
+                } else {
+                    for (addr, payload) in handle(&mut manager, &data, peer_addr, offer) {
+                        send(&socket, quic_server.as_ref(), addr, payload).await;
+                    }
+                    flush_streams(&mut manager, quic_server.as_ref());
                 }
             }
 

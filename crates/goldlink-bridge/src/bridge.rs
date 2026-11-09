@@ -600,7 +600,8 @@ impl Bridge {
                 match self.net.quic_port() {
                     // No silent fallback to UDP (protocol 9).
                     Some(port) => format!(
-                        "Couldn't reach the server's encrypted port, UDP {port}: ask the host to open it."
+                        "Couldn't reach the server over its encrypted connection (UDP {port}). \
+                         Check that it's running and that its UDP port is open."
                     ),
                     None => text::no_answer(),
                 }
