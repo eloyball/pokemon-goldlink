@@ -41,6 +41,9 @@ const SEEN_SLOTS: usize = goldlink_abi::COOP_LINK_SEEN_SLOTS as usize;
 const MSG_KIND_MAX: u8 = wire::LINK_MSG_BYE;
 
 pub const RESEND: Duration = Duration::from_millis(150);
+/// Relay -> client trailer header: magic, counts, ack, first seq, epoch and 1, then (protocol 9,
+/// the referee) the players the battle waits for and who called it off.
+const DOWN_HEADER: usize = 14;
 
 struct Pending {
     seq: u16,
@@ -67,6 +70,10 @@ pub struct LinkCarrier {
     inbox: VecDeque<InMsg>,
     /// Raw trailers from the relay, waiting for the next pump.
     received: VecDeque<Vec<u8>>,
+    /// The relay's referee (dev/docs/LINK_BATTLE_REWORK.md part 3): the players of my link group
+    /// the battle waits for (a bitmap), and the player whose loss called it off.
+    waiting: u8,
+    called_off_by: Option<u8>,
 }
 
 /// Main-RAM offset of a valid link block at ARM9 address `ptr`, or None.
@@ -122,6 +129,18 @@ impl LinkCarrier {
         self.in_next = 0;
         self.beacon = None;
         self.role = 0;
+        self.waiting = 0;
+        self.called_off_by = None;
+    }
+
+    /// The relay's referee for my link session: who the battle waits for (a player bitmap) and
+    /// who its being called off is down to. Nothing outside a session.
+    pub fn referee(&self) -> (u8, Option<u8>) {
+        if self.active {
+            (self.waiting, self.called_off_by)
+        } else {
+            (0, None)
+        }
     }
 
     /// After a frame. `block`: the link block's main-RAM offset (None: no link session).
@@ -214,7 +233,7 @@ impl LinkCarrier {
     /// Applies one relay trailer; returns its beacon section (count, then the raw beacons), or
     /// None when malformed.
     fn apply(&mut self, t: &[u8]) -> Option<Vec<u8>> {
-        if t.len() < 12 || u32_at(t, 0) != wire::LINK_MAGIC {
+        if t.len() < DOWN_HEADER || u32_at(t, 0) != wire::LINK_MAGIC {
             return None;
         }
         let (beacon_count, count) = (t[4] as usize, t[5] as usize);
@@ -222,7 +241,7 @@ impl LinkCarrier {
         if beacon_count > 6 || count > wire::LINK_MAX_MSGS {
             return None;
         }
-        let mut pos = 12;
+        let mut pos = DOWN_HEADER;
         let beacons_start = pos;
         for _ in 0..beacon_count {
             if pos + 8 > t.len() || t[pos + 1] as usize > BEACON_MAX {
@@ -243,6 +262,8 @@ impl LinkCarrier {
         if other_block || seq_before(self.out_next, ack) {
             return Some(beacons);
         }
+        self.waiting = t[12];
+        self.called_off_by = (t[13] < wire::MAX_PLAYERS as u8).then_some(t[13]);
         self.out.retain(|p| !seq_before(p.seq, ack));
         for i in 0..count {
             if pos + 4 > t.len() {
@@ -409,6 +430,8 @@ mod tests {
         t.extend_from_slice(&first.to_le_bytes());
         t.push(epoch);
         t.push(1);
+        t.push(0); // nobody waited for
+        t.push(wire::LINK_NOBODY);
         for m in msgs {
             t.push(wire::LINK_MSG_DATA);
             t.push(0);
@@ -505,5 +528,22 @@ mod tests {
             (2, 0, 0),
             "epoch 2, nothing pending"
         );
+    }
+
+    /// Protocol 9: the relay's referee bytes (header bytes 12 and 13).
+    #[test]
+    fn the_referee_bytes() {
+        let (mut ram, blk) = ram_with_block();
+        let mut c = LinkCarrier::new();
+        c.pump(&mut ram, Some(blk), 0);
+        assert_eq!(c.referee(), (0, None));
+        let mut t = down(c.epoch, 0, 0, &[]);
+        t[12] = 0b10;
+        t[13] = 1;
+        c.on_server_packet(&[vec![0; wire::SERVER_PACKET_SIZE], t].concat());
+        c.pump(&mut ram, Some(blk), 0);
+        assert_eq!(c.referee(), (0b10, Some(1)));
+        c.pump(&mut ram, None, 0);
+        assert_eq!(c.referee(), (0, None), "cleared with the link block");
     }
 }
