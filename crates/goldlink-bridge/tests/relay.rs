@@ -413,10 +413,12 @@ fn quic_and_udp_share_a_world_and_survive_a_rebinding() {
     assert_eq!(ga.mb()[ASSIGNED_PLAYER_ID], slot, "the same seat");
     assert!(sees(&gb, 0x1111_0001), "B still sees A");
     let log = std::fs::read_to_string(dir.join("relay.log")).unwrap();
+    // Two: B joined with the plain address and learned QUIC on first use (protocol 9); A's
+    // stayed one connection, migrated.
     assert_eq!(
         log.matches("QUIC connection from").count(),
-        1,
-        "one connection, migrated:\n{log}"
+        2,
+        "A's connection migrated, not a new one:\n{log}"
     );
 
     // The wrong certificate: never connects.
@@ -432,9 +434,129 @@ fn quic_and_udp_share_a_world_and_survive_a_rebinding() {
         == LinkState::Offline
         && p[0].0.view().message_is_error));
     assert!(
-        c.view().message.contains("didn't answer"),
+        c.view().message.contains("identity changed"),
         "{}",
         c.view().message
     );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// A relay started with `args` (protocol 9: QUIC is on by default, on port + 1), its log in
+/// `log`.
+fn start_relay_with(
+    port: u16,
+    dir: &std::path::Path,
+    args: &[&str],
+    log: &std::path::Path,
+) -> Relay {
+    let bin = std::env::var_os("GOLDLINK_RELAY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../coop-relay/target/release/coop-relay")
+        });
+    let child = Command::new(&bin)
+        .args(["--bind", &format!("127.0.0.1:{port}")])
+        .args(args)
+        .arg("--save-dir")
+        .arg(dir.join("campaigns"))
+        .env("NO_COLOR", "1")
+        .stdout(std::fs::File::create(log).unwrap())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    Relay(child)
+}
+
+/// Protocol 9 (rework plan §7.3), QUIC by default: the first connection to a world learns the
+/// relay's QUIC port and certificate from its challenge (the hello carries no secret), plays
+/// over QUIC and pins the certificate with the world; later ones need it; a new certificate is
+/// refused until trusted; a pinned world never falls back to UDP; a `--no-quic` relay plays
+/// over UDP.
+#[test]
+#[ignore = "needs the coop-relay binary (protocol 9)"]
+fn quic_by_default_trust_on_first_use() {
+    let port = 22_000 + (std::process::id() % 500) as u16 * 2;
+    let dir = temp("tofu");
+    let server = format!("127.0.0.1:{port}");
+    let connected = |b: &mut Bridge, g: &mut FakeGame| {
+        run(&mut [(b, g)], 10, |p| p[0].0.link() == LinkState::Connected)
+    };
+    let offline_with = |b: &mut Bridge, g: &mut FakeGame, text: &str| {
+        let ok = run(&mut [(b, g)], 15, |p| {
+            p[0].0.link() == LinkState::Offline && p[0].0.view().message_is_error
+        });
+        ok && b.view().message.contains(text)
+    };
+    let leave = |b: &mut Bridge, g: &mut FakeGame| {
+        b.leave();
+        run(&mut [(b, g)], 3, |p| p[0].0.link() == LinkState::Offline);
+    };
+
+    // First use: QUIC, pinned with the world.
+    let relay = start_relay_with(port, &dir, &[], &dir.join("relay1.log"));
+    let mut a = Bridge::new(&dir.join("a"), &[]).unwrap();
+    let mut ga = FakeGame::new(0x1111_0001, 100);
+    a.join(&server, "TOFU01", true);
+    assert!(connected(&mut a, &mut ga), "{}", a.view().message);
+    assert!(a.quic_stats().is_some(), "over QUIC");
+    let w = a.worlds().find("TOFU01").unwrap().clone();
+    assert_eq!((w.pin.len(), w.quic_port), (64, port + 1), "pinned: {w:?}");
+    let log = std::fs::read_to_string(dir.join("relay1.log")).unwrap();
+    assert!(log.contains(&w.pin), "the relay's own fingerprint:\n{log}");
+
+    // Again: straight to QUIC with the pin.
+    leave(&mut a, &mut ga);
+    a.join(&server, "TOFU01", false);
+    assert!(connected(&mut a, &mut ga), "{}", a.view().message);
+    assert!(a.quic_stats().is_some());
+
+    // A new certificate (the host lost it): refused, until trusted in the world panel.
+    leave(&mut a, &mut ga);
+    drop(relay);
+    for f in ["relay-quic-cert.der", "relay-quic-key.der"] {
+        std::fs::remove_file(dir.join("campaigns").join(f)).unwrap();
+    }
+    let relay = start_relay_with(port, &dir, &[], &dir.join("relay2.log"));
+    a.join(&server, "TOFU01", false);
+    assert!(
+        offline_with(&mut a, &mut ga, "identity changed"),
+        "{}",
+        a.view().message
+    );
+    let new_fp = a
+        .view()
+        .identity_change
+        .expect("the new fingerprint to trust");
+    assert_ne!(new_fp, w.pin);
+    assert!(a.trust_new_identity());
+    assert_eq!(a.worlds().find("TOFU01").unwrap().pin, new_fp);
+    // (A room that never started isn't kept across a relay restart: create it again.)
+    a.join(&server, "TOFU01", true);
+    assert!(connected(&mut a, &mut ga), "{}", a.view().message);
+
+    // The QUIC port blocked (here: the relay runs without it): no fallback to UDP.
+    leave(&mut a, &mut ga);
+    drop(relay);
+    let _relay = start_relay_with(port, &dir, &["--no-quic"], &dir.join("relay3.log"));
+    a.join(&server, "TOFU01", false);
+    assert!(
+        offline_with(
+            &mut a,
+            &mut ga,
+            &format!("encrypted port, UDP {}", port + 1)
+        ),
+        "{}",
+        a.view().message
+    );
+
+    // A --no-quic relay, first use: plain UDP, nothing pinned.
+    let mut b = Bridge::new(&dir.join("b"), &[]).unwrap();
+    let mut gb = FakeGame::new(0x2222_0002, 110);
+    b.join(&server, "TOFU02", true);
+    assert!(connected(&mut b, &mut gb), "{}", b.view().message);
+    assert!(b.quic_stats().is_none(), "over UDP");
+    assert!(b.worlds().find("TOFU02").unwrap().pin.is_empty());
     std::fs::remove_dir_all(&dir).ok();
 }

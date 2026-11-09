@@ -640,3 +640,109 @@ fn test_link_referee_waits_then_calls_off() {
     assert!(fresh.is_empty());
     assert_eq!(d.unwrap().called_off_by, None);
 }
+
+/// Protocol 9 (rework plan §7.1): a QUIC member's link messages travel on its link stream;
+/// a UDP member in the same group keeps the trailer's go-back-N.
+#[test]
+fn test_link_streams_beside_the_go_back_n() {
+    use crate::lobby::{LinkStreamEvent, LinkStreamOut};
+    let out = |lobby: &mut LobbyState| -> Vec<(usize, LinkMsg)> {
+        lobby
+            .take_link_stream_out()
+            .into_iter()
+            .map(|LinkStreamOut { addr: a, msg, .. }| {
+                let slot = (0..6).find(|&i| addr(i) == a).expect("a player's address");
+                (slot, msg)
+            })
+            .collect()
+    };
+    let mut lobby = room_in(2, true, None);
+    let (mut p, mut c) = (Client::default(), Client::default());
+    // The parent's trailer comes first (the stream opens a moment later); the child's CONNECT
+    // is queued for it until then, and goes on the stream when it opens.
+    p.send(&mut lobby, 0, LINK_ROLE_PARENT, Some(beacon()), vec![]);
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]);
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_CONNECT, 0, &[0, 1, b'D', b'P', 0])],
+    );
+    assert!(out(&mut lobby).is_empty());
+    lobby.link_stream_event(addr(0), LinkStreamEvent::Open(p.epoch));
+    assert_eq!(
+        out(&mut lobby),
+        vec![(0, msg(LINK_MSG_CONNECT, 1, &[1, b'D', b'P', 0]))]
+    );
+    // Its trailers carry no messages any more.
+    assert!(p.recv(&mut lobby, 0).1.is_empty());
+
+    // The parent's ACCEPT and DATA from its stream reach the UDP child's trailer, the child's
+    // DATA the parent's stream.
+    lobby.link_stream_event(
+        addr(0),
+        LinkStreamEvent::Msg(p.epoch, msg(LINK_MSG_ACCEPT, 1, &[])),
+    );
+    lobby.link_stream_event(
+        addr(0),
+        LinkStreamEvent::Msg(p.epoch, msg(LINK_MSG_DATA, 0, &[7])),
+    );
+    assert_eq!(
+        c.recv(&mut lobby, 1).1,
+        vec![msg(LINK_MSG_ACCEPT, 1, &[]), msg(LINK_MSG_DATA, 0, &[7])]
+    );
+    assert_eq!(lobby.link_parent(1), Some((0, 1, true)));
+    c.send(
+        &mut lobby,
+        1,
+        LINK_ROLE_CHILD,
+        None,
+        vec![msg(LINK_MSG_DATA, 1, &[8])],
+    );
+    assert_eq!(out(&mut lobby), vec![(0, msg(LINK_MSG_DATA, 1, &[8]))]);
+
+    // An earlier block's message is dropped; so is one for a stream that isn't open.
+    lobby.link_stream_event(
+        addr(0),
+        LinkStreamEvent::Msg(p.epoch.wrapping_sub(1), msg(LINK_MSG_DATA, 0, &[9])),
+    );
+    assert!(c.recv(&mut lobby, 1).1.is_empty());
+
+    // Finishing the stream is the parent's BYE.
+    lobby.link_stream_event(addr(0), LinkStreamEvent::Closed(p.epoch));
+    assert_eq!(c.recv(&mut lobby, 1).1, vec![msg(LINK_MSG_BYE, 0, &[])]);
+    assert_eq!(lobby.link_parent(1), None);
+
+    // The referee: a quiet QUIC child gets its BYE on its stream at once (QUIC delivers it
+    // when it comes back); its status line still learns who called it off.
+    let mut lobby = room_in(2, true, None);
+    let (mut p, mut c) = (Client::default(), Client::default());
+    p.send(&mut lobby, 0, LINK_ROLE_PARENT, Some(beacon()), vec![]);
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]);
+    lobby.link_stream_event(addr(1), LinkStreamEvent::Open(c.epoch));
+    lobby.link_stream_event(
+        addr(1),
+        LinkStreamEvent::Msg(c.epoch, msg(LINK_MSG_CONNECT, 0, &[0, 1, b'D', b'P', 0])),
+    );
+    assert_eq!(
+        p.recv(&mut lobby, 0).1,
+        vec![msg(LINK_MSG_CONNECT, 1, &[1, b'D', b'P', 0])]
+    );
+    p.send(
+        &mut lobby,
+        0,
+        LINK_ROLE_PARENT,
+        Some(beacon()),
+        vec![msg(LINK_MSG_ACCEPT, 1, &[])],
+    );
+    assert_eq!(out(&mut lobby), vec![(1, msg(LINK_MSG_ACCEPT, 1, &[]))]);
+    lobby.backdate_client(1, LINK_DEADLINE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
+    assert_eq!(out(&mut lobby), vec![(1, msg(LINK_MSG_BYE, 0, &[]))]);
+    assert_eq!(p.recv(&mut lobby, 0).1, vec![msg(LINK_MSG_BYE, 1, &[])]);
+    c.send(&mut lobby, 1, LINK_ROLE_CHILD, None, vec![]); // back: no BYE twice
+    let (d, fresh) = c.recv(&mut lobby, 1);
+    assert!(fresh.is_empty());
+    assert_eq!(d.unwrap().called_off_by, Some(1));
+}

@@ -30,6 +30,21 @@ pub(crate) struct Shared {
     running: AtomicBool,
     /// Every OK packet, for the virtual link (each link trailer counts; UC4).
     ok_packets: Mutex<VecDeque<Vec<u8>>>,
+    /// Link messages from QUIC link streams, by link block (epoch), for the carrier.
+    pub(crate) link_in: Mutex<VecDeque<(u8, wire::LinkMsg)>>,
+    /// The relay's latest frame on the trade stream (`encode_trade_down`).
+    pub(crate) trade_down: Mutex<Option<Vec<u8>>>,
+    /// Protocol 9: what the last challenge said about QUIC (Some(None): no offer).
+    offer: Mutex<Option<Option<wire::QuicOffer>>>,
+    /// Why the QUIC connection failed, once.
+    pub(crate) quic_error: Mutex<Option<QuicError>>,
+}
+
+/// Why a QUIC connection to the relay failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuicError {
+    /// The relay presented another certificate than the pinned one: its SHA-256.
+    IdentityChanged([u8; 32]),
 }
 
 /// Where the relay is, and how to reach it.
@@ -60,6 +75,14 @@ impl RelayClient {
     }
 
     /// Talks to `target` from now on (a new server forgets the old cookie) and starts listening.
+    /// A new join: a fresh QUIC connection even to the same target (the last one may be to a
+    /// relay that restarted, unnoticed until its 75 s idle timeout; a new one meets its
+    /// certificate again).
+    pub fn connect_fresh(&mut self, target: Target) {
+        self.quic = None;
+        self.set_server(target);
+    }
+
     pub fn set_server(&mut self, target: Target) {
         let server = target.addr;
         let mut s = lock(&self.shared.server);
@@ -70,7 +93,13 @@ impl RelayClient {
         drop(s);
         match target.pin {
             Some(pin) => {
-                if self.quic.as_ref().is_none_or(|(t, _)| *t != target) {
+                // A new connection for another target, or when the last one ended (a restarted
+                // relay presents its certificate again).
+                if self
+                    .quic
+                    .as_ref()
+                    .is_none_or(|(t, q)| *t != target || !q.is_alive())
+                {
                     self.quic = Some((
                         target,
                         crate::quic::QuicClient::connect(server, pin, self.shared.clone()),
@@ -127,6 +156,51 @@ impl RelayClient {
 
     /// QUIC only: moves to a new local UDP port, as a NAT rebinding or a network change would.
     /// The connection (and the seat in the world) carries on. False over plain UDP.
+    /// Passes a link stream command to the QUIC connection (nothing over UDP).
+    pub fn link_cmd(&self, cmd: crate::link::StreamCmd) {
+        if let Some((_, q)) = &self.quic {
+            q.link(cmd);
+        }
+    }
+
+    /// What the relay's last challenge said about QUIC (protocol 9), once: Some(None) = it
+    /// offers none.
+    pub fn take_offer(&self) -> Option<Option<wire::QuicOffer>> {
+        lock(&self.shared.offer).take()
+    }
+
+    /// Why the QUIC connection failed, once.
+    pub fn take_quic_error(&self) -> Option<QuicError> {
+        lock(&self.shared.quic_error).take()
+    }
+
+    /// The relay's address (the last `set_server`).
+    pub fn server(&self) -> Option<SocketAddr> {
+        *lock(&self.shared.server)
+    }
+
+    /// The QUIC connection's server port, if this is one.
+    pub fn quic_port(&self) -> Option<u16> {
+        self.quic.as_ref().map(|(t, _)| t.addr.port())
+    }
+
+    /// Passes a trade stream command to the QUIC connection (nothing over UDP).
+    pub fn trade_cmd(&self, cmd: crate::quic::TradeCmd) {
+        if let Some((_, q)) = &self.quic {
+            q.trade(cmd);
+        }
+    }
+
+    /// The relay's latest frame on the trade stream, if any came.
+    pub fn trade_down(&self) -> Option<Vec<u8>> {
+        lock(&self.shared.trade_down).clone()
+    }
+
+    /// Link messages that arrived on QUIC link streams since the last call.
+    pub fn take_link_in(&self) -> Vec<(u8, wire::LinkMsg)> {
+        lock(&self.shared.link_in).drain(..).collect()
+    }
+
     pub fn rebind(&self) -> bool {
         self.quic.as_ref().is_some_and(|(_, q)| q.rebind())
     }
@@ -185,6 +259,7 @@ pub(crate) fn accept(shared: &Shared, data: &[u8]) {
                 let cookie = u64::from_le_bytes(data[16..24].try_into().unwrap());
                 shared.cookie.store(cookie, Ordering::Relaxed);
                 *lock(&shared.last_challenge) = Some(Instant::now());
+                *lock(&shared.offer) = Some(wire::challenge_offer(data));
             }
             return;
         }
@@ -215,7 +290,7 @@ pub fn resolve(host_port: &str) -> Option<Target> {
     resolve_addr(text).map(|addr| Target { addr, pin })
 }
 
-fn parse_pin(hex: &str) -> Option<[u8; 32]> {
+pub fn parse_pin(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 {
         return None;
     }

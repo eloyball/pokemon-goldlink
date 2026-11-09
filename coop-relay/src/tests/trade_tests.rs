@@ -396,3 +396,70 @@ fn test_a_revive_is_one_sided_and_journaled() {
     assert!(trailer(&mut lobby, 1).is_none());
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// Protocol 9 (rework plan §7.1): a QUIC player's trade travels on its trade stream: its
+/// TradeOut up when it changes (applied as if every packet carried it), the relay's TradeIn
+/// down when it changes, and no trade trailer in its packets.
+#[test]
+fn test_a_trade_stream_beside_the_trailer() {
+    use crate::lobby::TradeStreamEvent;
+    use crate::protocol::{TRADE_STREAM_DOWN_SIZE, encode_trade_down};
+    let mut lobby = open_trade(None);
+    lobby.trade_stream_event(addr(0), TradeStreamEvent::Open);
+    let down = |lobby: &mut LobbyState| -> (usize, Vec<Vec<u8>>) {
+        let batch = lobby.build_broadcast_batch();
+        let (_, buf) = batch.iter().find(|(a, _)| *a == addr(0)).unwrap();
+        let frames = lobby
+            .take_trade_stream_out()
+            .into_iter()
+            .map(|o| {
+                assert_eq!(o.addr, addr(0));
+                o.frame
+            })
+            .collect();
+        (buf.len() - CHALLENGE_DOWN_SIZE, frames)
+    };
+    let (len, frames) = down(&mut lobby);
+    assert_eq!(len, SERVER_PACKET_SIZE, "no trade trailer for a stream player");
+    let waiting = {
+        let mut t = TradeIn::empty(TRADE_IN_WAITING);
+        t.peer_slot = 0;
+        t
+    };
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].len(), TRADE_STREAM_DOWN_SIZE);
+    assert_eq!(TradeIn::decode_le(&frames[0][1..]).state, waiting.state);
+    assert!(down(&mut lobby).1.is_empty(), "nothing new, nothing sent");
+
+    // Its offer from the stream reaches the UDP partner's trailer; the partner's offer comes
+    // back on the stream.
+    let offer = TradeOut {
+        state: TRADE_OUT_OFFERED,
+        offer_id: 1,
+        confirm_id: 0,
+        trade_id: 0,
+        mon: mon(PID_A, 0x11),
+    };
+    lobby.trade_stream_event(addr(0), TradeStreamEvent::Up(Box::new(offer)));
+    assert_eq!(trailer(&mut lobby, 1).unwrap().mon, mon(PID_A, 0x11));
+    send(&mut lobby, 1, TRADE_OUT_OFFERED, 1, 0, 0, mon(PID_B, 0x22));
+    let (_, frames) = down(&mut lobby);
+    let t0 = TradeIn::decode_le(&frames.last().unwrap()[1..]);
+    assert_eq!((t0.state, t0.mon), (TRADE_IN_OFFERED, mon(PID_B, 0x22)));
+    // Its packets carry no trade: the stream's latest stands in (the offer stays).
+    let pkt = packet(
+        0,
+        SessionOut {
+            seq: 1,
+            ..SessionOut::default()
+        },
+        true,
+    );
+    lobby.handle_client_packet(addr(0), pkt).unwrap();
+    assert_eq!(trailer(&mut lobby, 1).unwrap().mon, mon(PID_A, 0x11));
+
+    // The exchange closed: the trailer again.
+    lobby.trade_stream_event(addr(0), TradeStreamEvent::Closed);
+    assert_eq!(trailer(&mut lobby, 0).unwrap().state, TRADE_IN_OFFERED);
+    assert_eq!(encode_trade_down(None), vec![0u8; TRADE_STREAM_DOWN_SIZE]);
+}

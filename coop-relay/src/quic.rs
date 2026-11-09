@@ -8,6 +8,10 @@
 //! (u16 length, then the bytes). The certificate is self-signed, made on the first start and
 //! kept in the save directory; players pin it by its SHA-256 fingerprint in the server address
 //! (`host:port#<fingerprint>`), shown at startup.
+//!
+//! Protocol 9 (dev/docs/LINK_BATTLE_REWORK.md §7.1): a player's link messages travel on one
+//! bidirectional stream per link block (`LINK_STREAM_MAGIC`, then the epoch, then frames both
+//! ways), QUIC's retransmission and ordering instead of the trailer's go-back-N.
 
 use std::collections::HashMap;
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
@@ -15,11 +19,17 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use quinn::{Connection, Endpoint};
+use quinn::{Connection, Endpoint, RecvStream, SendStream};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tracing::{debug, info};
+
+use crate::lobby::{LinkStreamEvent, TradeStreamEvent};
+use crate::protocol::{
+    LINK_STREAM_MAGIC, LinkMsg, TRADE_OUT_SIZE, TRADE_STREAM_MAGIC, TradeOut, encode_link_frame,
+    link_frame_len,
+};
 
 /// ALPN: the relay protocol over QUIC (the packets inside carry their own version).
 pub const ALPN: &[u8] = b"goldlink-relay";
@@ -50,11 +60,13 @@ fn virtual_addr(n: u64) -> SocketAddr {
     ))
 }
 
-pub fn fingerprint(cert: &[u8]) -> String {
-    Sha256::digest(cert)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+/// The certificate's SHA-256: what players pin.
+pub fn fingerprint(cert: &[u8]) -> [u8; 32] {
+    Sha256::digest(cert).into()
+}
+
+pub fn fingerprint_hex(fp: &[u8; 32]) -> String {
+    fp.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The relay's certificate and key: kept in `dir`, made on the first start.
@@ -81,12 +93,29 @@ pub fn load_or_create_cert(
     ))
 }
 
-/// What a QUIC connection sent: a packet, under its stand-in address.
-pub type Incoming = (SocketAddr, Vec<u8>);
+/// How long a quiet connection lives: past the relay's link deadline (30 s), its slot hold and
+/// the bridge's 65 s, so a paused player's link stream outlives the referee's decision.
+pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(75);
+
+/// What a QUIC connection did, under its stand-in address.
+#[derive(Debug)]
+pub enum Incoming {
+    Packet(SocketAddr, Vec<u8>),
+    Link(SocketAddr, LinkStreamEvent),
+    Trade(SocketAddr, TradeStreamEvent),
+}
+
+struct Conn {
+    conn: Connection,
+    /// The current link stream's epoch and its writer.
+    link: Option<(u8, mpsc::UnboundedSender<Vec<u8>>)>,
+    /// The current trade stream's writer.
+    trade: Option<mpsc::UnboundedSender<Vec<u8>>>,
+}
 
 #[derive(Clone)]
 pub struct QuicServer {
-    conns: Arc<Mutex<HashMap<SocketAddr, Connection>>>,
+    conns: Arc<Mutex<HashMap<SocketAddr, Conn>>>,
 }
 
 impl QuicServer {
@@ -95,7 +124,7 @@ impl QuicServer {
         bind: SocketAddr,
         save_dir: &Path,
         max_packet: usize,
-    ) -> Result<(Self, mpsc::Receiver<Incoming>, String), Box<dyn std::error::Error>> {
+    ) -> Result<(Self, mpsc::Receiver<Incoming>, [u8; 32]), Box<dyn std::error::Error>> {
         let (cert, key) = load_or_create_cert(save_dir)?;
         let fp = fingerprint(&cert);
         let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -109,7 +138,7 @@ impl QuicServer {
             quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
         ));
         let mut transport = quinn::TransportConfig::default();
-        transport.max_idle_timeout(Some(std::time::Duration::from_secs(10).try_into()?));
+        transport.max_idle_timeout(Some(IDLE_TIMEOUT.try_into()?));
         transport.datagram_receive_buffer_size(Some(1 << 20));
         // Real-time traffic: a stale packet is worth less than a fresh one. A small send buffer
         // drops the oldest instead of queueing seconds behind the congestion window, and BBR
@@ -131,8 +160,15 @@ impl QuicServer {
                 tokio::spawn(async move {
                     let Ok(conn) = incoming.await else { return };
                     info!("QUIC connection from {} as {addr}", conn.remote_address());
-                    conns.lock().unwrap().insert(addr, conn.clone());
-                    serve(conn.clone(), addr, tx, max_packet).await;
+                    conns.lock().unwrap().insert(
+                        addr,
+                        Conn {
+                            conn: conn.clone(),
+                            link: None,
+                            trade: None,
+                        },
+                    );
+                    serve(conn.clone(), addr, tx, max_packet, conns.clone()).await;
                     conns.lock().unwrap().remove(&addr);
                     debug!("QUIC connection {addr} closed");
                 });
@@ -143,7 +179,13 @@ impl QuicServer {
 
     /// Sends a packet to a QUIC player (dropped if the connection is gone).
     pub fn send(&self, addr: SocketAddr, payload: Vec<u8>) {
-        let Some(conn) = self.conns.lock().unwrap().get(&addr).cloned() else {
+        let Some(conn) = self
+            .conns
+            .lock()
+            .unwrap()
+            .get(&addr)
+            .map(|c| c.conn.clone())
+        else {
             return;
         };
         if conn
@@ -166,13 +208,156 @@ impl QuicServer {
     }
 }
 
+impl QuicServer {
+    /// A link message for a player's link stream of block `epoch` (dropped if that stream is
+    /// gone: a newer block's, or the connection's end).
+    pub fn send_link(&self, addr: SocketAddr, epoch: u8, msg: &LinkMsg) {
+        if let Some(Conn {
+            link: Some((e, w)), ..
+        }) = self.conns.lock().unwrap().get(&addr)
+            && *e == epoch
+        {
+            w.send(encode_link_frame(msg)).ok();
+        }
+    }
+}
+
+impl QuicServer {
+    /// A trade frame for a player's trade stream (dropped if none is open).
+    pub fn send_trade(&self, addr: SocketAddr, frame: Vec<u8>) {
+        if let Some(Conn { trade: Some(w), .. }) = self.conns.lock().unwrap().get(&addr) {
+            w.send(frame).ok();
+        }
+    }
+}
+
+type Conns = Arc<Mutex<HashMap<SocketAddr, Conn>>>;
+
+/// A stream's writer task: frames from the channel, in order, until it closes (then FIN).
+fn spawn_writer(mut send: SendStream) -> mpsc::UnboundedSender<Vec<u8>> {
+    let (w_tx, mut w_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    tokio::spawn(async move {
+        while let Some(frame) = w_rx.recv().await {
+            if send.write_all(&frame).await.is_err() {
+                return;
+            }
+        }
+        send.finish().ok();
+    });
+    w_tx
+}
+
+/// A trade stream: one per trade exchange. Up frames are the ROM's TradeOut.
+async fn serve_trade(
+    addr: SocketAddr,
+    send: SendStream,
+    mut recv: RecvStream,
+    tx: mpsc::Sender<Incoming>,
+    conns: Conns,
+) {
+    let w_tx = spawn_writer(send);
+    if let Some(c) = conns.lock().unwrap().get_mut(&addr) {
+        c.trade = Some(w_tx);
+    }
+    tx.send(Incoming::Trade(addr, TradeStreamEvent::Open))
+        .await
+        .ok();
+    loop {
+        let mut frame = vec![0u8; TRADE_OUT_SIZE];
+        match recv.read_exact(&mut frame).await {
+            Ok(()) => {
+                let out = TradeOut::decode_le(&frame);
+                tx.send(Incoming::Trade(addr, TradeStreamEvent::Up(Box::new(out))))
+                    .await
+                    .ok();
+            }
+            Err(_) => {
+                // Finished (the exchange closed) or lost: no trade from this stream any more.
+                tx.send(Incoming::Trade(addr, TradeStreamEvent::Closed))
+                    .await
+                    .ok();
+                return;
+            }
+        }
+    }
+}
+
+/// A link stream: its writer becomes the connection's, its frames events, until it ends.
+async fn serve_link(
+    addr: SocketAddr,
+    epoch: u8,
+    send: SendStream,
+    mut recv: RecvStream,
+    tx: mpsc::Sender<Incoming>,
+    conns: Conns,
+) {
+    let w_tx = spawn_writer(send);
+    if let Some(c) = conns.lock().unwrap().get_mut(&addr) {
+        c.link = Some((epoch, w_tx)); // an earlier block's writer ends with its sender
+    }
+    tx.send(Incoming::Link(addr, LinkStreamEvent::Open(epoch)))
+        .await
+        .ok();
+    loop {
+        let mut header = [0u8; 4];
+        match recv.read_exact(&mut header).await {
+            Ok(()) => {}
+            // Finished by the client between frames: its BYE. Anything else (the connection
+            // lost, a reset) is silence, for the referee.
+            Err(quinn::ReadExactError::FinishedEarly(0)) => {
+                tx.send(Incoming::Link(addr, LinkStreamEvent::Closed(epoch)))
+                    .await
+                    .ok();
+                return;
+            }
+            Err(_) => return,
+        }
+        let Some(len) = link_frame_len(header) else {
+            return;
+        };
+        let mut data = vec![0u8; len];
+        if recv.read_exact(&mut data).await.is_err() {
+            return;
+        }
+        let msg = LinkMsg {
+            kind: header[0],
+            aid: header[1],
+            data,
+        };
+        tx.send(Incoming::Link(addr, LinkStreamEvent::Msg(epoch, msg)))
+            .await
+            .ok();
+    }
+}
+
 /// One connection's packets, from datagrams and streams, until it closes.
-async fn serve(conn: Connection, addr: SocketAddr, tx: mpsc::Sender<Incoming>, max_packet: usize) {
+async fn serve(
+    conn: Connection,
+    addr: SocketAddr,
+    tx: mpsc::Sender<Incoming>,
+    max_packet: usize,
+    conns: Conns,
+) {
     loop {
         tokio::select! {
             d = conn.read_datagram() => match d {
-                Ok(bytes) if bytes.len() <= max_packet => { tx.send((addr, bytes.to_vec())).await.ok(); }
+                Ok(bytes) if bytes.len() <= max_packet => { tx.send(Incoming::Packet(addr, bytes.to_vec())).await.ok(); }
                 Ok(_) => {}
+                Err(_) => return,
+            },
+            b = conn.accept_bi() => match b {
+                Ok((send, mut recv)) => {
+                    let (tx, conns) = (tx.clone(), conns.clone());
+                    tokio::spawn(async move {
+                        let mut head = [0u8; 5];
+                        if recv.read_exact(&mut head).await.is_err() { return; }
+                        match u32::from_le_bytes([head[0], head[1], head[2], head[3]]) {
+                            LINK_STREAM_MAGIC => serve_link(addr, head[4], send, recv, tx, conns).await,
+                            TRADE_STREAM_MAGIC => serve_trade(addr, send, recv, tx, conns).await,
+                            _ => {}
+                        }
+                    });
+                }
                 Err(_) => return,
             },
             s = conn.accept_uni() => match s {
@@ -185,7 +370,7 @@ async fn serve(conn: Connection, addr: SocketAddr, tx: mpsc::Sender<Incoming>, m
                         if len > max_packet { return; }
                         let mut buf = vec![0u8; len];
                         if s.read_exact(&mut buf).await.is_ok() {
-                            tx.send((addr, buf)).await.ok();
+                            tx.send(Incoming::Packet(addr, buf)).await.ok();
                         }
                     });
                 }
@@ -215,7 +400,7 @@ mod tests {
         let (a, _) = load_or_create_cert(&dir).unwrap();
         let (b, _) = load_or_create_cert(&dir).unwrap();
         assert_eq!(fingerprint(&a), fingerprint(&b));
-        assert_eq!(fingerprint(&a).len(), 64);
+        assert_eq!(fingerprint_hex(&fingerprint(&a)).len(), 64);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

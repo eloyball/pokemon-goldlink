@@ -80,6 +80,28 @@ pub(crate) struct LinkPeer {
     /// The player whose loss called this member's battle off (sent in every
     /// trailer until the link block ends, for the bridge's status line).
     called_off_by: Option<u8>,
+    /// A QUIC member's messages travel on its link stream for this block
+    /// (protocol 9): no sequence numbers or resends here, QUIC's own.
+    stream: bool,
+}
+
+/// A link message for a QUIC member's link stream (the relay's main loop writes it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkStreamOut {
+    pub addr: std::net::SocketAddr,
+    pub epoch: u8,
+    pub msg: LinkMsg,
+}
+
+/// What a QUIC member's link stream did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkStreamEvent {
+    /// Opened for this link block (epoch).
+    Open(u8),
+    /// A message on it.
+    Msg(u8, LinkMsg),
+    /// Finished by the client: as a BYE. (A lost connection is silence: the referee's.)
+    Closed(u8),
 }
 
 /// A member that was quiet when the referee called its battle off: the BYEs it
@@ -113,33 +135,19 @@ impl LobbyState {
         // session on it, keeps the current one alive (Milestone 6: the PvP freeze over the
         // VPS; locally nothing ever arrived late).
         if peer.active && peer.epoch != up.epoch && (up.epoch.wrapping_sub(peer.epoch) as i8) < 0 {
-            debug!("link P{slot} stale trailer of epoch {} (now {})", up.epoch, peer.epoch);
+            debug!(
+                "link P{slot} stale trailer of epoch {} (now {})",
+                up.epoch, peer.epoch
+            );
             return;
         }
         if !peer.active || peer.epoch != up.epoch {
-            if peer.active {
-                self.leave_link(slot); // a new link block: the old session is over
-            }
-            self.links[slot] = LinkPeer {
-                active: true,
-                epoch: up.epoch,
-                ..LinkPeer::default()
-            };
-            if let Some(off) = self.link_called_off[slot].take()
-                && off.epoch == up.epoch
-            {
-                // Back after its battle was called off: go on from the client's own
-                // numbers (what it sends now was for a group that is gone), then BYE.
-                let room_str = room_code_to_string(&self.room_code);
-                info!("[Room {room_str} | LINK] P{slot} is back: its battle was called off");
-                let peer = &mut self.links[slot];
-                peer.in_next = up.first_seq.wrapping_add(up.msgs.len() as u16);
-                peer.out_next = up.ack;
-                peer.called_off_by = Some(off.by);
-                for aid in off.byes {
-                    self.push_link_msg(slot, LINK_MSG_BYE, aid, Vec::new());
-                }
-            }
+            self.begin_link_block(
+                slot,
+                up.epoch,
+                up.first_seq.wrapping_add(up.msgs.len() as u16),
+                up.ack,
+            );
         }
         let peer = &mut self.links[slot];
         peer.role = up.role;
@@ -185,9 +193,101 @@ impl LobbyState {
         }
     }
 
+    /// `slot` starts a new link block (`epoch`): the old session is over. A member whose
+    /// battle was called off while it was quiet, back with the same block, picks its stream
+    /// up at the client's own numbers (`in_next`, `out_next`: what it sends now was for a
+    /// group that is gone), then gets its BYEs.
+    fn begin_link_block(&mut self, slot: usize, epoch: u8, in_next: u16, out_next: u16) {
+        if self.links[slot].active {
+            self.leave_link(slot);
+        }
+        self.links[slot] = LinkPeer {
+            active: true,
+            epoch,
+            ..LinkPeer::default()
+        };
+        if let Some(off) = self.link_called_off[slot].take()
+            && off.epoch == epoch
+        {
+            let room_str = room_code_to_string(&self.room_code);
+            info!("[Room {room_str} | LINK] P{slot} is back: its battle was called off");
+            let peer = &mut self.links[slot];
+            peer.in_next = in_next;
+            peer.out_next = out_next;
+            peer.called_off_by = Some(off.by);
+            for aid in off.byes {
+                self.push_link_msg(slot, LINK_MSG_BYE, aid, Vec::new());
+            }
+        }
+    }
+
+    /// A QUIC member's link stream (protocol 9, §7.1 of the rework plan).
+    pub(super) fn apply_link_stream(&mut self, slot: usize, event: LinkStreamEvent, now: Instant) {
+        match event {
+            LinkStreamEvent::Open(epoch) => {
+                let peer = &self.links[slot];
+                if peer.active && peer.epoch != epoch && (epoch.wrapping_sub(peer.epoch) as i8) < 0
+                {
+                    return; // an earlier block's
+                }
+                if !peer.active || peer.epoch != epoch {
+                    self.begin_link_block(slot, epoch, 0, 0);
+                }
+                let room_str = room_code_to_string(&self.room_code);
+                info!(
+                    "[Room {room_str} | LINK] P{slot}'s link block {epoch} travels on a QUIC stream"
+                );
+                let peer = &mut self.links[slot];
+                peer.stream = true;
+                peer.last_trailer = Some(now);
+                // What was queued before the stream opened goes on it, in order.
+                let queued: Vec<LinkMsg> = peer.out.drain(..).map(|o| o.msg).collect();
+                for msg in queued {
+                    self.push_link_msg(slot, msg.kind, msg.aid, msg.data);
+                }
+            }
+            LinkStreamEvent::Msg(epoch, msg) => {
+                let peer = &mut self.links[slot];
+                if !(peer.active && peer.stream && peer.epoch == epoch) {
+                    return;
+                }
+                peer.last_trailer = Some(now);
+                debug!(
+                    "link P{slot} stream kind {} len {}",
+                    msg.kind,
+                    msg.data.len()
+                );
+                self.route_link_msg(slot, msg);
+            }
+            LinkStreamEvent::Closed(epoch) => {
+                let peer = &self.links[slot];
+                if peer.active && peer.stream && peer.epoch == epoch {
+                    self.leave_link(slot);
+                    self.links[slot] = LinkPeer::default();
+                }
+            }
+        }
+    }
+
+    /// Link messages for QUIC members' link streams, to write now.
+    pub(crate) fn take_link_stream_out(&mut self) -> Vec<LinkStreamOut> {
+        std::mem::take(&mut self.link_stream_out)
+    }
+
     fn push_link_msg(&mut self, to: usize, kind: u8, aid: u8, data: Vec<u8>) {
         let peer = &mut self.links[to];
         if !peer.active {
+            return;
+        }
+        if peer.stream {
+            if let Some(p) = &self.slots[to] {
+                debug!("link P{to} stream out kind {kind} len {}", data.len());
+                self.link_stream_out.push(LinkStreamOut {
+                    addr: p.addr,
+                    epoch: peer.epoch,
+                    msg: LinkMsg { kind, aid, data },
+                });
+            }
             return;
         }
         if peer.out.len() >= LINK_QUEUE_MAX {
@@ -389,7 +489,17 @@ impl LobbyState {
         for &o in &others {
             self.links[o].called_off_by = Some(slot as u8);
         }
-        self.link_called_off[slot] = (!byes.is_empty()).then(|| CalledOff {
+        // A QUIC member gets its BYEs on its stream now (QUIC delivers them when it comes
+        // back); the record then only says who, for its status line.
+        let byes = if self.links[slot].stream {
+            for &aid in &byes {
+                self.push_link_msg(slot, LINK_MSG_BYE, aid, Vec::new());
+            }
+            Vec::new()
+        } else {
+            byes
+        };
+        self.link_called_off[slot] = (!others.is_empty()).then(|| CalledOff {
             epoch: self.links[slot].epoch,
             byes,
             by: slot as u8,

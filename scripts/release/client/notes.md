@@ -19,7 +19,9 @@ Windows shows an "unknown publisher" warning for this unsigned program: **More i
 
 - Relay protocol **{{WIRE}}**: use a `coop-relay` release for protocol {{WIRE}}. Players of the
   last BizHawk release on the same protocol can share a world with this one.
-- An encrypted server (`host:port#…`) needs a relay started with `--quic`.
+- GoldLink connects encrypted (QUIC) by default: the relay listens on its port + 1 too (7778
+  beside 7777), which its host must open. A relay run with `--no-quic` is played over plain UDP.
+  The first connection to a world trusts the relay's certificate and keeps it with the world.
 - The ROM it accepts: SHA-1 `{{ROM_SHA1}}`.
 
 ## Changes

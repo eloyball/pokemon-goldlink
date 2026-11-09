@@ -12,6 +12,7 @@ use tracing::{error, info, warn};
 use crate::admission::{CookieJar, FailureLimiter};
 use crate::protocol::{
     ACTIVITY_BATTLE, AUTO_PLAYER_ID, COOP_MAGIC, ClientToServerPacket, LinkDown, MAX_PLAYERS,
+    TradeIn, TradeOut, encode_trade_down,
     NO_SLOT, PROTOCOL_VERSION, PlayerState, REMOTE_SLOTS, ROOM_ACTION_CREATE, ROOM_ACTION_JOIN,
     ROOM_ACTION_LEAVE, ROOM_ACTION_SYNC, ROOM_STATUS_ERR_ALREADY_EXISTS, ROOM_STATUS_ERR_FULL,
     ROOM_STATUS_ERR_LOCKED, ROOM_STATUS_ERR_MIDGAME_SAVE, ROOM_STATUS_ERR_NOT_FOUND,
@@ -35,7 +36,35 @@ use crate::protocol::{
 
 mod link;
 mod trade;
-pub use link::{LINK_DEADLINE, LINK_RESEND, LINK_SILENCE, LINK_STALL};
+pub use link::{
+    LINK_DEADLINE, LINK_RESEND, LINK_SILENCE, LINK_STALL, LinkStreamEvent, LinkStreamOut,
+};
+
+/// What a QUIC player's trade stream did (protocol 9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TradeStreamEvent {
+    /// Opened: its ROM opened a trade exchange.
+    Open,
+    /// The ROM's TradeOut changed.
+    Up(Box<TradeOut>),
+    /// Finished: the exchange closed.
+    Closed,
+}
+
+/// A trade frame for a QUIC player's trade stream (`encode_trade_down`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TradeStreamOut {
+    pub addr: SocketAddr,
+    pub frame: Vec<u8>,
+}
+
+/// A QUIC player's open trade stream: its latest TradeOut, and the TradeIn last sent on it.
+#[derive(Debug, Clone)]
+struct TradeStream {
+    addr: SocketAddr,
+    latest: Option<TradeOut>,
+    sent: Option<Option<TradeIn>>,
+}
 pub use trade::{PendingTrade, TRADE_IDLE_TIMEOUT, TRADE_NOTICE_TTL, TRADE_SILENCE_TIMEOUT};
 
 /// A request nobody answers expires after this long.
@@ -234,6 +263,12 @@ pub struct LobbyState {
     links: [link::LinkPeer; MAX_PLAYERS],
     /// Members whose link battle was called off while they were quiet (the referee).
     link_called_off: [Option<link::CalledOff>; MAX_PLAYERS],
+    /// Link messages for QUIC members' link streams, until the main loop writes them.
+    link_stream_out: Vec<link::LinkStreamOut>,
+    /// QUIC players' trade streams (protocol 9), by slot.
+    trade_streams: [Option<TradeStream>; MAX_PLAYERS],
+    /// Trade frames for them, until the main loop writes them.
+    trade_stream_out: Vec<TradeStreamOut>,
     /// Milestone 5 room rules (CHALLENGE_RULE_*): set by the host while the
     /// room forms, fixed once the roster locks.
     rules: u16,
@@ -289,6 +324,9 @@ impl LobbyState {
             trade_notices: Vec::new(),
             links: Default::default(),
             link_called_off: Default::default(),
+            link_stream_out: Vec::new(),
+            trade_streams: Default::default(),
+            trade_stream_out: Vec::new(),
             rules: 0,
             run_lost: false,
         };
@@ -329,6 +367,60 @@ impl LobbyState {
     pub fn is_idle(&self, now: Instant, idle_timeout: Duration) -> bool {
         self.slots.iter().all(Option::is_none)
             && now.duration_since(self.last_activity) > idle_timeout
+    }
+
+    /// A QUIC player's trade stream did something (protocol 9).
+    pub fn trade_stream_event(&mut self, addr: SocketAddr, event: TradeStreamEvent) {
+        let Some(slot) = self.slot_of_addr(addr) else {
+            return;
+        };
+        let now = Instant::now();
+        self.last_activity = now;
+        match event {
+            TradeStreamEvent::Open => {
+                let room_str = room_code_to_string(&self.room_code);
+                info!("[Room {room_str} | TRADE] P{slot}'s trade travels on a QUIC stream");
+                self.trade_streams[slot] = Some(TradeStream {
+                    addr,
+                    latest: None,
+                    sent: None,
+                });
+            }
+            TradeStreamEvent::Up(out) => {
+                if let Some(ts) = self.trade_streams[slot].as_mut().filter(|ts| ts.addr == addr) {
+                    ts.latest = Some(*out);
+                    self.apply_trade_out(slot, Some(*out), now);
+                }
+            }
+            TradeStreamEvent::Closed => {
+                if self.trade_streams[slot].as_ref().is_some_and(|ts| ts.addr == addr) {
+                    self.trade_streams[slot] = None;
+                }
+            }
+        }
+    }
+
+    /// Trade frames for QUIC players' trade streams, to write now.
+    pub fn take_trade_stream_out(&mut self) -> Vec<TradeStreamOut> {
+        std::mem::take(&mut self.trade_stream_out)
+    }
+
+    /// The slot a player's (current) address holds.
+    pub fn slot_of_addr(&self, addr: SocketAddr) -> Option<usize> {
+        self.slots
+            .iter()
+            .position(|s| s.as_ref().is_some_and(|p| p.addr == addr))
+    }
+
+    /// A QUIC player's link stream did something (protocol 9). Link messages for UDP members
+    /// go out at once, as for a packet's.
+    pub fn link_stream_event(&mut self, addr: SocketAddr, event: LinkStreamEvent) {
+        let Some(slot) = self.slot_of_addr(addr) else {
+            return;
+        };
+        let now = Instant::now();
+        self.last_activity = now;
+        self.apply_link_stream(slot, event, now);
     }
 
     pub fn remove_client_by_addr(&mut self, addr: SocketAddr) {
@@ -461,7 +553,12 @@ impl LobbyState {
             if fresh_op {
                 self.apply_session_op(slot_idx, session_out, now);
             }
-            self.apply_trade_out(slot_idx, pkt.trade, now);
+            // A trade stream's latest TradeOut stands in for the packets' trailer (protocol 9).
+            let trade = match &self.trade_streams[slot_idx] {
+                Some(ts) if ts.addr == addr => ts.latest,
+                _ => pkt.trade,
+            };
+            self.apply_trade_out(slot_idx, trade, now);
             self.apply_link_up(slot_idx, pkt.link, now);
 
             if (badge_changed || allow_changed)
@@ -951,6 +1048,21 @@ impl LobbyState {
             }
 
             let trade = self.trade_in_for(recipient_idx);
+            // A trade stream's player gets the trade on it, when it changes, not in packets.
+            let mut packet_trade = trade;
+            if let Some(ts) = self.trade_streams[recipient_idx]
+                .as_mut()
+                .filter(|ts| ts.addr == recipient.addr)
+            {
+                if ts.sent != Some(trade) {
+                    ts.sent = Some(trade);
+                    self.trade_stream_out.push(TradeStreamOut {
+                        addr: recipient.addr,
+                        frame: encode_trade_down(trade.as_ref()),
+                    });
+                }
+                packet_trade = None;
+            }
             let pkt = ServerToClientPacket {
                 magic: COOP_MAGIC,
                 version: PROTOCOL_VERSION,
@@ -988,7 +1100,7 @@ impl LobbyState {
             batch.push((
                 recipient.addr,
                 pkt.encode_full(
-                    trade.as_ref(),
+                    packet_trade.as_ref(),
                     links.get(recipient_idx).and_then(Option::as_ref),
                     Some(&self.challenge_down_for(recipient_idx)),
                 ),
@@ -1825,6 +1937,51 @@ impl RoomManager {
     /// Packets built outside the tick (link messages), to send now.
     pub fn take_immediate(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
         std::mem::take(&mut self.immediate)
+    }
+
+    /// A QUIC player's link stream did something: to its room. Messages for UDP members go
+    /// out at once (`take_immediate`), for QUIC members' streams by `take_link_stream_out`.
+    pub fn link_stream_event(&mut self, addr: SocketAddr, event: LinkStreamEvent) {
+        let msg = matches!(event, LinkStreamEvent::Msg(..));
+        let Some(room) = self
+            .rooms
+            .values_mut()
+            .find(|r| r.slot_of_addr(addr).is_some())
+        else {
+            return;
+        };
+        room.link_stream_event(addr, event);
+        if msg {
+            let packets = room.build_link_flush();
+            self.immediate.extend(packets);
+        }
+    }
+
+    /// A QUIC player's trade stream did something: to its room.
+    pub fn trade_stream_event(&mut self, addr: SocketAddr, event: TradeStreamEvent) {
+        if let Some(room) = self
+            .rooms
+            .values_mut()
+            .find(|r| r.slot_of_addr(addr).is_some())
+        {
+            room.trade_stream_event(addr, event);
+        }
+    }
+
+    /// Trade frames for QUIC players' trade streams, from every room.
+    pub fn take_trade_stream_out(&mut self) -> Vec<TradeStreamOut> {
+        self.rooms
+            .values_mut()
+            .flat_map(|r| r.take_trade_stream_out())
+            .collect()
+    }
+
+    /// Link messages for QUIC players' link streams, from every room.
+    pub fn take_link_stream_out(&mut self) -> Vec<LinkStreamOut> {
+        self.rooms
+            .values_mut()
+            .flat_map(|r| r.take_link_stream_out())
+            .collect()
     }
 
     fn dispatch(&mut self, addr: SocketAddr, pkt: ClientToServerPacket) -> Result<u8, u8> {

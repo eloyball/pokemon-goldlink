@@ -7,8 +7,11 @@ What you need
   the game; it checks your copy and makes the co-op version from it.
 - Windows 10 or 11, 64-bit, or Linux, 64-bit. Nothing else to install: the emulator is built
   into GoldLink.
-- The address of the server your group uses (host:port, or host:port#… for an encrypted
-  server; ask whoever runs it) and your world code.
+- The address of the server your group uses (host:port; ask whoever runs it) and your world
+  code. GoldLink connects encrypted: the first time, it learns the server's identity and from
+  then on accepts only that server for the world. If the server's identity ever changes,
+  GoldLink stops and asks you before trusting the new one (only do so if the host says they
+  replaced it).
 
 Starting
 --------

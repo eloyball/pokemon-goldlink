@@ -232,6 +232,37 @@ pub const SERVER_PACKET_SIZE: usize = 16 + (REMOTE_SLOTS * PLAYER_STATE_SIZE) + 
 pub const ERROR_PACKET_SIZE: usize = 16;
 /// Challenge replies: the 16-byte header plus the 8-byte cookie.
 pub const CHALLENGE_PACKET_SIZE: usize = 24;
+/// Protocol 9 (rework plan §7.3): a relay that offers QUIC appends its QUIC port (u16) and its
+/// certificate's SHA-256 fingerprint (32 bytes). The client learns them before it sends any
+/// secret, pins the fingerprint with the world and plays over QUIC. Still smaller than the
+/// 120-byte request (no amplification).
+pub const CHALLENGE_QUIC_PACKET_SIZE: usize = CHALLENGE_PACKET_SIZE + 2 + 32;
+
+/// A relay's QUIC offer: its port and certificate fingerprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicOffer {
+    pub port: u16,
+    pub fingerprint: [u8; 32],
+}
+
+/// A challenge reply with the relay's QUIC offer, if it makes one.
+pub fn challenge_with_offer(cookie: u64, offer: Option<QuicOffer>) -> Vec<u8> {
+    let mut buf = ServerToClientPacket::create_challenge_response(cookie).to_vec();
+    if let Some(o) = offer {
+        buf.extend_from_slice(&o.port.to_le_bytes());
+        buf.extend_from_slice(&o.fingerprint);
+    }
+    buf
+}
+
+/// The QUIC offer in a challenge reply (None: the relay offers none).
+pub fn challenge_offer(reply: &[u8]) -> Option<QuicOffer> {
+    let rest = reply.get(CHALLENGE_PACKET_SIZE..CHALLENGE_QUIC_PACKET_SIZE)?;
+    let port = u16::from_le_bytes([rest[0], rest[1]]);
+    let mut fingerprint = [0u8; 32];
+    fingerprint.copy_from_slice(&rest[2..34]);
+    (port != 0).then_some(QuicOffer { port, fingerprint })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {
@@ -694,6 +725,46 @@ impl LinkDown {
             msgs,
         })
     }
+}
+
+// QUIC streams (protocol 9, dev/docs/LINK_BATTLE_REWORK.md §7.1). A QUIC player's link
+// messages travel on one bidirectional stream per link block instead of the trailer's
+// go-back-N: the client opens it with LINK_STREAM_MAGIC and the block's epoch, then both sides
+// write frames (kind, aid, len u16, data), the trailer's message layout. The client finishing
+// its side is its BYE. Its datagram trailers then carry no messages (count 0): the epoch, role
+// and beacon, and the relay's beacons and referee bytes, as before.
+pub const LINK_STREAM_MAGIC: u32 = 0x314B_534C; // "LSK1"
+
+// A QUIC player's trade (protocol 9, §7.1): one bidirectional stream per trade exchange, opened
+// by the client with TRADE_STREAM_MAGIC when its ROM opens the exchange, finished when it
+// closes. Up: the ROM's TradeOut (TRADE_OUT_SIZE bytes) whenever it changes; the relay applies
+// the latest as if every packet carried it. Down: TRADE_STREAM_DOWN_SIZE bytes (1 = a TradeIn
+// follows, 0 = none, then TRADE_IN_SIZE bytes) whenever the relay's view changes. Its packets
+// then carry no trade trailer either way.
+pub const TRADE_STREAM_MAGIC: u32 = 0x314B_5354; // "TSK1"
+pub const TRADE_STREAM_DOWN_SIZE: usize = 1 + TRADE_IN_SIZE;
+
+/// The relay's trade state for a trade stream (`None`: no trade to show).
+pub fn encode_trade_down(trade: Option<&TradeIn>) -> Vec<u8> {
+    let mut buf = vec![0u8; TRADE_STREAM_DOWN_SIZE];
+    if let Some(t) = trade {
+        buf[0] = 1;
+        t.encode_le(&mut buf[1..]);
+    }
+    buf
+}
+
+/// One link frame on a QUIC stream: (kind, aid, len u16, data).
+pub fn encode_link_frame(msg: &LinkMsg) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4 + msg.data.len());
+    put_msgs(&mut buf, std::slice::from_ref(msg));
+    buf
+}
+
+/// The frame header's data length (bytes 2-3), or None if it is too long.
+pub fn link_frame_len(header: [u8; 4]) -> Option<usize> {
+    let len = u16::from_le_bytes([header[2], header[3]]) as usize;
+    (len <= LINK_DATA_MAX).then_some(len)
 }
 
 fn starts_with_link_magic(buf: &[u8]) -> bool {
@@ -1447,6 +1518,17 @@ mod tests {
         assert!(err.len() < CLIENT_PACKET_SIZE);
         let challenge = ServerToClientPacket::create_challenge_response(0xDEAD_BEEF);
         assert!(challenge.len() < CLIENT_PACKET_SIZE);
+        // Protocol 9: the QUIC offer rides it, still smaller than the request.
+        let offer = QuicOffer {
+            port: 7778,
+            fingerprint: [0xAB; 32],
+        };
+        let with = challenge_with_offer(0xDEAD_BEEF, Some(offer));
+        assert_eq!(with.len(), CHALLENGE_QUIC_PACKET_SIZE);
+        assert!(with.len() < CLIENT_PACKET_SIZE);
+        assert_eq!(challenge_offer(&with), Some(offer));
+        assert_eq!(&with[..CHALLENGE_PACKET_SIZE], &challenge[..]);
+        assert_eq!(challenge_offer(&challenge_with_offer(1, None)), None);
         assert_eq!(challenge[12], ROOM_STATUS_CHALLENGE);
         assert_eq!(
             u64::from_le_bytes(challenge[16..24].try_into().unwrap()),

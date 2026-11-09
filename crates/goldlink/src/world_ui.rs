@@ -89,6 +89,26 @@ impl WorldPanel {
 
     fn offline(&mut self, ui: &mut egui::Ui, view: &View, bridge: &SharedBridge) {
         let busy = view.link != LinkState::Offline;
+        // Protocol 9 (QUIC by default): the world's relay presented another certificate than
+        // the one pinned when this world was first played. Never re-pinned silently.
+        if let Some(fp) = &view.identity_change {
+            ui.label("The server now presents this certificate (SHA-256):");
+            let grouped: Vec<&str> = (0..fp.len())
+                .step_by(8)
+                .map(|i| &fp[i..(i + 8).min(fp.len())])
+                .collect();
+            ui.monospace(grouped.join(" "));
+            if ui
+                .button("Trust the new identity")
+                .on_hover_text(
+                    "Only if the world's host says they replaced the relay's certificate",
+                )
+                .clicked()
+            {
+                goldlink_bridge::hook::lock(bridge).trust_new_identity();
+            }
+            ui.add_space(6.0);
+        }
         ui.add_enabled_ui(!busy, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.host, false, "Join a world");
