@@ -17,8 +17,11 @@ Windows shows an "unknown publisher" warning for this unsigned program: **More i
 
 ## Compatibility
 
-- Relay protocol **{{WIRE}}**: use a `coop-relay` release for protocol {{WIRE}}. Players of the
-  last BizHawk release on the same protocol can share a world with this one.
+- **Everyone updates together.** This release speaks relay protocol **{{WIRE}}**: it needs a
+  `coop-relay` release for protocol {{WIRE}} (relay-v0.5), and a relay for protocol {{WIRE}} refuses
+  older GoldLink releases (v0.3 speaks protocol 8): they can't join, and get a message saying
+  which side is behind. Update the relay and every player at the same time. Your worlds, saves
+  and places in them carry over.
 - GoldLink connects encrypted (QUIC) by default: the relay listens on its port + 1 too (7778
   beside 7777), which its host must open. A relay run with `--no-quic` is played over plain UDP.
   The first connection to a world trusts the relay's certificate and keeps it with the world.
