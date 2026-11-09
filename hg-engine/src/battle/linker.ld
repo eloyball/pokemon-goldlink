@@ -12,6 +12,9 @@ SECTIONS {
                 FILL (0xABCD)
 
                 __text_start = . ;
+                /* The co-op header first, at the address resident code calls
+                   through (include/coop_link.h COOP_BATTLE_EXT). */
+                KEEP(*(.coop_battle_ext))
                 *(.init)
                 *(.text)
                 *(.ctors)
@@ -28,3 +31,5 @@ SECTIONS {
         __end__ = __bss_end__ ;
         } >rom = 0xff
 }
+
+ASSERT(gCoopBattleExt == 0x023C4000, "the co-op battle header must sit at 0x023C4000 (include/coop_link.h)")

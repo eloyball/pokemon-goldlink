@@ -1,6 +1,7 @@
 #include "config.h"
 #include "debug.h"
 #include "types.h"
+#include "coop_sync.h"
 
 #include "constants/ability.h"
 #include "constants/battle_message_constants.h"
@@ -890,12 +891,12 @@ s32 LONG_CALL GrabClientFromBattleScriptParam(void *bw, struct BattleStruct *sp,
 u32 cmdAddress2 = 0;
 #endif
 /**
- *  @brief check if waitmessage battle script command should end
+ *  @brief vanilla's Link_QueueIsEmpty: every game has done every command
  *
  *  @param sp global battle structure
  *  @return TRUE if link queue is empty; FALSE otherwise
  */
-BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
+BOOL LONG_CALL Link_QueueIsDrained(struct BattleStruct *sp)
 {
     int i;
     int battlerId;
@@ -932,6 +933,43 @@ BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
     return cnt == 0;
 }
 
+// Link battle rework part 2 (docs/LINK_BATTLE_REWORK.md): the server runs ahead of the other
+// games. It waits for its own game's commands (ServerQue[0], the host) and lets every other
+// game fall behind by fewer than COOP_RUN_AHEAD commands, instead of a round trip per step.
+// The bound keeps a lagging game's 4 KB battle receive ring (BattleLink_RecvData overwrites
+// unread data when it wraps) and its 16 entries per battler safe: a step adds a few commands
+// past the check, each at most 259 bytes. Not a link battle: only ServerQue[0] is used, as
+// before. The end waits for every game (BattleContext_Main, Link_QueueIsDrained).
+#define COOP_RUN_AHEAD 8
+
+/**
+ *  @brief check if waitmessage battle script command should end
+ *
+ *  @param sp global battle structure
+ *  @return TRUE if the host's commands are done and no other game is too far behind
+ */
+BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
+{
+    int i;
+    int battlerId;
+    int j;
+    int cnt;
+
+    for (i = 0; i < 4; i++) {
+        cnt = 0;
+        for (battlerId = 0; battlerId < 4; battlerId++) {
+            for (j = 0; j < 16; j++) {
+                cnt += sp->ServerQue[i][battlerId][j] != 0;
+            }
+        }
+        if (i == 0 ? cnt != 0 : cnt >= COOP_RUN_AHEAD) {
+            return FALSE;
+        }
+    }
+    sp->server_queue_time_out = 0;
+    return TRUE;
+}
+
 /**
  *  @brief battle script command for waitmessage
  *         checks to see if the server queue is empty before incrementing the VM PC
@@ -942,10 +980,27 @@ BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
  */
 BOOL btl_scr_cmd_0E_waitmessage(void *bw UNUSED, struct BattleStruct *sp)
 {
-    if (Link_QueueIsEmpty(sp)) {
+    BOOL empty = Link_QueueIsEmpty(sp);
+
+#if COOP_DEBUG_TOOLS
+    // Link battle rework phase 0: how many waits, and how long, per link battle.
+    if (BattleTypeGet(bw) & BATTLE_TYPE_LINK) {
+        if (!empty) {
+            if (!gCoopDebugMonBuffer.link_wait_open) {
+                gCoopDebugMonBuffer.link_wait_open = 1;
+                gCoopDebugMonBuffer.link_waits++;
+            }
+            gCoopDebugMonBuffer.link_wait_steps++;
+        } else {
+            gCoopDebugMonBuffer.link_wait_open = 0;
+        }
+    }
+#endif
+    // No Link_CheckTimeout (vanilla: an error after 1800 frames of waiting): in a co-op link
+    // battle the relay decides when a quiet game is gone (docs/LINK_BATTLE_REWORK.md part 3),
+    // and its decision ends the battle on every game (src/battle/coop_link_battle.c).
+    if (empty) {
         IncrementBattleScriptPtr(sp, 1);
-    } else {
-        Link_CheckTimeout(sp);
     }
 
     sp->battle_progress_flag = 1;

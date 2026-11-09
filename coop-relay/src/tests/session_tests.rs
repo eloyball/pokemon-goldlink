@@ -593,8 +593,9 @@ fn test_busy_while_linked() {
     });
     op(&mut lobby, 2, 1, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
     assert_eq!(gates(&mut lobby, 2)[6], SESSION_REASON_BUSY);
-    // The link went quiet: free again.
-    lobby.expire_links(Instant::now() + crate::lobby::LINK_SILENCE + Duration::from_secs(1));
+    // The link block closed (the client talks on without a link trailer): free again.
+    lobby.backdate_link(1, crate::lobby::LINK_SILENCE + Duration::from_secs(1));
+    lobby.expire_links(Instant::now());
     op(&mut lobby, 2, 2, SESSION_OP_REQUEST, SESSION_KIND_TRADE, 1);
     assert_eq!(gates(&mut lobby, 2)[2], SESSION_STATE_OUTGOING);
 }

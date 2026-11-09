@@ -2838,6 +2838,9 @@ BOOL LONG_CALL MoldBreakerIsClientGrounded(struct BattleStruct *sp, u32 attacker
  */
 BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp);
 
+// Every game has done every command (vanilla Link_QueueIsEmpty; src/battle/battle_script_commands.c).
+BOOL LONG_CALL Link_QueueIsDrained(struct BattleStruct *sp);
+
 /**
  *  @brief grab a battler's weight
  *
