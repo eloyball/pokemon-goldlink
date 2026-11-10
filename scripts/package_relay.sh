@@ -12,7 +12,8 @@
 #   ALLOW_DIRTY=1  packages uncommitted changes (testing the script; never with --publish).
 #
 # Needs: cargo with the x86_64-unknown-linux-musl, aarch64-unknown-linux-musl and
-# x86_64-pc-windows-gnu targets, mingw-w64-gcc, python3, gh (--publish).
+# x86_64-pc-windows-gnu targets, mingw-w64-gcc, clang and llvm-ar (or the musl targets' own gcc),
+# python3, gh (--publish).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -38,6 +39,23 @@ for t in "${TARGETS[@]}"; do
     rustup target list --installed | grep -qx "$t" || die "rustup target add $t"
 done
 command -v x86_64-w64-mingw32-gcc > /dev/null || die "x86_64-w64-mingw32-gcc is missing (mingw-w64-gcc)"
+# ring (QUIC's TLS, through quinn, rustls and rcgen) compiles C for the musl targets: with their
+# own gcc (x86_64-linux-musl-gcc, aarch64-linux-musl-gcc) when installed, else with clang, which
+# targets both, and llvm-ar (or the newest llvm-ar-N, as Ubuntu installs it). CC_<target> and
+# AR_<target> set by hand win.
+for arch in x86_64 aarch64; do
+    cc_var="CC_${arch}_unknown_linux_musl"
+    ar_var="AR_${arch}_unknown_linux_musl"
+    [[ -n "${!cc_var:-}" ]] && continue
+    command -v "$arch-linux-musl-gcc" > /dev/null && continue
+    command -v clang > /dev/null || die "no C compiler for $arch musl: install clang and llvm (or $arch-linux-musl-gcc)"
+    export "$cc_var=clang"
+    if [[ -z "${!ar_var:-}" ]]; then
+        llvm_ar="$(command -v llvm-ar || compgen -c llvm-ar- | sort -V | tail -1)"
+        [[ -n "$llvm_ar" ]] || die "llvm-ar is missing (install llvm)"
+        export "$ar_var=$llvm_ar"
+    fi
+done
 COMMIT="$(git rev-parse HEAD)"
 # crates/goldlink-proto is the relay's wire protocol (compiled from coop-relay/src/protocol.rs);
 # the root Cargo.toml is the workspace it inherits its edition from.
@@ -52,6 +70,7 @@ if [[ $PUBLISH == 1 ]]; then
     gh release view "$TAG" -R "$REPOSITORY" > /dev/null 2>&1 && die "the GitHub release $TAG exists already"
 fi
 echo "[*] coop-relay $CRATE ($TAG) from ${COMMIT:0:9}: relay protocol $WIRE"
+echo "[*] musl C: x86_64 ${CC_x86_64_unknown_linux_musl:-x86_64-linux-musl-gcc}, aarch64 ${CC_aarch64_unknown_linux_musl:-aarch64-linux-musl-gcc}"
 
 # --- Build (static on Linux; the aarch64 one links with the toolchain's own lld)
 cargo test --locked --manifest-path "$MANIFEST" -q
