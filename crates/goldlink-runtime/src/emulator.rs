@@ -18,6 +18,10 @@ use crate::saves::{self, SaveWatcher};
 /// The mailbox's size (`gCoopCommBlock`).
 pub const MAILBOX_SIZE: usize = std::mem::size_of::<CoopCommBlock>();
 
+/// Where NitroSDK keeps the reset parameter across a reset (`HW_RESET_PARAMETER_BUF`).
+const RESET_PARAMETER: usize = 0x027F_FC20;
+const MAIN_RAM_SIZE: usize = 0x40_0000;
+
 /// What a game needs to start.
 pub struct GameSetup {
     /// The patched ROM, in memory.
@@ -99,6 +103,28 @@ impl Emulator {
         }
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
+        Ok(())
+    }
+
+    /// Power cycle straight into the game (dev/docs/unified-client/UC9_PROPOSAL.md §2): the cart
+    /// keeps what it holds now (the bridge may just have put a world's save in), and the game boots
+    /// with reset parameter 1, its own boot into Continue (pret main.c): no intro, title or main
+    /// menu. The co-op ROM turns it into New Game on a blank cart (`Coop_RegisterMainOverlay`).
+    pub fn boot_into_game(&mut self) -> Result<(), String> {
+        let cart = self.nds.save().to_vec();
+        self.nds
+            .load_rom(&self.rom, (!cart.is_empty()).then_some(cart.as_slice()))
+            .map_err(|e| e.to_string())?;
+        match self.rtc {
+            Some(at) => self.nds.set_rtc(at),
+            None => self.nds.set_rtc_now(),
+        }
+        self.watcher
+            .reset(self.flash_writes.load(Ordering::Relaxed));
+        // NitroSDK's HW_RESET_PARAMETER_BUF (0x027FFC20), which OS_GetResetParameter reads; main
+        // RAM is 4 MB, mirrored up to 0x02800000.
+        let at = RESET_PARAMETER & (MAIN_RAM_SIZE - 1);
+        self.nds.main_ram_mut()[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
         Ok(())
     }
 

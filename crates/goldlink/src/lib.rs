@@ -92,7 +92,7 @@ pub fn run(session: Session) -> Result<(), String> {
     let (config, note) = Config::load(&data_dir);
     let emu = Emulator::new(setup)?;
     if let Some(b) = &bridge {
-        hooks.insert(0, Box::new(BridgeHook { bridge: b.clone() }));
+        hooks.insert(0, Box::new(BridgeHook::new(b.clone())));
     }
     let runner = Runner::start(emu, hooks);
     let size = layout::window_size(&config.video, 2.0);

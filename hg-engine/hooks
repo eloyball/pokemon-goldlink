@@ -733,6 +733,10 @@ arm9 Coop_SetupAndStartTrainerBattle 02051370
 # the caller (src/coop_boss.c). r0: no arguments, lr stays the caller's.
 arm9 Coop_GF_AssertFail 0202551C 0
 
+# co-op (UC9 §2, straight into the game): RegisterMainOverlay queues New Game
+# for a boot into Continue on a blank cart (src/coop_sync.c). r2: two arguments.
+arm9 Coop_RegisterMainOverlay 02000EF4 2
+
 # co-op: script command 219 (WhiteOut) is skipped after a team boss battle a
 # lost link ended (KNOWN_RISKS #32, src/coop_boss.c). r1: one argument (ctx).
 arm9 Coop_ScrCmd_WhiteOut 020498C8 1

@@ -417,6 +417,32 @@ void Coop_LinkSysTask(struct SysTask *task, void *param)
     Coop_LinkUpdate();
 }
 
+// Straight into the game (dev/docs/unified-client/UC9_PROPOSAL.md §2): GoldLink
+// boots the game with reset parameter 1, vanilla's own boot into Continue
+// (pret main.c: no intro, title or main menu). Vanilla RegisterMainOverlay
+// (pret main.c, 0x02000EF4, replaced wholesale by a register hook: it only
+// queues the next app). On a cart with no save there is nothing to continue,
+// so Continue becomes New Game (Oak's speech), as the main menu would offer.
+// Vanilla never queues Continue without a save, so nothing else changes.
+// Resident: it runs at boot, once Main() has loaded Overlay 129
+// (armips/asm/syntheticoverlay.s).
+#define COOP_MAIN_WORK        0x02111868 // pret _02111868 (main.c): queued id +0x8, template +0xC
+#define COOP_APP_CONTINUE      0x021E5C04 // ov36_App_MainMenu_SelectOption_Continue
+#define COOP_APP_NEW_GAME      0x021E5C24 // ov36_App_MainMenu_SelectOption_NewGame (same overlay)
+#define COOP_SAVE_FILE_EXISTS  0x4        // pret SaveData.saveFileExists (Save_FileExists)
+
+void LONG_CALL Coop_RegisterMainOverlay(u32 overlayId, const void *template)
+{
+    u32 *work = (u32 *)COOP_MAIN_WORK;
+    const u8 *save = SaveBlock2_get();
+
+    if ((u32)template == COOP_APP_CONTINUE && save != NULL
+        && *(const u32 *)(save + COOP_SAVE_FILE_EXISTS) == FALSE)
+        template = (const void *)COOP_APP_NEW_GAME;
+    work[2] = overlayId;      // queuedMainOverlayId
+    work[3] = (u32)template;  // queuedMainOverlayTemplate
+}
+
 void Coop_MainSysTask(struct SysTask *task, void *param)
 {
     FieldSystem *fsys = gFieldSysPtr;
@@ -437,7 +463,9 @@ void Coop_MainSysTask(struct SysTask *task, void *param)
 
     // The bridge swapped this room's save into the cartridge (SRAM): restart
     // so the game loads it. Only before a session started (title screen,
-    // main menu), never once a save is in play.
+    // main menu), never once a save is in play. (GoldLink itself power-cycles
+    // the emulator straight into the game instead, UC9 §2; this restart is for
+    // the BizHawk bridge of the development runners, back to the title.)
     if (gCoopCommBlock.reset_request == 1 && !gCoopCommBlock.was_in_active_session && !fieldActive)
         OS_ResetSystem(0);
 

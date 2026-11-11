@@ -56,6 +56,9 @@ pub struct Actions {
     /// The bridge put another world's save into the cart: write the cart's save file now, or a
     /// restart before the next in-game save would bring the old one back.
     pub cart_replaced: bool,
+    /// Power-cycle now, straight into the game on the cart as it is (UC9 §2:
+    /// `Emulator::boot_into_game`). Only asked of hosts that said they can.
+    pub boot_into_game: bool,
     pub backup_taken: Option<PathBuf>,
     pub backup_failed: Option<String>,
 }
@@ -81,6 +84,9 @@ pub struct View {
     pub slot_ready: bool,
     /// Connected to a started world whose save isn't on this computer (UC8 §2.3).
     pub save_missing: bool,
+    /// The game is in the overworld with its save, or in Oak's speech for a new one: with
+    /// `slot_ready`, the window shows the game (UC9 §2: never the boot's black screens).
+    pub game_started: bool,
     /// The ROM is in a session: its save is in play (`was_in_active_session`), or it's saving
     /// on its way back to the title after a disconnect (`disconnect_state` != 0). False once it's
     /// back at the title (UC8 §2.2: the game may stop then).
@@ -117,6 +123,22 @@ const CALLED_OFF: &str = "The battle was called off";
 /// (a NAT that changes our port per packet would otherwise keep us "connecting" forever).
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const SWAP_RETRY: Duration = Duration::from_secs(10);
+
+/// Vanilla's main work (pret main.c `_02111868`): the running app's manager at +4, which starts
+/// with a copy of the app's template (init first). And Oak's speech's template
+/// (`gApplication_OakSpeech`), where New Game begins (UC9 §2).
+const MAIN_WORK: usize = 0x0211_1868;
+const APP_OAK_SPEECH: usize = 0x0210_6068;
+
+/// Whether the running app is Oak's speech, read from main RAM (4 MB at 0x02000000).
+fn oak_speech_running(ram: &[u8]) -> bool {
+    let word = |addr: usize| -> Option<usize> {
+        let o = addr.checked_sub(0x0200_0000)?;
+        Some(u32::from_le_bytes(ram.get(o..o + 4)?.try_into().ok()?) as usize)
+    };
+    let running = word(MAIN_WORK + 4).filter(|&m| m != 0).and_then(word);
+    running.is_some() && running == word(APP_OAK_SPEECH)
+}
 
 pub struct Bridge {
     dir: PathBuf,
@@ -174,6 +196,15 @@ pub struct Bridge {
     last_save_counter: Option<u32>,
     last_rom_heartbeat: u32,
     swap_requested: Instant,
+    /// The host power-cycles the emulator straight into the game when asked
+    /// ([`Actions::boot_into_game`]): the window's emulation thread does ([`crate::hook::BridgeHook`]);
+    /// bare hosts (the dev binary's Lua runs) don't, and get the ROM's restart to the title.
+    boots_into_game: bool,
+    /// Asked for on this frame (taken by `post_frame`).
+    boot_into_game: bool,
+    /// The game is in the overworld with its save, or in Oak's speech (a new game): the window
+    /// can show it (UC9 §2).
+    game_started: bool,
     backups: Backups,
     next_backup: Option<Instant>,
     pending_restore: Option<PathBuf>,
@@ -243,6 +274,9 @@ impl Bridge {
             last_save_counter: None,
             last_rom_heartbeat: 0,
             swap_requested: Instant::now(),
+            boots_into_game: false,
+            boot_into_game: false,
+            game_started: false,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
             pending_restore: None,
@@ -472,12 +506,18 @@ impl Bridge {
         self.next_backup = Some(Instant::now());
     }
 
+    /// This host power-cycles the emulator when [`Actions::boot_into_game`] asks (UC9 §2).
+    pub fn set_boots_into_game(&mut self, yes: bool) {
+        self.boots_into_game = yes;
+    }
+
     /// A new emulator is starting (the launcher starts one per session, UC8): what the bridge
     /// knew of the last one's game is dropped, so nothing reads a game that's gone.
     pub fn forget_game(&mut self) {
         self.mailbox_copy = None;
         self.last_save_counter = None;
         self.last_rom_heartbeat = 0;
+        self.game_started = false;
         self.clear_payload_pending = true;
     }
 
@@ -574,9 +614,14 @@ impl Bridge {
             ram[mailbox + LOCAL_AVATAR] = self.avatar_id;
         }
         self.read_local_player(m.main_ram(), mailbox);
+        self.game_started = {
+            let ram = m.main_ram();
+            ram[mailbox + WAS_IN_ACTIVE_SESSION] == 1 || oak_speech_running(ram)
+        };
         if self.update_save_slot(m, mailbox) {
             actions.cart_replaced = true;
         }
+        actions.boot_into_game = std::mem::take(&mut self.boot_into_game);
 
         if !matches!(self.link, LinkState::Connecting | LinkState::Connected) {
             self.net.take_ok_packets();
@@ -999,8 +1044,9 @@ impl Bridge {
 
     /// One save per world (the C# `UpdateSaveSlot`). Copies the cart to the owning world's file
     /// after every completed in-game save (also while disconnected: the disconnect flow saves
-    /// after the link drops). Once connected at the title, swaps the world's save (or a blank
-    /// one) into the cart and asks the ROM to restart so the game loads it. `save_slot_ready`
+    /// after the link drops). Once connected before the game started, swaps the world's save (or
+    /// a blank one) into the cart, then has the host boot straight into the game (UC9 §2) or,
+    /// on a host that can't, asks the ROM to restart so the game loads it. `save_slot_ready`
     /// lets the startup gate pass only with the right save loaded. True: the cart was replaced.
     fn update_save_slot(&mut self, m: &mut dyn Machine, mb: usize) -> bool {
         let (rom_heartbeat, counter, in_session) = {
@@ -1039,17 +1085,27 @@ impl Bridge {
                         self.slot_state = SlotState::Missing;
                     } else {
                         let cart = m.cart().to_vec();
-                        match self.slots.prepare_join(&key, &cart) {
-                            None => self.slot_state = SlotState::Ready,
-                            Some(image) => {
-                                let c = m.cart();
-                                let n = c.len().min(image.len());
-                                c[..n].copy_from_slice(&image[..n]);
-                                m.main_ram()[mb + RESET_REQUEST] = 1;
-                                self.swap_requested = Instant::now();
-                                self.slot_state = SlotState::Swapping;
-                                replaced = true;
-                            }
+                        if let Some(image) = self.slots.prepare_join(&key, &cart) {
+                            let c = m.cart();
+                            let n = c.len().min(image.len());
+                            c[..n].copy_from_slice(&image[..n]);
+                            replaced = true;
+                        }
+                        if self.boots_into_game {
+                            // The host power-cycles straight into the game after this frame
+                            // (Continue, or New Game on a blank cart), even when the cart
+                            // already held this world's save: the player never sees the intro
+                            // or the title (dev/docs/unified-client/UC9_PROPOSAL.md §2).
+                            self.forget_game();
+                            self.boot_into_game = true;
+                            self.slot_state = SlotState::Ready;
+                        } else if replaced {
+                            // The ROM restarts on its own, back to the title.
+                            m.main_ram()[mb + RESET_REQUEST] = 1;
+                            self.swap_requested = Instant::now();
+                            self.slot_state = SlotState::Swapping;
+                        } else {
+                            self.slot_state = SlotState::Ready;
                         }
                     }
                 }
@@ -1144,6 +1200,7 @@ impl Bridge {
             slot_ready: self.link == LinkState::Connected && self.slot_state == SlotState::Ready,
             save_missing: self.link == LinkState::Connected
                 && self.slot_state == SlotState::Missing,
+            game_started: self.game_started,
             game_in_session: self
                 .mailbox_copy
                 .as_ref()

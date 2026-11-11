@@ -23,15 +23,19 @@ const LAUNCHER_MIN: egui::Vec2 = egui::vec2(860.0, 540.0);
 /// A restored backup must be loaded by then, and saved by the ROM after that.
 const RESTORE_LOAD: Duration = Duration::from_secs(20);
 const RESTORE_SAVE: Duration = Duration::from_secs(90);
+/// A join shows the game after this even if it never reached the overworld (UC9 §2).
+const REVEAL_ANYWAY: Duration = Duration::from_secs(30);
 
 enum Stage {
     /// The ROM screen.
     Rom,
     Lobby,
-    /// The emulator boots hidden and muted while the bridge joins and loads the world's save.
+    /// The emulator boots hidden and muted while the bridge joins, loads the world's save and
+    /// boots straight into the game (UC9 §2). `since`: when the join started.
     Connecting {
         runner: Runner,
         code: String,
+        since: Instant,
     },
     /// A started world whose save isn't here (UC8 §2.3): nothing is shown of the game.
     Missing {
@@ -104,9 +108,7 @@ impl Shell {
         })?;
         Ok(Runner::start(
             emu,
-            vec![Box::new(BridgeHook {
-                bridge: bridge.clone(),
-            })],
+            vec![Box::new(BridgeHook::new(bridge.clone()))],
         ))
     }
 
@@ -140,6 +142,7 @@ impl Shell {
         Ok(Stage::Connecting {
             runner,
             code: code.to_owned(),
+            since: Instant::now(),
         })
     }
 
@@ -200,7 +203,11 @@ impl Shell {
                 };
                 self.act(ctx, &bridge, asked)
             }
-            Stage::Connecting { runner, code } => self.connecting(ctx, runner, code, close),
+            Stage::Connecting {
+                runner,
+                code,
+                since,
+            } => self.connecting(ctx, runner, code, since, close),
             Stage::Missing {
                 runner,
                 code,
@@ -344,6 +351,7 @@ impl Shell {
         ctx: &egui::Context,
         runner: Runner,
         code: String,
+        since: Instant,
         close: bool,
     ) -> Stage {
         let art = self.art.as_ref().expect("loaded");
@@ -366,7 +374,11 @@ impl Shell {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
         }
         let Some(v) = view else {
-            return Stage::Connecting { runner, code };
+            return Stage::Connecting {
+                runner,
+                code,
+                since,
+            };
         };
         if cancel || close {
             if let Some(b) = &self.bridge {
@@ -394,7 +406,10 @@ impl Shell {
                 choosing: None,
             };
         }
-        if v.slot_ready {
+        // The game shows once it's in the overworld (or Oak's speech, for a new game), never
+        // during the boot's black screens; after REVEAL_ANYWAY whatever it shows, so a game
+        // that never gets there is still in front of the player (UC9 §2).
+        if v.slot_ready && (v.game_started || since.elapsed() > REVEAL_ANYWAY) {
             let bridge = self.bridge.clone().expect("connected");
             let game = GameApp::release(
                 runner,
@@ -410,7 +425,11 @@ impl Shell {
                 code,
             };
         }
-        Stage::Connecting { runner, code }
+        Stage::Connecting {
+            runner,
+            code,
+            since,
+        }
     }
 
     fn missing(
@@ -894,17 +913,19 @@ mod tests {
         };
         theme::install(&d.ctx);
 
-        // Join: the game boots hidden, the world's save goes in, then the game takes the window.
+        // Join: the game boots hidden, the world's save goes in, the game boots straight into it
+        // (UC9 §2: no intro, title or menu, and no key pressed), and only then takes the window.
+        let joined = Instant::now();
         d.until(&mut shell, 60, "the game to be shown", &[], |s| {
             matches!(s.stage, Stage::Playing { .. })
         });
-        // Title screen → Continue → the overworld (A and Start now and then).
-        d.until(
-            &mut shell,
-            120,
-            "the overworld",
-            &[Key::X, Key::Enter, Key::X],
-            |s| s.view().is_some_and(|v| v.game_in_session),
+        assert!(
+            shell.view().is_some_and(|v| v.game_in_session),
+            "the game was shown before it reached the overworld"
+        );
+        eprintln!(
+            "join → overworld, shown: {:.1} s",
+            joined.elapsed().as_secs_f64()
         );
         // A backup (a melonDS state), taken at the next safe moment.
         let backups = data.join("coop_backups/TEAM01-5445414D");

@@ -43,7 +43,16 @@ pub fn after_frame(bridge: &SharedBridge, nds: &mut Nds, mailbox: usize) -> crat
 }
 
 pub struct BridgeHook {
-    pub bridge: SharedBridge,
+    bridge: SharedBridge,
+}
+
+impl BridgeHook {
+    /// The bridge on this emulation thread, which power-cycles straight into the game when the
+    /// bridge asks (UC9 §2).
+    pub fn new(bridge: SharedBridge) -> Self {
+        lock(&bridge).set_boots_into_game(true);
+        Self { bridge }
+    }
 }
 
 impl FrameHook for BridgeHook {
@@ -57,6 +66,11 @@ impl FrameHook for BridgeHook {
         let actions = lock(&self.bridge).post_frame(&mut NdsMachine(&mut emu.nds), mailbox);
         if actions.cart_replaced {
             emu.write_cart_save();
+        }
+        if actions.boot_into_game
+            && let Err(e) = emu.boot_into_game()
+        {
+            emu.push_event(Event::SaveFailed(format!("the game couldn't restart: {e}")));
         }
         if let Some(p) = actions.backup_taken {
             emu.push_event(Event::BackupTaken(p));

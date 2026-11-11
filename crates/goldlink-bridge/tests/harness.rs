@@ -102,7 +102,10 @@ impl Game {
             Some(b) => {
                 before_frame(b, &mut self.emu.nds, MB);
                 self.emu.frame(input);
-                after_frame(b, &mut self.emu.nds, MB);
+                // As the window's emulation thread (BridgeHook): straight into the game (UC9 §2).
+                if after_frame(b, &mut self.emu.nds, MB).boot_into_game {
+                    self.emu.boot_into_game().unwrap();
+                }
                 // COOP_BRIDGE_AUTOJOIN's behaviour: join, and again after a failed attempt.
                 self.frames += 1;
                 if self.frames % 60 == 0 {
@@ -238,6 +241,9 @@ fn game(
         ),
     })
     .unwrap();
+    if let Some(b) = &bridge {
+        lock(b).set_boots_into_game(true);
+    }
     Game {
         role,
         emu,
@@ -520,6 +526,120 @@ fn two_games_link_through_the_relay() {
 #[ignore = "needs the co-op ROM, the regression's saves and the relay"]
 fn four_games_in_one_world_two_of_them_link() {
     run_world(4, 19_500 + (std::process::id() % 500) as u16);
+}
+
+// Straight into the game (dev/docs/unified-client/UC9_PROPOSAL.md §2): pret main.c's work struct
+// (_02111868: the running app's manager at +4) and Oak's speech (gApplication_OakSpeech).
+const MAIN_WORK: usize = 0x0211_1868;
+const APP_OAK_SPEECH: usize = 0x0210_6068;
+
+/// Whether the running app is Oak's speech: its manager starts with a copy of its template, so
+/// both begin with the same init function.
+fn app_is_oak_speech(g: &Game) -> bool {
+    let ram = g.emu.nds.main_ram();
+    let at = |addr: usize| -> Option<usize> {
+        let o = addr.checked_sub(0x0200_0000)?;
+        Some(u32::from_le_bytes(ram.get(o..o + 4)?.try_into().ok()?) as usize)
+    };
+    let running = at(MAIN_WORK + 4).filter(|&m| m != 0).and_then(at);
+    running.is_some() && running == at(APP_OAK_SPEECH)
+}
+
+#[test]
+#[ignore = "needs the co-op ROM, the regression's saves and the relay"]
+fn a_join_goes_straight_into_the_game() {
+    let port = 20_000 + (std::process::id() % 500) as u16;
+    let (dir, _relay, games, rom) = world(1, port);
+    let server = format!("127.0.0.1:{port}");
+    let (role, gd) = games.into_iter().next().unwrap();
+    let bridge: SharedBridge = Arc::new(Mutex::new(Bridge::new(&gd, &[]).unwrap()));
+    let mut g = game(
+        role,
+        rom,
+        gd.join("cart.sav"),
+        Some(bridge.clone()),
+        Arc::default(),
+        &server,
+    );
+    lock(&bridge).join(&server, ROOM, false);
+    // No key at all: the bridge's restart goes straight into Continue (no intro, title or menu).
+    assert!(g.wait_for(1800, |g| g.connected()), "never connected");
+    let connected = g.frames;
+    assert!(g.wait_for(600, |g| lock(g.bridge.as_ref().unwrap()).view().slot_ready));
+    let rebooted = g.frames;
+    let ok = g.wait_for(1800, |g| g.in_field());
+    assert!(
+        ok,
+        "not in the overworld after {} frames with no input",
+        g.frames
+    );
+    g.frame();
+    assert!(
+        lock(&bridge).view().game_started,
+        "the window would still wait"
+    );
+    eprintln!(
+        "join → overworld: {} frames ({:.1} s), no input: connected at {connected}, rebooted \
+         at {rebooted}",
+        g.frames,
+        g.frames as f64 / DS_FPS
+    );
+    lock(&bridge).leave();
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+#[ignore = "needs the co-op ROM and the relay"]
+fn a_new_world_starts_a_new_game() {
+    let port = 20_500 + (std::process::id() % 500) as u16;
+    let dir = std::env::temp_dir().join(format!("goldlink-harness-new-{}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join("campaigns")).unwrap();
+    std::fs::create_dir_all(dir.join("A")).unwrap();
+    let bin = std::env::var_os("GOLDLINK_RELAY")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo().join("coop-relay/target/release/coop-relay"));
+    let _relay = Relay(
+        Command::new(&bin)
+            .args(["--bind", &format!("127.0.0.1:{port}"), "--save-dir"])
+            .arg(dir.join("campaigns"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap_or_else(|e| panic!("{}: {e}", bin.display())),
+    );
+    std::thread::sleep(Duration::from_millis(500));
+    let server = format!("127.0.0.1:{port}");
+    let gd = dir.join("A");
+    let bridge: SharedBridge = Arc::new(Mutex::new(Bridge::new(&gd, &[]).unwrap()));
+    // A fresh install: no cart file yet, so the cart is blank.
+    let mut g = game(
+        'A',
+        rom(),
+        gd.join("cart.sav"),
+        Some(bridge.clone()),
+        Arc::default(),
+        &server,
+    );
+    lock(&bridge).join(&server, "NEWGM1", true);
+    let ok = g.wait_for(1800, app_is_oak_speech);
+    assert!(
+        ok,
+        "Oak's speech didn't start within 1800 frames with no input (link {:?})",
+        lock(&bridge).link()
+    );
+    g.frame();
+    assert!(
+        lock(&bridge).view().game_started,
+        "the window would still wait"
+    );
+    eprintln!(
+        "new world → Oak's speech: {} frames ({:.1} s), no input",
+        g.frames,
+        g.frames as f64 / DS_FPS
+    );
+    lock(&bridge).leave();
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Where each game really was, frame by frame for the last 2 s: role → (when, trainer, map, x,
