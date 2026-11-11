@@ -139,6 +139,28 @@ impl WorldList {
         }
     }
 
+    /// Adds another install's worlds (UC8 §2.3: Import a save…): the ones this list doesn't
+    /// have, with their server and pin. Returns how many were added.
+    pub fn merge_from(&mut self, file: &Path) -> usize {
+        let Ok(text) = std::fs::read_to_string(file) else {
+            return 0;
+        };
+        let other: File = serde_json::from_str(&text).unwrap_or_default();
+        let mut added = 0;
+        for e in other.worlds {
+            if is_world_code(&e.code) && self.find(&e.code).is_none() {
+                self.entries.push(e);
+                added += 1;
+            }
+        }
+        if added > 0 {
+            self.sort();
+            self.entries.truncate(MAX_ENTRIES);
+            self.save();
+        }
+        added
+    }
+
     fn sort(&mut self) {
         self.entries
             .sort_by_key(|e| std::cmp::Reverse(e.last_played));
@@ -201,8 +223,16 @@ impl WorldList {
         let mut s = String::from("{\n  \"worlds\": [\n");
         for (i, e) in self.entries.iter().enumerate() {
             let server = serde_json::to_string(&e.server).unwrap_or_else(|_| "\"\"".into());
+            // The pin must survive a restart: without it every start trusts the relay's
+            // certificate anew and a changed identity is never noticed (UC8).
+            let pin = if e.pin.is_empty() || e.quic_port == 0 {
+                String::new()
+            } else {
+                let p = serde_json::to_string(&e.pin).unwrap_or_else(|_| "\"\"".into());
+                format!(", \"pin\": {p}, \"quic_port\": {}", e.quic_port)
+            };
             s.push_str(&format!(
-                "    {{ \"code\": \"{}\", \"server\": {server}, \"created\": {}, \"last_played\": {} }}",
+                "    {{ \"code\": \"{}\", \"server\": {server}, \"created\": {}, \"last_played\": {}{pin} }}",
                 e.code, e.created, e.last_played
             ));
             s.push_str(if i + 1 < self.entries.len() {
@@ -248,6 +278,42 @@ mod tests {
         w.forget("TEST02");
         let again = WorldList::new(&dir, &saves);
         assert_eq!(again.entries(), w.entries());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_pin_survives_a_restart_and_worlds_merge() {
+        let dir = std::env::temp_dir().join(format!("goldlink-worlds-pin-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut w = WorldList::new(&dir, &dir.join("none"));
+        w.record("PINNED", "relay.example:7777", true);
+        w.set_pin("PINNED", "relay.example:7777", &"ab".repeat(32), 7777);
+        let again = WorldList::new(&dir, &dir.join("none"));
+        assert_eq!(
+            again.pin_for("PINNED", "relay.example:7777"),
+            Some(("ab".repeat(32), 7777)),
+            "a restart keeps the pin"
+        );
+
+        // Another install's list: new worlds come in with their pin; known ones stay ours.
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(
+            other.join(FILE),
+            format!(
+                "{{\"worlds\": [{{\"code\": \"WORLD1\", \"server\": \"h:7777\", \"created\": false, \"last_played\": 5, \"pin\": \"{}\", \"quic_port\": 7777}}, {{\"code\": \"PINNED\", \"server\": \"x:1\", \"created\": false, \"last_played\": 9}}]}}",
+                "cd".repeat(32)
+            ),
+        )
+        .unwrap();
+        let mut w = WorldList::new(&dir, &dir.join("none"));
+        assert_eq!(w.merge_from(&other.join(FILE)), 1);
+        assert_eq!(w.find("PINNED").unwrap().server, "relay.example:7777");
+        assert_eq!(
+            WorldList::new(&dir, &dir.join("none")).pin_for("WORLD1", "h:7777"),
+            Some(("cd".repeat(32), 7777))
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

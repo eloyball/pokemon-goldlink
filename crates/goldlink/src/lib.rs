@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod crash;
+pub mod import;
 pub mod input;
 pub mod launcher;
 pub mod layout;

@@ -78,13 +78,20 @@ impl SaveSlots {
         self.room_file(key).is_file()
     }
 
+    /// This computer has this world's save: its file, or the cart holding the world's image.
+    pub fn has_save_for(&self, key: &str, cart: &[u8]) -> bool {
+        self.has_room_save(key) || (self.owner == key && !is_blank(cart))
+    }
+
     /// Picks the image for a world the player just joined (at the title screen, before a save is
     /// in play). Keeps the cart's image first: for its owner world when it changed since the
     /// bridge last saw it, or as `unassigned-*.sav` when its owner is unknown. Returns the image
     /// to put in the cart, or None when the cart already holds the world's save.
     pub fn prepare_join(&mut self, key: &str, cart: &[u8]) -> Option<Vec<u8>> {
         let current = hash(cart);
-        if !self.owner.is_empty() && current != self.hash {
+        // A blank cart holds no progress: never kept over the owner's file (an imported save
+        // must survive a join that finds the emulator's empty cart, UC8 §2.3).
+        if !self.owner.is_empty() && current != self.hash && !is_blank(cart) {
             let owner_file = self.room_file(&self.owner.clone());
             self.store(&owner_file, cart);
         } else if self.owner.is_empty() && !is_blank(cart) {
@@ -184,6 +191,22 @@ mod tests {
         // Back to A: its save comes back.
         let back = s.prepare_join("AAAAAA-00000001", &blank()).unwrap();
         assert_eq!(back, a2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn has_save_for_the_file_or_the_worlds_cart() {
+        let dir = temp("has");
+        let mut s = SaveSlots::new(&dir);
+        assert!(!s.has_save_for("WORLD1-0A1B2C3D", &blank()));
+        // A join that put a blank cart in for the world (as before UC8): still no save.
+        assert_eq!(s.prepare_join("WORLD1-0A1B2C3D", &blank()), None);
+        assert!(!s.has_save_for("WORLD1-0A1B2C3D", &blank()));
+        // The cart holds the world's game (never written to its file yet): that's a save.
+        assert!(s.has_save_for("WORLD1-0A1B2C3D", &vec![7u8; SAVE_SIZE]));
+        assert!(!s.has_save_for("OTHER1-00000001", &vec![7u8; SAVE_SIZE]));
+        s.capture(&vec![7u8; SAVE_SIZE]);
+        assert!(s.has_save_for("WORLD1-0A1B2C3D", &blank()));
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -579,3 +579,82 @@ fn quic_by_default_trust_on_first_use() {
     assert!(b.worlds().find("TOFU02").unwrap().pin.is_empty());
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// UC8 §2.3: joining a world whose adventure started, without its save on this computer, puts
+/// no blank save in and asks for no restart (no New Game over the world); once the save is
+/// there (Import a save…), the next look swaps it in. The started world is a campaign file the
+/// relay loads, as after a restart.
+#[test]
+#[ignore = "needs the coop-relay binary"]
+fn a_started_world_without_its_save_starts_no_new_game() {
+    let port = 24_000 + (std::process::id() % 500) as u16;
+    let dir = temp("missing");
+    let secret: u64 = 0x0123_4567_89AB_CDEF;
+    let campaigns = dir.join("campaigns");
+    std::fs::create_dir_all(&campaigns).unwrap();
+    let trainer = |slot: u8, id: u32, secret: u64| {
+        format!(
+            "{{\"slot_id\": {slot}, \"trainer_id\": {id}, \"last_badge_mask\": 0, \"assigned_monolocke\": 0, \"player_secret\": {secret}}}"
+        )
+    };
+    std::fs::write(
+        campaigns.join("MISS01.json"),
+        format!(
+            "{{\"room_code\": \"MISS01\", \"room_uid\": {}, \"host_token\": 1, \"campaign_started\": true, \"expected_party_size\": 2, \"roster\": [{}, {}]}}",
+            0x0A1B_2C3Du32,
+            trainer(0, 0x1111_0001, secret),
+            trainer(1, 0x2222_0002, 77)
+        ),
+    )
+    .unwrap();
+    let _relay = start_relay(port, &dir);
+    let server = format!("127.0.0.1:{port}");
+
+    // This install knows the player (their secret) but has none of the world's saves; the game
+    // sits at the title on a blank cart.
+    let da = dir.join("a");
+    std::fs::create_dir_all(&da).unwrap();
+    std::fs::write(
+        da.join("coop_config.json"),
+        format!("{{\"player_secret\": \"{secret:016X}\"}}"),
+    )
+    .unwrap();
+    let mut a = Bridge::new(&da, &[]).unwrap();
+    let mut ga = FakeGame::new(0, 100);
+    ga.ram[MB + LOCAL_PLAYER + PS_IS_ACTIVE] = 0;
+    a.join(&server, "MISS01", false);
+    assert!(
+        run(&mut [(&mut a, &mut ga)], 10, |p| p[0].0.view().save_missing),
+        "the missing save is noticed: {}",
+        a.view().message
+    );
+    // A while longer: still nothing swapped, the gate stays shut, the cart untouched.
+    let end = Instant::now() + Duration::from_millis(500);
+    run(&mut [(&mut a, &mut ga)], 2, |_| Instant::now() > end);
+    let v = a.view();
+    assert!(v.save_missing && !v.slot_ready);
+    assert_eq!(ga.mb()[RESET_REQUEST], 0, "no restart into a New Game");
+    assert_eq!(ga.mb()[SAVE_SLOT_READY], 0);
+    assert_eq!(ga.cart, vec![0xFF; 0x8_0000]);
+    assert!(
+        !da.join("coop_saves/sram_owner.txt").exists(),
+        "the blank cart isn't claimed for the world"
+    );
+
+    // The save is imported: it goes in, and the ROM is asked to restart.
+    std::fs::create_dir_all(da.join("coop_saves")).unwrap();
+    std::fs::write(
+        da.join("coop_saves/MISS01-0A1B2C3D.sav"),
+        vec![0x33u8; 0x8_0000],
+    )
+    .unwrap();
+    a.reload_from_disk();
+    assert!(
+        run(&mut [(&mut a, &mut ga)], 5, |p| p[0].1.mb()[RESET_REQUEST]
+            == 1),
+        "the imported save is swapped in"
+    );
+    assert_eq!(ga.cart, vec![0x33u8; 0x8_0000]);
+    assert!(!a.view().save_missing);
+    std::fs::remove_dir_all(&dir).ok();
+}

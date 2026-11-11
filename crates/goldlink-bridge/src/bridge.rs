@@ -44,6 +44,10 @@ enum SlotState {
     None,
     Swapping,
     Ready,
+    /// The world's adventure started and this computer has no save for it (UC8 §2.3): no blank
+    /// swap, no New Game (the relay would turn the new trainer away at its first save anyway).
+    /// Held until the player leaves, or imports the save and calls `recheck_save`.
+    Missing,
 }
 
 /// Things the emulator side must do after a frame.
@@ -73,6 +77,14 @@ pub struct View {
     /// A world's relay presented another certificate than the pinned one (its fingerprint, hex):
     /// the world panel offers to trust it.
     pub identity_change: Option<String>,
+    /// Connected and the world's save is in the cart: the game can be shown (UC8 §2.2).
+    pub slot_ready: bool,
+    /// Connected to a started world whose save isn't on this computer (UC8 §2.3).
+    pub save_missing: bool,
+    /// The ROM is in a session: its save is in play (`was_in_active_session`), or it's saving
+    /// on its way back to the title after a disconnect (`disconnect_state` != 0). False once it's
+    /// back at the title (UC8 §2.2: the game may stop then).
+    pub game_in_session: bool,
 }
 
 /// A world's relay presented another QUIC certificate than the one pinned with it.
@@ -1002,6 +1014,10 @@ impl Bridge {
                     if in_session {
                         // A save is already in play: never swap under it.
                         self.slot_state = SlotState::Ready;
+                    } else if m.main_ram()[mb + GATES + GATE_CAMPAIGN_STARTED] == 1
+                        && !self.slots.has_save_for(&key, m.cart())
+                    {
+                        self.slot_state = SlotState::Missing;
                     } else {
                         let cart = m.cart().to_vec();
                         match self.slots.prepare_join(&key, &cart) {
@@ -1027,7 +1043,7 @@ impl Bridge {
                         self.swap_requested = Instant::now();
                     }
                 }
-                SlotState::Ready => {}
+                SlotState::Ready | SlotState::Missing => {}
             }
         }
         let ready = self.link == LinkState::Connected && self.slot_state == SlotState::Ready;
@@ -1088,6 +1104,7 @@ impl Bridge {
                         "New world: start a New Game".into()
                     }
                 }
+                SlotState::Missing => "Your save for this world isn't on this computer".into(),
                 SlotState::None => "Preparing…".into(),
             }
         };
@@ -1105,7 +1122,33 @@ impl Bridge {
             save_line,
             identity_change: self.identity_change.as_ref().map(|ic| hex(&ic.fingerprint)),
             has_backups: !self.backups().is_empty(),
+            slot_ready: self.link == LinkState::Connected && self.slot_state == SlotState::Ready,
+            save_missing: self.link == LinkState::Connected
+                && self.slot_state == SlotState::Missing,
+            game_in_session: self
+                .mailbox_copy
+                .as_ref()
+                .is_some_and(|mb| mb[WAS_IN_ACTIVE_SESSION] == 1 || mb[DISCONNECT_STATE] != 0),
         }
+    }
+
+    /// After an import (UC8 §2.3): the settings, the world list and the saves are read from
+    /// disk again (offline only: a session keeps what it started with). A world whose save was
+    /// missing is looked at again on the next frame.
+    pub fn reload_from_disk(&mut self) {
+        if self.slot_state == SlotState::Missing {
+            self.slot_state = SlotState::None;
+        }
+        if self.link != LinkState::Offline {
+            return;
+        }
+        self.config = NetConfig::load_or_create(&self.dir);
+        if let Some(a) = self.avatars.iter().find(|a| a.key == self.config.avatar) {
+            self.avatar_id = a.id;
+        }
+        let saves = self.dir.join("coop_saves");
+        self.slots = SaveSlots::new(&saves);
+        self.worlds = WorldList::new(&self.dir, &saves);
     }
 }
 

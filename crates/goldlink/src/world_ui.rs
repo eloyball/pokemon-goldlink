@@ -43,7 +43,10 @@ fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
             .collect(),
         _ => return None,
     };
-    (pixels.len() == w * h).then_some(egui::ColorImage { size: [w, h], pixels })
+    (pixels.len() == w * h).then_some(egui::ColorImage {
+        size: [w, h],
+        pixels,
+    })
 }
 
 impl WorldPanel {
