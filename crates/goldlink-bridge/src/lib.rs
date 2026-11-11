@@ -18,5 +18,5 @@ pub mod slots;
 pub mod text;
 pub mod worlds;
 
-pub use bridge::{Actions, Bridge, LinkState, Machine, View};
+pub use bridge::{Actions, Bridge, LinkState, Machine, Scene, View, scene_of};
 pub use hook::{BridgeHook, SharedBridge};

@@ -843,6 +843,12 @@ impl Lobby {
             changed |= ui
                 .radio_value(&mut v.layout, Layout::Horizontal, "Side by side")
                 .changed();
+            changed |= ui
+                .radio_value(&mut v.layout, Layout::Focus, "One screen")
+                .on_hover_text(
+                    "The other screen shows beside the game when it's needed (Tab: show or hide it)",
+                )
+                .changed();
         });
         changed |= ui
             .add(egui::Slider::new(&mut v.gap, 0..=96).text("Gap"))

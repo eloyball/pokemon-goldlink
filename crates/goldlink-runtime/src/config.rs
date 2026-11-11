@@ -26,6 +26,9 @@ pub enum Layout {
     Vertical,
     /// Side by side.
     Horizontal,
+    /// One big screen; the other beside it at half size, shown when the game needs it
+    /// (UC9 §3.1).
+    Focus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

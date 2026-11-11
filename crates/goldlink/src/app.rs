@@ -15,16 +15,53 @@ use crate::input::{Controls, touch_at};
 use crate::layout;
 use crate::theme::{self, Kind};
 use crate::world_ui::{self, WorldPanel};
-use goldlink_bridge::SharedBridge;
+use goldlink_bridge::{Scene, SharedBridge};
 
 /// The release program's bar above the screens (UC8 §2.1): the world, who's online, Leave.
 pub const BAR: f32 = 38.0;
+
+/// The halves of the screens texture: the top screen, the touch screen.
+const TOP_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.5));
+const BOTTOM_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egui::pos2(1.0, 1.0));
+/// The one-screen layout's slide, in seconds.
+const DOCK_SLIDE: f32 = 0.18;
+/// The handle that shows or hides the other screen.
+const HANDLE: egui::Vec2 = egui::vec2(18.0, 56.0);
 
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameAction {
     /// Leave the world: the game saves, then back to the launcher.
     Leave,
+}
+
+/// The one-screen layout's state (UC9 §3.1): which screen is big, and whether the other shows
+/// beside it.
+#[derive(Debug, Default)]
+struct Focus {
+    /// The touch screen is the big one (the party, the bag, the Pokégear…).
+    bottom_big: bool,
+    /// The other screen shows beside the big one.
+    dock_open: bool,
+    /// The scene these were set from. Only a new scene sets them again, so Tab holds until then.
+    scene: Option<Scene>,
+}
+
+impl Focus {
+    /// Follows the game: the top screen alone in the overworld, the touch screen beside it in the
+    /// start menu and in battle, the touch screen big in an application. Between two scenes,
+    /// nothing moves.
+    fn follow(&mut self, scene: Scene) {
+        if scene == Scene::Changing || self.scene == Some(scene) {
+            return;
+        }
+        self.scene = Some(scene);
+        (self.bottom_big, self.dock_open) = match scene {
+            Scene::Overworld => (false, false),
+            Scene::StartMenu | Scene::Battle | Scene::Unknown | Scene::Changing => (false, true),
+            Scene::App => (true, true),
+        };
+    }
 }
 
 struct Message {
@@ -45,6 +82,7 @@ pub struct GameApp {
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     bottom: egui::Rect,
+    focus: Focus,
     settings_open: bool,
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
@@ -102,6 +140,7 @@ impl GameApp {
             texture: None,
             last_seq: u64::MAX,
             bottom: egui::Rect::NOTHING,
+            focus: Focus::default(),
             settings_open: false,
             messages,
             extra_ui: None,
@@ -124,7 +163,14 @@ impl GameApp {
         world_code: &str,
     ) -> Self {
         let mut app = Self::new(runner, Some(bridge), config, config_dir, notes);
-        app.say("Esc: menu · F3: details", false);
+        app.say(
+            if app.config.video.layout == Layout::Focus {
+                "Esc: menu · F3: details · Tab: the other screen"
+            } else {
+                "Esc: menu · F3: details"
+            },
+            false,
+        );
         app.world = None;
         app.release_ui = true;
         app.world_code = world_code.to_owned();
@@ -272,6 +318,9 @@ impl GameApp {
                     ui.label("Screens:");
                     changed |= ui.radio_value(&mut v.layout, Layout::Vertical, "Top and bottom").changed();
                     changed |= ui.radio_value(&mut v.layout, Layout::Horizontal, "Side by side").changed();
+                    changed |= ui.radio_value(&mut v.layout, Layout::Focus, "One screen")
+                        .on_hover_text("The other screen shows beside the game when it's needed (Tab: show or hide it)")
+                        .changed();
                 });
                 changed |= ui.add(egui::Slider::new(&mut v.gap, 0..=96).text("Gap between the screens")).changed();
                 ui.horizontal(|ui| {
@@ -525,6 +574,95 @@ impl GameApp {
         self.details_open = open;
     }
 
+    /// The one-screen layout (UC9 §3.1): the big screen, the other sliding in beside it, and a
+    /// handle to show or hide it with the mouse.
+    fn draw_focus(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
+        let open = ui.ctx().animate_bool_with_time(
+            egui::Id::new("goldlink-dock"),
+            self.focus.dock_open,
+            DOCK_SLIDE,
+        );
+        let (big, dock) = layout::focus(area, &self.config.video, open);
+        let (big_uv, dock_uv) = if self.focus.bottom_big {
+            (BOTTOM_UV, TOP_UV)
+        } else {
+            (TOP_UV, BOTTOM_UV)
+        };
+        // Touches go to the touch screen wherever it is, once it has finished sliding in.
+        self.bottom = if self.focus.bottom_big {
+            big
+        } else if open >= 1.0 {
+            dock
+        } else {
+            egui::Rect::NOTHING
+        };
+        if let Some(t) = &self.texture {
+            let p = ui.painter();
+            p.image(t.id(), big, big_uv, egui::Color32::WHITE);
+            if open > 0.0 {
+                p.image(
+                    t.id(),
+                    dock,
+                    dock_uv,
+                    egui::Color32::WHITE.gamma_multiply(open),
+                );
+                p.rect_stroke(
+                    dock.expand(1.0),
+                    0.0,
+                    egui::Stroke::new(2.0_f32, theme::EDGE.gamma_multiply(open)),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+        // The handle: closed, a tab right of the big screen at the bottom (where the other screen
+        // comes in); open, one lying on the other screen's top edge, at its right.
+        let handle = if open > 0.5 {
+            let size = egui::vec2(HANDLE.y, HANDLE.x);
+            egui::Rect::from_min_size(dock.right_top() - egui::vec2(size.x, size.y + 6.0), size)
+        } else {
+            egui::Rect::from_min_size(
+                egui::pos2(big.right() + 6.0, big.bottom() - HANDLE.y),
+                HANDLE,
+            )
+        };
+        let response = ui
+            .interact(
+                handle,
+                egui::Id::new("goldlink-dock-handle"),
+                egui::Sense::click(),
+            )
+            .on_hover_text(if self.focus.dock_open {
+                "Hide the other screen (Tab)"
+            } else {
+                "Show the other screen (Tab)"
+            });
+        let p = ui.painter();
+        let fill = if response.hovered() {
+            theme::EDGE
+        } else {
+            theme::INSET
+        };
+        p.rect_filled(handle, 4.0, fill);
+        // A chevron: "show" points left (where it comes from), "hide" points down.
+        let c = handle.center();
+        let (a, b) = if open > 0.5 {
+            (egui::vec2(-5.0, -2.5), egui::vec2(5.0, -2.5))
+        } else {
+            (egui::vec2(2.5, -5.0), egui::vec2(2.5, 5.0))
+        };
+        let tip = if open > 0.5 {
+            egui::vec2(0.0, 2.5)
+        } else {
+            egui::vec2(-2.5, 0.0)
+        };
+        let stroke = egui::Stroke::new(2.0_f32, theme::GOLD);
+        p.line_segment([c + a, c + tip], stroke);
+        p.line_segment([c + tip, c + b], stroke);
+        if response.clicked() {
+            self.focus.dock_open = !self.focus.dock_open;
+        }
+    }
+
     /// One UI frame (the window's, or the launcher shell's once the game runs). The release
     /// look returns what the player asked of the shell.
     pub fn ui(&mut self, ctx: &egui::Context) -> Option<GameAction> {
@@ -546,6 +684,20 @@ impl GameApp {
                 _ => self.settings_open = !self.settings_open,
             }
         }
+        if self.config.video.layout == Layout::Focus {
+            if let Some(b) = &self.bridge {
+                let scene = goldlink_bridge::hook::lock(b).scene();
+                self.focus.follow(scene);
+            } else {
+                self.focus.follow(Scene::Unknown);
+            }
+            if !self.blocked()
+                && !ctx.wants_keyboard_input()
+                && ctx.input(|i| i.key_pressed(egui::Key::Tab))
+            {
+                self.focus.dock_open = !self.focus.dock_open;
+            }
+        }
         self.feed_input(ctx);
         self.collect_events();
         self.update_texture(ctx);
@@ -557,16 +709,16 @@ impl GameApp {
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
             .show(ctx, |ui| {
                 let area = ui.max_rect();
-                let (top, bottom) = layout::screens(area, &self.config.video);
-                self.bottom = bottom;
-                if let Some(t) = &self.texture {
-                    let p = ui.painter();
-                    let top_uv =
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.5));
-                    let bottom_uv =
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egui::pos2(1.0, 1.0));
-                    p.image(t.id(), top, top_uv, egui::Color32::WHITE);
-                    p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
+                if self.config.video.layout == Layout::Focus {
+                    self.draw_focus(ui, area);
+                } else {
+                    let (top, bottom) = layout::screens(area, &self.config.video);
+                    self.bottom = bottom;
+                    if let Some(t) = &self.texture {
+                        let p = ui.painter();
+                        p.image(t.id(), top, TOP_UV, egui::Color32::WHITE);
+                        p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
+                    }
                 }
                 let now = Instant::now();
                 self.messages.retain(|m| m.until > now);

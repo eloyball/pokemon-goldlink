@@ -63,6 +63,49 @@ pub struct Actions {
     pub backup_failed: Option<String>,
 }
 
+/// What the game is showing (UC9 §3.1: which screen matters).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scene {
+    /// Walking, talking: all on the top screen.
+    Overworld,
+    /// The start menu (X): its icons are on the touch screen, the top screen points down to them.
+    StartMenu,
+    /// A battle: the battle on top, its menus on the touch screen.
+    Battle,
+    /// An application over the overworld (party, bag, Pokégear, PC, Pokédex…): mostly on the
+    /// touch screen.
+    App,
+    /// Between two of these (a warp, one application handing over to the next).
+    Changing,
+    /// Not in a game yet (Oak's speech, the title), or no mailbox.
+    Unknown,
+}
+
+/// What a game with this mailbox is showing (UC9 §3.1), from the ROM's own account of the local
+/// player (what it tells teammates): no game address is read.
+pub fn scene_of(mailbox: &[u8]) -> Scene {
+    let Some(ps) = mailbox.get(LOCAL_PLAYER..LOCAL_PLAYER + PLAYER_STATE_SIZE) else {
+        return Scene::Unknown;
+    };
+    if u32_at(ps, PS_TRAINER_ID) == 0 {
+        // Never been in the overworld since this boot (Oak's speech, the title).
+        return Scene::Unknown;
+    }
+    if ps[PS_IS_ACTIVE] == 1 {
+        // In the overworld, "a menu" is the start menu (coop_ghosts.c Coop_FieldActivity).
+        return if u32::from(ps[PS_ACTIVITY]) == goldlink_abi::CoopActivity::COOP_ACTIVITY_MENU {
+            Scene::StartMenu
+        } else {
+            Scene::Overworld
+        };
+    }
+    match u32::from(ps[PS_ACTIVITY]) {
+        goldlink_abi::CoopActivity::COOP_ACTIVITY_BATTLE => Scene::Battle,
+        goldlink_abi::CoopActivity::COOP_ACTIVITY_MENU => Scene::App,
+        _ => Scene::Changing,
+    }
+}
+
 /// A snapshot for the window's world panel.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -342,6 +385,13 @@ impl Bridge {
     /// The local player's current activity (CoopActivity), from the last snapshot.
     pub fn local_activity(&self) -> u8 {
         self.local_player[PS_ACTIVITY]
+    }
+
+    /// What the game is showing, for the one-screen layout (UC9 §3.1).
+    pub fn scene(&self) -> Scene {
+        self.mailbox_copy
+            .as_deref()
+            .map_or(Scene::Unknown, scene_of)
     }
 
     fn set_status(&mut self, message: impl Into<String>, is_error: bool) {
@@ -1281,4 +1331,46 @@ fn find_challenge_sync(ram: &[u8], local_player: &[u8]) -> Option<usize> {
 /// A link trailer ("LNK1") at `at`: then there's no trade trailer.
 fn has_link_magic(pkt: &[u8], at: usize) -> bool {
     link::has_magic(pkt, at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use goldlink_abi::CoopActivity as A;
+
+    fn mailbox(trainer: u32, active: u8, activity: u32) -> Vec<u8> {
+        let mut mb = vec![0; MAILBOX_SIZE];
+        let ps = LOCAL_PLAYER;
+        mb[ps + PS_TRAINER_ID..ps + PS_TRAINER_ID + 4].copy_from_slice(&trainer.to_le_bytes());
+        mb[ps + PS_IS_ACTIVE] = active;
+        mb[ps + PS_ACTIVITY] = activity as u8;
+        mb
+    }
+
+    #[test]
+    fn scenes_from_the_local_player() {
+        assert_eq!(scene_of(&mailbox(0, 0, 0)), Scene::Unknown);
+        assert_eq!(scene_of(&[]), Scene::Unknown);
+        assert_eq!(
+            scene_of(&mailbox(7, 1, A::COOP_ACTIVITY_FIELD)),
+            Scene::Overworld
+        );
+        assert_eq!(
+            scene_of(&mailbox(7, 1, A::COOP_ACTIVITY_EVENT)),
+            Scene::Overworld
+        );
+        assert_eq!(
+            scene_of(&mailbox(7, 1, A::COOP_ACTIVITY_MENU)),
+            Scene::StartMenu
+        );
+        assert_eq!(
+            scene_of(&mailbox(7, 0, A::COOP_ACTIVITY_BATTLE)),
+            Scene::Battle
+        );
+        assert_eq!(scene_of(&mailbox(7, 0, A::COOP_ACTIVITY_MENU)), Scene::App);
+        assert_eq!(
+            scene_of(&mailbox(7, 0, A::COOP_ACTIVITY_TRANSITION)),
+            Scene::Changing
+        );
+    }
 }
