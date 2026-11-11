@@ -85,6 +85,11 @@ pub struct View {
     /// on its way back to the title after a disconnect (`disconnect_state` != 0). False once it's
     /// back at the title (UC8 §2.2: the game may stop then).
     pub game_in_session: bool,
+    /// The ROM's count of completed save writes (0 until its first): a change means the game
+    /// just saved, and the bridge has already kept that save for its world.
+    pub save_counter: u32,
+    /// A backup waits to be loaded on the next frame.
+    pub restore_pending: bool,
 }
 
 /// A world's relay presented another QUIC certificate than the one pinned with it.
@@ -462,6 +467,20 @@ impl Bridge {
         self.clear_payload_pending = true;
     }
 
+    /// Takes the next backup at the next safe moment instead of after the interval.
+    pub fn backup_soon(&mut self) {
+        self.next_backup = Some(Instant::now());
+    }
+
+    /// A new emulator is starting (the launcher starts one per session, UC8): what the bridge
+    /// knew of the last one's game is dropped, so nothing reads a game that's gone.
+    pub fn forget_game(&mut self) {
+        self.mailbox_copy = None;
+        self.last_save_counter = None;
+        self.last_rom_heartbeat = 0;
+        self.clear_payload_pending = true;
+    }
+
     /// The world's backups (offline: the last world's), newest first.
     pub fn backups(&self) -> Vec<backups::Backup> {
         let key = self
@@ -522,7 +541,7 @@ impl Bridge {
                     "Backup restored. The game saves it and returns to the title screen; then join your world again.",
                     false,
                 ),
-                Err(_) => self.set_status("Could not load that backup.", true),
+                Err(e) => self.set_status(format!("Could not load that backup: {e}"), true),
             }
             return actions;
         }
@@ -1129,6 +1148,11 @@ impl Bridge {
                 .mailbox_copy
                 .as_ref()
                 .is_some_and(|mb| mb[WAS_IN_ACTIVE_SESSION] == 1 || mb[DISCONNECT_STATE] != 0),
+            save_counter: self
+                .mailbox_copy
+                .as_ref()
+                .map_or(0, |mb| u32_at(mb, SAVE_COUNTER)),
+            restore_pending: self.pending_restore.is_some(),
         }
     }
 

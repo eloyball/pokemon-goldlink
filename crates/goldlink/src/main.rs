@@ -2,6 +2,8 @@
 //!
 //!     goldlink                      the launcher (your ROM, Play), then the game, one window
 //!     goldlink --play               the same, Play pressed at once
+//!     goldlink --join <host:port> <CODE>    Play, then join that world (a shortcut)
+//!     goldlink --create <host:port> <CODE>  Play, then create that world
 //!     goldlink --status             what's set up (version, folders, ROM)
 //!     goldlink --setup <rom>        check and keep your ROM (the first run's step)
 //!     goldlink --rom <goldlink.nds> an already patched ROM, straight into the game
@@ -21,11 +23,20 @@ use goldlink_runtime::GameSetup;
 fn main() -> ExitCode {
     let mut rom: Option<PathBuf> = None;
     let mut play = false;
+    let mut join: Option<(String, String, bool)> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--rom" => rom = args.next().map(PathBuf::from),
             "--play" => play = true,
+            "--join" | "--create" => {
+                let (Some(server), Some(code)) = (args.next(), args.next()) else {
+                    eprintln!("usage: goldlink {a} <host:port> <WORLD CODE>");
+                    return ExitCode::from(64);
+                };
+                join = Some((server, code.to_uppercase(), a == "--create"));
+                play = true;
+            }
             "--status" | "--setup" => {
                 #[cfg(windows)]
                 attach_console();
@@ -48,7 +59,7 @@ fn main() -> ExitCode {
             }
             _ => {
                 eprintln!(
-                    "usage: goldlink [--play | --status | --setup <rom> | --rom <goldlink.nds>]"
+                    "usage: goldlink [--play | --join <host:port> <CODE> | --create <host:port> <CODE> | --status | --setup <rom> | --rom <goldlink.nds>]"
                 );
                 return ExitCode::from(64);
             }
@@ -59,7 +70,7 @@ fn main() -> ExitCode {
     }
     let result = (|| {
         let Some(rom) = rom else {
-            return goldlink::run_release(play);
+            return goldlink::run_release(play, join);
         };
         let bytes = std::fs::read(&rom).map_err(|e| format!("{}: {e}", rom.display()))?;
         let data = goldlink::data_dir()?;

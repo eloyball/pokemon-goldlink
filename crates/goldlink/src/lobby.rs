@@ -140,6 +140,17 @@ impl Lobby {
         }
     }
 
+    /// Back from a world: Continue, the world just played, is at the top again.
+    pub fn after_session(&mut self, bridge: &SharedBridge) {
+        if !goldlink_bridge::hook::lock(bridge)
+            .worlds()
+            .entries()
+            .is_empty()
+        {
+            self.item = Item::Continue;
+        }
+    }
+
     /// The server's status, checked when the address changes and every 20 seconds.
     fn poll_status(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.status_rx {

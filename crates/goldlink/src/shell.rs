@@ -43,18 +43,23 @@ enum Stage {
         game: Box<GameApp>,
         code: String,
     },
-    /// Leave was asked: the game shows until the ROM has saved and is back at the title.
+    /// Leave was asked: the game shows until its disconnect save is written (`saves`, the ROM's
+    /// save count when Leave began, moves; the bridge has kept it then, and the ROM only waits
+    /// for A to restart) or it's at the title without a session.
     Leaving {
         game: Box<GameApp>,
         code: String,
         error: Option<String>,
         forced: bool,
+        saves: u32,
+        /// The game had a session (a save in play) when Leave began: there's a save to wait for.
+        played: bool,
     },
-    /// A backup goes in, hidden; the ROM saves it and returns to the title.
+    /// A backup goes in, hidden; the ROM saves it (`loaded`: its save count once loaded).
     Restoring {
         runner: Runner,
         since: Instant,
-        loaded: bool,
+        loaded: Option<u32>,
     },
 }
 
@@ -70,6 +75,8 @@ pub struct Shell {
     game_rom: Option<Arc<Vec<u8>>>,
     notes: Vec<String>,
     version: String,
+    /// `--join` / `--create`: the world to go to once at the launcher.
+    auto_join: Option<(String, String, bool)>,
 }
 
 impl Shell {
@@ -86,6 +93,7 @@ impl Shell {
 
     fn start_emulator(&self, bridge: &SharedBridge) -> Result<Runner, String> {
         let rom = self.game_rom.clone().ok_or("the game isn't prepared")?;
+        goldlink_bridge::hook::lock(bridge).forget_game();
         let emu = Emulator::new(GameSetup {
             rom,
             cart_save: Some(self.data.join(CART_SAVE)),
@@ -107,10 +115,11 @@ impl Shell {
 
     fn back_to_lobby(&mut self, ctx: &egui::Context, message: Option<(String, bool)>) {
         Self::resize(ctx, LAUNCHER_SIZE, LAUNCHER_MIN);
-        if let Some(l) = self.lobby.as_mut() {
+        if let (Some(l), Some(b)) = (self.lobby.as_mut(), self.bridge.as_ref()) {
             if message.is_some() {
                 l.message = message;
             }
+            l.after_session(b);
         }
         self.stage = Stage::Lobby;
     }
@@ -171,51 +180,23 @@ impl Shell {
                 };
                 let lobby = self.lobby.get_or_insert_with(|| Lobby::new(&bridge));
                 let art = self.art.as_ref().expect("loaded above");
-                match lobby.ui(
+                let asked = lobby.ui(
                     ctx,
                     art,
                     &bridge,
                     &mut self.config,
                     &self.data,
                     &self.version,
-                ) {
-                    Action::None => Stage::Lobby,
-                    Action::Quit => {
-                        ctx.send_viewport_cmd(ViewportCommand::Close);
-                        Stage::Lobby
-                    }
-                    Action::ChangeRom => Stage::Rom,
-                    Action::Join {
+                );
+                let asked = match self.auto_join.take() {
+                    Some((server, code, create)) => Action::Join {
                         server,
                         code,
                         create,
-                    } => match self.join(&server, &code, create) {
-                        Ok(s) => {
-                            if let Some(l) = self.lobby.as_mut() {
-                                l.message = None;
-                            }
-                            s
-                        }
-                        Err(e) => {
-                            self.say(e);
-                            Stage::Lobby
-                        }
                     },
-                    Action::Restore(path) => match self.start_emulator(&bridge) {
-                        Ok(runner) => {
-                            goldlink_bridge::hook::lock(&bridge).restore_backup(path);
-                            Stage::Restoring {
-                                runner,
-                                since: Instant::now(),
-                                loaded: false,
-                            }
-                        }
-                        Err(e) => {
-                            self.say(e);
-                            Stage::Lobby
-                        }
-                    },
-                }
+                    None => asked,
+                };
+                self.act(ctx, &bridge, asked)
             }
             Stage::Connecting { runner, code } => self.connecting(ctx, runner, code, close),
             Stage::Missing {
@@ -240,11 +221,16 @@ impl Shell {
                         }
                     }
                     game.leaving = Some("Saving your game".into());
+                    let (saves, played) = self
+                        .view()
+                        .map_or((0, false), |v| (v.save_counter, v.game_in_session));
                     Stage::Leaving {
                         game,
                         code,
                         error,
                         forced: false,
+                        saves,
+                        played,
                     }
                 } else {
                     Stage::Playing { game, code }
@@ -255,6 +241,8 @@ impl Shell {
                 code,
                 error,
                 mut forced,
+                saves,
+                played,
             } => {
                 let _ = game.ui(ctx);
                 if close {
@@ -262,8 +250,12 @@ impl Shell {
                     ctx.send_viewport_cmd(ViewportCommand::CancelClose);
                     forced = true;
                 }
-                let in_session = self.view().is_some_and(|v| v.game_in_session);
-                if in_session && !forced {
+                let view = self.view();
+                let in_session = view.as_ref().is_some_and(|v| v.game_in_session);
+                let saved = view
+                    .as_ref()
+                    .is_some_and(|v| v.save_counter != saves && v.save_counter != 0);
+                if in_session && !saved && !forced {
                     game.leaving = Some(if close {
                         "Saving: close again to quit without waiting".into()
                     } else {
@@ -274,6 +266,8 @@ impl Shell {
                         code,
                         error,
                         forced,
+                        saves,
+                        played,
                     }
                 } else {
                     game.shutdown();
@@ -285,7 +279,8 @@ impl Shell {
                             ),
                             true,
                         ),
-                        None => (format!("Saved. You left world {code}."), false),
+                        None if played => (format!("Saved. You left world {code}."), false),
+                        None => (format!("You left world {code}."), false),
                     };
                     self.back_to_lobby(ctx, Some(message));
                     Stage::Lobby
@@ -297,6 +292,48 @@ impl Shell {
                 loaded,
             } => self.restoring(ctx, runner, since, loaded),
         };
+    }
+
+    /// What the launcher asked for.
+    fn act(&mut self, ctx: &egui::Context, bridge: &SharedBridge, asked: Action) -> Stage {
+        match asked {
+            Action::None => Stage::Lobby,
+            Action::Quit => {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+                Stage::Lobby
+            }
+            Action::ChangeRom => Stage::Rom,
+            Action::Join {
+                server,
+                code,
+                create,
+            } => match self.join(&server, &code, create) {
+                Ok(s) => {
+                    if let Some(l) = self.lobby.as_mut() {
+                        l.message = None;
+                    }
+                    s
+                }
+                Err(e) => {
+                    self.say(e);
+                    Stage::Lobby
+                }
+            },
+            Action::Restore(path) => match self.start_emulator(bridge) {
+                Ok(runner) => {
+                    goldlink_bridge::hook::lock(bridge).restore_backup(path);
+                    Stage::Restoring {
+                        runner,
+                        since: Instant::now(),
+                        loaded: None,
+                    }
+                }
+                Err(e) => {
+                    self.say(e);
+                    Stage::Lobby
+                }
+            },
+        }
     }
 
     fn connecting(
@@ -487,7 +524,7 @@ impl Shell {
         ctx: &egui::Context,
         runner: Runner,
         since: Instant,
-        loaded: bool,
+        loaded: Option<u32>,
     ) -> Stage {
         let art = self.art.as_ref().expect("loaded");
         lobby::waiting_screen(
@@ -501,12 +538,12 @@ impl Shell {
         ctx.request_repaint_after(Duration::from_millis(100));
         let view = self.view();
         let in_session = view.as_ref().is_some_and(|v| v.game_in_session);
-        if !loaded {
-            if in_session {
+        let Some(saves) = loaded else {
+            if in_session && !view.as_ref().is_some_and(|v| v.restore_pending) {
                 return Stage::Restoring {
                     runner,
                     since: Instant::now(),
-                    loaded: true,
+                    loaded: Some(view.as_ref().map_or(0, |v| v.save_counter)),
                 };
             }
             if since.elapsed() > RESTORE_LOAD || view.as_ref().is_some_and(|v| v.message_is_error) {
@@ -523,8 +560,13 @@ impl Shell {
                 since,
                 loaded,
             };
-        }
-        if !in_session {
+        };
+        // The restored game's disconnect save is written (and kept by the bridge): done. The ROM
+        // only waits for A to restart after it.
+        let saved = view
+            .as_ref()
+            .is_some_and(|v| v.save_counter != saves && v.save_counter != 0);
+        if saved || !in_session {
             runner.stop();
             self.back_to_lobby(
                 ctx,
@@ -587,7 +629,7 @@ impl eframe::App for Shell {
 
 /// The release program: the ROM screen, the launcher, the game, in one window. `autoplay`
 /// presses PLAY at once (`--play`).
-pub fn run(autoplay: bool) -> Result<(), String> {
+pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<(), String> {
     let paths = launcher::Paths::detect()?;
     let (config, note) = Config::load(&paths.data);
     let data = paths.data.clone();
@@ -614,6 +656,7 @@ pub fn run(autoplay: bool) -> Result<(), String> {
         game_rom: None,
         notes: note.into_iter().collect(),
         version,
+        auto_join,
     });
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         eframe::run_native(
@@ -631,4 +674,308 @@ pub fn run(autoplay: bool) -> Result<(), String> {
         ))
     })
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The session's life end to end (UC8 §2.2), in this process: egui without a window, the
+    //! real emulator and the real relay. Ignored by default: it needs the development ROM and the
+    //! e2e harness's TEAM01 fixture (a save in the overworld and the relay's campaign):
+    //!
+    //!     cargo build --release --manifest-path coop-relay/Cargo.toml
+    //!     cargo test -p goldlink --lib -- --ignored session
+    //!
+    //! GOLDLINK_RELAY, GOLDLINK_TEST_ROM, GOLDLINK_TEST_INSTANCE and GOLDLINK_TEST_CAMPAIGN
+    //! point elsewhere.
+
+    use super::*;
+    use eframe::egui::{Event, Key, RawInput, ViewportEvent, ViewportId, ViewportInfo};
+    use std::path::Path;
+
+    fn env_or(var: &str, default: &str) -> PathBuf {
+        std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(default)
+        })
+    }
+
+    fn copy_dir(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for e in std::fs::read_dir(from).unwrap().flatten() {
+            let t = to.join(e.file_name());
+            if e.path().is_dir() {
+                copy_dir(&e.path(), &t);
+            } else {
+                std::fs::copy(e.path(), t).unwrap();
+            }
+        }
+    }
+
+    struct Relay(std::process::Child);
+    impl Drop for Relay {
+        fn drop(&mut self) {
+            self.0.kill().ok();
+            self.0.wait().ok();
+        }
+    }
+
+    /// One UI frame with these keys going down (and those of the last frame coming up).
+    struct Driver {
+        ctx: egui::Context,
+        held: Vec<Key>,
+        start: Instant,
+    }
+
+    impl Driver {
+        fn frame(&mut self, shell: &mut Shell, press: &[Key], close: bool) {
+            let mut input = RawInput {
+                focused: true,
+                time: Some(self.start.elapsed().as_secs_f64()),
+                ..Default::default()
+            };
+            let key = |key, pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            };
+            for k in self.held.drain(..) {
+                input.events.push(key(k, false));
+            }
+            for k in press {
+                input.events.push(key(*k, true));
+                self.held.push(*k);
+            }
+            if close {
+                input.viewports.insert(
+                    ViewportId::ROOT,
+                    ViewportInfo {
+                        events: vec![ViewportEvent::Close],
+                        ..Default::default()
+                    },
+                );
+            }
+            let _ = self.ctx.run(input, |ctx| shell.step(ctx));
+            std::thread::sleep(Duration::from_millis(16));
+        }
+
+        /// Frames until `done` (pressing `keys` now and then), or panics after `secs`.
+        fn until(
+            &mut self,
+            shell: &mut Shell,
+            secs: u64,
+            what: &str,
+            keys: &[Key],
+            done: impl Fn(&Shell) -> bool,
+        ) {
+            let end = Instant::now() + Duration::from_secs(secs);
+            let mut n = 0u64;
+            while !done(shell) {
+                assert!(
+                    Instant::now() < end,
+                    "timed out waiting for {what}; the bridge says: {:?}",
+                    shell.view().map(|v| v.message)
+                );
+                // A key held for 6 frames every 40: the game sees a press.
+                let press: Vec<Key> = if !keys.is_empty() && n % 40 == 0 {
+                    vec![keys[(n / 40) as usize % keys.len()]]
+                } else {
+                    vec![]
+                };
+                self.frame(shell, &press, false);
+                n += 1;
+            }
+        }
+    }
+
+    fn message(shell: &Shell) -> String {
+        shell
+            .lobby
+            .as_ref()
+            .and_then(|l| l.message.clone())
+            .map(|m| m.0)
+            .unwrap_or_default()
+    }
+
+    #[test]
+    #[ignore = "needs the development ROM, the TEAM01 fixture and the relay binary"]
+    fn session_leave_saves_and_returns_then_a_backup_restores() {
+        let rom = std::fs::read(env_or("GOLDLINK_TEST_ROM", "hg-engine/test.nds"))
+            .expect("the development ROM");
+        let instance = env_or("GOLDLINK_TEST_INSTANCE", "instances/agent-team-a");
+        let campaign = env_or(
+            "GOLDLINK_TEST_CAMPAIGN",
+            "build/probe-stress/campaigns/TEAM01.json",
+        );
+        let relay_bin = env_or("GOLDLINK_RELAY", "coop-relay/target/release/coop-relay");
+
+        let dir = std::env::temp_dir().join(format!("goldlink-session-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        let data = dir.join("data");
+        copy_dir(&instance.join("coop_saves"), &data.join("coop_saves"));
+        std::fs::copy(
+            instance.join("coop_config.json"),
+            data.join("coop_config.json"),
+        )
+        .unwrap();
+        // The relay knows the world; its roster takes this install's trainer as it shows up (a
+        // legacy roster: no secrets yet).
+        let mut c: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&campaign).unwrap()).unwrap();
+        for r in c["roster"].as_array_mut().unwrap() {
+            r["player_secret"] = 0.into();
+        }
+        let campaigns = dir.join("campaigns");
+        std::fs::create_dir_all(&campaigns).unwrap();
+        std::fs::write(campaigns.join("TEAM01.json"), c.to_string()).unwrap();
+        let port = 25_000 + (std::process::id() % 500) as u16;
+        let _relay = Relay(
+            std::process::Command::new(&relay_bin)
+                .args(["--bind", &format!("127.0.0.1:{port}"), "--save-dir"])
+                .arg(&campaigns)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("the relay binary"),
+        );
+        std::thread::sleep(Duration::from_millis(400));
+
+        let save = data.join("coop_saves/TEAM01-5445414D.sav");
+        let before = std::fs::read(&save).unwrap();
+
+        let mut config = Config::default();
+        config.audio.muted = true;
+        let paths = launcher::Paths {
+            install: dir.join("install"),
+            data: data.clone(),
+        };
+        let mut shell = Shell {
+            art: None,
+            rom: Launcher::new(paths),
+            lobby: None,
+            bridge: None,
+            stage: Stage::Lobby,
+            config,
+            data: data.clone(),
+            game_rom: Some(Arc::new(rom)),
+            notes: Vec::new(),
+            version: "test".into(),
+            auto_join: Some((format!("127.0.0.1:{port}"), "TEAM01".into(), false)),
+        };
+        shell.bridge().unwrap();
+        let mut d = Driver {
+            ctx: egui::Context::default(),
+            held: Vec::new(),
+            start: Instant::now(),
+        };
+        theme::install(&d.ctx);
+
+        // Join: the game boots hidden, the world's save goes in, then the game takes the window.
+        d.until(&mut shell, 60, "the game to be shown", &[], |s| {
+            matches!(s.stage, Stage::Playing { .. })
+        });
+        // Title screen → Continue → the overworld (A and Start now and then).
+        d.until(
+            &mut shell,
+            120,
+            "the overworld",
+            &[Key::X, Key::Enter, Key::X],
+            |s| s.view().is_some_and(|v| v.game_in_session),
+        );
+        // A backup (a melonDS state), taken at the next safe moment.
+        let backups = data.join("coop_backups/TEAM01-5445414D");
+        let mlds = |dir: &Path| {
+            std::fs::read_dir(dir)
+                .map(|d| {
+                    d.flatten()
+                        .map(|e| e.path())
+                        .filter(|p| p.extension().is_some_and(|x| x == "mlds"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        goldlink_bridge::hook::lock(shell.bridge.as_ref().unwrap()).backup_soon();
+        d.until(&mut shell, 30, "a backup", &[Key::Z], |_| {
+            !mlds(&backups).is_empty()
+        });
+        let backup = mlds(&backups).remove(0);
+        // Close whatever the last A opened (B), let it settle, then close the window: Leave.
+        for _ in 0..4 {
+            d.frame(&mut shell, &[Key::Z], false);
+            for _ in 0..30 {
+                d.frame(&mut shell, &[], false);
+            }
+        }
+        d.frame(&mut shell, &[], true);
+        assert!(
+            matches!(shell.stage, Stage::Leaving { .. }),
+            "closing the game's window is Leave"
+        );
+        // While it saves: what the ROM says, every few seconds.
+        for i in 0..400 {
+            if matches!(shell.stage, Stage::Lobby) {
+                break;
+            }
+            if i % 120 == 0
+                && let Some(v) = shell.view()
+                && let Some(mb) = &v.mailbox
+            {
+                use goldlink_bridge::layout::*;
+                let lp = &mb[LOCAL_PLAYER..LOCAL_PLAYER + PLAYER_STATE_SIZE];
+                eprintln!(
+                    "leaving: disconnect_state {} in_session {} connected {} activity {} active {} save_status {}",
+                    mb[DISCONNECT_STATE],
+                    mb[WAS_IN_ACTIVE_SESSION],
+                    mb[IS_CONNECTED_TO_ROOM],
+                    lp[PS_ACTIVITY],
+                    lp[PS_IS_ACTIVE],
+                    lp[PS_SAVE_STATUS]
+                );
+            }
+            // The player closes whatever is open (B), as the bar asks them to.
+            let b = if i % 40 == 0 { vec![Key::Z] } else { vec![] };
+            d.frame(&mut shell, &b, false);
+        }
+        d.until(
+            &mut shell,
+            90,
+            "the save and the return to the launcher",
+            &[Key::Z],
+            |s| matches!(s.stage, Stage::Lobby),
+        );
+        assert!(
+            message(&shell).starts_with("Saved. You left world TEAM01"),
+            "{}",
+            message(&shell)
+        );
+        assert_eq!(shell.view().unwrap().link, LinkState::Offline);
+        assert_ne!(
+            std::fs::read(&save).unwrap(),
+            before,
+            "the game saved on its way out"
+        );
+
+        // A backup, from the launcher: loaded hidden, saved by the game, back to the launcher.
+        let saved = std::fs::read(&save).unwrap();
+        let bridge = shell.bridge.clone().unwrap();
+        let ctx = d.ctx.clone();
+        shell.stage = shell.act(&ctx, &bridge, Action::Restore(backup));
+        assert!(matches!(shell.stage, Stage::Restoring { .. }));
+        d.until(&mut shell, 120, "the restored game to save", &[], |s| {
+            matches!(s.stage, Stage::Lobby)
+        });
+        assert!(
+            message(&shell).starts_with("Backup restored and saved"),
+            "{}",
+            message(&shell)
+        );
+        assert_ne!(
+            std::fs::read(&save).unwrap(),
+            saved,
+            "the restored game was saved"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

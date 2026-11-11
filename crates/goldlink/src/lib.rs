@@ -142,6 +142,7 @@ fn dark(ctx: &eframe::egui::Context) {
 
 /// The release program (UC8): the ROM screen, the launcher and the game in one window.
 /// `autoplay` presses PLAY at once (`--play`).
-pub fn run_release(autoplay: bool) -> Result<(), String> {
-    shell::run(autoplay)
+/// `join`: a world to join (or create) once PLAY is pressed (`--join`, `--create`).
+pub fn run_release(autoplay: bool, join: Option<(String, String, bool)>) -> Result<(), String> {
+    shell::run(autoplay, join)
 }

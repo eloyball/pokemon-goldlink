@@ -124,6 +124,7 @@ impl GameApp {
         world_code: &str,
     ) -> Self {
         let mut app = Self::new(runner, Some(bridge), config, config_dir, notes);
+        app.say("Esc: menu · F3: details", false);
         app.world = None;
         app.release_ui = true;
         app.world_code = world_code.to_owned();
@@ -419,12 +420,6 @@ impl GameApp {
                             } else {
                                 theme::TEXT_FAINT
                             },
-                        );
-                        ui.add_space(14.0);
-                        ui.label(
-                            egui::RichText::new("ESC MENU · F3 DETAILS")
-                                .font(theme::label(11.0))
-                                .color(theme::TEXT_FAINT),
                         );
                     });
                 });
