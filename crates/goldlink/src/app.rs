@@ -702,6 +702,22 @@ impl GameApp {
                     hud::draw_text_band(ui, frame, tb);
                 }
             }
+            None if scene == Scene::Unknown && self.one.by_hand != Some(false) => {
+                // Before the game: the title and Oak's speech, whose choices (the topics, boy or
+                // girl, the name keyboard) are on the touch screen and whose picture runs across
+                // both screens. The two stacked as on the DS, as tall as the frame; clicks on
+                // the lower one are touches.
+                let size = egui::vec2(256.0, 192.0) * (frame.height() / 384.0);
+                let top = egui::Rect::from_min_size(
+                    egui::pos2(frame.center().x - size.x / 2.0, frame.top()),
+                    size,
+                );
+                let bottom = top.translate(egui::vec2(0.0, size.y));
+                p.image(t.id(), top, TOP_UV, egui::Color32::WHITE);
+                p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
+                self.bottom = bottom;
+                return;
+            }
             None => {
                 match &wide {
                     Some(w) => p.image(w.id(), frame, rows(1.0), egui::Color32::WHITE),

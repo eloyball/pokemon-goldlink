@@ -64,7 +64,12 @@ impl DevTicker {
         {
             match b.link() {
                 LinkState::Connected => self.autojoin = None,
-                LinkState::Offline => b.join(server, code, false),
+                // COOP_BRIDGE_AUTOJOIN_CREATE=1: create the world (a new game) instead.
+                LinkState::Offline => b.join(
+                    server,
+                    code,
+                    std::env::var_os("COOP_BRIDGE_AUTOJOIN_CREATE").is_some(),
+                ),
                 _ => {}
             }
         }

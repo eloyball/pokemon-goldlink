@@ -52,9 +52,44 @@ const FAINT_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=intro (a new world): Oak's speech and the new game's choices, A every
+/// 1.5 s and a shot every 3 s, until the overworld (or 4 minutes).
+fn intro_steps() -> &'static [Step] {
+    static STEPS: OnceLock<Vec<Step>> = OnceLock::new();
+    STEPS.get_or_init(|| {
+        // The topics come first: NO INFO NEEDED, tapped where it is on the touch screen.
+        let mut v = vec![
+            Step::Wait(240),
+            Step::Shot("intro-topics"),
+            Step::Touch(128, 152),
+            Step::Wait(90),
+            Step::Shot("intro-after-topics"),
+        ];
+        // Then, round after round: a tap where NO INFO NEEDED is (it does nothing elsewhere),
+        // and A for the rest of Oak's speech.
+        // On the name keyboard the tap and A type letters; START jumps to OK and A confirms.
+        for _ in 0..70 {
+            v.extend([
+                Step::Touch(128, 152),
+                Step::Wait(60),
+                Step::Press(Keys::A),
+                Step::Wait(40),
+                Step::Press(Keys::START),
+                Step::Wait(30),
+                Step::Press(Keys::A),
+                Step::Wait(60),
+                Step::Shot("intro"),
+            ]);
+        }
+        v.push(Step::Close);
+        v
+    })
+}
+
 fn steps() -> &'static [Step] {
     match std::env::var("GOLDLINK_DEV_TOUR_ROUTE").as_deref() {
         Ok("faint") => FAINT_STEPS,
+        Ok("intro") => intro_steps(),
         _ => STEPS,
     }
 }
