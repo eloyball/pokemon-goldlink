@@ -1548,6 +1548,13 @@ static const struct
     { 486, { 17, 7, 13 } }, // Whirl Islands B3F (camera 10)
 };
 
+// The unified client's wider picture shows 342 DS pixels across instead of
+// 256 (UC9 4, dev/docs/unified-client/UC9_PROPOSAL.md): the half-width in
+// tiles grows by 342/256, rounded up. The ROM can't tell whether a player has
+// it on, so ghosts always use the wider radius; without it they only spawn a
+// few tiles further off screen.
+#define COOP_WIDE_VIEW_X(x) ((u8)(((x) * 342 + 255) / 256))
+
 static void Coop_GetView(FieldSystem *fsys, struct CoopView *view)
 {
     u32 mapId = fsys->location->mapId;
@@ -1561,9 +1568,10 @@ static void Coop_GetView(FieldSystem *fsys, struct CoopView *view)
         if (sCoopWideViews[i].mapId == mapId)
         {
             *view = sCoopWideViews[i].view;
-            return;
+            break;
         }
     }
+    view->x = COOP_WIDE_VIEW_X(view->x);
 }
 
 // Within the view plus a margin (0 = on screen).
