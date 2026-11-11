@@ -467,7 +467,7 @@ pub const LINK_DATA_MAX: usize = 0xC0;
 pub const LINK_BEACON_MAX: usize = 0x70;
 pub const LINK_MAX_MSGS: usize = 16; // per trailer
 /// Bytes of messages (4-byte header + data each) per trailer, both ways
-/// (coop-bridge CoopLink.cs SendBudget); keeps a packet under one MTU.
+/// (the BizHawk version's bridge had the same SendBudget); keeps a packet under one MTU.
 pub const LINK_SEND_BUDGET: usize = 1000;
 /// The largest link trailer up: header, a full beacon, a full budget.
 pub const LINK_UP_MAX: usize = 12 + 8 + LINK_BEACON_MAX + LINK_SEND_BUDGET;

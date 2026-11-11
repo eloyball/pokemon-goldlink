@@ -1,6 +1,6 @@
 //! The launcher, inside the game's window (RFC §6 M4): the first run (pick your ROM), bringing a
 //! BizHawk install's worlds over, and Play, which patches the ROM in memory and starts the game.
-//! The old launcher's setup (coop-launcher/src/setup.rs), without BizHawk.
+//! The BizHawk version's launcher setup, without BizHawk.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};

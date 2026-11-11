@@ -1,6 +1,5 @@
-# The unified client's crates (dev/docs/unified-client, UC0). The relay and the launcher stay
-# standalone packages with their own Cargo.lock and target/ until the BizHawk path is retired:
-# release and probe scripts find their binaries under coop-relay/target and coop-launcher/target.
+# The unified client's crates (dev/docs/unified-client, UC0). The relay stays a standalone package
+# with its own Cargo.lock and target/ (its release scripts find it under coop-relay/target).
 [workspace]
 resolver = "3"
 members = [
@@ -28,7 +27,7 @@ default-members = [
     "crates/goldlink",
     "crates/goldlink-dev",
 ]
-exclude = ["coop-relay", "coop-launcher", "hg-engine"]
+exclude = ["coop-relay", "hg-engine"]
 
 [workspace.package]
 edition = "2024"

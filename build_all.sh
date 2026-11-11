@@ -7,26 +7,22 @@ echo "============================================================"
 echo " Building Pokémon HeartGold 6-Player Co-op Stack"
 echo "============================================================"
 
-echo "[1/4] Testing & building coop-relay (Rust)..."
+echo "[1/3] Testing & building coop-relay (Rust)..."
 cd "$ROOT_DIR/coop-relay"
 cargo test
 cargo build --release
 
-echo "[2/4] Cutting the avatar sheets, then compiling hg-engine ROM (C / ARMIPS)..."
+echo "[2/3] Cutting the avatar sheets, then compiling hg-engine ROM (C / ARMIPS)..."
 cd "$ROOT_DIR"
 python3 ./scripts/avatar_build.py   # docs/CUSTOM_SPRITES_PLAN.md: writes only what changed
 cd "$ROOT_DIR/hg-engine"
 make -j$(nproc)
 
-echo "[3/4] Extracting & validating gCoopCommBlock symbol offset..."
+echo "[3/3] Extracting & validating gCoopCommBlock symbol offset..."
 cd "$ROOT_DIR"
 python3 ./scripts/extract_coop_sym.py
 
-echo "[4/4] Building CoopBridge.dll (C#) and installing to BizHawk/ExternalTools..."
-cd "$ROOT_DIR/coop-bridge/src"
-dotnet build -c Release
-mkdir -p "$ROOT_DIR/BizHawk/ExternalTools"
-cp bin/Release/CoopBridge.dll "$ROOT_DIR/BizHawk/ExternalTools/CoopBridge.dll"
+# The game itself: cargo build --release -p goldlink (scripts/package_client.sh for a release).
 
 echo "============================================================"
 echo " Build Complete Successfully!"

@@ -1,7 +1,7 @@
 [package]
 name = "goldlink-bridge"
 version = "0.1.0"
-description = "The co-op bridge in Rust (port of coop-bridge's CoopBridgeForm): mailbox, relay client, sessions, trades, challenge sync, per-world saves"
+description = "The co-op bridge in Rust (port of the BizHawk version's C# bridge): mailbox, relay client, sessions, trades, challenge sync, per-world saves"
 license = "GPL-3.0-or-later"
 edition.workspace = true
 rust-version.workspace = true

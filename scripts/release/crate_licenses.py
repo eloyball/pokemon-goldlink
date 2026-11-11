@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The license texts of the launcher's Rust libraries, as each crate ships them.
+"""The license texts of a program's Rust libraries, as each crate ships them.
 
-    cargo metadata --format-version 1 --manifest-path coop-launcher/Cargo.toml | crate_licenses.py > out.txt
+    cargo metadata --format-version 1 ... | crate_licenses.py > out.txt   (package_client.sh, package_relay.sh)
 """
 import glob
 import json

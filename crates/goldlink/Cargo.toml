@@ -33,7 +33,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 dirs = "6"
 
-# The launcher's choices (coop-launcher/Cargo.toml): OpenGL on Linux and macOS; on Windows wgpu
+# The BizHawk version's launcher's choices, kept: OpenGL on Linux and macOS; on Windows wgpu
 # (Direct3D 12, with Windows' software adapter when there's no usable GPU), since many Windows
 # drivers, VMs and remote desktops lack OpenGL.
 [target.'cfg(not(windows))'.dependencies]

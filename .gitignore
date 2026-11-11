@@ -15,7 +15,7 @@
 # --- Emulator install (binaries, user config, installed CoopBridge.dll) ---
 /BizHawk/
 /emulators/
-# Extra BizHawk instances (scripts/run_bizhawk.sh <name>): configs, saves, secrets
+# Extra BizHawk instances (the dev test runners): configs, saves, secrets
 /instances/
 # Probe output (dev/run_probe.sh)
 /build/
@@ -24,12 +24,8 @@
 /dev/
 /docs
 
-# --- Rust workspace build outputs (Cargo.toml at the root; the relay and launcher keep their own) ---
+# --- Rust workspace build outputs (Cargo.toml at the root; the relay keeps its own) ---
 /target/
-
-# --- coop-bridge build outputs ---
-/coop-bridge/src/bin/
-/coop-bridge/src/obj/
 
 # --- coop-relay runtime data (campaign rosters; default --save-dir) ---
 /campaigns/

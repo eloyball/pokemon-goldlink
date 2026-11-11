@@ -1,5 +1,5 @@
-//! BPS patches: the format byuu designed for ROM hacks. Ported from coop-launcher/src/bps.rs
-//! (same author; GPL-3.0-or-later here, DECISIONS D1), which stays as it is until UC4.
+//! BPS patches: the format byuu designed for ROM hacks. Ported from the BizHawk version's
+//! launcher (same author; GPL-3.0-or-later here, DECISIONS D1).
 //!
 //! A patch is `BPS1`, the source / target / metadata sizes, the actions, then the CRC32s of the
 //! source, the target and the patch itself. Actions copy from the source at the same offset

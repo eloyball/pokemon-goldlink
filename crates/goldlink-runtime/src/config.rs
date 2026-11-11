@@ -99,8 +99,8 @@ impl Default for Audio {
 }
 
 impl Bindings {
-    /// The release's BizHawk keyboard controls (scripts/bizhawk_defaults.py), without BizHawk's
-    /// Tab (fast-forward) and Shift extras: the game always runs at the DS's speed (D5.6).
+    /// The keyboard controls of the BizHawk version's releases, without BizHawk's Tab
+    /// (fast-forward) and Shift extras: the game always runs at the DS's speed (D5.6).
     pub fn keyboard() -> Self {
         Self {
             a: names(&["X", "K"]),

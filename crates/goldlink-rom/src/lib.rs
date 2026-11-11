@@ -6,7 +6,7 @@ pub mod bps;
 use serde::Deserialize;
 use sha1::{Digest, Sha1};
 
-/// The fields of `release.json` (written by `scripts/package_release.sh`) the ROM step needs.
+/// The fields of `release.json` (written by `scripts/package_client.sh`) the ROM step needs.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Release {
     pub version: String,
