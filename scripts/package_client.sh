@@ -38,7 +38,7 @@ step() { echo; echo "=== [$1/7] $2"; }
 
 # ---------------------------------------------------------------------------
 step 1 "Checks"
-for tool in cargo docker x86_64-w64-mingw32-gcc arm-none-eabi-nm strings sha1sum sha256sum objdump; do
+for tool in cargo docker x86_64-w64-mingw32-gcc x86_64-w64-mingw32-windres arm-none-eabi-nm strings sha1sum sha256sum objdump; do
     command -v "$tool" > /dev/null || die "$tool is missing"
 done
 [[ $PUBLISH == 0 ]] || command -v gh > /dev/null || die "gh is missing"

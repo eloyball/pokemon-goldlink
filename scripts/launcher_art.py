@@ -573,8 +573,17 @@ def main():
     background().save(OUT / "background.png", optimize=True)
     for name, (colours, rows) in ICONS.items():
         icon(colours, rows).save(OUT / f"icon-{name}.png", optimize=True)
-    big = app_icon().resize((256, 256), Image.NEAREST)
+    small = app_icon()
+    big = small.resize((256, 256), Image.NEAREST)
     big.save(OUT / "goldlink.png", optimize=True)
+    # the Windows program's icon (build.rs): whole-pixel scales where they exist, smoothed below 32
+    # and at 48, the sizes Explorer and the taskbar ask for
+    sizes = [16, 24, 32, 48, 64, 128, 256]
+    frames = [
+        small.resize((n, n), Image.NEAREST) if n % 32 == 0 else big.resize((n, n), Image.LANCZOS)
+        for n in sizes
+    ]
+    frames[-1].save(OUT / "goldlink.ico", sizes=[(n, n) for n in sizes], append_images=frames[:-1])
     print(f"wrote {OUT}")
 
 
