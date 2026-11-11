@@ -640,7 +640,13 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
         viewport: egui::ViewportBuilder::default()
             .with_inner_size(LAUNCHER_SIZE)
             .with_min_inner_size(LAUNCHER_MIN)
-            .with_title("GoldLink"),
+            .with_title("GoldLink")
+            // matches goldlink.desktop, so desktops show the window under GoldLink's own icon
+            .with_app_id("goldlink")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/goldlink.png"))
+                    .expect("the app icon is a PNG"),
+            ),
         #[cfg(windows)]
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()

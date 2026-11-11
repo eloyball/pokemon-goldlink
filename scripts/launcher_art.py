@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Draws the launcher's pixel art (dev/docs/unified-client/UC8.md §2.4): golden hour over a Johto town
-(a sunset sky, a pagoda, a snowy peak, roofs, autumn trees, falling leaves) and the menu icons. Everything is drawn
+(a sunset sky, a pagoda, a snowy peak, roofs, autumn trees, falling leaves), the menu icons and the app icon. Everything is drawn
 here from shapes and a fixed seed, so the files are reproducible:
 
     python3 scripts/launcher_art.py      (writes crates/goldlink/assets/*.png)
@@ -516,11 +516,65 @@ def icon(colours, rows):
     return img
 
 
+def app_icon():
+    """GoldLink's 32x32 app icon: two gold chain links on a sunset tile (saved at 1x and scaled to 256)."""
+    n = 32
+    img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    px = img.load()
+    top, bottom = hexc("#f6a03c"), hexc("#5a2d6e")
+    for y in range(n):
+        for x in range(n):
+            # a rounded tile: corners of radius 5 cut away
+            cx = min(max(x, 5), n - 6)
+            cy = min(max(y, 5), n - 6)
+            if (x - cx) ** 2 + (y - cy) ** 2 > 25:
+                continue
+            t = y / (n - 1)
+            steps = 6
+            level = t * steps
+            base = int(level)
+            frac = level - base
+            if BAYER[y % 4][x % 4] / 16 < frac:
+                base += 1
+            px[x, y] = lerp(top, bottom, min(base, steps) / steps) + (255,)
+    edge = hexc("#3a1d0c")
+    gold, light, shade = hexc("#f4c84a"), hexc("#fff1a8"), hexc("#b8801f")
+
+    def link(cx, cy, rx, ry, w):
+        """One chain link as {cell: colour}: an elliptical ring with a dark outline, lit from the top left."""
+        ring = {}
+        for y in range(n):
+            for x in range(n):
+                fx, fy = (x + 0.5 - cx), (y + 0.5 - cy)
+                if (fx / rx) ** 2 + (fy / ry) ** 2 <= 1 and (fx / (rx - w)) ** 2 + (fy / (ry - w)) ** 2 >= 1:
+                    lit = fy < 0 and fx < rx * 0.3 and (fx / (rx - w * 0.5)) ** 2 + (fy / (ry - w * 0.5)) ** 2 > 1
+                    ring[(x, y)] = light if lit else shade if fy > ry * 0.45 else gold
+        sprite = {}
+        for (x, y) in ring:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                q = (x + dx, y + dy)
+                if q not in ring and 0 <= q[0] < n and 0 <= q[1] < n:
+                    sprite[q] = edge
+        sprite.update(ring)
+        return sprite
+
+    left = link(11, 16, 8, 5.5, 2.2)
+    right = link(21, 16, 8, 5.5, 2.2)
+    # the right link passes over the left one at the top and under it at the bottom
+    for sprite, keep in ((left, lambda q: True), (right, lambda q: True), (left, lambda q: q[1] >= 16 and q[0] >= 13)):
+        for q, c in sprite.items():
+            if keep(q):
+                px[q] = c + (255,)
+    return img
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     background().save(OUT / "background.png", optimize=True)
     for name, (colours, rows) in ICONS.items():
         icon(colours, rows).save(OUT / f"icon-{name}.png", optimize=True)
+    big = app_icon().resize((256, 256), Image.NEAREST)
+    big.save(OUT / "goldlink.png", optimize=True)
     print(f"wrote {OUT}")
 
 

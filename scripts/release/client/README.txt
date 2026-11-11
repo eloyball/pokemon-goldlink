@@ -18,6 +18,7 @@ Starting
 1. Unpack this folder anywhere (keep everything in it together).
 2. Start GoldLink: GoldLink.exe on Windows, ./GoldLink on Linux.
    Windows may warn about an unknown publisher: choose "More info", then "Run anyway".
+   On Linux, ./install.sh adds GoldLink to your app menu (run it again if you move the folder).
 3. The first time, choose your HeartGold ROM. GoldLink checks it and keeps a copy.
 4. Press PLAY: the launcher. Pick your avatar (YOU PLAY AS), then Join a world (the world
    code and the server address your host gave you) or Create a world (then share its code).

@@ -154,7 +154,14 @@ fill() { # template -> stdout
 assemble() { # <os> <dir>
     local os="$1" dir="$2"
     mkdir -p "$dir/LICENSES" "$dir/build/avatars"
-    if [[ $os == linux ]]; then cp "$LINUX_BIN" "$dir/GoldLink"; else cp "$WINDOWS_BIN" "$dir/GoldLink.exe"; fi
+    if [[ $os == linux ]]; then
+        cp "$LINUX_BIN" "$dir/GoldLink"
+        # the app menu entry (install.sh writes goldlink.desktop) and its icon
+        install -m 755 scripts/release/client/install.sh "$dir/install.sh"
+        cp crates/goldlink/assets/goldlink.png "$dir/goldlink.png"
+    else
+        cp "$WINDOWS_BIN" "$dir/GoldLink.exe"
+    fi
     cp "$WORK/goldlink.bps" coop_avatars.json "$dir/"
     python3 -I -c 'import json,sys; [print(a["preview"]) for a in json.load(open(sys.argv[1]))["avatars"] if "preview" in a]' \
         coop_avatars.json | while read -r preview; do cp "$preview" "$dir/$preview"; done
