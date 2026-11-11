@@ -8,7 +8,7 @@
 use eframe::egui::{
     self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, StrokeKind, pos2, vec2,
 };
-use goldlink_bridge::battle_ui::{BattleHud, menu};
+use goldlink_bridge::battle_ui::{Ball, BattleHud, menu};
 
 use crate::theme;
 
@@ -298,6 +298,9 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
         [band.left_top(), band.right_top()],
         Stroke::new((1.0 * s).max(2.0), ACCENT),
     );
+    if let Some(balls) = &hud.party {
+        party_balls(c.ui.painter(), band.left_top(), balls, s);
+    }
     match (hud.menu, &hud.options) {
         (menu::FIGHT, _) => fight(&mut c, hud),
         (menu::TARGET, _) => targets(&mut c, hud),
@@ -671,5 +674,51 @@ pub fn recolour_textbox(top_screen_rows: &[u32]) -> egui::ColorImage {
     egui::ColorImage {
         size: [256, rows],
         pixels,
+    }
+}
+
+/// The player's party, as the game's touch screen shows it: a small ball per Pokémon, greyed
+/// when it has fainted, a dot for an empty slot; just above the band, on the left.
+fn party_balls(p: &egui::Painter, band_top_left: Pos2, balls: &[Ball; 6], s: f32) {
+    let r = 3.5 * s;
+    let y = band_top_left.y - r - 2.5 * s;
+    for (i, ball) in balls.iter().enumerate() {
+        let c = pos2(
+            band_top_left.x + 6.0 * s + r + i as f32 * (2.0 * r + 2.5 * s),
+            y,
+        );
+        let line = Stroke::new((0.6 * s).max(1.0), Color32::from_rgb(0x1A, 0x17, 0x16));
+        if *ball == Ball::Empty {
+            p.circle_filled(c, 1.3 * s, Color32::from_rgb(0x8A, 0x84, 0x7E));
+            p.circle_stroke(c, 1.3 * s, line);
+            continue;
+        }
+        let (upper, lower) = match ball {
+            Ball::Fainted => (
+                Color32::from_rgb(0x7C, 0x76, 0x72),
+                Color32::from_rgb(0xA8, 0xA2, 0x9C),
+            ),
+            _ => (
+                Color32::from_rgb(0xE8, 0x3A, 0x34),
+                Color32::from_rgb(0xF4, 0xF2, 0xEE),
+            ),
+        };
+        p.circle_filled(c, r, lower);
+        // The upper half.
+        let top: Vec<Pos2> = (0..=16)
+            .map(|k| {
+                let a = std::f32::consts::PI * (1.0 + k as f32 / 16.0);
+                c + vec2(r * a.cos(), r * a.sin())
+            })
+            .collect();
+        p.add(egui::Shape::convex_polygon(top, upper, Stroke::NONE));
+        p.line_segment([c - vec2(r, 0.0), c + vec2(r, 0.0)], line);
+        p.circle_filled(c, 1.1 * s, lower);
+        p.circle_stroke(c, 1.1 * s, line);
+        p.circle_stroke(c, r, line);
+        if *ball == Ball::Status {
+            // A status condition: a small amber mark, as the game's ball shows one.
+            p.circle_filled(c + vec2(r * 0.7, -r * 0.7), 1.3 * s, theme::AMBER);
+        }
     }
 }

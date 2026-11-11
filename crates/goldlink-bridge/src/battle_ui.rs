@@ -31,6 +31,10 @@ const INPUT_TEXT_OBJECTS: u32 = 0x4D0;
 const TEXT_OBJECT_COUNT: u32 = 13;
 const TEXT_OBJECT_SIZE: u32 = 0x14;
 const INPUT_MENU_ID: u32 = 0x68B;
+/// `BattleInput.spriteBallGauge[6]`: the player's party balls on the touch screen (measured;
+/// the opponent's six follow). Each `Sprite`'s animation (+0xF0) is the ball's state.
+const INPUT_BALL_GAUGE: u32 = 0x5D8;
+const SPRITE_ANIMATION: u32 = 0xF0;
 const INPUT_CURSOR: u32 = 0x6DC;
 const INPUT_CHOSEN: u32 = 0x6E0;
 /// pret `sOverlayRegions` (poke_overlay.c): three regions of eight loaded overlays, each
@@ -138,6 +142,7 @@ impl GameText {
             boxes,
             targets,
             run_is_back: ui.run_is_back,
+            party: ui.party,
             menu: ui.menu,
             waiting: ui.waiting,
             cursor: ui.cursor,
@@ -202,6 +207,8 @@ pub struct HudTarget {
 pub struct BattleHud {
     /// The command menu shows BACK where RUN is (a double battle's second Pokémon).
     pub run_is_back: bool,
+    /// The player's party balls, while the touch screen shows them.
+    pub party: Option<[Ball; 6]>,
     /// A two-option menu's labels (top, bottom), in the ROM's words.
     pub options: Option<(String, String)>,
     pub boxes: Vec<HudBox>,
@@ -289,6 +296,16 @@ impl HpBox {
     }
 }
 
+/// A party ball on the battle's touch screen (pret: its sprite's animation 0..3).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Ball {
+    #[default]
+    Empty,
+    Healthy,
+    Status,
+    Fainted,
+}
+
 /// The target menu's battlers (double battles): which can be chosen.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Target {
@@ -318,6 +335,8 @@ pub struct BattleUi {
     pub option_move: u16,
     /// The command menu shows BACK where RUN is (a double battle's second Pokémon).
     pub run_is_back: bool,
+    /// The player's party balls as the touch screen shows them (None when it doesn't).
+    pub party: Option<[Ball; 6]>,
     /// The target menu's battlers, by battler id (player left, opponent right, player right,
     /// opponent left), and every battler's nickname.
     pub targets: [Target; 4],
@@ -423,6 +442,7 @@ pub fn read(main_ram: &[u8]) -> Option<BattleUi> {
         }
     }
     let option_move = r.u16(input + INPUT_MENU).unwrap_or(0);
+    let party = read_party(&r, input);
     // BattleInputMainMenu.cancelRunDisplay (+8).
     let run_is_back = menu::COMMANDS.contains(&menu) && r.u8(input + INPUT_MENU + 8) == Some(1);
     Some(BattleUi {
@@ -435,6 +455,7 @@ pub fn read(main_ram: &[u8]) -> Option<BattleUi> {
         boxes,
         option_move,
         run_is_back,
+        party,
         targets,
         names,
     })
@@ -494,6 +515,25 @@ fn read_boxes(r: &Ram<'_>, system: u32) -> (Vec<HpBox>, [Vec<u16>; 4]) {
         });
     }
     (boxes, names)
+}
+
+/// The player's party balls, when the touch screen draws them.
+fn read_party(r: &Ram<'_>, input: u32) -> Option<[Ball; 6]> {
+    let mut balls = [Ball::Empty; 6];
+    let mut drawn = false;
+    for (i, b) in balls.iter_mut().enumerate() {
+        let sprite = r
+            .ptr(input + INPUT_BALL_GAUGE + i as u32 * 4)
+            .and_then(|m| r.ptr(m))?;
+        drawn |= r.u8(sprite + SPRITE_DRAW) == Some(1);
+        *b = match r.u16(sprite + SPRITE_ANIMATION)? {
+            1 => Ball::Healthy,
+            2 => Ball::Status,
+            3 => Ball::Fainted,
+            _ => Ball::Empty,
+        };
+    }
+    drawn.then_some(balls)
 }
 
 fn s32_at(r: &Ram<'_>, addr: u32) -> i32 {
