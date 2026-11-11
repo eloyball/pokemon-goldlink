@@ -41,7 +41,7 @@ jobs:
   # Notarization needs the maintainer's Apple Developer ID (UC7.md), so Gatekeeper still asks
   # the first time (right-click > Open).
   macos:
-    runs-on: macos-14
+    runs-on: macos-15 # macos-14 is retired: jobs on it are cancelled before they start
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,7 +59,17 @@ jobs:
           cargo build --locked --release -p goldlink --target aarch64-apple-darwin
           cargo build --locked --release -p goldlink --target x86_64-apple-darwin
           app=build/GoldLink.app/Contents
-          mkdir -p "$app/MacOS"
+          mkdir -p "$app/MacOS" "$app/Resources"
+          # the app icon (scripts/launcher_art.py's 256 px goldlink.png, drawn at 32 px, so whole-pixel scales)
+          set=build/GoldLink.iconset
+          mkdir -p "$set" build/icon
+          for n in 16 32 64 128 256; do
+            sips -z $n $n crates/goldlink/assets/goldlink.png --out build/icon/$n.png > /dev/null
+          done
+          # iconutil takes only Apple's names: icon_<size>x<size>[@2x].png
+          for n in 16 32 128 256; do cp build/icon/$n.png "$set/icon_${n}x${n}.png"; done
+          for n in 16 32 128; do cp build/icon/$((n * 2)).png "$set/icon_${n}x${n}@2x.png"; done
+          iconutil -c icns "$set" -o "$app/Resources/GoldLink.icns"
           lipo -create -output "$app/MacOS/GoldLink" \
             target/aarch64-apple-darwin/release/goldlink target/x86_64-apple-darwin/release/goldlink
           cat > "$app/Info.plist" <<PLIST
@@ -68,6 +78,7 @@ jobs:
           <plist version="1.0"><dict>
             <key>CFBundleName</key><string>GoldLink</string>
             <key>CFBundleExecutable</key><string>GoldLink</string>
+            <key>CFBundleIconFile</key><string>GoldLink</string>
             <key>CFBundleIdentifier</key><string>io.github.eloyball.goldlink</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>0.0</string>
