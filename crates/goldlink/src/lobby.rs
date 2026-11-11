@@ -105,6 +105,8 @@ pub struct Lobby {
     pub message: Option<(String, bool)>,
     /// An import found a different player identity: the player decides.
     secret_offer: Option<u64>,
+    /// Import a save's folder chooser, while it's open.
+    choosing: Option<crate::launcher::Choosing>,
     avatar: Option<(u8, Option<TextureHandle>)>,
     status: Status,
     status_of: String,
@@ -132,6 +134,7 @@ impl Lobby {
             server,
             message: None,
             secret_offer: None,
+            choosing: None,
             avatar: None,
             status: Status::NoServer,
             status_of: String::new(),
@@ -753,11 +756,25 @@ impl Lobby {
             "Choose a folder…",
             Kind::Neutral,
             vec2(ui.available_width(), 40.0),
-            true,
+            self.choosing.is_none(),
         )
         .clicked()
         {
-            match crate::launcher::pick_folder("Your old GoldLink folder") {
+            self.message = None;
+            self.choosing = Some(crate::launcher::choose_folder("Your old GoldLink folder"));
+        }
+        let answer = self.choosing.as_ref().and_then(|c| c.poll());
+        if self.choosing.is_some() && answer.is_none() {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Choose the folder in the window that opened…");
+            });
+            ui.ctx().request_repaint_after(Duration::from_millis(100));
+        }
+        if let Some(answer) = answer {
+            self.choosing = None;
+            match answer {
                 Ok(Some(dir)) => match import::import(data, &dir) {
                     Ok(report) => {
                         goldlink_bridge::hook::lock(bridge).reload_from_disk();

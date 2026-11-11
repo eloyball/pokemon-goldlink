@@ -3,7 +3,7 @@
 //! The old launcher's setup (coop-launcher/src/setup.rs), without BizHawk.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use eframe::egui;
 use goldlink_rom::{Release, sha1_hex};
@@ -12,15 +12,70 @@ pub const RELEASE_FILE: &str = "release.json";
 
 const ROM_DIALOG_TITLE: &str = "Your Pokémon HeartGold (USA) ROM";
 
-/// Runs a file dialog. On Linux (and the BSDs) rfd asks the desktop portal over D-Bus through
-/// zbus on Tokio (rfd's `tokio` feature), which panics without a Tokio runtime driving it: the UI
-/// thread has none, so the dialog gets its own for as long as it's open.
+/// A file or folder chooser that's open. It runs on a thread of its own, so the window keeps
+/// drawing (and answering the desktop, which otherwise calls it "not responding") while the
+/// player chooses; `poll` gives the answer once the chooser closes.
+pub struct Choosing(Receiver<Result<Option<PathBuf>, String>>);
+
+impl Choosing {
+    /// None while the chooser is still open.
+    pub fn poll(&self) -> Option<Result<Option<PathBuf>, String>> {
+        match self.0.try_recv() {
+            Ok(answer) => Some(answer),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                Some(Err("The file chooser closed unexpectedly.".into()))
+            }
+        }
+    }
+}
+
+/// Opens the chooser `dialog` builds.
+fn choose<F>(dialog: impl FnOnce() -> F + Send + 'static) -> Choosing
+where
+    F: std::future::Future<Output = Option<rfd::FileHandle>> + 'static,
+{
+    let (tx, rx) = channel();
+    let run = move || {
+        let answer = run_dialog(dialog()).map(|f| f.map(|f| f.path().to_path_buf()));
+        tx.send(answer).ok();
+    };
+    // macOS's panels belong to the main thread: there the chooser runs where it's asked for
+    #[cfg(target_os = "macos")]
+    run();
+    #[cfg(not(target_os = "macos"))]
+    if let Err(e) = std::thread::Builder::new()
+        .name("file chooser".into())
+        .spawn(run)
+    {
+        let (tx, rx) = channel();
+        tx.send(Err(format!("Couldn't open the file chooser: {e}")))
+            .ok();
+        return Choosing(rx);
+    }
+    Choosing(rx)
+}
+
+/// Runs a file dialog to the end. On Linux (and the BSDs) rfd asks the desktop portal over D-Bus
+/// through zbus on Tokio (rfd's `tokio` feature), which panics without a Tokio runtime. The
+/// runtime lives as long as the program: ashpd keeps one D-Bus connection for the whole process,
+/// and its reader runs on the runtime that opened it, so with a runtime per dialog every chooser
+/// after the first waited forever for an answer that nothing read.
 #[cfg(all(unix, not(target_os = "macos")))]
 fn run_dialog<T>(dialog: impl std::future::Future<Output = T>) -> Result<T, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("Couldn't open the file chooser: {e}"))?;
+    static RUNTIME: std::sync::OnceLock<Result<tokio::runtime::Runtime, String>> =
+        std::sync::OnceLock::new();
+    let runtime = RUNTIME
+        .get_or_init(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(1)
+                .thread_name("file chooser D-Bus")
+                .enable_all()
+                .build()
+                .map_err(|e| format!("Couldn't open the file chooser: {e}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
     Ok(runtime.block_on(dialog))
 }
 
@@ -53,20 +108,19 @@ fn pollster_block_on<T>(f: impl std::future::Future<Output = T>) -> T {
 }
 
 /// The system's file chooser for the ROM.
-fn pick_rom_file() -> Result<Option<PathBuf>, String> {
-    run_dialog(
+fn choose_rom_file() -> Choosing {
+    choose(|| {
         rfd::AsyncFileDialog::new()
             .set_title(ROM_DIALOG_TITLE)
             .add_filter("Nintendo DS ROM", &["nds"])
-            .pick_file(),
-    )
-    .map(|f| f.map(|f| f.path().to_path_buf()))
+            .pick_file()
+    })
 }
 
 /// The system's folder chooser (Import a save…).
-pub fn pick_folder(title: &str) -> Result<Option<PathBuf>, String> {
-    run_dialog(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
-        .map(|f| f.map(|f| f.path().to_path_buf()))
+pub fn choose_folder(title: &str) -> Choosing {
+    let title = title.to_owned();
+    choose(move || rfd::AsyncFileDialog::new().set_title(title).pick_folder())
 }
 
 pub struct Paths {
@@ -190,6 +244,8 @@ pub fn import_bizhawk(paths: &Paths) -> Option<String> {
 }
 
 enum Work {
+    /// The ROM chooser is open.
+    Choose(Choosing),
     Import(Receiver<Result<(), String>>),
     Prepare(Receiver<Result<Vec<u8>, String>>),
 }
@@ -259,16 +315,20 @@ impl Launcher {
     }
 
     fn pick_rom(&mut self) {
+        if self.release.is_err() {
+            return;
+        }
+        self.message = None;
+        self.work = Some((
+            "Choose your ROM in the window that opened…".into(),
+            Work::Choose(choose_rom_file()),
+        ));
+    }
+
+    /// The ROM the player chose: checked and copied on a thread.
+    fn import_rom(&mut self, rom: PathBuf) {
         let Ok(release) = self.release.clone() else {
             return;
-        };
-        let rom = match pick_rom_file() {
-            Ok(Some(rom)) => rom,
-            Ok(None) => return,
-            Err(e) => {
-                self.message = Some((e, true));
-                return;
-            }
         };
         let paths = Paths {
             install: self.paths.install.clone(),
@@ -303,6 +363,18 @@ impl Launcher {
             return Next::Stay;
         };
         match work {
+            Work::Choose(chooser) => match chooser.poll() {
+                Some(Ok(Some(rom))) => {
+                    self.work = None;
+                    self.import_rom(rom);
+                }
+                Some(Ok(None)) => self.work = None,
+                Some(Err(e)) => {
+                    self.work = None;
+                    self.message = Some((e, true));
+                }
+                None => {}
+            },
             Work::Import(rx) => match rx.try_recv() {
                 Ok(Ok(())) => {
                     self.work = None;
@@ -505,5 +577,41 @@ mod tests {
         );
         assert!(import_bizhawk(&paths).is_none(), "only once");
         std::fs::remove_dir_all(&data).ok();
+    }
+}
+
+#[cfg(test)]
+mod chooser_tests {
+    use std::time::{Duration, Instant};
+
+    /// Needs a desktop portal that answers by itself: dev/test_file_chooser.sh runs it against a
+    /// fake one on a private D-Bus session (GOLDLINK_CHOOSER_EXPECT is what it picks). Only the
+    /// first chooser in a program used to answer (the portal's D-Bus connection died with the
+    /// first dialog's runtime), and the window's thread waited for every one.
+    #[test]
+    #[ignore]
+    fn choosers_answer_every_time() {
+        let expect = std::path::PathBuf::from(
+            std::env::var("GOLDLINK_CHOOSER_EXPECT").expect("run by dev/test_file_chooser.sh"),
+        );
+        for i in 0..3 {
+            let asked = Instant::now();
+            let chooser = super::choose_folder("Your old GoldLink folder");
+            assert!(
+                asked.elapsed() < Duration::from_millis(100),
+                "chooser {i} held up the window's thread"
+            );
+            let answer = loop {
+                if let Some(answer) = chooser.poll() {
+                    break answer;
+                }
+                assert!(
+                    asked.elapsed() < Duration::from_secs(10),
+                    "chooser {i} never answered"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            assert_eq!(answer, Ok(Some(expect.clone())), "chooser {i}");
+        }
     }
 }

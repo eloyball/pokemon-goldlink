@@ -38,6 +38,8 @@ enum Stage {
         runner: Runner,
         code: String,
         server: String,
+        /// Import a save's folder chooser, while it's open.
+        choosing: Option<launcher::Choosing>,
     },
     Playing {
         game: Box<GameApp>,
@@ -203,7 +205,8 @@ impl Shell {
                 runner,
                 code,
                 server,
-            } => self.missing(ctx, runner, code, server, close),
+                choosing,
+            } => self.missing(ctx, runner, code, server, choosing, close),
             Stage::Playing { mut game, code } => {
                 let asked = game.ui(ctx) == Some(GameAction::Leave);
                 if close {
@@ -388,6 +391,7 @@ impl Shell {
                 runner,
                 code,
                 server,
+                choosing: None,
             };
         }
         if v.slot_ready {
@@ -415,9 +419,11 @@ impl Shell {
         runner: Runner,
         code: String,
         server: String,
+        mut choosing: Option<launcher::Choosing>,
         close: bool,
     ) -> Stage {
         let art = self.art.as_ref().expect("loaded");
+        let open = choosing.is_some();
         let text = format!(
             "Your save for world {code} isn't on this computer, so the game won't start a new \
              one over it. If you played this world before (another computer, or an older \
@@ -436,7 +442,12 @@ impl Shell {
                 );
                 let import = ui
                     .scope_builder(egui::UiBuilder::new().max_rect(r), |ui| {
-                        theme::button(ui, "Import a save…", Kind::Primary, r.size(), true).clicked()
+                        let label = if open {
+                            "Choose the folder in the window that opened…"
+                        } else {
+                            "Import a save…"
+                        };
+                        theme::button(ui, label, Kind::Primary, r.size(), !open).clicked()
                     })
                     .inner;
                 let leave = theme::big_button(
@@ -467,7 +478,11 @@ impl Shell {
             return Stage::Lobby;
         }
         if import {
-            match launcher::pick_folder("Your old GoldLink folder") {
+            choosing = Some(launcher::choose_folder("Your old GoldLink folder"));
+        }
+        if let Some(answer) = choosing.as_ref().and_then(|c| c.poll()) {
+            choosing = None;
+            match answer {
                 Ok(Some(dir)) => {
                     // Out of the world first: the import may change who this player is.
                     leave_now(self);
@@ -516,6 +531,7 @@ impl Shell {
             runner,
             code,
             server,
+            choosing,
         }
     }
 
