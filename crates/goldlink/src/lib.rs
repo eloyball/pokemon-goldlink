@@ -7,6 +7,9 @@ pub mod import;
 pub mod input;
 pub mod launcher;
 pub mod layout;
+pub mod lobby;
+pub mod shell;
+pub mod theme;
 pub mod update;
 pub mod world_ui;
 
@@ -46,6 +49,9 @@ pub fn data_dir() -> Result<PathBuf, String> {
 /// (a build in `target/<profile>/`), or in the working folder.
 pub fn avatar_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
+    if let Some(dir) = std::env::var_os("GOLDLINK_INSTALL_DIR") {
+        out.push(PathBuf::from(dir).join(goldlink_bridge::avatars::FILE));
+    }
     if let Some(dir) = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf))
@@ -134,114 +140,8 @@ fn dark(ctx: &eframe::egui::Context) {
     ctx.set_theme(eframe::egui::ThemePreference::Dark);
 }
 
-/// The release program's window: the launcher first, then the game in the same window.
-struct Shell {
-    launcher: launcher::Launcher,
-    game: Option<app::GameApp>,
-    config: Option<Config>,
-    notes: Vec<String>,
-}
-
-impl Shell {
-    fn start_game(&mut self, ctx: &eframe::egui::Context, rom: Vec<u8>) -> Result<(), String> {
-        let data = self.launcher.paths.data.clone();
-        let bridge = goldlink_bridge::Bridge::new(&data, &avatar_files())
-            .map_err(|e| format!("the network: {e}"))?;
-        let bridge: SharedBridge = std::sync::Arc::new(std::sync::Mutex::new(bridge));
-        let emu = Emulator::new(GameSetup {
-            rom: std::sync::Arc::new(rom),
-            cart_save: Some(data.join(CART_SAVE)),
-            mailbox_offset: MAILBOX_OFFSET,
-            rtc: None,
-        })?;
-        let runner = Runner::start(
-            emu,
-            vec![Box::new(BridgeHook {
-                bridge: bridge.clone(),
-            })],
-        );
-        let config = self.config.take().unwrap_or_default();
-        let size = layout::window_size(&config.video, 2.0);
-        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::InnerSize(size));
-        ctx.send_viewport_cmd(eframe::egui::ViewportCommand::MinInnerSize(
-            layout::window_size(&config.video, 1.0),
-        ));
-        self.game = Some(app::GameApp::new(
-            runner,
-            Some(bridge),
-            config,
-            data,
-            std::mem::take(&mut self.notes),
-        ));
-        Ok(())
-    }
-}
-
-impl eframe::App for Shell {
-    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
-        if let Some(g) = self.game.as_mut() {
-            g.ui(ctx);
-            return;
-        }
-        if let launcher::Next::Play(rom) = self.launcher.ui(ctx)
-            && let Err(e) = self.start_game(ctx, rom)
-        {
-            self.notes.push(e);
-        }
-    }
-
-    #[cfg(not(windows))]
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        if let Some(g) = self.game.as_mut() {
-            g.shutdown();
-        }
-    }
-
-    #[cfg(windows)]
-    fn on_exit(&mut self) {
-        if let Some(g) = self.game.as_mut() {
-            g.shutdown();
-        }
-    }
-}
-
-/// The release program: the launcher (first run, the ROM, Play), then the game. `autoplay`
-/// presses Play at once (`--play`).
+/// The release program (UC8): the ROM screen, the launcher and the game in one window.
+/// `autoplay` presses PLAY at once (`--play`).
 pub fn run_release(autoplay: bool) -> Result<(), String> {
-    let paths = launcher::Paths::detect()?;
-    let (config, note) = Config::load(&paths.data);
-    let title = "GoldLink";
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([460.0, 360.0])
-            .with_title(title),
-        #[cfg(windows)]
-        renderer: eframe::Renderer::Wgpu,
-        ..Default::default()
-    };
-    let mut launcher = launcher::Launcher::new(paths);
-    launcher.autoplay = autoplay;
-    let shell = Shell {
-        launcher,
-        game: None,
-        config: Some(config),
-        notes: note.into_iter().collect(),
-    };
-    let mut shell = Some(shell);
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        eframe::run_native(
-            title,
-            options,
-            Box::new(|cc| {
-                dark(&cc.egui_ctx);
-                Ok(Box::new(shell.take().expect("one window")))
-            }),
-        )
-    }))
-    .unwrap_or_else(|_| {
-        Err(eframe::Error::AppCreation(
-            "the graphics driver can't draw the window".into(),
-        ))
-    })
-    .map_err(|e| e.to_string())
+    shell::run(autoplay)
 }

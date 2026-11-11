@@ -15,5 +15,9 @@ hg-engine (in goldlink.bps, compiled into the game)
   No license file; used under its README's terms (quoted in NOTICE.md): no money involved,
   freely accessible, credits kept.
 
+Pixelify Sans and Silkscreen (the launcher's fonts, built into the program)
+  https://github.com/eifetx/Pixelify-Sans, https://github.com/googlefonts/silkscreen
+  SIL Open Font License 1.1 (LICENSES/PixelifySans-OFL.txt, LICENSES/Silkscreen-OFL.txt).
+
 The program's Rust libraries
   Their licenses, as each library ships them: LICENSES/libraries.txt

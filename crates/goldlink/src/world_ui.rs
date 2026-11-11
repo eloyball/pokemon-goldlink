@@ -25,7 +25,7 @@ pub struct WorldPanel {
 }
 
 /// A PNG file as an egui image.
-fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
+pub fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
     let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];
@@ -326,50 +326,7 @@ impl WorldPanel {
     fn connected(&mut self, ui: &mut egui::Ui, view: &View, bridge: &SharedBridge) {
         if let Some(mb) = &view.mailbox {
             game_lines(ui, view, mb);
-            let g = GATES;
-            let started = mb[g + GATE_CAMPAIGN_STARTED] == 1;
-            let (online, expected, ready) = (
-                mb[g + GATE_ONLINE_PARTY],
-                mb[g + GATE_EXPECTED_PARTY],
-                mb[g + GATE_READY_PARTY],
-            );
-            row(
-                ui,
-                "Players",
-                &if started {
-                    format!("{online} of {expected}")
-                } else {
-                    format!("{online} of {expected} · {ready} ready in bedroom")
-                },
-                None,
-            );
-            row(
-                ui,
-                "Adventure",
-                if started {
-                    "Started · world locked"
-                } else {
-                    "Waiting for everyone in the bedroom"
-                },
-                Some(if started { CONNECTED } else { CONNECTING }),
-            );
-            match view.room_rules {
-                Some((rules, mono)) => row(ui, "Rules", &text::describe_rules(rules, mono), None),
-                None => row(ui, "Rules", "Waiting for the server…", Some(SECONDARY)),
-            }
-            let open = mb[g + GATE_SYNC_READY] == 1;
-            ui.horizontal(|ui| {
-                row(
-                    ui,
-                    "Gym gate",
-                    if open {
-                        "Open for you"
-                    } else {
-                        "Closed · a teammate is behind on badges"
-                    },
-                    Some(if open { CONNECTED } else { SECONDARY }),
-                );
-            });
+            world_lines(ui, view, mb);
             let mut ahead = goldlink_bridge::hook::lock(bridge).allow_ahead;
             if ui
                 .checkbox(
@@ -379,30 +336,6 @@ impl WorldPanel {
                 .changed()
             {
                 goldlink_bridge::hook::lock(bridge).allow_ahead = ahead;
-            }
-            let partner = mb[g + GATE_TEAM_PARTNER];
-            let mut lines = Vec::new();
-            for i in 0..REMOTE_SLOTS {
-                let o = SERVER_PAYLOAD + i * PLAYER_STATE_SIZE;
-                let p = &mb[o..o + PLAYER_STATE_SIZE];
-                if u32_at(p, PS_TRAINER_ID) == 0 {
-                    continue;
-                }
-                let tag = if i as u8 == partner {
-                    " (teammate)"
-                } else {
-                    ""
-                };
-                lines.push(format!(
-                    "{}{tag}: {}",
-                    text::decode_name(p),
-                    text::describe_player(p)
-                ));
-            }
-            if lines.is_empty() {
-                row(ui, "Others", "Nobody else yet", Some(SECONDARY));
-            } else {
-                row(ui, "Others", &lines.join("\n"), None);
             }
         }
         ui.add_space(6.0);
@@ -503,4 +436,91 @@ fn game_lines(ui: &mut egui::Ui, view: &View, mb: &[u8]) {
         SECONDARY
     };
     row(ui, "Save", &view.save_line, Some(save_color));
+}
+
+/// The world's lines: players, the adventure, rules, the gym gate, where the others are.
+pub fn world_lines(ui: &mut egui::Ui, view: &View, mb: &[u8]) {
+    let g = GATES;
+    let started = mb[g + GATE_CAMPAIGN_STARTED] == 1;
+    let (online, expected, ready) = (
+        mb[g + GATE_ONLINE_PARTY],
+        mb[g + GATE_EXPECTED_PARTY],
+        mb[g + GATE_READY_PARTY],
+    );
+    row(
+        ui,
+        "Players",
+        &if started {
+            format!("{online} of {expected}")
+        } else {
+            format!("{online} of {expected} · {ready} ready in bedroom")
+        },
+        None,
+    );
+    row(
+        ui,
+        "Adventure",
+        if started {
+            "Started · world locked"
+        } else {
+            "Waiting for everyone in the bedroom"
+        },
+        Some(if started { CONNECTED } else { CONNECTING }),
+    );
+    match view.room_rules {
+        Some((rules, mono)) => row(ui, "Rules", &text::describe_rules(rules, mono), None),
+        None => row(ui, "Rules", "Waiting for the server…", Some(SECONDARY)),
+    }
+    let open = mb[g + GATE_SYNC_READY] == 1;
+    ui.horizontal(|ui| {
+        row(
+            ui,
+            "Gym gate",
+            if open {
+                "Open for you"
+            } else {
+                "Closed · a teammate is behind on badges"
+            },
+            Some(if open { CONNECTED } else { SECONDARY }),
+        );
+    });
+    let partner = mb[g + GATE_TEAM_PARTNER];
+    let mut lines = Vec::new();
+    for i in 0..REMOTE_SLOTS {
+        let o = SERVER_PAYLOAD + i * PLAYER_STATE_SIZE;
+        let p = &mb[o..o + PLAYER_STATE_SIZE];
+        if u32_at(p, PS_TRAINER_ID) == 0 {
+            continue;
+        }
+        let tag = if i as u8 == partner {
+            " (teammate)"
+        } else {
+            ""
+        };
+        lines.push(format!(
+            "{}{tag}: {}",
+            text::decode_name(p),
+            text::describe_player(p)
+        ));
+    }
+    if lines.is_empty() {
+        row(ui, "Others", "Nobody else yet", Some(SECONDARY));
+    } else {
+        row(ui, "Others", &lines.join("\n"), None);
+    }
+}
+
+/// The game window's Details panel (UC8 §2.1): the game's and the world's lines.
+pub fn details(ui: &mut egui::Ui, view: &View) {
+    match &view.mailbox {
+        Some(mb) => {
+            game_lines(ui, view, mb);
+            if view.link == LinkState::Connected {
+                world_lines(ui, view, mb);
+            }
+        }
+        None => {
+            ui.label("The game is starting…");
+        }
+    }
 }

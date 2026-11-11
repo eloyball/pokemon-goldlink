@@ -12,31 +12,61 @@ pub const RELEASE_FILE: &str = "release.json";
 
 const ROM_DIALOG_TITLE: &str = "Your Pokémon HeartGold (USA) ROM";
 
-/// The system's file chooser for the ROM. On Linux (and the BSDs) rfd asks the desktop portal
-/// over D-Bus through zbus on Tokio (rfd's `tokio` feature), which panics without a Tokio runtime
-/// driving it: the UI thread has none, so the dialog gets its own for as long as it's open.
+/// Runs a file dialog. On Linux (and the BSDs) rfd asks the desktop portal over D-Bus through
+/// zbus on Tokio (rfd's `tokio` feature), which panics without a Tokio runtime driving it: the UI
+/// thread has none, so the dialog gets its own for as long as it's open.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn pick_rom_file() -> Result<Option<PathBuf>, String> {
+fn run_dialog<T>(dialog: impl std::future::Future<Output = T>) -> Result<T, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|e| format!("Couldn't open the file chooser: {e}"))?;
-    let picked = runtime.block_on(
+    Ok(runtime.block_on(dialog))
+}
+
+/// Windows and macOS: the native dialogs, polled to the end here.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn run_dialog<T>(dialog: impl std::future::Future<Output = T>) -> Result<T, String> {
+    Ok(pollster_block_on(dialog))
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn pollster_block_on<T>(f: impl std::future::Future<Output = T>) -> T {
+    // A minimal executor: the native dialogs complete on their own threads.
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Thread(std::thread::Thread);
+    impl Wake for Thread {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(Thread(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut f = std::pin::pin!(f);
+    loop {
+        if let Poll::Ready(v) = f.as_mut().poll(&mut cx) {
+            return v;
+        }
+        std::thread::park();
+    }
+}
+
+/// The system's file chooser for the ROM.
+fn pick_rom_file() -> Result<Option<PathBuf>, String> {
+    run_dialog(
         rfd::AsyncFileDialog::new()
             .set_title(ROM_DIALOG_TITLE)
             .add_filter("Nintendo DS ROM", &["nds"])
             .pick_file(),
-    );
-    Ok(picked.map(|f| f.path().to_path_buf()))
+    )
+    .map(|f| f.map(|f| f.path().to_path_buf()))
 }
 
-/// Windows and macOS: the native dialogs, no async runtime involved.
-#[cfg(not(all(unix, not(target_os = "macos"))))]
-fn pick_rom_file() -> Result<Option<PathBuf>, String> {
-    Ok(rfd::FileDialog::new()
-        .set_title(ROM_DIALOG_TITLE)
-        .add_filter("Nintendo DS ROM", &["nds"])
-        .pick_file())
+/// The system's folder chooser (Import a save…).
+pub fn pick_folder(title: &str) -> Result<Option<PathBuf>, String> {
+    run_dialog(rfd::AsyncFileDialog::new().set_title(title).pick_folder())
+        .map(|f| f.map(|f| f.path().to_path_buf()))
 }
 
 pub struct Paths {
@@ -299,7 +329,9 @@ impl Launcher {
         Next::Stay
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context) -> Next {
+    /// The ROM screen (UC8 §2.1): your game, then PLAY.
+    pub fn ui(&mut self, ctx: &egui::Context, art: &crate::theme::Art) -> Next {
+        use crate::theme::{self, Kind};
         if self.autoplay && self.work.is_none() && self.release.is_ok() && self.has_rom() {
             self.autoplay = false;
             self.play();
@@ -314,62 +346,102 @@ impl Launcher {
         if self.work.is_some() || self.update.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(4.0);
-            ui.heading("GoldLink");
-            match &self.release {
-                Ok(r) => ui.weak(format!("Version {} · co-op Pokémon HeartGold", r.version)),
-                Err(e) => {
-                    ui.colored_label(ui.visuals().error_fg_color, e.as_str());
-                    return;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| {
+                let c = theme::chrome(ui, art);
+                if let Ok(r) = &self.release {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(c.status), |ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("GAME VERSION {}", r.version))
+                                    .font(theme::label(14.0))
+                                    .color(theme::TEXT),
+                            );
+                        });
+                    });
                 }
-            };
-            if let Some(note) = &self.update_note {
-                ui.colored_label(egui::Color32::from_rgb(0xF5, 0x9E, 0x0B), note.as_str());
-            }
-            ui.separator();
-            if let Some((label, _)) = &self.work {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(label.as_str());
+                let ready = self.has_rom() && self.release.is_ok();
+                let w = (c.main.width() * 0.48).clamp(380.0, 520.0);
+                let panel = egui::Rect::from_min_max(egui::pos2(c.main.right() - w, c.main.top()), c.main.max);
+                theme::panel(ui, panel, "YOUR GAME", if ready { theme::GREEN } else { theme::EDGE }, |ui| {
+                    ui.label(
+                        egui::RichText::new("Six-player co-op Pokémon HeartGold")
+                            .font(theme::text(21.0))
+                            .color(theme::GOLD),
+                    );
+                    theme::hint(
+                        ui,
+                        "Press PLAY, then join your friends' world with its code, or create one and \
+                         share the code.",
+                    );
+                    ui.add_space(4.0);
+                    if let Err(e) = &self.release {
+                        ui.colored_label(theme::RED, e.as_str());
+                        return;
+                    }
+                    if let Some((label, _)) = &self.work {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(label.as_str());
+                        });
+                    } else if self.has_rom() {
+                        theme::inset(ui, theme::GREEN, |ui| {
+                            ui.label(
+                                egui::RichText::new("POKÉMON HEARTGOLD (USA)")
+                                    .font(theme::label(13.0))
+                                    .color(theme::TEXT_DIM),
+                            );
+                            ui.label(egui::RichText::new("Ready to play").font(theme::text(26.0)).color(theme::TEXT));
+                            ui.label(
+                                egui::RichText::new("Your copy is checked: GoldLink makes the co-op game from it.")
+                                    .font(theme::text(15.0))
+                                    .color(theme::TEXT_DIM),
+                            );
+                        });
+                    } else {
+                        theme::inset(ui, theme::EDGE, |ui| {
+                            theme::hint(
+                                ui,
+                                "GoldLink needs your own copy of Pokémon HeartGold (USA): an .nds \
+                                 file. It checks it, keeps a copy in your GoldLink folder and makes \
+                                 the co-op game from it.",
+                            );
+                        });
+                    }
+                    if let Some(note) = &self.update_note {
+                        theme::inset(ui, theme::AMBER, |ui| {
+                            ui.label(egui::RichText::new(note.as_str()).color(theme::AMBER));
+                        });
+                    }
+                    ui.add_space(6.0);
+                    let label = if self.has_rom() { "Choose another ROM…" } else { "Choose your ROM…" };
+                    let kind = if self.has_rom() { Kind::Neutral } else { Kind::Primary };
+                    let h = if self.has_rom() { 34.0 } else { 46.0 };
+                    if theme::button(ui, label, kind, egui::vec2(ui.available_width(), h), self.work.is_none())
+                        .clicked()
+                    {
+                        self.pick_rom();
+                    }
+                    if theme::button(ui, "Open your GoldLink folder", Kind::Neutral, egui::vec2(ui.available_width(), 34.0), true)
+                        .on_hover_text("Saves, settings, backups")
+                        .clicked()
+                    {
+                        open_folder(&self.paths.data);
+                    }
                 });
-            } else if !self.has_rom() {
-                ui.label(
-                    "GoldLink needs your own copy of Pokémon HeartGold (USA). It checks it, keeps a \
-                     copy in your GoldLink folder and makes the co-op game from it.",
-                );
-                ui.add_space(6.0);
-                if ui.button("Choose your ROM…").clicked() {
-                    self.pick_rom();
-                }
-            } else {
-                let play = egui::Button::new(egui::RichText::new("Play").size(22.0))
-                    .min_size(egui::vec2(160.0, 44.0));
-                if ui.add(play).clicked() {
-                    self.play();
-                }
-            }
-            ui.add_space(8.0);
-            if let Some((text, error)) = &self.message {
-                if *error {
-                    ui.colored_label(ui.visuals().error_fg_color, text.as_str());
-                } else {
-                    ui.label(text.as_str());
-                }
-            }
-            ui.add_space(8.0);
-            egui::CollapsingHeader::new("Settings").show(ui, |ui| {
-                if ui.button("Open your GoldLink folder (saves, settings)").clicked() {
-                    open_folder(&self.paths.data);
-                }
-                if ui
-                    .add_enabled(self.work.is_none(), egui::Button::new("Choose another ROM…"))
+                let (tip, error) = match &self.message {
+                    Some((t, e)) => (t.clone(), *e),
+                    None if !self.has_rom() => ("Tip: choose your ROM to begin.".to_owned(), false),
+                    None => ("Tip: your saves live in your GoldLink folder, not next to the program.".to_owned(), false),
+                };
+                theme::tip_line(ui, c.tip, &tip, error);
+                if theme::big_button(ui, art, c.button, Some("continue"), "PLAY", Kind::Primary, ready && self.work.is_none())
                     .clicked()
                 {
-                    self.pick_rom();
+                    self.play();
                 }
             });
-        });
         next
     }
 }

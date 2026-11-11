@@ -180,6 +180,8 @@ JSON
     cp NOTICE.md "$dir/LICENSES/NOTICE.md"
     cp CREDITS.md "$dir/CREDITS.md"
     cp "$WORK/libraries.txt" "$dir/LICENSES/libraries.txt"
+    # The launcher's pixel fonts (UC8), built into the program: SIL OFL 1.1.
+    cp crates/goldlink/assets/fonts/PixelifySans-OFL.txt crates/goldlink/assets/fonts/Silkscreen-OFL.txt "$dir/LICENSES/"
     # The GPL's source offer: the exact source of this program, melonDS included.
     cat > "$dir/LICENSES/SOURCE.txt" <<TXT
 GoldLink $VERSION is free software (GPL-3.0-or-later, COPYING). Its complete source, the
@@ -191,7 +193,7 @@ build scripts and melonDS ($MELONDS, a git submodule) included, is the commit
 Build: cargo build --release -p goldlink (needs Rust, CMake and a C++17 compiler).
 TXT
     if [[ $os == windows ]]; then # Windows' Notepad likes CRLF
-        for f in README.txt LICENSES/THIRD_PARTY.txt LICENSES/SOURCE.txt; do sed -i 's/$/\r/' "$dir/$f"; done
+        for f in README.txt LICENSES/THIRD_PARTY.txt LICENSES/SOURCE.txt LICENSES/PixelifySans-OFL.txt LICENSES/Silkscreen-OFL.txt; do sed -i 's/$/\r/' "$dir/$f"; done
     fi
 }
 NAME="GoldLink-$VERSION"

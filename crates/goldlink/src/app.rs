@@ -13,8 +13,19 @@ use goldlink_runtime::{Command, Event, Input, Runner};
 
 use crate::input::{Controls, touch_at};
 use crate::layout;
-use crate::world_ui::WorldPanel;
+use crate::theme::{self, Kind};
+use crate::world_ui::{self, WorldPanel};
 use goldlink_bridge::SharedBridge;
+
+/// The release program's bar above the screens (UC8 §2.1): the world, who's online, Leave.
+pub const BAR: f32 = 38.0;
+
+/// What the release program's game window asks of the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameAction {
+    /// Leave the world: the game saves, then back to the launcher.
+    Leave,
+}
 
 struct Message {
     text: String,
@@ -38,6 +49,15 @@ pub struct GameApp {
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
     pub extra_ui: Option<crate::ExtraUi>,
+    /// The release program's look (UC8): the top bar, the Esc menu and the Details panel instead
+    /// of the in-window World panel (goldlink-dev keeps that).
+    release_ui: bool,
+    menu_open: bool,
+    details_open: bool,
+    /// The world being played (the top bar's name).
+    world_code: String,
+    /// Leaving: what the top bar says until the game has saved.
+    pub leaving: Option<String>,
 }
 
 impl GameApp {
@@ -85,7 +105,40 @@ impl GameApp {
             settings_open: false,
             messages,
             extra_ui: None,
+            release_ui: false,
+            menu_open: false,
+            details_open: false,
+            world_code: String::new(),
+            leaving: None,
         }
+    }
+
+    /// The release program's game window (UC8): no World panel; the top bar, Esc's menu and
+    /// the Details panel (F3).
+    pub fn release(
+        runner: Runner,
+        bridge: SharedBridge,
+        config: Config,
+        config_dir: PathBuf,
+        notes: Vec<String>,
+        world_code: &str,
+    ) -> Self {
+        let mut app = Self::new(runner, Some(bridge), config, config_dir, notes);
+        app.world = None;
+        app.release_ui = true;
+        app.world_code = world_code.to_owned();
+        app
+    }
+
+    /// The window size that shows the screens at `scale` (with the release bar).
+    pub fn window_size(&self, scale: f32) -> egui::Vec2 {
+        let bar = if self.release_ui { BAR } else { 0.0 };
+        layout::window_size(&self.config.video, scale) + egui::vec2(0.0, bar)
+    }
+
+    /// A panel over the game takes the keyboard and the stylus.
+    fn blocked(&self) -> bool {
+        self.settings_open || self.menu_open
     }
 
     fn volume_of(c: &Config) -> u8 {
@@ -127,17 +180,18 @@ impl GameApp {
             )
         });
         let mut keys = goldlink_core::Keys::NONE;
-        if focused && !self.settings_open && !typing {
+        if focused && !self.blocked() && !typing {
             keys |= self.controls.keyboard(&held);
         }
+        let blocked = self.blocked();
         if let Some(g) = &mut self.gilrs {
             while g.next_event().is_some() {}
-            if !self.settings_open {
+            if !blocked {
                 keys |= self.controls.gamepads(g);
             }
         }
         let touch = match (down, pos) {
-            (true, Some(p)) if !self.settings_open && !over_panel => touch_at(self.bottom, p),
+            (true, Some(p)) if !self.blocked() && !over_panel => touch_at(self.bottom, p),
             _ => None,
         };
         *lock(&runner.shared.input) = Input { keys, touch };
@@ -205,11 +259,12 @@ impl GameApp {
         let mut open = self.settings_open;
         let mut changed = false;
         let mut quit = false;
+        // Never anchored: it can be dragged off the game (UC8).
         egui::Window::new("Settings")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .default_pos(egui::pos2(24.0, BAR + 24.0))
             .show(ctx, |ui| {
                 let v = &mut self.config.video;
                 ui.horizontal(|ui| {
@@ -242,7 +297,7 @@ impl GameApp {
                         w.open = true;
                         self.settings_open = false;
                     }
-                    if ui.button("Quit").clicked() {
+                    if !self.release_ui && ui.button("Quit").clicked() {
                         quit = true;
                     }
                 });
@@ -271,9 +326,226 @@ impl GameApp {
 }
 
 impl GameApp {
-    /// One UI frame (the window's, or the launcher shell's once the game runs).
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    /// The bar above the screens: the world on the left; who's online and Leave on the right.
+    fn top_bar(&mut self, ctx: &egui::Context) -> Option<GameAction> {
+        let view = self
+            .bridge
+            .as_ref()
+            .map(|b| goldlink_bridge::hook::lock(b).view());
+        let mut action = None;
+        egui::TopBottomPanel::top("goldlink-bar")
+            .exact_height(BAR)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::INSET)
+                    .inner_margin(egui::Margin::symmetric(12, 0)),
+            )
+            .show(ctx, |ui| {
+                let r = ui.max_rect();
+                ui.painter().line_segment(
+                    [
+                        r.left_bottom() + egui::vec2(-12.0, -1.0),
+                        r.right_bottom() + egui::vec2(12.0, -1.0),
+                    ],
+                    egui::Stroke::new(2.0_f32, theme::EDGE),
+                );
+                ui.horizontal_centered(|ui| {
+                    ui.label(
+                        egui::RichText::new("GOLDLINK")
+                            .font(egui::FontId::new(15.0, theme::caps_bold()))
+                            .color(theme::GOLD),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("WORLD {}", self.world_code))
+                            .font(theme::label(13.0))
+                            .color(theme::TEXT_DIM),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let leave = theme::button(
+                            ui,
+                            "Leave",
+                            Kind::Danger,
+                            egui::vec2(78.0, 26.0),
+                            self.leaving.is_none(),
+                        );
+                        if leave
+                            .on_hover_text("Saves your game, then back to the launcher")
+                            .clicked()
+                        {
+                            action = Some(GameAction::Leave);
+                        }
+                        ui.add_space(12.0);
+                        if let Some(text) = &self.leaving {
+                            ui.label(
+                                egui::RichText::new(format!("{text}{}", theme::dots(ui)))
+                                    .font(theme::text(16.0))
+                                    .color(theme::AMBER),
+                            );
+                            return;
+                        }
+                        let (online, expected, connected) = match &view {
+                            Some(v) if v.link == goldlink_bridge::LinkState::Connected => {
+                                v.mailbox.as_ref().map_or((0, 0, true), |mb| {
+                                    let g = goldlink_bridge::layout::GATES;
+                                    (
+                                        mb[g + goldlink_bridge::layout::GATE_ONLINE_PARTY],
+                                        mb[g + goldlink_bridge::layout::GATE_EXPECTED_PARTY],
+                                        true,
+                                    )
+                                })
+                            }
+                            _ => (0, 0, false),
+                        };
+                        let text = if !connected {
+                            "Offline".to_owned()
+                        } else if expected == 0 {
+                            "…".to_owned()
+                        } else {
+                            format!("{online}/{expected}")
+                        };
+                        ui.label(
+                            egui::RichText::new(text)
+                                .font(theme::text(20.0))
+                                .color(theme::TEXT),
+                        )
+                        .on_hover_text("Players online in this world");
+                        let (dot, _) =
+                            ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                        theme::dot(
+                            ui.painter(),
+                            dot.center(),
+                            if connected {
+                                theme::GREEN_DOT
+                            } else {
+                                theme::TEXT_FAINT
+                            },
+                        );
+                        ui.add_space(14.0);
+                        ui.label(
+                            egui::RichText::new("ESC MENU · F3 DETAILS")
+                                .font(theme::label(11.0))
+                                .color(theme::TEXT_FAINT),
+                        );
+                    });
+                });
+            });
+        action
+    }
+
+    /// Esc's menu: back to the game, settings, details, the gym gate toggle, Leave.
+    fn menu(&mut self, ctx: &egui::Context) -> Option<GameAction> {
+        let mut action = None;
+        let mut open = true;
+        let bridge = self.bridge.clone();
+        egui::Window::new("Menu")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                let size = egui::vec2(280.0, 38.0);
+                if theme::button(ui, "Back to the game", Kind::Primary, size, true).clicked() {
+                    self.menu_open = false;
+                }
+                if theme::button(ui, "Settings", Kind::Neutral, size, true).clicked() {
+                    self.settings_open = true;
+                    self.menu_open = false;
+                }
+                let details = if self.details_open {
+                    "Hide details (F3)"
+                } else {
+                    "Details (F3)"
+                };
+                if theme::button(ui, details, Kind::Neutral, size, true).clicked() {
+                    self.details_open = !self.details_open;
+                    self.menu_open = false;
+                }
+                if let Some(b) = &bridge {
+                    let mut ahead = goldlink_bridge::hook::lock(b).allow_ahead;
+                    if ui
+                        .checkbox(
+                            &mut ahead,
+                            "Let teammates challenge bosses\nwhile I'm behind",
+                        )
+                        .changed()
+                    {
+                        goldlink_bridge::hook::lock(b).allow_ahead = ahead;
+                    }
+                }
+                if theme::button(
+                    ui,
+                    "Leave world",
+                    Kind::Danger,
+                    size,
+                    self.leaving.is_none(),
+                )
+                .on_hover_text("Saves your game, then back to the launcher")
+                .clicked()
+                {
+                    action = Some(GameAction::Leave);
+                    self.menu_open = false;
+                }
+            });
+        if !open {
+            self.menu_open = false;
+        }
+        action
+    }
+
+    /// The technical lines (F3), in a panel that can be dragged anywhere (UC8 §2.1).
+    fn details(&mut self, ctx: &egui::Context) {
+        let Some(b) = &self.bridge else { return };
+        let (view, quic) = {
+            let b = goldlink_bridge::hook::lock(b);
+            (b.view(), b.quic_stats())
+        };
+        let mut open = self.details_open;
+        egui::Window::new("Details")
+            .open(&mut open)
+            .collapsible(true)
+            .resizable(false)
+            .default_pos(egui::pos2(16.0, BAR + 16.0))
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                ui.style_mut().override_font_id = Some(theme::text(15.0));
+                world_ui::details(ui, &view);
+                ui.separator();
+                ui.label(match &quic {
+                    Some(_) => "Connection: encrypted (QUIC)",
+                    None if view.link == goldlink_bridge::LinkState::Connected => {
+                        "Connection: plain UDP"
+                    }
+                    None => "Connection: offline",
+                });
+                if !view.message.is_empty() {
+                    ui.label(
+                        egui::RichText::new(&view.message).color(if view.message_is_error {
+                            theme::RED
+                        } else {
+                            theme::TEXT_DIM
+                        }),
+                    );
+                }
+            });
+        self.details_open = open;
+    }
+
+    /// One UI frame (the window's, or the launcher shell's once the game runs). The release
+    /// look returns what the player asked of the shell.
+    pub fn ui(&mut self, ctx: &egui::Context) -> Option<GameAction> {
+        let mut action = None;
+        if self.release_ui {
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if self.settings_open {
+                    self.settings_open = false;
+                } else {
+                    self.menu_open = !self.menu_open;
+                }
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::F3)) {
+                self.details_open = !self.details_open;
+            }
+        } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             match self.world.as_mut() {
                 Some(w) if w.open => w.open = false,
                 _ => self.settings_open = !self.settings_open,
@@ -282,6 +554,9 @@ impl GameApp {
         self.feed_input(ctx);
         self.collect_events();
         self.update_texture(ctx);
+        if self.release_ui {
+            action = self.top_bar(ctx);
+        }
 
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
@@ -325,6 +600,16 @@ impl GameApp {
         if self.settings_open {
             self.settings(ctx);
         }
+        if self.release_ui {
+            if self.menu_open
+                && let Some(a) = self.menu(ctx)
+            {
+                action = Some(a);
+            }
+            if self.details_open {
+                self.details(ctx);
+            }
+        }
         if let (Some(w), Some(b)) = (self.world.as_mut(), self.bridge.as_ref()) {
             w.show(ctx, b);
         }
@@ -333,6 +618,7 @@ impl GameApp {
         }
         // The emulator runs on its own clock; draw whenever the display can.
         ctx.request_repaint();
+        action
     }
 
     /// Leaves the world and writes the save (the window closes).
@@ -343,7 +629,7 @@ impl GameApp {
 
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ui(ctx);
+        let _ = self.ui(ctx);
     }
 
     #[cfg(not(windows))]
