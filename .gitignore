@@ -27,6 +27,9 @@
 # --- Rust workspace build outputs (Cargo.toml at the root; the relay keeps its own) ---
 /target/
 
+# --- Build outputs the retired C# bridge (coop-bridge/, gone since v0.5) may have left behind ---
+/coop-bridge/
+
 # --- coop-relay runtime data (campaign rosters; default --save-dir) ---
 /campaigns/
 /coop-relay/campaigns/

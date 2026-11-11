@@ -4,9 +4,9 @@ The relay is the server GoldLink players meet on: up to six players per room, ea
 campaign with its own roster and progress. It speaks **relay protocol {{WIRE}}**: it serves the
 GoldLink player releases for protocol {{WIRE}} (their release notes and `README.txt` say which
 protocol they need). One relay serves any number of rooms (up to `--max-rooms`). Players call a
-room a **world**: the code they type in the Co-op Bridge is the room's code.
+room a **world**: the code they type in GoldLink's launcher is the room's code.
 
-It needs very little: two UDP ports, about 22 KB/s per player each way, a few MB of memory, no
+It needs very little: one UDP port, about 22 KB/s per player each way, a few MB of memory, no
 database. Anything from a Raspberry Pi to the smallest VPS will do.
 
 ## Quick start
@@ -100,7 +100,7 @@ The log level comes from `RUST_LOG` (`info` by default; `RUST_LOG=debug` says mo
 Each room's campaign (its roster, rules, progress) is one file, `<save-dir>/<ROOM>.json`,
 written as soon as it changes (through a temporary file, so a crash never leaves half a file).
 To back up a relay, copy that folder; to move it, copy the folder to the new machine. The
-players' own saves stay on their machines (the Co-op Bridge keeps them per room).
+players' own saves stay on their machines (GoldLink keeps them per world).
 
 Deleting a room's file forgets that campaign: the next group to use the code starts afresh.
 
