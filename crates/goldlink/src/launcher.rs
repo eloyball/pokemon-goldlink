@@ -10,6 +10,35 @@ use goldlink_rom::{Release, sha1_hex};
 
 pub const RELEASE_FILE: &str = "release.json";
 
+const ROM_DIALOG_TITLE: &str = "Your Pokémon HeartGold (USA) ROM";
+
+/// The system's file chooser for the ROM. On Linux (and the BSDs) rfd asks the desktop portal
+/// over D-Bus through zbus on Tokio (rfd's `tokio` feature), which panics without a Tokio runtime
+/// driving it: the UI thread has none, so the dialog gets its own for as long as it's open.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pick_rom_file() -> Result<Option<PathBuf>, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("Couldn't open the file chooser: {e}"))?;
+    let picked = runtime.block_on(
+        rfd::AsyncFileDialog::new()
+            .set_title(ROM_DIALOG_TITLE)
+            .add_filter("Nintendo DS ROM", &["nds"])
+            .pick_file(),
+    );
+    Ok(picked.map(|f| f.path().to_path_buf()))
+}
+
+/// Windows and macOS: the native dialogs, no async runtime involved.
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn pick_rom_file() -> Result<Option<PathBuf>, String> {
+    Ok(rfd::FileDialog::new()
+        .set_title(ROM_DIALOG_TITLE)
+        .add_filter("Nintendo DS ROM", &["nds"])
+        .pick_file())
+}
+
 pub struct Paths {
     /// Where the release was unpacked (the program's folder).
     pub install: PathBuf,
@@ -203,11 +232,14 @@ impl Launcher {
         let Ok(release) = self.release.clone() else {
             return;
         };
-        let picked = rfd::FileDialog::new()
-            .set_title("Your Pokémon HeartGold (USA) ROM")
-            .add_filter("Nintendo DS ROM", &["nds"])
-            .pick_file();
-        let Some(rom) = picked else { return };
+        let rom = match pick_rom_file() {
+            Ok(Some(rom)) => rom,
+            Ok(None) => return,
+            Err(e) => {
+                self.message = Some((e, true));
+                return;
+            }
+        };
         let paths = Paths {
             install: self.paths.install.clone(),
             data: self.paths.data.clone(),

@@ -105,7 +105,8 @@ pub fn run(session: Session) -> Result<(), String> {
         eframe::run_native(
             &title,
             options,
-            Box::new(|_cc| {
+            Box::new(|cc| {
+                dark(&cc.egui_ctx);
                 let (runner, bridge) = parts.take().expect("one window");
                 let mut app = app::GameApp::new(runner, bridge, config, data_dir, notes);
                 app.extra_ui = extra_ui;
@@ -124,6 +125,12 @@ pub fn run(session: Session) -> Result<(), String> {
         r.stop();
     }
     Ok(())
+}
+
+/// GoldLink is always dark, whatever the desktop reports (on Wayland winit often reports no
+/// theme or a light one, and the launcher's bright panel glared next to the game).
+fn dark(ctx: &eframe::egui::Context) {
+    ctx.set_theme(eframe::egui::ThemePreference::Dark);
 }
 
 /// The release program's window: the launcher first, then the game in the same window.
@@ -224,7 +231,10 @@ pub fn run_release(autoplay: bool) -> Result<(), String> {
         eframe::run_native(
             title,
             options,
-            Box::new(|_cc| Ok(Box::new(shell.take().expect("one window")))),
+            Box::new(|cc| {
+                dark(&cc.egui_ctx);
+                Ok(Box::new(shell.take().expect("one window")))
+            }),
         )
     }))
     .unwrap_or_else(|_| {

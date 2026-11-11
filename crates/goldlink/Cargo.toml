@@ -39,6 +39,11 @@ dirs = "6"
 [target.'cfg(not(windows))'.dependencies]
 eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 
+# rfd's file chooser there goes through the desktop portal on zbus over Tokio, which needs a
+# runtime to drive it (launcher.rs `pick_rom_file`).
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+tokio = { version = "1", features = ["rt", "net"] }
+
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
 wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
