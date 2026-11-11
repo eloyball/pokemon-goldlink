@@ -354,6 +354,32 @@ impl Nds {
         }
     }
 
+    /// The most the picture can be widened on each side (UC9 §4).
+    pub const MAX_WIDE_SIDE: usize = 64;
+
+    /// Widens the 3D view by `side` pixels on each side (0: the DS's own view).
+    pub fn set_wide(&mut self, side: usize) {
+        // SAFETY: a plain setter on the live core.
+        unsafe { sys::gl_core_set_wide(self.ptr(), side.min(Self::MAX_WIDE_SIDE) as c_int) }
+    }
+
+    /// A screen `256 + 2 * side` pixels wide (0x00RRGGBB, 192 rows): the screen as shown in the
+    /// middle, the 3D layer on the sides.
+    pub fn wide_frame(&self, screen: usize, side: usize) -> Vec<u32> {
+        let side = side.min(Self::MAX_WIDE_SIDE);
+        let mut out = vec![0u32; (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT];
+        // SAFETY: out holds (256 + 2 * side) * 192 pixels, what the shim writes.
+        unsafe {
+            sys::gl_core_wide_frame(
+                self.ptr(),
+                screen.min(1) as c_int,
+                side as c_int,
+                out.as_mut_ptr(),
+            );
+        }
+        out
+    }
+
     /// Takes up to `out.len() / 2` stereo frames of audio. Returns how many it wrote.
     pub fn audio(&mut self, out: &mut [i16]) -> usize {
         // SAFETY: out holds out.len() / 2 interleaved stereo frames.

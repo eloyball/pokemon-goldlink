@@ -93,6 +93,14 @@ uint8_t *gl_core_save(GlCore *core, uint32_t *len);
 // The front buffer of a screen (0 top, 1 bottom): 256 x 192 pixels, 0x00RRGGBB.
 const uint32_t *gl_core_framebuffer(GlCore *core, int screen);
 
+// GoldLink's wider picture (UC9 §4, a change to melonDS's 3D engine): the 3D view keeps `side`
+// more pixels on each side (0 = off; at most GL_CORE_MAX_WIDE_SIDE).
+#define GL_CORE_MAX_WIDE_SIDE 64
+void gl_core_set_wide(GlCore *core, int side);
+// The screen `256 + 2*side` wide into `out` (192 rows): the centre is the screen as shown, the
+// sides the 3D layer (black where it has nothing). Returns the width.
+int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
+
 // Up to max_frames stereo frames (interleaved L, R) of audio produced so far. Returns how many.
 uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames);
 // The audio output's sample rate in Hz (48000 until set): melonDS resamples to it.

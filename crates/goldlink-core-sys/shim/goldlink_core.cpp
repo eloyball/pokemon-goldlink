@@ -20,6 +20,8 @@
 #include "NDSCart.h"
 #include "SPI_Firmware.h"
 #include "Savestate.h"
+#include "GPU3D_Soft.h"
+#include "GPU2D_Soft.h"
 
 #if defined(JIT_ENABLED) || defined(OGLRENDERER_ENABLED) || defined(GDBSTUB_ENABLED)
 #error "goldlink-core-sys builds melonDS without the JIT, the OpenGL renderer and the GDB stub"
@@ -166,6 +168,55 @@ const uint32_t *gl_core_framebuffer(GlCore *core, int screen)
 {
     melonDS::GPU &gpu = core->nds->GPU;
     return gpu.Framebuffer[gpu.FrontBuffer][screen == 0 ? 0 : 1].get();
+}
+
+void gl_core_set_wide(GlCore *core, int side)
+{
+    core->nds->GPU.GPU3D.WideSide = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
+}
+
+int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
+{
+    side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
+    const int width = 256 + 2 * side;
+    melonDS::GPU &gpu = core->nds->GPU;
+    const uint32_t *fb = gpu.Framebuffer[gpu.FrontBuffer][screen == 0 ? 0 : 1].get();
+    auto &soft = static_cast<melonDS::SoftRenderer &>(gpu.GPU3D.GetCurrentRenderer());
+    // The 2D engine's side strips for the engine that drew this screen, when it drew them.
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
+    int unit = -1;
+    for (int u = 0; u < 2; u++)
+        if (soft2d.WideOwner[u] == fb && soft2d.WideDrawn[u] >= side)
+            unit = u;
+    for (int y = 0; y < 192; y++)
+    {
+        const uint32_t *wide = soft.GetWideLine(y) + (melonDS::GPU3D::MaxWideSide - side);
+        uint32_t *row = out + y * width;
+        for (int x = 0; x < width; x++)
+        {
+            int sx = x - side;
+            if (sx >= 0 && sx < 256)
+            {
+                row[x] = fb[y * 256 + sx];
+                continue;
+            }
+            if (unit >= 0)
+            {
+                const uint32_t *strips = soft2d.WideSides[unit][y];
+                row[x] = sx < 0 ? strips[x] : strips[melonDS::GPU2D::SoftRenderer::MaxSide + (sx - 256)];
+                continue;
+            }
+            uint32_t c = wide[x];
+            if ((c >> 24) == 0)
+            {
+                row[x] = 0;
+                continue;
+            }
+            auto ch = [](uint32_t v) { v &= 0x3F; return (v << 2) | (v >> 4); };
+            row[x] = 0xFF000000 | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+        }
+    }
+    return width;
 }
 
 uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames)

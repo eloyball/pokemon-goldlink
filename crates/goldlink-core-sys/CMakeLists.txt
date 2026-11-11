@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# GoldLink's core library: melonDS's core (the submodule, never edited) plus the C ABI shim.
+# GoldLink's core library: melonDS's core plus the C ABI shim. melonDS is the submodule with
+# GoldLink's patches (patches/) applied: build.rs applies them to a copy and passes its path as
+# MELONDS_DIR (the submodule itself stays at upstream).
 # build.rs configures it with the options below forced off and builds the goldlink_core target.
 # The shim links melonDS's `core` target, so it is compiled with the core's own include paths
 # and public definitions (the class layouts must match: see shim/goldlink_core.cpp).
@@ -14,7 +16,8 @@ set(ENABLE_LTO_RELEASE OFF CACHE BOOL "" FORCE)
 set(USE_VCPKG OFF CACHE BOOL "" FORCE)
 set(MELONDS_EMBED_BUILD_INFO OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(melonDS)
+set(MELONDS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/melonDS" CACHE PATH "melonDS's source tree")
+add_subdirectory(${MELONDS_DIR} melonDS)
 
 add_library(goldlink_core STATIC shim/goldlink_core.cpp shim/platform.cpp)
 set_target_properties(goldlink_core PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

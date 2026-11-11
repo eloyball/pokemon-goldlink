@@ -129,6 +129,26 @@ impl Machine {
         }
     }
 
+    /// The top screen widened by `side` pixels each side (UC9 §4), as an RGB PNG.
+    pub fn wide_screenshot(&self, path: &Path, side: usize) -> Result<(), String> {
+        let frame = self.nds.wide_frame(0, side);
+        let w = frame.len() / SCREEN_HEIGHT;
+        let mut rgb = Vec::with_capacity(frame.len() * 3);
+        for &px in &frame {
+            rgb.extend_from_slice(&[(px >> 16) as u8, (px >> 8) as u8, px as u8]);
+        }
+        let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut enc = png::Encoder::new(
+            std::io::BufWriter::new(file),
+            w as u32,
+            SCREEN_HEIGHT as u32,
+        );
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut writer = enc.write_header().map_err(|e| e.to_string())?;
+        writer.write_image_data(&rgb).map_err(|e| e.to_string())
+    }
+
     /// Both screens, top above bottom with no gap (BizHawk's ScreenLayout 0, ScreenGap 0),
     /// as an RGB PNG.
     pub fn screenshot(&self, path: &Path) -> Result<(), String> {

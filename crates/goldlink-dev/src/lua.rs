@@ -326,6 +326,27 @@ pub fn install(lua: &Lua, state: &State) -> mlua::Result<()> {
         )?;
     }
     {
+        // GoldLink-only (UC9 §4): the wide 3D view, and a screenshot of the wide top screen.
+        let st = state.clone();
+        client.set(
+            "setwide",
+            lua.create_function(move |_, side: usize| {
+                st.borrow_mut().machine.nds.set_wide(side);
+                Ok(())
+            })?,
+        )?;
+        let st = state.clone();
+        client.set(
+            "widescreenshot",
+            lua.create_function(move |_, (path, side): (String, usize)| {
+                st.borrow()
+                    .machine
+                    .wide_screenshot(Path::new(&path), side)
+                    .map_err(mlua::Error::runtime)
+            })?,
+        )?;
+    }
+    {
         let st = state.clone();
         client.set(
             "speedmode",
