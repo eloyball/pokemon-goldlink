@@ -170,12 +170,13 @@ impl Charmap {
     }
 }
 
-/// What the battle HUD shows of a move: its name and type, from the player's ROM.
+/// What the battle HUD shows of a move: its name, type, power and accuracy, from the player's
+/// ROM.
 #[derive(Debug, Clone, Default)]
 pub struct MoveInfo {
     pub names: Vec<String>,
-    /// The type of each move (the game's type number).
-    pub types: Vec<u8>,
+    /// Each move's data (`a/0/1/1`, pret `MoveTbl`): byte 3 power, 4 type, 5 accuracy.
+    data: Vec<[u8; 3]>,
     /// The type names, by type number.
     pub type_names: Vec<String>,
 }
@@ -196,14 +197,17 @@ impl MoveInfo {
                 .map(|b| b.iter().map(|s| charmap.decode(s)).collect())
                 .unwrap_or_default()
         };
-        // a/0/1/1: one member per move; byte 4 is the type (pret `MoveTbl`).
-        let types = file(rom, "a/0/1/1")
+        let data = file(rom, "a/0/1/1")
             .and_then(narc)
-            .map(|m| m.iter().map(|d| d.get(4).copied().unwrap_or(0)).collect())
+            .map(|m| {
+                m.iter()
+                    .map(|d| d.get(3..6).map_or([0; 3], |b| [b[0], b[1], b[2]]))
+                    .collect()
+            })
             .unwrap_or_default();
         Self {
             names: bank(MOVE_NAMES),
-            types,
+            data,
             type_names: bank(TYPE_NAMES),
         }
     }
@@ -213,7 +217,17 @@ impl MoveInfo {
     }
 
     pub fn type_of(&self, id: u16) -> Option<u8> {
-        self.types.get(id as usize).copied()
+        self.data.get(id as usize).map(|d| d[1])
+    }
+
+    /// Power (0: none, as status moves).
+    pub fn power(&self, id: u16) -> Option<u8> {
+        self.data.get(id as usize).map(|d| d[0])
+    }
+
+    /// Accuracy (0: never misses).
+    pub fn accuracy(&self, id: u16) -> Option<u8> {
+        self.data.get(id as usize).map(|d| d[2])
     }
 }
 
@@ -236,8 +250,15 @@ mod tests {
         let info = MoveInfo::read(&rom);
         for id in [1u16, 33, 88, 225, 482] {
             let t = info.type_of(id).unwrap();
-            eprintln!("{id}: {} ({})", info.name(id), info.type_names[t as usize]);
+            eprintln!(
+                "{id}: {} ({}, power {:?}, accuracy {:?})",
+                info.name(id),
+                info.type_names[t as usize],
+                info.power(id),
+                info.accuracy(id)
+            );
         }
+        assert_eq!((info.power(88), info.accuracy(88)), (Some(50), Some(90)));
         assert_eq!(info.name(33), "Tackle");
         assert_eq!(
             info.type_names[info.type_of(33).unwrap() as usize],

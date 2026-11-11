@@ -123,7 +123,30 @@ struct Ctx<'a> {
     tap: Option<(u16, u16)>,
 }
 
+/// The room for a label between a button's pointed ends.
+fn label_room(r: Rect) -> f32 {
+    r.width() - r.height() * 0.6
+}
+
 impl Ctx<'_> {
+    /// The largest capitals size (from `ds_px` down, on the font's grid) at which every label
+    /// fits its button: a row of buttons shares one size.
+    fn fit_caps(&self, labels: &[(&str, Rect)], ds_px: f32) -> FontId {
+        let mut font = self.caps(ds_px);
+        let p = self.ui.painter();
+        while font.size > 8.0
+            && labels.iter().any(|(l, r)| {
+                p.layout_no_wrap((*l).to_owned(), font.clone(), INK)
+                    .size()
+                    .x
+                    > label_room(*r)
+            })
+        {
+            font.size -= 8.0;
+        }
+        font
+    }
+
     /// A rectangle in DS pixels (columns, rows from the band's top) → window points.
     fn rect(&self, x0: f32, y0: f32, x1: f32, y1: f32) -> Rect {
         Rect::from_min_max(
@@ -149,7 +172,7 @@ impl Ctx<'_> {
         label: &str,
         fill: Color32,
         edge: Color32,
-        size: f32,
+        font: FontId,
         selected: bool,
         tap: (u16, u16),
     ) {
@@ -174,13 +197,17 @@ impl Ctx<'_> {
             Color32::from_white_alpha(28),
             Stroke::NONE,
         ));
+        // The label with a dark drop shadow, so it reads on the button's light top half.
+        let at = r.center() + vec2(0.0, 0.3 * self.s);
+        let drop = (0.6 * self.s).max(1.0);
         p.text(
-            r.center() + vec2(0.0, 0.3 * self.s),
+            at + vec2(drop, drop),
             egui::Align2::CENTER_CENTER,
             label,
-            self.caps(size),
-            INK,
+            font.clone(),
+            Color32::from_black_alpha(150),
         );
+        p.text(at, egui::Align2::CENTER_CENTER, label, font, INK);
         if selected {
             brackets(p, r, self.s);
         }
@@ -217,17 +244,18 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
 
 fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
     // The message, left.
-    let text = c.rect(4.0, 4.0, 108.0, 44.0);
+    let text = c.rect(4.0, 4.0, 100.0, 44.0);
     message_box(c, text, &hud.message, 9.0);
     let sel = |y: i8, x: i8| hud.cursor == Some((y, x));
-    let fight = c.rect(112.0, 4.0, 252.0, 24.0);
+    let fight = c.rect(104.0, 4.0, 252.0, 24.0);
+    let fight_font = c.fit_caps(&[("FIGHT", fight)], 10.0);
     c.command(
         "fight",
         fight,
         "FIGHT",
         Color32::from_rgb(0xE0, 0x3C, 0x31),
         Color32::from_rgb(0x7A, 0x14, 0x10),
-        10.0,
+        fight_font,
         hud.cursor.is_some_and(|(y, _)| y == 0),
         TAP_FIGHT,
     );
@@ -257,11 +285,17 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
             TAP_POKEMON,
         ),
     ];
-    let w = (252.0 - 112.0 - 2.0 * 3.0) / 3.0;
-    for (i, (id, label, fill, edge, selected, tap)) in row.into_iter().enumerate() {
-        let x = 112.0 + i as f32 * (w + 3.0);
-        let r = c.rect(x, 27.0, x + w, 44.0);
-        c.command(id, r, label, fill, edge, 6.5, selected, tap);
+    let w = (252.0 - 104.0 - 2.0 * 3.0) / 3.0;
+    let rects: Vec<Rect> = (0..3)
+        .map(|i| {
+            let x = 104.0 + i as f32 * (w + 3.0);
+            c.rect(x, 27.0, x + w, 44.0)
+        })
+        .collect();
+    let labels: Vec<(&str, Rect)> = row.iter().zip(&rects).map(|(b, r)| (b.1, *r)).collect();
+    let font = c.fit_caps(&labels, 7.5);
+    for ((id, label, fill, edge, selected, tap), r) in row.into_iter().zip(rects) {
+        c.command(id, r, label, fill, edge, font.clone(), selected, tap);
     }
 }
 
@@ -340,7 +374,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
             pos2(r.right() - pad, r.bottom() - 1.6 * s),
             egui::Align2::RIGHT_BOTTOM,
             format!("PP {}/{}", m.pp, m.max),
-            text_font(6.5 * s),
+            caps_font(5.5 * s),
             pp_colour,
         );
         if selected == Some(i) {
@@ -362,24 +396,34 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         StrokeKind::Inside,
     );
     let line = match shown {
-        Some(m) => format!("{}\nPP {}/{}", m.type_name, m.pp, m.max),
-        None => "Choose a\nmove".to_owned(),
+        Some(m) => {
+            let num = |v: u8| {
+                if v == 0 {
+                    "—".to_owned()
+                } else {
+                    v.to_string()
+                }
+            };
+            format!("POWER {}\nACC. {}", num(m.power), num(m.accuracy))
+        }
+        None => "CHOOSE\nA MOVE".to_owned(),
     };
     p.text(
         info.center(),
         egui::Align2::CENTER_CENTER,
         line,
-        c.font(6.5),
+        c.caps(5.5),
         INK_DIM,
     );
     let back = c.rect(199.0, 25.5, 252.0, 44.0);
+    let back_font = c.fit_caps(&[("BACK", back)], 7.0);
     c.command(
         "cancel",
         back,
         "BACK",
         NAVY_LIGHT,
         NAVY_EDGE,
-        7.0,
+        back_font,
         hud.cursor.is_some_and(|(y, _)| y >= 2),
         TAP_CANCEL,
     );

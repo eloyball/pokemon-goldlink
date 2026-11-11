@@ -83,6 +83,8 @@ impl GameText {
                             .unwrap_or_default(),
                         pp: m.pp,
                         max: m.max,
+                        power: self.moves.power(m.id).unwrap_or(0),
+                        accuracy: self.moves.accuracy(m.id).unwrap_or(0),
                     }
                 })
             }),
@@ -99,6 +101,10 @@ pub struct HudMove {
     pub type_name: String,
     pub pp: u8,
     pub max: u8,
+    /// 0: none (a status move).
+    pub power: u8,
+    /// 0: never misses.
+    pub accuracy: u8,
 }
 
 /// What the one-screen battle HUD draws.

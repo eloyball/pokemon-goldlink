@@ -92,6 +92,7 @@ struct State {
     taken: usize,
     seq: u8,
     log: Vec<String>,
+    sized: bool,
 }
 
 #[derive(Clone)]
@@ -143,6 +144,17 @@ impl Tour {
     /// The window's part: screenshots when the game side asks, and closing at the end.
     pub fn ui(&self, ctx: &egui::Context) {
         let mut s = self.state();
+        // GOLDLINK_DEV_TOUR_SIZE=WxH: the window's inner size for the shots (once).
+        if !s.sized {
+            s.sized = true;
+            if let Some((w, h)) = std::env::var("GOLDLINK_DEV_TOUR_SIZE")
+                .ok()
+                .and_then(|v| v.split_once('x').map(|(w, h)| (w.parse(), h.parse())))
+                .and_then(|(w, h)| Some((w.ok()?, h.ok()?)))
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+            }
+        }
         if let Some(name) = s.shot.clone() {
             if !s.requested {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
