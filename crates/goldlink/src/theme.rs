@@ -170,7 +170,7 @@ impl Art {
             )*};
         }
         icon!(
-            "continue", "join", "create", "restore", "import", "settings", "leave"
+            "continue", "play", "join", "create", "restore", "import", "settings", "leave"
         );
         Self {
             background: tex("background", include_bytes!("../assets/background.png")),
@@ -278,6 +278,8 @@ pub fn inset<R>(ui: &mut Ui, colour: Color32, add: impl FnOnce(&mut Ui) -> R) ->
 pub enum Kind {
     /// Gold: the one thing to do.
     Primary,
+    /// Green: PLAY, the button the whole screen leads to (gold blends into the sunset behind it).
+    Go,
     Neutral,
     Danger,
 }
@@ -303,6 +305,15 @@ pub fn button(ui: &mut Ui, label: &str, kind: Kind, size: Vec2, enabled: bool) -
             },
             rgb(0xFF, 0xE0, 0x8A),
             rgb(0x2A, 0x1A, 0x00),
+        ),
+        (Kind::Go, _) => (
+            if hot {
+                rgb(0x34, 0xA8, 0x52)
+            } else {
+                rgb(0x26, 0x8C, 0x42)
+            },
+            rgb(0x9C, 0xF0, 0xA8),
+            TEXT,
         ),
         (Kind::Neutral, _) => (
             if hot {

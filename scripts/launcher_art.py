@@ -401,6 +401,23 @@ ICONS = {
             "............",
         ],
     ),
+    "play": (  # the play arrow in cream, for the green PLAY button
+        {"g": "#fff4e0", "d": "#c9b48a"},
+        [
+            "............",
+            "..gg........",
+            "..gggg......",
+            "..gggggg....",
+            "..gggggggg..",
+            "..ggggggggg.",
+            "..gggggggdd.",
+            "..ggggggdd..",
+            "..ggggdd....",
+            "..ggdd......",
+            "..dd........",
+            "............",
+        ],
+    ),
     "join": (  # a key
         {"y": "#f4c84a", "d": "#a8741b"},
         [

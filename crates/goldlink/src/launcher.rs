@@ -508,7 +508,7 @@ impl Launcher {
                     None => ("Tip: your saves live in your GoldLink folder, not next to the program.".to_owned(), false),
                 };
                 theme::tip_line(ui, c.tip, &tip, error);
-                if theme::big_button(ui, art, c.button, Some("continue"), "PLAY", Kind::Primary, ready && self.work.is_none())
+                if theme::big_button(ui, art, c.button, Some("play"), "PLAY", Kind::Go, ready && self.work.is_none())
                     .clicked()
                 {
                     self.play();
