@@ -58,7 +58,13 @@ impl BridgeHook {
 impl FrameHook for BridgeHook {
     fn pre_frame(&mut self, emu: &mut Emulator, _input: &mut goldlink_runtime::Input) {
         let mailbox = emu.mailbox_offset();
-        lock(&self.bridge).pre_frame(emu.nds.main_ram_mut(), mailbox);
+        let moved = {
+            let mut b = lock(&self.bridge);
+            b.pre_frame(emu.nds.main_ram_mut(), mailbox);
+            b.moved_boxes()
+        };
+        // The wider picture: the game's HP boxes out toward its edges, from this frame on.
+        emu.nds.set_sprite_move(&moved);
     }
 
     fn post_frame(&mut self, emu: &mut Emulator) {

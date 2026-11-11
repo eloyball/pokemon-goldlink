@@ -255,6 +255,9 @@ pub struct Bridge {
     /// The battle's menu, when one runs (UC9 §3.2: the one-screen HUD).
     battle_ui: Option<crate::battle_ui::BattleUi>,
     game_text: Option<crate::battle_ui::GameText>,
+    /// The wider picture's side when the window shows it: the game's HP boxes are moved out
+    /// toward its edges by that much (0: left where the game puts them).
+    pub box_shift: i32,
     backups: Backups,
     next_backup: Option<Instant>,
     pending_restore: Option<PathBuf>,
@@ -330,6 +333,7 @@ impl Bridge {
             new_game_intro: false,
             battle_ui: None,
             game_text: None,
+            box_shift: 0,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
             pending_restore: None,
@@ -400,6 +404,15 @@ impl Bridge {
     /// The battle's menu with its words, for the one-screen HUD (once the ROM's text is read).
     pub fn battle_hud(&self) -> Option<crate::battle_ui::BattleHud> {
         Some(self.game_text.as_ref()?.hud(self.battle_ui.as_ref()?))
+    }
+
+    /// The game's HP boxes and how far melonDS moves them: the opponents' to the left, the
+    /// player's to the right (empty unless the window shows the wider picture: `box_shift`).
+    pub fn moved_boxes(&self) -> Vec<[i32; 5]> {
+        match &self.battle_ui {
+            Some(ui) if self.box_shift > 0 => crate::battle_ui::box_moves(ui, self.box_shift),
+            _ => Vec::new(),
+        }
     }
 
     /// The ROM's words for the HUD; read once, from the emulation thread (`BridgeHook`).

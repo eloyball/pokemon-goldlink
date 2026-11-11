@@ -78,6 +78,7 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
+
     settings_open: bool,
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
@@ -139,6 +140,7 @@ impl GameApp {
             textbox: None,
             wide: None,
             wide_side: 0,
+
             settings_open: false,
             messages,
             extra_ui: None,
@@ -749,9 +751,20 @@ impl GameApp {
             }
         }
         let (scene, battle) = match &self.bridge {
-            Some(b) if self.config.video.layout == Layout::OneScreen => {
-                let b = goldlink_bridge::hook::lock(b);
-                (b.scene(), b.battle_hud())
+            Some(b) => {
+                let mut b = goldlink_bridge::hook::lock(b);
+                let one = self.config.video.layout == Layout::OneScreen;
+                // The wider picture moves the game's HP boxes out toward its edges.
+                b.box_shift = if one && self.config.video.wide {
+                    layout::WIDE_SIDE as i32
+                } else {
+                    0
+                };
+                if one {
+                    (b.scene(), b.battle_hud())
+                } else {
+                    (Scene::Unknown, None)
+                }
             }
             _ => (Scene::Unknown, None),
         };

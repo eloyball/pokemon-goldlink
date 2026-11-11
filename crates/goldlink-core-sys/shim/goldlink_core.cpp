@@ -219,6 +219,18 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
     return width;
 }
 
+void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
+{
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());
+    count = std::clamp(count, 0, melonDS::GPU2D::SoftRenderer::MaxObjMove);
+    for (int i = 0; i < count; i++)
+    {
+        const int32_t *r = rects + i * 5;
+        soft2d.ObjMove[i] = {r[0], r[1], r[2], r[3], r[4]};
+    }
+    soft2d.ObjMoveCount = count;
+}
+
 uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames)
 {
     int n = core->nds->SPU.ReadOutput(out, static_cast<int>(max_frames));

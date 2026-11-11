@@ -1,0 +1,79 @@
+GoldLink's change to melonDS (UC9 §3.2): move the main engine's sprite pieces in given rectangles.
+
+The one-screen layout moves the battle's HP boxes (the game's own sprites, its own style)
+toward the wider picture's edges: the shim passes rectangles with an offset, and a main-engine
+sprite piece whose centre lies in one is drawn moved by it, on the screen's own pass and
+on the side passes alike. Applied after 0001 by build.rs.
+
+diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
+index a9d14e8c..1159273b 100644
+--- a/src/GPU2D_Soft.cpp
++++ b/src/GPU2D_Soft.cpp
+@@ -1783,7 +1783,7 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+                     continue;
+                 ypos = (sprline - ypos) & 0xFF;
+ 
+-                s32 xpos = SpriteX(attrib[1]);
++                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, boundwidth, boundheight);
+                 if (xpos <= -boundwidth)
+                     continue;
+ 
+@@ -1807,7 +1807,7 @@ void SoftRenderer::DrawSprites(u32 line, Unit* unit)
+                     continue;
+                 ypos = (sprline - ypos) & 0xFF;
+ 
+-                s32 xpos = SpriteX(attrib[1]);
++                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, width, height);
+                 if (xpos <= -width)
+                     continue;
+ 
+diff --git a/src/GPU2D_Soft.h b/src/GPU2D_Soft.h
+index cf10d7a4..0a0a1b41 100644
+--- a/src/GPU2D_Soft.h
++++ b/src/GPU2D_Soft.h
+@@ -46,6 +46,14 @@ public:
+     u32* WideOwner[2] {};
+     // The strips' width when drawn.
+     int WideDrawn[2] {};
++
++    // GoldLink: rectangles (screen pixels, end exclusive) whose sprite pieces the main engine draws
++    // moved by DX: the one-screen layout moves the battle's HP boxes toward the wider picture's
++    // edges. A piece belongs to a rectangle when its centre is in it.
++    struct ObjMoveRect { s32 X0, Y0, X1, Y1, DX; };
++    static constexpr int MaxObjMove = 8;
++    ObjMoveRect ObjMove[MaxObjMove] {};
++    int ObjMoveCount = 0;
+     void DrawSprites(u32 line, Unit* unit) override;
+     void VBlankEnd(Unit* unitA, Unit* unitB) override;
+ private:
+@@ -56,13 +64,26 @@ private:
+     alignas(8) u32 Side3DLine[256];
+     void DrawWideSides(u32 line, int n3dline, u32* dst);
+     void FinishPixels(u32* px, int count);
+-    // A sprite's x for this pass. Shifted past the line's end, it lies outside this strip:
+-    // -512 makes the callers skip it (they skip x <= -width).
+-    s32 SpriteX(u16 attrib1) const
++    // A sprite piece's x for this pass (moved when its centre lies in an ObjMove rectangle).
++    // Shifted past the line's end, it lies outside this strip: -512 makes the callers skip it
++    // (they skip x <= -width).
++    s32 SpriteX(u16 attrib1, u32 top, s32 width, s32 height) const
+     {
+         s32 x = (s32)(attrib1 << 23) >> 23;
++        s32 dx = 0;
++        if (CurUnit->Num == 0)
++        {
++            s32 cx = x + width / 2, cy = (s32)top + height / 2;
++            for (int r = 0; r < ObjMoveCount; r++)
++            {
++                const ObjMoveRect& m = ObjMove[r];
++                if (cx >= m.X0 && cx < m.X1 && cy >= m.Y0 && cy < m.Y1) { dx = m.DX; break; }
++            }
++        }
++        if (dx != 0) x += dx;
++        else if (SideShift > 0) x = (s32)(attrib1 & 0x1FF); // 256..511: the right of the screen
+         if (SideShift < 0) x += 256;
+-        else if (SideShift > 0) x = (s32)(attrib1 & 0x1FF) - 256;
++        else if (SideShift > 0) x -= 256;
+         return x >= 256 ? -512 : x;
+     }
+     u32* _3DLine;

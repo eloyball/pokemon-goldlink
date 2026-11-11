@@ -25,6 +25,21 @@ const ACCENT: Color32 = Color32::from_rgb(0xD8, 0x9A, 0x3A);
 const INK: Color32 = Color32::from_rgb(0xF4, 0xF4, 0xF8);
 const INK_DIM: Color32 = Color32::from_rgb(0xCF, 0xC4, 0xB8);
 const CURSOR: Color32 = Color32::from_rgb(0xFF, 0x4A, 0x3A);
+/// The game's own button colours (measured on its touch screen): a bright top half, a darker
+/// bottom half, a dark grey edge.
+const FIGHT_TOP: Color32 = Color32::from_rgb(0xEB, 0x38, 0x38);
+const FIGHT_BOTTOM: Color32 = Color32::from_rgb(0x8A, 0x41, 0x41);
+const BAG_TOP: Color32 = Color32::from_rgb(0xE3, 0x9A, 0x28);
+const BAG_BOTTOM: Color32 = Color32::from_rgb(0x8A, 0x69, 0x38);
+const RUN_TOP: Color32 = Color32::from_rgb(0x28, 0x92, 0xCB);
+const RUN_BOTTOM: Color32 = Color32::from_rgb(0x41, 0x59, 0x71);
+const POKEMON_TOP: Color32 = Color32::from_rgb(0x59, 0xB2, 0x28);
+const POKEMON_BOTTOM: Color32 = Color32::from_rgb(0x51, 0x71, 0x41);
+const BUTTON_EDGE: Color32 = Color32::from_rgb(0x41, 0x41, 0x41);
+/// A neutral button's top half (BACK).
+const PANEL_TOP: Color32 = Color32::from_rgb(0x55, 0x4E, 0x4A);
+/// The labels' outline.
+const OUTLINE: Color32 = Color32::from_rgb(0x1A, 0x17, 0x16);
 
 /// The game's own buttons (pret battle_input.c hitboxes): where a click on ours touches.
 const TAP_FIGHT: (u16, u16) = (128, 84);
@@ -33,6 +48,10 @@ const TAP_RUN: (u16, u16) = (128, 172);
 const TAP_POKEMON: (u16, u16) = (216, 168);
 const TAP_MOVES: [(u16, u16); 4] = [(64, 52), (192, 52), (64, 116), (192, 116)];
 const TAP_CANCEL: (u16, u16) = (128, 172);
+/// The two-option menus' buttons (top, bottom).
+const TAP_OPTIONS: [(u16, u16); 2] = [(128, 68), (128, 140)];
+/// The target menu's buttons: player left, opponent right, player right, opponent left.
+const TAP_TARGETS: [(u16, u16); 4] = [(60, 116), (195, 44), (195, 116), (60, 44)];
 
 /// The band: the frame's rows under the scene.
 pub fn band(frame: Rect) -> Rect {
@@ -42,7 +61,10 @@ pub fn band(frame: Rect) -> Rect {
 
 /// Whether the HUD draws this menu (the others show the touch screen as a modal).
 pub fn handles(hud: &BattleHud) -> bool {
-    hud.waiting && matches!(hud.menu, menu::MAIN_INITIAL | menu::MAIN | menu::FIGHT)
+    hud.waiting
+        && (menu::COMMANDS.contains(&hud.menu)
+            || matches!(hud.menu, menu::FIGHT | menu::TARGET)
+            || hud.options.is_some())
 }
 
 /// The type colours, by the game's type number (hg-engine's order).
@@ -82,6 +104,31 @@ fn chevron(r: Rect) -> Vec<Pos2> {
         pos2(r.left() + tip, r.bottom()),
         pos2(r.left(), r.center().y),
     ]
+}
+
+/// White text with a dark outline all round (eight directions, about a DS pixel wide).
+fn outlined_text(
+    p: &egui::Painter,
+    at: Pos2,
+    align: egui::Align2,
+    text: &str,
+    font: FontId,
+    s: f32,
+) {
+    let d = (0.7 * s).max(1.0);
+    for (dx, dy) in [
+        (-d, -d),
+        (0.0, -d),
+        (d, -d),
+        (-d, 0.0),
+        (d, 0.0),
+        (-d, d),
+        (0.0, d),
+        (d, d),
+    ] {
+        p.text(at + vec2(dx, dy), align, text, font.clone(), OUTLINE);
+    }
+    p.text(at, align, text, font, INK);
 }
 
 /// The game's key cursor: red brackets on the corners, as on the touch screen.
@@ -175,8 +222,8 @@ impl Ctx<'_> {
         id: &str,
         r: Rect,
         label: &str,
-        fill: Color32,
-        edge: Color32,
+        top: Color32,
+        bottom: Color32,
         font: FontId,
         selected: bool,
         tap: (u16, u16),
@@ -184,35 +231,45 @@ impl Ctx<'_> {
         let response = self
             .ui
             .interact(r, egui::Id::new(("goldlink-hud", id)), egui::Sense::CLICK);
-        let fill = if response.hovered() {
-            fill.lerp_to_gamma(Color32::WHITE, 0.15)
+        let (top, bottom) = if response.hovered() {
+            (
+                top.lerp_to_gamma(Color32::WHITE, 0.15),
+                bottom.lerp_to_gamma(Color32::WHITE, 0.15),
+            )
         } else {
-            fill
+            (top, bottom)
         };
         let p = self.ui.painter();
+        // The game's two tones: the darker bottom under the bright top half, a dark grey edge.
         p.add(egui::Shape::convex_polygon(
             chevron(r),
-            fill,
-            Stroke::new((0.8 * self.s).max(1.5), edge),
-        ));
-        // A lighter top half, as the game's buttons have.
-        let top = Rect::from_min_max(r.min, pos2(r.max.x, r.center().y));
-        p.add(egui::Shape::convex_polygon(
-            chevron(top.shrink2(vec2(r.height() * 0.17, 0.0))),
-            Color32::from_white_alpha(18),
+            bottom,
             Stroke::NONE,
         ));
-        // The label with a dark drop shadow, so it reads on the button's light top half.
-        let at = r.center() + vec2(0.0, 0.3 * self.s);
-        let drop = (0.6 * self.s).max(1.0);
-        p.text(
-            at + vec2(drop, drop),
+        let tip = (r.height() * 0.35).min(r.width() * 0.2);
+        p.add(egui::Shape::convex_polygon(
+            vec![
+                pos2(r.left() + tip, r.top()),
+                pos2(r.right() - tip, r.top()),
+                pos2(r.right(), r.center().y),
+                pos2(r.left(), r.center().y),
+            ],
+            top,
+            Stroke::NONE,
+        ));
+        p.add(egui::Shape::closed_line(
+            chevron(r),
+            Stroke::new((0.8 * self.s).max(1.5), BUTTON_EDGE),
+        ));
+        // The label in white with a dark outline all round, legible on either half.
+        outlined_text(
+            p,
+            r.center() + vec2(0.0, 0.3 * self.s),
             egui::Align2::CENTER_CENTER,
             label,
-            font.clone(),
-            Color32::from_black_alpha(150),
+            font,
+            self.s,
         );
-        p.text(at, egui::Align2::CENTER_CENTER, label, font, INK);
         if selected {
             brackets(p, r, self.s);
         }
@@ -241,8 +298,10 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
         [band.left_top(), band.right_top()],
         Stroke::new((1.0 * s).max(2.0), ACCENT),
     );
-    match hud.menu {
-        menu::FIGHT => fight(&mut c, hud),
+    match (hud.menu, &hud.options) {
+        (menu::FIGHT, _) => fight(&mut c, hud),
+        (menu::TARGET, _) => targets(&mut c, hud),
+        (_, Some((top, bottom))) => two_options(&mut c, hud, top, bottom),
         _ => commands(&mut c, hud),
     }
     c.tap
@@ -262,34 +321,27 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
         "fight",
         fight,
         "FIGHT",
-        Color32::from_rgb(0xC0, 0x4A, 0x3E),
-        Color32::from_rgb(0x6A, 0x22, 0x1C),
+        FIGHT_TOP,
+        FIGHT_BOTTOM,
         fight_font,
         hud.cursor.is_some_and(|(y, _)| y == 0),
         TAP_FIGHT,
     );
     let row = [
-        (
-            "bag",
-            "BAG",
-            Color32::from_rgb(0xC6, 0x8A, 0x3E),
-            Color32::from_rgb(0x6A, 0x46, 0x18),
-            sel(1, 0),
-            TAP_BAG,
-        ),
+        ("bag", "BAG", BAG_TOP, BAG_BOTTOM, sel(1, 0), TAP_BAG),
         (
             "run",
-            "RUN",
-            Color32::from_rgb(0x4C, 0x78, 0xAE),
-            Color32::from_rgb(0x22, 0x3C, 0x5E),
+            if hud.run_is_back { "BACK" } else { "RUN" },
+            RUN_TOP,
+            RUN_BOTTOM,
             sel(1, 1),
             TAP_RUN,
         ),
         (
             "pokemon",
             "POKéMON",
-            Color32::from_rgb(0x52, 0x8E, 0x52),
-            Color32::from_rgb(0x24, 0x4C, 0x26),
+            POKEMON_TOP,
+            POKEMON_BOTTOM,
             sel(1, 2),
             TAP_POKEMON,
         ),
@@ -434,12 +486,116 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         "cancel",
         back,
         "BACK",
+        PANEL_TOP,
         PANEL,
-        EDGE,
         back_font,
         hud.cursor.is_some_and(|(y, _)| y >= 2),
         TAP_CANCEL,
     );
+}
+
+/// Yes / no and the other two-choice menus: the message, then the two choices stacked.
+fn two_options(c: &mut Ctx<'_>, hud: &BattleHud, top: &str, bottom: &str) {
+    let w = c.w;
+    let bx = (w * 0.406).round();
+    let text = c.rect(4.0, 4.0, bx - 4.0, 44.0);
+    message_box(c, text, &hud.message, 9.0);
+    let rects = [
+        c.rect(bx, 4.0, w - 4.0, 23.0),
+        c.rect(bx, 25.0, w - 4.0, 44.0),
+    ];
+    let labels = [(top, rects[0]), (bottom, rects[1])];
+    let font = c.fit_caps(&labels, 7.5);
+    let colours = [(POKEMON_TOP, POKEMON_BOTTOM), (PANEL_TOP, PANEL)];
+    for (i, ((label, r), (fill, edge))) in labels.into_iter().zip(colours).enumerate() {
+        let selected = hud.cursor.is_some_and(|(y, _)| y as usize == i);
+        c.command(
+            ["option-top", "option-bottom"][i],
+            r,
+            label,
+            fill,
+            edge,
+            font.clone(),
+            selected,
+            TAP_OPTIONS[i],
+        );
+    }
+}
+
+/// The target menu (double battles): the opponents on top, the player's side below, as on the
+/// touch screen; battlers the move can't reach aren't offered.
+fn targets(c: &mut Ctx<'_>, hud: &BattleHud) {
+    let w = c.w;
+    let info_x = w - 57.0;
+    let col = (info_x - 4.0 - 4.0 - 3.0) / 2.0;
+    let cols = [(4.0, 4.0 + col), (7.0 + col, info_x - 4.0)];
+    let rows = [(4.0, 23.5), (25.5, 44.0)];
+    // Grid position → button: opponent left, opponent right; player left, player right.
+    let grid = [3usize, 1, 0, 2];
+    for (cell, &battler) in grid.iter().enumerate() {
+        let (x0, x1) = cols[cell % 2];
+        let (y0, y1) = rows[cell / 2];
+        let r = c.rect(x0, y0, x1, y1);
+        let Some(t) = &hud.targets[battler] else {
+            c.ui.painter().add(egui::Shape::convex_polygon(
+                chevron(r),
+                PANEL,
+                Stroke::new((0.6 * c.s).max(1.0), EDGE),
+            ));
+            continue;
+        };
+        let opponent = battler % 2 == 1;
+        let (fill, edge) = if opponent {
+            (FIGHT_TOP, FIGHT_BOTTOM)
+        } else {
+            (RUN_TOP, RUN_BOTTOM)
+        };
+        let label = format!("{}{}", t.name, gender_mark(t.gender));
+        let font = c.fit_caps(&[(&label, r)], 7.0);
+        let selected = hud
+            .cursor
+            .is_some_and(|(y, x)| (y as usize) * 2 + x as usize == cell);
+        c.command(
+            ["target-0", "target-1", "target-2", "target-3"][cell],
+            r,
+            &label,
+            fill,
+            edge,
+            font,
+            selected,
+            TAP_TARGETS[battler],
+        );
+    }
+    let info = c.rect(info_x, 4.0, w - 4.0, 23.5);
+    let p = c.ui.painter();
+    p.rect_filled(info, CornerRadius::same((2.0 * c.s) as u8), PANEL);
+    p.text(
+        info.center(),
+        egui::Align2::CENTER_CENTER,
+        "CHOOSE\nA TARGET",
+        c.caps(5.5),
+        INK_DIM,
+    );
+    let back = c.rect(info_x, 25.5, w - 4.0, 44.0);
+    let back_font = c.fit_caps(&[("BACK", back)], 7.0);
+    c.command(
+        "target-back",
+        back,
+        "BACK",
+        PANEL_TOP,
+        PANEL,
+        back_font,
+        hud.cursor.is_some_and(|(y, _)| y >= 2),
+        TAP_CANCEL,
+    );
+}
+
+fn gender_mark(g: u8) -> &'static str {
+    match g {
+        0 => " ♂",
+        1 => " ♀",
+        _ => "",
+    }
 }
 
 fn message_box(c: &mut Ctx<'_>, r: Rect, text: &str, size: f32) {

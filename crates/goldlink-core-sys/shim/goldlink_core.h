@@ -101,6 +101,11 @@ void gl_core_set_wide(GlCore *core, int side);
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 
+// Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx) whose main-engine sprite
+// pieces (by their top-left corner) are drawn moved by dx, from the next frame on: the one-screen
+// layout moves the battle's HP boxes toward the wider picture's edges. At most 8; 0 clears.
+void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count);
+
 // Up to max_frames stereo frames (interleaved L, R) of audio produced so far. Returns how many.
 uint32_t gl_core_audio(GlCore *core, int16_t *out, uint32_t max_frames);
 // The audio output's sample rate in Hz (48000 until set): melonDS resamples to it.

@@ -22,11 +22,41 @@ enum Step {
     Until(Scene, u32),
     Wait(u32),
     Press(Keys),
+    /// Presses A every second until the battle's touch screen waits in this menu (or gives up).
+    MashUntilMenu(i8, u32),
     /// A touch on the touch screen (held a few frames).
     Touch(u16, u16),
     Debug(u8, u8),
     Shot(&'static str),
     Close,
+}
+
+/// GOLDLINK_DEV_TOUR_ROUTE=faint: a level 100 wild Pokémon knocks out the lead, for the
+/// two-option menu ("Use next Pokémon?" / "Flee").
+const FAINT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 100),
+    Step::Until(Scene::Battle, 600),
+    Step::Wait(60 * 16),
+    // FIGHT and the first move, turn after turn, until the lead faints and the game asks.
+    Step::MashUntilMenu(
+        goldlink::goldlink_bridge::battle_ui::menu::SWITCH_OR_FLEE,
+        60 * 120,
+    ),
+    Step::Wait(30),
+    Step::Shot("faint-question"),
+    Step::Press(Keys::DOWN),
+    Step::Wait(30),
+    Step::Shot("faint-question-cursor"),
+    Step::Close,
+];
+
+fn steps() -> &'static [Step] {
+    match std::env::var("GOLDLINK_DEV_TOUR_ROUTE").as_deref() {
+        Ok("faint") => FAINT_STEPS,
+        _ => STEPS,
+    }
 }
 
 const STEPS: &[Step] = &[
@@ -70,14 +100,16 @@ const STEPS: &[Step] = &[
     Step::Press(Keys::RIGHT),
     Step::Wait(30),
     Step::Shot("battle-moves-cursor"),
-    // Back, then BAG: the battle's bag shows as a modal.
-    Step::Press(Keys::B),
-    Step::Wait(40),
-    Step::Press(Keys::DOWN),
-    Step::Wait(20),
+    // Tackle: the HP box drains with the game's bar, then the EXP bar fills.
     Step::Press(Keys::A),
-    Step::Wait(120),
-    Step::Shot("battle-bag"),
+    Step::Wait(330),
+    Step::Shot("battle-attack"),
+    Step::Wait(20),
+    Step::Shot("battle-drain"),
+    Step::Wait(40),
+    Step::Shot("battle-drained"),
+    Step::Wait(240),
+    Step::Shot("battle-exp"),
     Step::Close,
 ];
 
@@ -93,6 +125,7 @@ struct State {
     seq: u8,
     log: Vec<String>,
     sized: bool,
+    last_menu: Option<(i8, bool)>,
 }
 
 #[derive(Clone)]
@@ -180,7 +213,7 @@ impl Tour {
             }
         }
         if s.shot.is_none()
-            && STEPS
+            && steps()
                 .get(s.step)
                 .is_some_and(|st| matches!(st, Step::Close))
         {
@@ -197,7 +230,7 @@ impl FrameHook for TourHook {
         let mut s = self.0.state();
         if s.holding > 0 {
             s.holding -= 1;
-            match s.step.checked_sub(1).and_then(|i| STEPS.get(i)) {
+            match s.step.checked_sub(1).and_then(|i| steps().get(i)) {
                 Some(Step::Press(k)) => input.keys |= *k,
                 Some(Step::Touch(x, y)) => input.touch = Some((*x, *y)),
                 _ => {}
@@ -206,7 +239,7 @@ impl FrameHook for TourHook {
         if s.shot.is_some() || s.holding > 0 {
             return;
         }
-        let Some(step) = STEPS.get(s.step).copied() else {
+        let Some(step) = steps().get(s.step).copied() else {
             return;
         };
         let at = emu.mailbox_offset();
@@ -230,6 +263,30 @@ impl FrameHook for TourHook {
                 scene == want || s.frames >= max
             }
             Step::Wait(n) => s.frames >= n,
+            Step::MashUntilMenu(want, max) => {
+                use goldlink::goldlink_bridge::battle_ui::menu;
+                let b = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());
+                let there = b.as_ref().is_some_and(|b| b.menu == want && b.waiting);
+                let now = b.as_ref().map(|b| (b.menu, b.waiting));
+                if now != s.last_menu {
+                    eprintln!("tour: menu {now:?} at frame {}", s.frames);
+                    s.last_menu = now;
+                }
+                // A only in the command and fight menus (FIGHT, then the first move), so no
+                // other question is answered for the player.
+                let fighting = b.as_ref().is_some_and(|b| {
+                    b.waiting && (menu::COMMANDS.contains(&b.menu) || b.menu == menu::FIGHT)
+                });
+                if !there && fighting && (30..36).contains(&(s.frames % 60)) {
+                    input.keys |= Keys::A;
+                }
+                if !there && s.frames >= max {
+                    let line = format!("step {}: gave up waiting for menu {want}", s.step);
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
+                there || s.frames >= max
+            }
             Step::Press(k) => {
                 input.keys |= k;
                 s.holding = 6;
@@ -250,6 +307,15 @@ impl FrameHook for TourHook {
             }
             Step::Shot(name) => {
                 s.shot = Some(name.to_owned());
+                // What the battle HUD reads at this shot, for the log.
+                if let Some(b) = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram()) {
+                    let line = format!(
+                        "{name}: menu {} waiting {} cursor {:?} bag/party {}",
+                        b.menu, b.waiting, b.cursor, b.bag_or_party
+                    );
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
                 true
             }
             Step::Close => false,

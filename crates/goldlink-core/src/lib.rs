@@ -380,6 +380,18 @@ impl Nds {
         out
     }
 
+    /// Rectangles `[x0, y0, x1, y1, dx]` (screen pixels, end exclusive) whose main-engine sprite
+    /// pieces (by their top-left corner) are drawn moved by `dx`, from the next frame: the
+    /// one-screen layout moves the battle's HP boxes toward the wider picture's edges. At most 8
+    /// are used; empty clears them.
+    pub fn set_sprite_move(&mut self, rects: &[[i32; 5]]) {
+        let flat: Vec<i32> = rects.iter().take(8).flatten().copied().collect();
+        // SAFETY: flat holds count * 5 ints, what the shim reads.
+        unsafe {
+            sys::gl_core_set_sprite_move(self.ptr(), flat.as_ptr(), (flat.len() / 5) as c_int);
+        }
+    }
+
     /// Takes up to `out.len() / 2` stereo frames of audio. Returns how many it wrote.
     pub fn audio(&mut self, out: &mut [i16]) -> usize {
         // SAFETY: out holds out.len() / 2 interleaved stereo frames.

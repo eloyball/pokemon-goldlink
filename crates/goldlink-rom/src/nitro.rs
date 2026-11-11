@@ -147,6 +147,13 @@ impl Charmap {
     /// Text up to the terminator (0xFFFF). The game's commands (0xFFFE and its arguments)
     /// and unknown codes are dropped.
     pub fn decode(&self, codes: &[u16]) -> String {
+        self.decode_with(codes, &[])
+    }
+
+    /// Text with the game's placeholders (its 0xFFFE commands) filled in order from `fills`;
+    /// the other commands are dropped.
+    pub fn decode_with(&self, codes: &[u16], fills: &[&str]) -> String {
+        let mut fills = fills.iter();
         let mut out = String::new();
         let mut i = 0;
         while i < codes.len() {
@@ -156,8 +163,15 @@ impl Charmap {
                 0xFFFF => break,
                 0xFFFE => {
                     // {command, argument count, arguments…}
+                    let command = codes.get(i).copied().unwrap_or(0);
                     let args = codes.get(i + 1).copied().unwrap_or(0) as usize;
                     i += 2 + args;
+                    // STRVAR commands (0x01xx) take a filler; others (colour, size…) don't.
+                    if command >> 8 == 0x01
+                        && let Some(f) = fills.next()
+                    {
+                        out.push_str(f);
+                    }
                 }
                 _ => {
                     if let Some(t) = self.0.get(&c) {
@@ -168,6 +182,15 @@ impl Charmap {
         }
         out
     }
+}
+
+/// A text bank of `a/0/2/7`, still encoded.
+pub fn message_bank(rom: &[u8], bank: usize) -> Vec<Vec<u16>> {
+    file(rom, "a/0/2/7")
+        .and_then(narc)
+        .and_then(|m| m.get(bank).copied())
+        .and_then(text_bank)
+        .unwrap_or_default()
 }
 
 /// What the battle HUD shows of a move: its name, type, power and accuracy, from the player's

@@ -27,6 +27,9 @@ pub struct Machine {
     pub speed: Option<f64>,
     uncapped: bool,
     next_frame_at: Option<Instant>,
+    /// GOLDLINK_DEV_BATTLE_LOG=<folder>: what the one-screen battle HUD reads, each time it changes
+    /// (UC9 §3.2: checks the reader in team and link battles run by the e2e tests).
+    battle_log: Option<(std::fs::File, String)>,
 }
 
 impl Machine {
@@ -37,7 +40,16 @@ impl Machine {
         uncapped: bool,
     ) -> Result<Self, String> {
         let nds = Nds::new(&FirmwareUser::default(), None).map_err(|e| e.to_string())?;
+        // A folder: each process writes battle-<pid>.log there (the e2e runners start several).
+        let battle_log = std::env::var_os("GOLDLINK_DEV_BATTLE_LOG")
+            .map(PathBuf::from)
+            .and_then(|d| {
+                std::fs::create_dir_all(&d).ok()?;
+                std::fs::File::create(d.join(format!("battle-{}.log", std::process::id()))).ok()
+            })
+            .map(|f| (f, String::new()));
         let mut m = Self {
+            battle_log,
             nds,
             bridge: None,
             rom,
@@ -100,6 +112,7 @@ impl Machine {
             goldlink::goldlink_bridge::hook::before_frame(&d.bridge, &mut self.nds, crate::MAILBOX);
         }
         self.nds.run_frame();
+        self.log_battle();
         if let Some(d) = self.bridge.as_mut() {
             // A world's save swapped into the cart reaches the .SaveRAM when the run ends, as
             // BizHawk writes it on close.
@@ -147,6 +160,51 @@ impl Machine {
         enc.set_depth(png::BitDepth::Eight);
         let mut writer = enc.write_header().map_err(|e| e.to_string())?;
         writer.write_image_data(&rgb).map_err(|e| e.to_string())
+    }
+
+    /// One line for GOLDLINK_DEV_BATTLE_LOG when what the battle HUD reads changes (HP while a
+    /// bar drains is left out of the comparison, so a drain is one line).
+    fn log_battle(&mut self) {
+        use std::io::Write;
+        let Some((file, last)) = self.battle_log.as_mut() else {
+            return;
+        };
+        let line = match goldlink::goldlink_bridge::battle_ui::read(self.nds.main_ram()) {
+            None => "no battle".to_owned(),
+            Some(b) => {
+                let boxes: Vec<String> = b
+                    .boxes
+                    .iter()
+                    .map(|x| {
+                        format!(
+                            "[battler {} kind {} at {},{} drawn {} hp {}/{} lv {}]",
+                            x.battler, x.kind, x.x, x.y, x.drawn, x.hp, x.max_hp, x.level
+                        )
+                    })
+                    .collect();
+                let targets: Vec<String> = b
+                    .targets
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| t.shown)
+                    .map(|(i, t)| format!("{i}:{}/{}", t.hp, t.max_hp))
+                    .collect();
+                format!(
+                    "menu {} waiting {} cursor {:?} back {} bag/party {} targets [{}] boxes {}",
+                    b.menu,
+                    b.waiting,
+                    b.cursor,
+                    b.run_is_back,
+                    b.bag_or_party,
+                    targets.join(" "),
+                    boxes.join(" ")
+                )
+            }
+        };
+        if line != *last {
+            writeln!(file, "f{} {line}", self.nds.frame_count()).ok();
+            *last = line;
+        }
     }
 
     /// Both screens, top above bottom with no gap (BizHawk's ScreenLayout 0, ScreenGap 0),
