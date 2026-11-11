@@ -2,6 +2,7 @@
 //! release's BPS patch, check the result. Nothing is written to disk; the bytes go to the core.
 
 pub mod bps;
+pub mod nitro;
 
 use serde::Deserialize;
 use sha1::{Digest, Sha1};

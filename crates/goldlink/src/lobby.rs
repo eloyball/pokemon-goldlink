@@ -844,7 +844,7 @@ impl Lobby {
                 .radio_value(&mut v.layout, Layout::Horizontal, "Side by side")
                 .changed();
             changed |= ui
-                .radio_value(&mut v.layout, Layout::Focus, "One screen")
+                .radio_value(&mut v.layout, Layout::OneScreen, "One screen")
                 .on_hover_text(
                     "The other screen shows beside the game when it's needed (Tab: show or hide it)",
                 )

@@ -15,6 +15,7 @@ goldlink-abi = { path = "../goldlink-abi" }
 goldlink-proto = { path = "../goldlink-proto" }
 goldlink-runtime = { path = "../goldlink-runtime" }
 goldlink-core = { path = "../goldlink-core" }
+goldlink-rom = { path = "../goldlink-rom" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }

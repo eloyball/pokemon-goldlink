@@ -26,9 +26,9 @@ pub enum Layout {
     Vertical,
     /// Side by side.
     Horizontal,
-    /// One big screen; the other beside it at half size, shown when the game needs it
-    /// (UC9 §3.1).
-    Focus,
+    /// The top screen alone; the touch screen's menus drawn over it as GoldLink's own (the
+    /// battle HUD) or as a modal when the game needs it (UC9 §3).
+    OneScreen,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

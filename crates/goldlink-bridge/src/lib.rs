@@ -6,6 +6,7 @@
 //! same packets (`link.rs`, UC4).
 
 pub mod avatars;
+pub mod battle_ui;
 pub mod bridge;
 pub mod config;
 pub mod hook;

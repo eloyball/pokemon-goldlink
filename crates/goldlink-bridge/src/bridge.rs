@@ -252,6 +252,9 @@ pub struct Bridge {
     /// Oak's speech is running: a new game with nothing to save yet, although the ROM counts the
     /// session as started (the startup gate passed at New Game).
     new_game_intro: bool,
+    /// The battle's menu, when one runs (UC9 §3.2: the one-screen HUD).
+    battle_ui: Option<crate::battle_ui::BattleUi>,
+    game_text: Option<crate::battle_ui::GameText>,
     backups: Backups,
     next_backup: Option<Instant>,
     pending_restore: Option<PathBuf>,
@@ -325,6 +328,8 @@ impl Bridge {
             boot_into_game: false,
             game_started: false,
             new_game_intro: false,
+            battle_ui: None,
+            game_text: None,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
             pending_restore: None,
@@ -385,6 +390,25 @@ impl Bridge {
     /// The local player's current activity (CoopActivity), from the last snapshot.
     pub fn local_activity(&self) -> u8 {
         self.local_player[PS_ACTIVITY]
+    }
+
+    /// The battle's menu as the game shows it on the touch screen, when a battle runs.
+    pub fn battle_ui(&self) -> Option<crate::battle_ui::BattleUi> {
+        self.battle_ui.clone()
+    }
+
+    /// The battle's menu with its words, for the one-screen HUD (once the ROM's text is read).
+    pub fn battle_hud(&self) -> Option<crate::battle_ui::BattleHud> {
+        Some(self.game_text.as_ref()?.hud(self.battle_ui.as_ref()?))
+    }
+
+    /// The ROM's words for the HUD; read once, from the emulation thread (`BridgeHook`).
+    pub fn has_game_text(&self) -> bool {
+        self.game_text.is_some()
+    }
+
+    pub fn set_game_text(&mut self, text: crate::battle_ui::GameText) {
+        self.game_text = Some(text);
     }
 
     /// What the game is showing, for the one-screen layout (UC9 §3.1).
@@ -574,6 +598,7 @@ impl Bridge {
         self.last_rom_heartbeat = 0;
         self.game_started = false;
         self.new_game_intro = false;
+        self.battle_ui = None;
         self.clear_payload_pending = true;
     }
 
@@ -674,6 +699,7 @@ impl Bridge {
             let ram = m.main_ram();
             self.new_game_intro = oak_speech_running(ram);
             self.game_started = ram[mailbox + WAS_IN_ACTIVE_SESSION] == 1 || self.new_game_intro;
+            self.battle_ui = crate::battle_ui::read(ram);
         }
         if self.update_save_slot(m, mailbox) {
             actions.cart_replaced = true;

@@ -898,3 +898,81 @@ fn six_games_soak() {
     assert!(problems.is_empty(), "games with problems: {problems:?}");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The battle HUD's reading of the game (UC9 §3.2) through a wild battle's first turn: the
+/// command menu waits with "What will … do?", FIGHT lists the moves with their PP, the key
+/// cursor follows the keys, and once a move is chosen nothing waits.
+#[test]
+#[ignore = "needs the co-op ROM, the regression's saves and the relay"]
+fn the_battle_hud_reads_a_wild_battle() {
+    use goldlink_bridge::battle_ui::{self, menu};
+    let port = 21_000 + (std::process::id() % 500) as u16;
+    let (dir, _relay, games, rom) = world(1, port);
+    let server = format!("127.0.0.1:{port}");
+    let (role, gd) = games.into_iter().next().unwrap();
+    let bridge: SharedBridge = Arc::new(Mutex::new(Bridge::new(&gd, &[]).unwrap()));
+    let charmap = goldlink_rom::nitro::Charmap::new();
+    let moves = goldlink_rom::nitro::MoveInfo::read(&rom);
+    let mut g = game(
+        role,
+        rom,
+        gd.join("cart.sav"),
+        Some(bridge.clone()),
+        Arc::default(),
+        &server,
+    );
+    lock(&bridge).join(&server, ROOM, false);
+    assert!(g.wait_for(3600, |g| g.in_field()), "never in the overworld");
+    g.wait(60);
+    assert_eq!(g.command(15, 5), Some(1), "the wild battle debug command");
+    let read = |g: &Game| battle_ui::read(g.emu.nds.main_ram());
+    assert!(g.wait_for(600, |g| read(g).is_some()), "no battle found");
+    let waiting_in = |m: i8| move |g: &Game| read(g).is_some_and(|b| b.waiting && b.menu == m);
+    assert!(
+        g.wait_for(60 * 40, |g| read(g).is_some_and(
+            |b| b.waiting && (b.menu == menu::MAIN_INITIAL || b.menu == menu::MAIN)
+        )),
+        "the command menu never waited: {:?}",
+        read(&g)
+    );
+    let b = read(&g).unwrap();
+    let text = charmap.decode(&b.message);
+    eprintln!("command menu: {b:?}\n  message {text:?}");
+    assert!(text.starts_with("What will"), "the message: {text:?}");
+    // The first A shows the cursor on FIGHT (once the menu has slid in), the second opens it.
+    g.wait(45);
+    g.press(Keys::A, 6);
+    g.wait(20);
+    assert_eq!(
+        read(&g).unwrap().cursor,
+        Some((0, 0)),
+        "the cursor on FIGHT"
+    );
+    g.press(Keys::A, 6);
+    assert!(
+        g.wait_for(120, waiting_in(menu::FIGHT)),
+        "FIGHT never opened: {:?}",
+        read(&g)
+    );
+    let b = read(&g).unwrap();
+    for m in b.moves.iter().flatten() {
+        eprintln!(
+            "  {} {}/{} ({})",
+            moves.name(m.id),
+            m.pp,
+            m.max,
+            moves.type_of(m.id).unwrap_or(0)
+        );
+    }
+    assert!(b.moves[0].is_some_and(|m| m.max > 0 && !moves.name(m.id).is_empty()));
+    g.press(Keys::RIGHT, 6);
+    g.wait(10);
+    eprintln!("after Right: cursor {:?}", read(&g).unwrap().cursor);
+    g.press(Keys::A, 6);
+    g.wait(30);
+    let b = read(&g).unwrap();
+    eprintln!("after choosing: {b:?}");
+    assert!(!b.waiting, "still waiting after a move was chosen");
+    lock(&bridge).leave();
+    std::fs::remove_dir_all(&dir).ok();
+}

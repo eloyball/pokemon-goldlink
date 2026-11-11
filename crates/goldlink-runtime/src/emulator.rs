@@ -88,6 +88,11 @@ impl Emulator {
         Ok(emu)
     }
 
+    /// The game's ROM, as the DS runs it.
+    pub fn rom(&self) -> &Arc<Vec<u8>> {
+        &self.rom
+    }
+
     /// Power cycle: the cart gets its save file as it is on disk.
     pub fn boot(&mut self) -> Result<(), String> {
         let save = match &self.cart_save {

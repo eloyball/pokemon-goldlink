@@ -1375,6 +1375,7 @@ dependencies = [
  "goldlink-abi",
  "goldlink-core",
  "goldlink-proto",
+ "goldlink-rom",
  "goldlink-runtime",
  "quinn",
  "rustls",

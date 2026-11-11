@@ -22,6 +22,8 @@ enum Step {
     Until(Scene, u32),
     Wait(u32),
     Press(Keys),
+    /// A touch on the touch screen (held a few frames).
+    Touch(u16, u16),
     Debug(u8, u8),
     Shot(&'static str),
     Close,
@@ -48,14 +50,34 @@ const STEPS: &[Step] = &[
     Step::Wait(30),
     Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 5),
     Step::Until(Scene::Battle, 600),
-    Step::Wait(60 * 16),
+    Step::Wait(330),
+    Step::Shot("battle-text"),
+    Step::Wait(60 * 11),
     Step::Shot("battle"),
-    // The first A shows the cursor on FIGHT, the second picks it.
+    // The first A shows the cursor on FIGHT.
     Step::Press(Keys::A),
     Step::Wait(30),
-    Step::Press(Keys::A),
+    Step::Shot("battle-cursor"),
+    Step::Press(Keys::DOWN),
+    Step::Wait(20),
+    Step::Shot("battle-cursor-bag"),
+    Step::Press(Keys::UP),
+    Step::Wait(20),
+    // A tap on the game's FIGHT button, as the HUD's click makes.
+    Step::Touch(128, 84),
     Step::Wait(90),
     Step::Shot("battle-moves"),
+    Step::Press(Keys::RIGHT),
+    Step::Wait(30),
+    Step::Shot("battle-moves-cursor"),
+    // Back, then BAG: the battle's bag shows as a modal.
+    Step::Press(Keys::B),
+    Step::Wait(40),
+    Step::Press(Keys::DOWN),
+    Step::Wait(20),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("battle-bag"),
     Step::Close,
 ];
 
@@ -163,8 +185,10 @@ impl FrameHook for TourHook {
         let mut s = self.0.state();
         if s.holding > 0 {
             s.holding -= 1;
-            if let Some(Step::Press(k)) = s.step.checked_sub(1).and_then(|i| STEPS.get(i)) {
-                input.keys |= *k;
+            match s.step.checked_sub(1).and_then(|i| STEPS.get(i)) {
+                Some(Step::Press(k)) => input.keys |= *k,
+                Some(Step::Touch(x, y)) => input.touch = Some((*x, *y)),
+                _ => {}
             }
         }
         if s.shot.is_some() || s.holding > 0 {
@@ -196,6 +220,11 @@ impl FrameHook for TourHook {
             Step::Wait(n) => s.frames >= n,
             Step::Press(k) => {
                 input.keys |= k;
+                s.holding = 6;
+                true
+            }
+            Step::Touch(x, y) => {
+                input.touch = Some((x, y));
                 s.holding = 6;
                 true
             }

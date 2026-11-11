@@ -11,6 +11,7 @@ use goldlink_runtime::config::{Config, Filter, Layout};
 use goldlink_runtime::runner::lock;
 use goldlink_runtime::{Command, Event, Input, Runner};
 
+use crate::hud;
 use crate::input::{Controls, touch_at};
 use crate::layout;
 use crate::theme::{self, Kind};
@@ -23,10 +24,8 @@ pub const BAR: f32 = 38.0;
 /// The halves of the screens texture: the top screen, the touch screen.
 const TOP_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.5));
 const BOTTOM_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egui::pos2(1.0, 1.0));
-/// The one-screen layout's slide, in seconds.
-const DOCK_SLIDE: f32 = 0.18;
-/// The handle that shows or hides the other screen.
-const HANDLE: egui::Vec2 = egui::vec2(18.0, 56.0);
+/// How long the HUD holds a touch on the game's button (then lets go).
+const TAP: Duration = Duration::from_millis(100);
 
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,32 +34,23 @@ pub enum GameAction {
     Leave,
 }
 
-/// The one-screen layout's state (UC9 §3.1): which screen is big, and whether the other shows
-/// beside it.
+/// The one-screen layout's state (UC9 §3).
 #[derive(Debug, Default)]
-struct Focus {
-    /// The touch screen is the big one (the party, the bag, the Pokégear…).
-    bottom_big: bool,
-    /// The other screen shows beside the big one.
-    dock_open: bool,
-    /// The scene these were set from. Only a new scene sets them again, so Tab holds until then.
+struct OneScreen {
+    /// Tab: the touch screen shown (or hidden) by hand, until the scene changes.
+    by_hand: Option<bool>,
+    /// The scene the last frame showed.
     scene: Option<Scene>,
+    /// A touch the HUD is making for the player: the DS point and when it began.
+    tap: Option<((u16, u16), Instant)>,
 }
 
-impl Focus {
-    /// Follows the game: the top screen alone in the overworld, the touch screen beside it in the
-    /// start menu and in battle, the touch screen big in an application. Between two scenes,
-    /// nothing moves.
+impl OneScreen {
     fn follow(&mut self, scene: Scene) {
-        if scene == Scene::Changing || self.scene == Some(scene) {
-            return;
+        if scene != Scene::Changing && self.scene != Some(scene) {
+            self.scene = Some(scene);
+            self.by_hand = None;
         }
-        self.scene = Some(scene);
-        (self.bottom_big, self.dock_open) = match scene {
-            Scene::Overworld => (false, false),
-            Scene::StartMenu | Scene::Battle | Scene::Unknown | Scene::Changing => (false, true),
-            Scene::App => (true, true),
-        };
     }
 }
 
@@ -82,7 +72,9 @@ pub struct GameApp {
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
     bottom: egui::Rect,
-    focus: Focus,
+    one: OneScreen,
+    /// The game's text box, re-inked for the battle HUD (one-screen layout).
+    textbox: Option<egui::TextureHandle>,
     settings_open: bool,
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
@@ -140,7 +132,8 @@ impl GameApp {
             texture: None,
             last_seq: u64::MAX,
             bottom: egui::Rect::NOTHING,
-            focus: Focus::default(),
+            one: OneScreen::default(),
+            textbox: None,
             settings_open: false,
             messages,
             extra_ui: None,
@@ -164,8 +157,8 @@ impl GameApp {
     ) -> Self {
         let mut app = Self::new(runner, Some(bridge), config, config_dir, notes);
         app.say(
-            if app.config.video.layout == Layout::Focus {
-                "Esc: menu · F3: details · Tab: the other screen"
+            if app.config.video.layout == Layout::OneScreen {
+                "Esc: menu · F3: details · Tab: the touch screen"
             } else {
                 "Esc: menu · F3: details"
             },
@@ -237,10 +230,18 @@ impl GameApp {
                 keys |= self.controls.gamepads(g);
             }
         }
-        let touch = match (down, pos) {
+        let mut touch = match (down, pos) {
             (true, Some(p)) if !self.blocked() && !over_panel => touch_at(self.bottom, p),
             _ => None,
         };
+        // The battle HUD's click: the game's button, held a moment, then let go.
+        if let Some((at, since)) = self.one.tap {
+            if since.elapsed() < TAP {
+                touch = Some(at);
+            } else {
+                self.one.tap = None;
+            }
+        }
         *lock(&runner.shared.input) = Input { keys, touch };
     }
 
@@ -252,6 +253,20 @@ impl GameApp {
                 None
             } else {
                 self.last_seq = frame.seq;
+                if self.config.video.layout == Layout::OneScreen {
+                    let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
+                    let img = hud::recolour_textbox(rows);
+                    match &mut self.textbox {
+                        Some(t) => t.set(img, egui::TextureOptions::NEAREST),
+                        None => {
+                            self.textbox = Some(ctx.load_texture(
+                                "textbox",
+                                img,
+                                egui::TextureOptions::NEAREST,
+                            ))
+                        }
+                    }
+                }
                 let px: Vec<egui::Color32> = frame
                     .pixels
                     .iter()
@@ -318,7 +333,7 @@ impl GameApp {
                     ui.label("Screens:");
                     changed |= ui.radio_value(&mut v.layout, Layout::Vertical, "Top and bottom").changed();
                     changed |= ui.radio_value(&mut v.layout, Layout::Horizontal, "Side by side").changed();
-                    changed |= ui.radio_value(&mut v.layout, Layout::Focus, "One screen")
+                    changed |= ui.radio_value(&mut v.layout, Layout::OneScreen, "One screen")
                         .on_hover_text("The other screen shows beside the game when it's needed (Tab: show or hide it)")
                         .changed();
                 });
@@ -574,92 +589,62 @@ impl GameApp {
         self.details_open = open;
     }
 
-    /// The one-screen layout (UC9 §3.1): the big screen, the other sliding in beside it, and a
-    /// handle to show or hide it with the mouse.
-    fn draw_focus(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
-        let open = ui.ctx().animate_bool_with_time(
-            egui::Id::new("goldlink-dock"),
-            self.focus.dock_open,
-            DOCK_SLIDE,
-        );
-        let (big, dock) = layout::focus(area, &self.config.video, open);
-        let (big_uv, dock_uv) = if self.focus.bottom_big {
-            (BOTTOM_UV, TOP_UV)
-        } else {
-            (TOP_UV, BOTTOM_UV)
+    /// The one-screen layout (UC9 §3): the top screen alone. In a battle, GoldLink's HUD takes
+    /// the game's text box rows; the touch screen shows as a modal over the picture when the game
+    /// needs it (the start menu, an application, a battle menu the HUD doesn't draw) or on Tab.
+    fn draw_one_screen(
+        &mut self,
+        ui: &mut egui::Ui,
+        area: egui::Rect,
+        scene: Scene,
+        battle: Option<&goldlink_bridge::battle_ui::BattleHud>,
+    ) {
+        let frame = layout::one_screen(area, &self.config.video);
+        let Some(t) = self.texture.clone() else {
+            return;
         };
-        // Touches go to the touch screen wherever it is, once it has finished sliding in.
-        self.bottom = if self.focus.bottom_big {
-            big
-        } else if open >= 1.0 {
-            dock
-        } else {
-            egui::Rect::NOTHING
-        };
-        if let Some(t) = &self.texture {
-            let p = ui.painter();
-            p.image(t.id(), big, big_uv, egui::Color32::WHITE);
-            if open > 0.0 {
-                p.image(
-                    t.id(),
-                    dock,
-                    dock_uv,
-                    egui::Color32::WHITE.gamma_multiply(open),
+        let p = ui.painter().clone();
+        let hud_draws = battle.is_some_and(hud::handles);
+        match battle {
+            Some(b) => {
+                // The scene above the band.
+                let band = hud::band(frame);
+                let scene_rect =
+                    egui::Rect::from_min_max(frame.min, egui::pos2(frame.right(), band.top()));
+                let uv = egui::Rect::from_min_max(
+                    egui::pos2(0.0, 0.0),
+                    egui::pos2(1.0, hud::SCENE_ROWS / 384.0),
                 );
-                p.rect_stroke(
-                    dock.expand(1.0),
-                    0.0,
-                    egui::Stroke::new(2.0_f32, theme::EDGE.gamma_multiply(open)),
-                    egui::StrokeKind::Outside,
-                );
+                p.image(t.id(), scene_rect, uv, egui::Color32::WHITE);
+                if hud_draws {
+                    if let Some(at) = hud::draw(ui, frame, b) {
+                        self.one.tap = Some((at, Instant::now()));
+                    }
+                } else if let Some(tb) = &self.textbox {
+                    hud::draw_text_band(ui, frame, tb);
+                }
+            }
+            None => {
+                p.image(t.id(), frame, TOP_UV, egui::Color32::WHITE);
             }
         }
-        // The handle: closed, a tab right of the big screen at the bottom (where the other screen
-        // comes in); open, one lying on the other screen's top edge, at its right.
-        let handle = if open > 0.5 {
-            let size = egui::vec2(HANDLE.y, HANDLE.x);
-            egui::Rect::from_min_size(dock.right_top() - egui::vec2(size.x, size.y + 6.0), size)
-        } else {
-            egui::Rect::from_min_size(
-                egui::pos2(big.right() + 6.0, big.bottom() - HANDLE.y),
-                HANDLE,
-            )
-        };
-        let response = ui
-            .interact(
-                handle,
-                egui::Id::new("goldlink-dock-handle"),
-                egui::Sense::click(),
-            )
-            .on_hover_text(if self.focus.dock_open {
-                "Hide the other screen (Tab)"
-            } else {
-                "Show the other screen (Tab)"
-            });
-        let p = ui.painter();
-        let fill = if response.hovered() {
-            theme::EDGE
-        } else {
-            theme::INSET
-        };
-        p.rect_filled(handle, 4.0, fill);
-        // A chevron: "show" points left (where it comes from), "hide" points down.
-        let c = handle.center();
-        let (a, b) = if open > 0.5 {
-            (egui::vec2(-5.0, -2.5), egui::vec2(5.0, -2.5))
-        } else {
-            (egui::vec2(2.5, -5.0), egui::vec2(2.5, 5.0))
-        };
-        let tip = if open > 0.5 {
-            egui::vec2(0.0, 2.5)
-        } else {
-            egui::vec2(-2.5, 0.0)
-        };
-        let stroke = egui::Stroke::new(2.0_f32, theme::GOLD);
-        p.line_segment([c + a, c + tip], stroke);
-        p.line_segment([c + tip, c + b], stroke);
-        if response.clicked() {
-            self.focus.dock_open = !self.focus.dock_open;
+        let wanted = matches!(scene, Scene::StartMenu | Scene::App)
+            || battle.is_some_and(|b| b.bag_or_party || (b.waiting && !hud_draws));
+        let modal = self.one.by_hand.unwrap_or(wanted);
+        self.bottom = egui::Rect::NOTHING;
+        if modal {
+            // The touch screen over the dimmed picture, leaving the picture's edges showing.
+            p.rect_filled(frame, 0.0, egui::Color32::from_black_alpha(150));
+            let r = egui::Rect::from_center_size(frame.center(), frame.size() * 0.86);
+            p.rect_filled(r.expand(6.0), 6.0, egui::Color32::from_black_alpha(120));
+            p.image(t.id(), r, BOTTOM_UV, egui::Color32::WHITE);
+            p.rect_stroke(
+                r.expand(1.5),
+                3.0,
+                egui::Stroke::new(3.0_f32, theme::EDGE),
+                egui::StrokeKind::Outside,
+            );
+            self.bottom = r;
         }
     }
 
@@ -684,18 +669,21 @@ impl GameApp {
                 _ => self.settings_open = !self.settings_open,
             }
         }
-        if self.config.video.layout == Layout::Focus {
-            if let Some(b) = &self.bridge {
-                let scene = goldlink_bridge::hook::lock(b).scene();
-                self.focus.follow(scene);
-            } else {
-                self.focus.follow(Scene::Unknown);
+        let (scene, battle) = match &self.bridge {
+            Some(b) if self.config.video.layout == Layout::OneScreen => {
+                let b = goldlink_bridge::hook::lock(b);
+                (b.scene(), b.battle_hud())
             }
+            _ => (Scene::Unknown, None),
+        };
+        if self.config.video.layout == Layout::OneScreen {
+            self.one.follow(scene);
             if !self.blocked()
                 && !ctx.wants_keyboard_input()
                 && ctx.input(|i| i.key_pressed(egui::Key::Tab))
             {
-                self.focus.dock_open = !self.focus.dock_open;
+                let shown = self.bottom != egui::Rect::NOTHING;
+                self.one.by_hand = Some(!shown);
             }
         }
         self.feed_input(ctx);
@@ -709,8 +697,8 @@ impl GameApp {
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
             .show(ctx, |ui| {
                 let area = ui.max_rect();
-                if self.config.video.layout == Layout::Focus {
-                    self.draw_focus(ui, area);
+                if self.config.video.layout == Layout::OneScreen {
+                    self.draw_one_screen(ui, area, scene, battle.as_ref());
                 } else {
                     let (top, bottom) = layout::screens(area, &self.config.video);
                     self.bottom = bottom;
