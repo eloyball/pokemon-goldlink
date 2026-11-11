@@ -17,11 +17,14 @@ pub const SCENE_ROWS: f32 = 144.0;
 const ROWS: f32 = 192.0;
 const COLS: f32 = 256.0;
 
-const NAVY: Color32 = Color32::from_rgb(0x14, 0x1A, 0x2E);
-const NAVY_LIGHT: Color32 = Color32::from_rgb(0x22, 0x2B, 0x47);
-const NAVY_EDGE: Color32 = Color32::from_rgb(0x4A, 0x56, 0x7E);
+/// Warm greys, so the band sits with HeartGold's yellows, oranges and reds (the user's choice
+/// over the first navy), with a gold line along its top.
+const BAND: Color32 = Color32::from_rgb(0x2A, 0x26, 0x24);
+const PANEL: Color32 = Color32::from_rgb(0x3B, 0x36, 0x33);
+const EDGE: Color32 = Color32::from_rgb(0x77, 0x6C, 0x63);
+const ACCENT: Color32 = Color32::from_rgb(0xD8, 0x9A, 0x3A);
 const INK: Color32 = Color32::from_rgb(0xF4, 0xF4, 0xF8);
-const INK_DIM: Color32 = Color32::from_rgb(0xA8, 0xB0, 0xC8);
+const INK_DIM: Color32 = Color32::from_rgb(0xCF, 0xC4, 0xB8);
 const CURSOR: Color32 = Color32::from_rgb(0xFF, 0x4A, 0x3A);
 
 /// The game's own buttons (pret battle_input.c hitboxes): where a click on ours touches.
@@ -163,7 +166,8 @@ impl Ctx<'_> {
         caps_font(ds_px * self.s)
     }
 
-    /// A coloured command button; a click taps the game's.
+    /// A coloured command button; a click taps the game's. Its colours are the game's own (red
+    /// FIGHT, orange BAG, blue RUN, green POKéMON), muted to sit on the grey band.
     #[allow(clippy::too_many_arguments)]
     fn command(
         &mut self,
@@ -194,7 +198,7 @@ impl Ctx<'_> {
         let top = Rect::from_min_max(r.min, pos2(r.max.x, r.center().y));
         p.add(egui::Shape::convex_polygon(
             chevron(top.shrink2(vec2(r.height() * 0.17, 0.0))),
-            Color32::from_white_alpha(28),
+            Color32::from_white_alpha(18),
             Stroke::NONE,
         ));
         // The label with a dark drop shadow, so it reads on the button's light top half.
@@ -230,10 +234,10 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
         origin: band.min,
         tap: None,
     };
-    c.ui.painter().rect_filled(band, CornerRadius::ZERO, NAVY);
+    c.ui.painter().rect_filled(band, CornerRadius::ZERO, BAND);
     c.ui.painter().line_segment(
         [band.left_top(), band.right_top()],
-        Stroke::new((1.0 * s).max(2.0), CURSOR.gamma_multiply(0.8)),
+        Stroke::new((1.0 * s).max(2.0), ACCENT),
     );
     match hud.menu {
         menu::FIGHT => fight(&mut c, hud),
@@ -253,8 +257,8 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
         "fight",
         fight,
         "FIGHT",
-        Color32::from_rgb(0xE0, 0x3C, 0x31),
-        Color32::from_rgb(0x7A, 0x14, 0x10),
+        Color32::from_rgb(0xC0, 0x4A, 0x3E),
+        Color32::from_rgb(0x6A, 0x22, 0x1C),
         fight_font,
         hud.cursor.is_some_and(|(y, _)| y == 0),
         TAP_FIGHT,
@@ -263,24 +267,24 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
         (
             "bag",
             "BAG",
-            Color32::from_rgb(0xE3, 0x93, 0x2A),
-            Color32::from_rgb(0x7A, 0x4A, 0x0C),
+            Color32::from_rgb(0xC6, 0x8A, 0x3E),
+            Color32::from_rgb(0x6A, 0x46, 0x18),
             sel(1, 0),
             TAP_BAG,
         ),
         (
             "run",
             "RUN",
-            Color32::from_rgb(0x2F, 0x7F, 0xE0),
-            Color32::from_rgb(0x12, 0x3E, 0x7A),
+            Color32::from_rgb(0x4C, 0x78, 0xAE),
+            Color32::from_rgb(0x22, 0x3C, 0x5E),
             sel(1, 1),
             TAP_RUN,
         ),
         (
             "pokemon",
             "POKéMON",
-            Color32::from_rgb(0x3E, 0xA6, 0x48),
-            Color32::from_rgb(0x15, 0x5A, 0x1C),
+            Color32::from_rgb(0x52, 0x8E, 0x52),
+            Color32::from_rgb(0x24, 0x4C, 0x26),
             sel(1, 2),
             TAP_POKEMON,
         ),
@@ -313,8 +317,8 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         let Some(m) = &hud.moves[i] else {
             c.ui.painter().add(egui::Shape::convex_polygon(
                 chevron(r),
-                NAVY_LIGHT,
-                Stroke::new((0.6 * c.s).max(1.0), NAVY_EDGE),
+                PANEL,
+                Stroke::new((0.6 * c.s).max(1.0), EDGE),
             ));
             c.ui.painter().text(
                 r.center(),
@@ -328,9 +332,9 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         let response = c.ui.interact(r, id, egui::Sense::CLICK);
         let colour = type_colour(m.type_id);
         let fill = if response.hovered() {
-            NAVY_LIGHT.lerp_to_gamma(colour, 0.25)
+            PANEL.lerp_to_gamma(colour, 0.25)
         } else {
-            NAVY_LIGHT
+            PANEL
         };
         let s = c.s;
         let p = c.ui.painter();
@@ -388,11 +392,11 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
     let info = c.rect(199.0, 4.0, 252.0, 23.5);
     let shown = selected.and_then(|i| hud.moves[i].as_ref());
     let p = c.ui.painter();
-    p.rect_filled(info, CornerRadius::same((2.0 * c.s) as u8), NAVY_LIGHT);
+    p.rect_filled(info, CornerRadius::same((2.0 * c.s) as u8), PANEL);
     p.rect_stroke(
         info,
         CornerRadius::same((2.0 * c.s) as u8),
-        Stroke::new((0.6 * c.s).max(1.0), NAVY_EDGE),
+        Stroke::new((0.6 * c.s).max(1.0), EDGE),
         StrokeKind::Inside,
     );
     let line = match shown {
@@ -421,8 +425,8 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         "cancel",
         back,
         "BACK",
-        NAVY_LIGHT,
-        NAVY_EDGE,
+        PANEL,
+        EDGE,
         back_font,
         hud.cursor.is_some_and(|(y, _)| y >= 2),
         TAP_CANCEL,
@@ -432,11 +436,11 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
 fn message_box(c: &mut Ctx<'_>, r: Rect, text: &str, size: f32) {
     let s = c.s;
     let p = c.ui.painter();
-    p.rect_filled(r, CornerRadius::same((2.0 * s) as u8), NAVY_LIGHT);
+    p.rect_filled(r, CornerRadius::same((2.0 * s) as u8), PANEL);
     p.rect_stroke(
         r,
         CornerRadius::same((2.0 * s) as u8),
-        Stroke::new((0.6 * s).max(1.0), NAVY_EDGE),
+        Stroke::new((0.6 * s).max(1.0), EDGE),
         StrokeKind::Inside,
     );
     let inner = r.shrink(4.0 * s);
@@ -449,22 +453,22 @@ fn message_box(c: &mut Ctx<'_>, r: Rect, text: &str, size: f32) {
 }
 
 /// The band when no menu waits: the game's own text box, its words re-inked white on GoldLink's
-/// navy (`textbox` is the game's text box rows, already recoloured; see [`recolour_textbox`]).
+/// grey (`textbox` is the game's text box rows, already recoloured; see [`recolour_textbox`]).
 pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHandle) {
     let band = band(frame);
     let s = frame.width() / COLS;
     let p = ui.painter();
-    p.rect_filled(band, CornerRadius::ZERO, NAVY);
+    p.rect_filled(band, CornerRadius::ZERO, BAND);
     p.line_segment(
         [band.left_top(), band.right_top()],
-        Stroke::new((1.0 * s).max(2.0), CURSOR.gamma_multiply(0.8)),
+        Stroke::new((1.0 * s).max(2.0), ACCENT),
     );
     let inner = band.shrink2(vec2(4.0 * s, 3.0 * s));
-    p.rect_filled(inner, CornerRadius::same((2.0 * s) as u8), NAVY_LIGHT);
+    p.rect_filled(inner, CornerRadius::same((2.0 * s) as u8), PANEL);
     p.rect_stroke(
         inner,
         CornerRadius::same((2.0 * s) as u8),
-        Stroke::new((0.6 * s).max(1.0), NAVY_EDGE),
+        Stroke::new((0.6 * s).max(1.0), EDGE),
         StrokeKind::Inside,
     );
     p.image(
@@ -476,7 +480,7 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
 }
 
 /// The game's text box rows (144 to 191 of the top screen) with only its words kept: the text
-/// colour becomes white, its shadow a dark navy, everything else transparent. The game prints
+/// colour becomes white, its shadow a near black, everything else transparent. The game prints
 /// battle messages in one palette (measured: text 515159, shadow A2A2AA on FBFBFB; the box's
 /// bottom border is the text colour too, so only the box's inside is kept).
 pub fn recolour_textbox(top_screen_rows: &[u32]) -> egui::ColorImage {
@@ -492,7 +496,7 @@ pub fn recolour_textbox(top_screen_rows: &[u32]) -> egui::ColorImage {
             };
             pixels[y * 256 + x] = match px & 0xFF_FFFF {
                 TEXT => INK,
-                SHADOW => Color32::from_rgb(0x0A, 0x0E, 0x1A),
+                SHADOW => Color32::from_rgb(0x14, 0x11, 0x10),
                 _ => Color32::TRANSPARENT,
             };
         }
