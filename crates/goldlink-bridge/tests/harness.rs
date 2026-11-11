@@ -639,6 +639,14 @@ fn a_new_world_starts_a_new_game() {
         g.frames as f64 / DS_FPS
     );
     lock(&bridge).leave();
+    // Leave in Oak's speech: nothing to save yet, so the window doesn't wait for one.
+    for _ in 0..60 {
+        g.frame();
+    }
+    assert!(
+        !lock(&bridge).view().game_in_session,
+        "Leave would wait for a save in Oak's speech"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 

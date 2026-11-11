@@ -89,7 +89,8 @@ pub struct View {
     pub game_started: bool,
     /// The ROM is in a session: its save is in play (`was_in_active_session`), or it's saving
     /// on its way back to the title after a disconnect (`disconnect_state` != 0). False once it's
-    /// back at the title (UC8 §2.2: the game may stop then).
+    /// back at the title (UC8 §2.2: the game may stop then), and in Oak's speech, where a new
+    /// game has nothing to save yet (UC9 §2).
     pub game_in_session: bool,
     /// The ROM's count of completed save writes (0 until its first): a change means the game
     /// just saved, and the bridge has already kept that save for its world.
@@ -205,6 +206,9 @@ pub struct Bridge {
     /// The game is in the overworld with its save, or in Oak's speech (a new game): the window
     /// can show it (UC9 §2).
     game_started: bool,
+    /// Oak's speech is running: a new game with nothing to save yet, although the ROM counts the
+    /// session as started (the startup gate passed at New Game).
+    new_game_intro: bool,
     backups: Backups,
     next_backup: Option<Instant>,
     pending_restore: Option<PathBuf>,
@@ -277,6 +281,7 @@ impl Bridge {
             boots_into_game: false,
             boot_into_game: false,
             game_started: false,
+            new_game_intro: false,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
             pending_restore: None,
@@ -518,6 +523,7 @@ impl Bridge {
         self.last_save_counter = None;
         self.last_rom_heartbeat = 0;
         self.game_started = false;
+        self.new_game_intro = false;
         self.clear_payload_pending = true;
     }
 
@@ -614,10 +620,11 @@ impl Bridge {
             ram[mailbox + LOCAL_AVATAR] = self.avatar_id;
         }
         self.read_local_player(m.main_ram(), mailbox);
-        self.game_started = {
+        {
             let ram = m.main_ram();
-            ram[mailbox + WAS_IN_ACTIVE_SESSION] == 1 || oak_speech_running(ram)
-        };
+            self.new_game_intro = oak_speech_running(ram);
+            self.game_started = ram[mailbox + WAS_IN_ACTIVE_SESSION] == 1 || self.new_game_intro;
+        }
         if self.update_save_slot(m, mailbox) {
             actions.cart_replaced = true;
         }
@@ -1201,10 +1208,13 @@ impl Bridge {
             save_missing: self.link == LinkState::Connected
                 && self.slot_state == SlotState::Missing,
             game_started: self.game_started,
-            game_in_session: self
-                .mailbox_copy
-                .as_ref()
-                .is_some_and(|mb| mb[WAS_IN_ACTIVE_SESSION] == 1 || mb[DISCONNECT_STATE] != 0),
+            // Not in Oak's speech: the ROM's disconnect flow would wait there for an overworld
+            // save, but a new game has nothing to save yet (Leave can stop it at once).
+            game_in_session: !self.new_game_intro
+                && self
+                    .mailbox_copy
+                    .as_ref()
+                    .is_some_and(|mb| mb[WAS_IN_ACTIVE_SESSION] == 1 || mb[DISCONNECT_STATE] != 0),
             save_counter: self
                 .mailbox_copy
                 .as_ref()
