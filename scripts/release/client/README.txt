@@ -19,9 +19,12 @@ Starting
 2. Start GoldLink: GoldLink.exe on Windows, ./GoldLink on Linux.
    Windows may warn about an unknown publisher: choose "More info", then "Run anyway".
 3. The first time, choose your HeartGold ROM. GoldLink checks it and keeps a copy.
-4. Press Play. The game opens in the same window with the World panel: pick your avatar,
-   enter the server address and the world code, and join (next time, pick the world from
-   "Played before"). Esc opens the settings; the World panel is there too.
+4. Press PLAY: the launcher. Pick your avatar (YOU PLAY AS), then Join a world (the world
+   code and the server address your host gave you) or Create a world (then share its code).
+   Next time, Continue takes you back to the world you played last.
+5. Once you're in the world, the game takes over the window. The bar at the top shows who's
+   online; Esc opens the menu (settings, details, Leave). Leave (or closing the window) saves
+   your game first, then brings the launcher back.
 
 Controls
 --------
@@ -36,7 +39,9 @@ Saves, settings and your ROM's copy live in your GoldLink folder, not in this on
   Windows: %LOCALAPPDATA%\GoldLink
   Linux:   ~/.local/share/goldlink
 If you played with the BizHawk version of GoldLink, the first start brings over your
-worlds, your place in them and your saves (its folder is left as it was).
+worlds, your place in them and your saves (its folder is left as it was). From another
+computer or another folder: Import a save in the launcher, and pick that GoldLink's (or its
+BizHawk's) folder.
 
 If GoldLink closes unexpectedly it saves a report in that folder (crashes/); pass it on to
 whoever helps your group.
