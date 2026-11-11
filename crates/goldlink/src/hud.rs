@@ -15,11 +15,10 @@ use crate::theme;
 /// The DS screen's rows: the battle scene above, the game's text box below.
 pub const SCENE_ROWS: f32 = 144.0;
 const ROWS: f32 = 192.0;
-const COLS: f32 = 256.0;
 
 /// Warm greys, so the band sits with HeartGold's yellows, oranges and reds (the user's choice
 /// over the first navy), with a gold line along its top.
-const BAND: Color32 = Color32::from_rgb(0x2A, 0x26, 0x24);
+pub const BAND: Color32 = Color32::from_rgb(0x2A, 0x26, 0x24);
 const PANEL: Color32 = Color32::from_rgb(0x3B, 0x36, 0x33);
 const EDGE: Color32 = Color32::from_rgb(0x77, 0x6C, 0x63);
 const ACCENT: Color32 = Color32::from_rgb(0xD8, 0x9A, 0x3A);
@@ -123,6 +122,8 @@ struct Ctx<'a> {
     s: f32,
     /// The band's top-left, in window points (DS row 144, column 0).
     origin: Pos2,
+    /// The band's width in DS pixels (256, or wider with the wider picture).
+    w: f32,
     tap: Option<(u16, u16)>,
 }
 
@@ -226,12 +227,13 @@ impl Ctx<'_> {
 ///
 /// The band for a menu the HUD draws. Returns the touch to send when a button was clicked.
 pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16)> {
-    let s = frame.width() / COLS;
+    let s = frame.height() / ROWS;
     let band = band(frame);
     let mut c = Ctx {
         ui,
         s,
         origin: band.min,
+        w: frame.width() / s,
         tap: None,
     };
     c.ui.painter().rect_filled(band, CornerRadius::ZERO, BAND);
@@ -248,10 +250,13 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
 
 fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
     // The message, left.
-    let text = c.rect(4.0, 4.0, 100.0, 44.0);
+    // The message on the left two fifths, the buttons on the rest.
+    let w = c.w;
+    let bx = (w * 0.406).round();
+    let text = c.rect(4.0, 4.0, bx - 4.0, 44.0);
     message_box(c, text, &hud.message, 9.0);
     let sel = |y: i8, x: i8| hud.cursor == Some((y, x));
-    let fight = c.rect(104.0, 4.0, 252.0, 24.0);
+    let fight = c.rect(bx, 4.0, w - 4.0, 24.0);
     let fight_font = c.fit_caps(&[("FIGHT", fight)], 10.0);
     c.command(
         "fight",
@@ -289,11 +294,11 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
             TAP_POKEMON,
         ),
     ];
-    let w = (252.0 - 104.0 - 2.0 * 3.0) / 3.0;
+    let bw = (w - 4.0 - bx - 2.0 * 3.0) / 3.0;
     let rects: Vec<Rect> = (0..3)
         .map(|i| {
-            let x = 104.0 + i as f32 * (w + 3.0);
-            c.rect(x, 27.0, x + w, 44.0)
+            let x = bx + i as f32 * (bw + 3.0);
+            c.rect(x, 27.0, x + bw, 44.0)
         })
         .collect();
     let labels: Vec<(&str, Rect)> = row.iter().zip(&rects).map(|(b, r)| (b.1, *r)).collect();
@@ -304,7 +309,11 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
 }
 
 fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
-    let cols = [(4.0, 98.0), (101.0, 195.0)];
+    // Two columns of moves, then a column for the highlighted move and BACK.
+    let w = c.w;
+    let info_x = w - 57.0;
+    let col = (info_x - 4.0 - 4.0 - 3.0) / 2.0;
+    let cols = [(4.0, 4.0 + col), (7.0 + col, info_x - 4.0)];
     let rows = [(4.0, 23.5), (25.5, 44.0)];
     let selected = hud
         .cursor
@@ -389,7 +398,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         }
     }
     // The right column: the highlighted move's type, and back.
-    let info = c.rect(199.0, 4.0, 252.0, 23.5);
+    let info = c.rect(info_x, 4.0, w - 4.0, 23.5);
     let shown = selected.and_then(|i| hud.moves[i].as_ref());
     let p = c.ui.painter();
     p.rect_filled(info, CornerRadius::same((2.0 * c.s) as u8), PANEL);
@@ -419,7 +428,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
         c.caps(5.5),
         INK_DIM,
     );
-    let back = c.rect(199.0, 25.5, 252.0, 44.0);
+    let back = c.rect(info_x, 25.5, w - 4.0, 44.0);
     let back_font = c.fit_caps(&[("BACK", back)], 7.0);
     c.command(
         "cancel",
@@ -456,7 +465,7 @@ fn message_box(c: &mut Ctx<'_>, r: Rect, text: &str, size: f32) {
 /// grey (`textbox` is the game's text box rows, already recoloured; see [`recolour_textbox`]).
 pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHandle) {
     let band = band(frame);
-    let s = frame.width() / COLS;
+    let s = frame.height() / ROWS;
     let p = ui.painter();
     p.rect_filled(band, CornerRadius::ZERO, BAND);
     p.line_segment(
@@ -471,9 +480,11 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
         Stroke::new((0.6 * s).max(1.0), EDGE),
         StrokeKind::Inside,
     );
+    // The words from the band's left, as the game prints them from its box's left.
+    let words = Rect::from_min_size(band.min, vec2(256.0 * s, band.height()));
     p.image(
         textbox.id(),
-        band,
+        words,
         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
         Color32::WHITE,
     );

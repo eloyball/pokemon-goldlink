@@ -62,6 +62,8 @@ pub struct Emulator {
     flash_writes: Arc<AtomicU32>,
     frame: u64,
     events: Vec<Event>,
+    /// The wider picture's side (UC9 §4), kept across power cycles.
+    wide: usize,
 }
 
 impl Emulator {
@@ -83,9 +85,20 @@ impl Emulator {
             flash_writes,
             frame: 0,
             events: Vec::new(),
+            wide: 0,
         };
         emu.boot()?;
         Ok(emu)
+    }
+
+    /// The wider picture: `side` more pixels of the top screen on each side (0: the DS's own).
+    pub fn set_wide(&mut self, side: usize) {
+        self.wide = side.min(goldlink_core::Nds::MAX_WIDE_SIDE);
+        self.nds.set_wide(self.wide);
+    }
+
+    pub fn wide(&self) -> usize {
+        self.wide
     }
 
     /// The game's ROM, as the DS runs it.
@@ -106,6 +119,8 @@ impl Emulator {
             Some(at) => self.nds.set_rtc(at),
             None => self.nds.set_rtc_now(),
         }
+        // A power cycle resets the GPU: the wider picture again.
+        self.nds.set_wide(self.wide);
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
         Ok(())
@@ -124,6 +139,7 @@ impl Emulator {
             Some(at) => self.nds.set_rtc(at),
             None => self.nds.set_rtc_now(),
         }
+        self.nds.set_wide(self.wide);
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
         // NitroSDK's HW_RESET_PARAMETER_BUF (0x027FFC20), which OS_GetResetParameter reads; main

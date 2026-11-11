@@ -75,6 +75,9 @@ pub struct GameApp {
     one: OneScreen,
     /// The game's text box, re-inked for the battle HUD (one-screen layout).
     textbox: Option<egui::TextureHandle>,
+    /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
+    wide: Option<egui::TextureHandle>,
+    wide_side: usize,
     settings_open: bool,
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
@@ -120,7 +123,7 @@ impl GameApp {
             }
         };
         let gilrs = gilrs::Gilrs::new().ok();
-        Self {
+        let app = Self {
             controls: Controls::new(&config.keys, &config.pad),
             runner: Some(runner),
             world: bridge.as_ref().map(WorldPanel::new),
@@ -134,6 +137,8 @@ impl GameApp {
             bottom: egui::Rect::NOTHING,
             one: OneScreen::default(),
             textbox: None,
+            wide: None,
+            wide_side: 0,
             settings_open: false,
             messages,
             extra_ui: None,
@@ -142,6 +147,21 @@ impl GameApp {
             details_open: false,
             world_code: String::new(),
             leaving: None,
+        };
+        app.apply_wide();
+        app
+    }
+
+    /// The wider picture on the emulation thread: on in the one-screen layout when chosen.
+    fn apply_wide(&self) {
+        let v = &self.config.video;
+        let side = if v.layout == Layout::OneScreen && v.wide {
+            layout::WIDE_SIDE
+        } else {
+            0
+        };
+        if let Some(r) = &self.runner {
+            r.send(Command::Wide(side));
         }
     }
 
@@ -203,6 +223,7 @@ impl GameApp {
         if let Some(a) = &self.audio {
             a.set_volume(Self::volume_of(&self.config));
         }
+        self.apply_wide();
     }
 
     /// Reads the keyboard, gamepads and pointer into the next frame's input.
@@ -264,6 +285,33 @@ impl GameApp {
                                 img,
                                 egui::TextureOptions::NEAREST,
                             ))
+                        }
+                    }
+                    // The wider top screen, when the emulation thread makes it.
+                    self.wide_side = frame.wide_side;
+                    if frame.wide_side > 0 && !frame.wide.is_empty() {
+                        let w = 256 + 2 * frame.wide_side;
+                        let img = egui::ColorImage {
+                            size: [w, 192],
+                            pixels: frame
+                                .wide
+                                .iter()
+                                .map(|&p| {
+                                    egui::Color32::from_rgb(
+                                        (p >> 16) as u8,
+                                        (p >> 8) as u8,
+                                        p as u8,
+                                    )
+                                })
+                                .collect(),
+                        };
+                        let options = match self.config.video.filter {
+                            Filter::Nearest => egui::TextureOptions::NEAREST,
+                            Filter::Linear => egui::TextureOptions::LINEAR,
+                        };
+                        match &mut self.wide {
+                            Some(t) if t.size() == [w, 192] => t.set(img, options),
+                            _ => self.wide = Some(ctx.load_texture("wide", img, options)),
                         }
                     }
                 }
@@ -344,6 +392,9 @@ impl GameApp {
                     changed |= ui.radio_value(&mut v.filter, Filter::Linear, "Smooth").changed();
                 });
                 changed |= ui.checkbox(&mut v.integer_scale, "Whole-number scaling only").changed();
+                if v.layout == Layout::OneScreen {
+                    changed |= ui.checkbox(&mut v.wide, "Widescreen in the overworld and in battles").changed();
+                }
                 ui.separator();
                 let a = &mut self.config.audio;
                 changed |= ui.add(egui::Slider::new(&mut a.volume, 0..=100).text("Volume")).changed();
@@ -604,18 +655,43 @@ impl GameApp {
             return;
         };
         let p = ui.painter().clone();
+        // DS pixels → window points; the frame's middle 256 columns are the DS screen.
+        let s = frame.height() / 192.0;
+        let middle =
+            egui::Rect::from_center_size(frame.center(), egui::vec2(256.0 * s, frame.height()));
+        // The wider picture shows in the overworld and in battles; elsewhere (menus, the title,
+        // cutscenes' screens) the DS screen sits in the middle of the same frame.
+        let wide = self
+            .wide
+            .clone()
+            .filter(|_| self.wide_side > 0 && frame.width() > middle.width() + 1.0)
+            .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu | Scene::Battle));
+        if frame.width() > middle.width() + 1.0 {
+            p.rect_filled(frame, 0.0, hud::BAND);
+        }
         let hud_draws = battle.is_some_and(hud::handles);
+        let rows = |to: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, to));
         match battle {
             Some(b) => {
                 // The scene above the band.
                 let band = hud::band(frame);
-                let scene_rect =
-                    egui::Rect::from_min_max(frame.min, egui::pos2(frame.right(), band.top()));
-                let uv = egui::Rect::from_min_max(
-                    egui::pos2(0.0, 0.0),
-                    egui::pos2(1.0, hud::SCENE_ROWS / 384.0),
-                );
-                p.image(t.id(), scene_rect, uv, egui::Color32::WHITE);
+                let scene_rows = hud::SCENE_ROWS / 192.0;
+                match &wide {
+                    Some(w) => {
+                        let r = egui::Rect::from_min_max(
+                            frame.min,
+                            egui::pos2(frame.right(), band.top()),
+                        );
+                        p.image(w.id(), r, rows(scene_rows), egui::Color32::WHITE);
+                    }
+                    None => {
+                        let r = egui::Rect::from_min_max(
+                            middle.min,
+                            egui::pos2(middle.right(), band.top()),
+                        );
+                        p.image(t.id(), r, rows(scene_rows / 2.0), egui::Color32::WHITE);
+                    }
+                }
                 if hud_draws {
                     if let Some(at) = hud::draw(ui, frame, b) {
                         self.one.tap = Some((at, Instant::now()));
@@ -625,7 +701,10 @@ impl GameApp {
                 }
             }
             None => {
-                p.image(t.id(), frame, TOP_UV, egui::Color32::WHITE);
+                match &wide {
+                    Some(w) => p.image(w.id(), frame, rows(1.0), egui::Color32::WHITE),
+                    None => p.image(t.id(), middle, TOP_UV, egui::Color32::WHITE),
+                };
             }
         }
         let wanted = matches!(scene, Scene::StartMenu | Scene::App)
@@ -635,7 +714,7 @@ impl GameApp {
         if modal {
             // The touch screen over the dimmed picture, leaving the picture's edges showing.
             p.rect_filled(frame, 0.0, egui::Color32::from_black_alpha(150));
-            let r = egui::Rect::from_center_size(frame.center(), frame.size() * 0.86);
+            let r = egui::Rect::from_center_size(frame.center(), middle.size() * 0.86);
             p.rect_filled(r.expand(6.0), 6.0, egui::Color32::from_black_alpha(120));
             p.image(t.id(), r, BOTTOM_UV, egui::Color32::WHITE);
             p.rect_stroke(

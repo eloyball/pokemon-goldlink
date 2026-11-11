@@ -36,6 +36,8 @@ pub enum Command {
     LoadState(std::path::PathBuf),
     /// Power cycle on the save file.
     Reboot,
+    /// The wider picture (UC9 §4): pixels kept on each side of the top screen (0: off).
+    Wide(usize),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -43,6 +45,10 @@ pub enum Command {
 /// The latest finished frame: both screens, top then bottom, 256 x 384, 0x00RRGGBB.
 pub struct Frame {
     pub pixels: Vec<u32>,
+    /// With the wider picture on: the top screen `256 + 2 * wide_side` wide (192 rows), the
+    /// screen as shown in the middle. Empty when off.
+    pub wide: Vec<u32>,
+    pub wide_side: usize,
     /// Counts frames; changes when the pixels do.
     pub seq: u64,
 }
@@ -119,6 +125,8 @@ impl Runner {
             input: Mutex::new(Input::default()),
             frame: Mutex::new(Frame {
                 pixels: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 2],
+                wide: Vec::new(),
+                wide_side: 0,
                 seq: 0,
             }),
             audio: Mutex::new(AudioRing::new()),
@@ -264,6 +272,7 @@ fn run(
                         lock(&shared.events).push(Event::SaveFailed(e));
                     }
                 }
+                Command::Wide(side) => emu.set_wide(side),
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -278,9 +287,17 @@ fn run(
         }
 
         emu.screens(&mut pixels);
+        let side = emu.wide();
+        let mut wide = if side > 0 {
+            emu.nds.wide_frame(0, side)
+        } else {
+            Vec::new()
+        };
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);
+            std::mem::swap(&mut f.wide, &mut wide);
+            f.wide_side = side;
             f.seq = emu.frame_count();
         }
         let events = emu.take_events();

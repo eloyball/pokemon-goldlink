@@ -864,6 +864,11 @@ impl Lobby {
         changed |= ui
             .checkbox(&mut v.integer_scale, "Whole-number scaling only")
             .changed();
+        if v.layout == Layout::OneScreen {
+            changed |= ui
+                .checkbox(&mut v.wide, "Widescreen in the overworld and in battles")
+                .changed();
+        }
         theme::caption(ui, "Sound");
         let a = &mut config.audio;
         changed |= ui

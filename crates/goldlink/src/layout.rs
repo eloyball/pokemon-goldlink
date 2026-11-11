@@ -32,9 +32,22 @@ pub fn screens(area: Rect, video: &Video) -> (Rect, Rect) {
     (top, bottom)
 }
 
-/// The one-screen layout's frame (UC9 §3): one DS screen's shape, centred, as large as fits.
+/// The wider picture's side, in DS pixels: 256 + 2 × 43 = 342 wide, about 16:9 (UC9 §4).
+pub const WIDE_SIDE: usize = 43;
+
+/// The one-screen frame's width in DS pixels: wider with the wider picture on.
+pub fn one_screen_width(video: &Video) -> f32 {
+    if video.wide {
+        W + 2.0 * WIDE_SIDE as f32
+    } else {
+        W
+    }
+}
+
+/// The one-screen layout's frame (UC9 §3): one DS screen's height, as wide as the picture,
+/// centred, as large as fits.
 pub fn one_screen(area: Rect, video: &Video) -> Rect {
-    let unit = vec2(W, H);
+    let unit = vec2(one_screen_width(video), H);
     let size = unit * fit(area, unit, video.integer_scale);
     Rect::from_center_size(area.center(), size)
 }
@@ -45,7 +58,7 @@ pub fn window_size(video: &Video, scale: f32) -> Vec2 {
     match video.layout {
         Layout::Vertical => vec2(W, H * 2.0 + gap) * scale,
         Layout::Horizontal => vec2(W * 2.0 + gap, H) * scale,
-        Layout::OneScreen => vec2(W, H) * scale,
+        Layout::OneScreen => vec2(one_screen_width(video), H) * scale,
     }
 }
 
@@ -81,6 +94,7 @@ mod tests {
         let v = Video {
             layout: Layout::OneScreen,
             integer_scale: true,
+            wide: false,
             ..Video::default()
         };
         assert_eq!(window_size(&v, 2.0), vec2(512.0, 384.0));
@@ -90,5 +104,12 @@ mod tests {
         );
         assert_eq!(r.size(), vec2(1280.0, 960.0)); // 5.6x floors to 5x
         assert_eq!(r.center(), pos2(960.0, 540.0));
+        let wide = Video { wide: true, ..v };
+        assert_eq!(window_size(&wide, 1.0), vec2(342.0, 192.0));
+        let r = one_screen(
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0)),
+            &wide,
+        );
+        assert_eq!(r.size(), vec2(1710.0, 960.0)); // 5x, 16:9 nearly fills a 1080p screen
     }
 }

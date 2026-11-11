@@ -49,6 +49,8 @@ pub struct Video {
     pub filter: Filter,
     /// Scale by whole numbers only (crisper, may leave borders).
     pub integer_scale: bool,
+    /// One screen: a wider picture in the overworld and in battles (UC9 §4).
+    pub wide: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -88,6 +90,7 @@ impl Default for Video {
             gap: 0,
             filter: Filter::Nearest,
             integer_scale: false,
+            wide: true,
         }
     }
 }
