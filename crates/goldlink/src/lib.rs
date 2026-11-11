@@ -76,6 +76,9 @@ pub struct Session {
     pub hooks: Vec<Box<dyn FrameHook>>,
     pub title: String,
     pub extra_ui: Option<ExtraUi>,
+    /// The release window's look for this world (its top bar, Esc's menu; UC8) instead of the
+    /// in-window World panel: the dev binary's screenshots show what players see.
+    pub release_look: Option<String>,
 }
 
 /// Boots the game and shows it in a window until the player closes it. The save is written on
@@ -88,6 +91,7 @@ pub fn run(session: Session) -> Result<(), String> {
         mut hooks,
         title,
         extra_ui,
+        release_look,
     } = session;
     let (config, note) = Config::load(&data_dir);
     let emu = Emulator::new(setup)?;
@@ -95,11 +99,12 @@ pub fn run(session: Session) -> Result<(), String> {
         hooks.insert(0, Box::new(BridgeHook::new(b.clone())));
     }
     let runner = Runner::start(emu, hooks);
-    let size = layout::window_size(&config.video, 2.0);
+    let bar = eframe::egui::vec2(0.0, release_look.as_ref().map_or(0.0, |_| app::BAR));
+    let size = layout::window_size(&config.video, 2.0) + bar;
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size(size)
-            .with_min_inner_size(layout::window_size(&config.video, 1.0))
+            .with_min_inner_size(layout::window_size(&config.video, 1.0) + bar)
             .with_title(&title),
         #[cfg(windows)]
         renderer: eframe::Renderer::Wgpu,
@@ -115,7 +120,13 @@ pub fn run(session: Session) -> Result<(), String> {
             Box::new(|cc| {
                 dark(&cc.egui_ctx);
                 let (runner, bridge) = parts.take().expect("one window");
-                let mut app = app::GameApp::new(runner, bridge, config, data_dir, notes);
+                let mut app = match (release_look, bridge) {
+                    (Some(world), Some(bridge)) => {
+                        theme::install(&cc.egui_ctx);
+                        app::GameApp::release(runner, bridge, config, data_dir, notes, &world)
+                    }
+                    (_, bridge) => app::GameApp::new(runner, bridge, config, data_dir, notes),
+                };
                 app.extra_ui = extra_ui;
                 Ok(Box::new(app))
             }),

@@ -64,5 +64,6 @@ pub fn run(
         ],
         title: "GoldLink (dev, offline world)".into(),
         extra_ui: Some(crate::dev_ui(panel)),
+        release_look: None,
     })
 }

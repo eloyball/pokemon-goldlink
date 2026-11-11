@@ -23,6 +23,7 @@ mod devpanel;
 mod lua;
 mod machine;
 mod offline;
+mod tour;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -291,17 +292,37 @@ fn window_with_bridge(
         },
         data_dir: data,
         bridge: Some(bridge),
-        hooks: vec![
+        hooks: with_tour(vec![
             Box::new(devbridge::TickHook(ticker)),
             Box::new(panel.hook()),
-        ],
+        ]),
         title: "GoldLink (dev)".into(),
         extra_ui: Some(dev_ui(panel)),
+        // The tour shows the release look (GOLDLINK_DEV_TOUR_WORLD names the world in its bar).
+        release_look: std::env::var("GOLDLINK_DEV_TOUR_WORLD").ok(),
     })
 }
 
-/// The dev panel (F12; GOLDLINK_DEV_PANEL=1 opens it at start), drawn over the window.
+/// The dev panel (F12; GOLDLINK_DEV_PANEL=1 opens it at start), drawn over the window; and the
+/// tour's screenshots when GOLDLINK_DEV_TOUR is set (`tour.rs`).
 fn dev_ui(panel: devpanel::DevPanel) -> goldlink::ExtraUi {
     let (mut open, mut warp) = (std::env::var_os("GOLDLINK_DEV_PANEL").is_some(), 0usize);
-    Box::new(move |ctx| panel.ui(ctx, &mut open, &mut warp))
+    let tour = tour::shared();
+    Box::new(move |ctx| {
+        panel.ui(ctx, &mut open, &mut warp);
+        if let Some(t) = &tour {
+            t.ui(ctx);
+        }
+    })
+}
+
+/// The tour's hook after the others, when GOLDLINK_DEV_TOUR is set (its window part is in
+/// `dev_ui`).
+fn with_tour(
+    mut hooks: Vec<Box<dyn goldlink_runtime::FrameHook>>,
+) -> Vec<Box<dyn goldlink_runtime::FrameHook>> {
+    if let Some(t) = tour::shared() {
+        hooks.push(Box::new(t.hook()));
+    }
+    hooks
 }
