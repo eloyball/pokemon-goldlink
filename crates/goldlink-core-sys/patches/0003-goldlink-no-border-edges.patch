@@ -1,0 +1,48 @@
+From 6d59f0da58d4618260f535226bfafba16d797af8 Mon Sep 17 00:00:00 2001
+From: Eloy Fernandes Ballesteros <eloyball66@gmail.com>
+Date: Wed, 11 Nov 2026 20:33:06 -0500
+Subject: [PATCH] GoldLink: no edge marking against the picture's border
+
+---
+ src/GPU3D_Soft.cpp | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
+index 20bf4845..e6ef98c1 100644
+--- a/src/GPU3D_Soft.cpp
++++ b/src/GPU3D_Soft.cpp
+@@ -1458,6 +1458,16 @@ void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y)
+         // edge marking
+         // only applied to topmost pixels
+ 
++        // GoldLink: no edges against the picture's own border. The hardware compares the
++        // border pixels with the rear plane beyond the screen, outlining every polygon that
++        // touches it: a one-pixel frame of outline colours round the picture (HeartGold's
++        // buildings), plain once scaled up. Edges inside the picture are kept.
++        const int side = gpu3d.WideActive() ? gpu3d.WideSide : 0;
++        const int left = GPU3D::MaxWideSide - side;
++        const int right = GPU3D::MaxWideSide + 256 + side;
++        const bool up = y > 0;
++        const bool down = y < 191;
++
+         for (int x = 0; x < RenderWidth; x++)
+         {
+             u32 pixeladdr = FirstPixelOffset + (y*ScanlineWidth) + x;
+@@ -1468,10 +1478,10 @@ void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y)
+             u32 polyid = attr >> 24; // opaque polygon IDs are used for edgemarking
+             u32 z = DepthBuffer[pixeladdr];
+ 
+-            if (((polyid != (AttrBuffer[pixeladdr-1] >> 24)) && (z < DepthBuffer[pixeladdr-1])) ||
+-                ((polyid != (AttrBuffer[pixeladdr+1] >> 24)) && (z < DepthBuffer[pixeladdr+1])) ||
+-                ((polyid != (AttrBuffer[pixeladdr-ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr-ScanlineWidth])) ||
+-                ((polyid != (AttrBuffer[pixeladdr+ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr+ScanlineWidth])))
++            if ((x - 1 >= left && (polyid != (AttrBuffer[pixeladdr-1] >> 24)) && (z < DepthBuffer[pixeladdr-1])) ||
++                (x + 1 < right && (polyid != (AttrBuffer[pixeladdr+1] >> 24)) && (z < DepthBuffer[pixeladdr+1])) ||
++                (up && (polyid != (AttrBuffer[pixeladdr-ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr-ScanlineWidth])) ||
++                (down && (polyid != (AttrBuffer[pixeladdr+ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr+ScanlineWidth])))
+             {
+                 u16 edgecolor = gpu3d.RenderEdgeTable[polyid >> 3];
+                 u32 edgeR = (edgecolor << 1) & 0x3E; if (edgeR) edgeR++;
+-- 
+2.56.0
+
