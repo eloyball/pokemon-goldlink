@@ -6,6 +6,7 @@
 //!     goldlink --create <host:port> <CODE>  Play, then create that world
 //!     goldlink --status             what's set up (version, folders, ROM)
 //!     goldlink --setup <rom>        check and keep your ROM (the first run's step)
+//!     goldlink --update             install a newer release, if there is one (the launcher's button)
 //!     goldlink --rom <goldlink.nds> an already patched ROM, straight into the game
 //!
 //! The data folder (per user, or GOLDLINK_DATA_DIR) holds your ROM's copy, the cart's save,
@@ -53,13 +54,24 @@ fn main() -> ExitCode {
                     }
                 };
             }
+            "--update" => {
+                #[cfg(windows)]
+                attach_console();
+                return match cli_update() {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("[-] {e}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
             "--version" => {
                 println!("goldlink {}", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
             _ => {
                 eprintln!(
-                    "usage: goldlink [--play | --join <host:port> <CODE> | --create <host:port> <CODE> | --status | --setup <rom> | --rom <goldlink.nds>]"
+                    "usage: goldlink [--play | --join <host:port> <CODE> | --create <host:port> <CODE> | --status | --setup <rom> | --update | --rom <goldlink.nds>]"
                 );
                 return ExitCode::from(64);
             }
@@ -105,6 +117,38 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `--update`: the launcher's Update button without the window (release tests, Wine).
+fn cli_update() -> Result<(), String> {
+    use goldlink::launcher::{Paths, load_release};
+    use goldlink::update;
+    let paths = Paths::detect()?;
+    let release = load_release(&paths)?;
+    update::clean_up(&paths.install);
+    let Some(found) = update::find(&release.repository, &release.version) else {
+        println!("up to date (version {}), or no answer", release.version);
+        return Ok(());
+    };
+    if !found.installable() {
+        return Err(format!(
+            "GoldLink {} is out, but can't be installed from here: {}",
+            found.tag, found.page
+        ));
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let shown = std::thread::spawn(move || {
+        for stage in rx {
+            if !matches!(stage, update::Stage::Downloading(..)) {
+                println!("{stage:?}");
+            }
+        }
+    });
+    let program = update::install_release(&found, &paths.install, &update::RELEASE_KEY, &tx);
+    drop(tx);
+    shown.join().ok();
+    println!("updated to {}: {}", found.tag, program?.display());
+    Ok(())
 }
 
 /// `--status` / `--setup <rom>`: the launcher's steps without the window (release tests).

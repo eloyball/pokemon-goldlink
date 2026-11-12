@@ -5,7 +5,11 @@
 #
 #   scripts/package_client.sh vX.Y [--publish]
 #
-#   --publish    also creates the GitHub release vX.Y as a draft. HEAD must be pushed.
+#   --publish    also creates the GitHub release vX.Y as a draft. HEAD must be pushed, and the
+#                signing key must be there.
+#   GOLDLINK_SIGNING_KEY=<file>  the release signing key (default
+#                ~/.config/goldlink-release/signing.pk8; UC10): SHA256SUMS.sig, which the
+#                launcher's Update button checks. Without it a test package is unsigned.
 #   NOTES=<file> the "Changes" section of the release notes (Markdown); a placeholder otherwise.
 #   ALLOW_DIRTY=1  packages uncommitted changes (testing the script; never with --publish).
 #   KEEP_RELEASE_BUILD=1  leaves hg-engine built without the debug tools.
@@ -29,6 +33,7 @@ WORK="$OUT/work"
 CACHE="$ROOT/build/release-cache"
 REPOSITORY="eloyball/pokemon-goldlink"
 ROM="$ROOT/hg-engine/rom.nds"
+SIGNING_KEY="${GOLDLINK_SIGNING_KEY:-$HOME/.config/goldlink-release/signing.pk8}"
 GAME="$ROOT/hg-engine/test.nds"
 IMAGE="goldlink-client-build:bullseye" # rust:1.98.0-bullseye + CMake and the audio/input headers
 MAX_GLIBC="2.31"
@@ -42,6 +47,7 @@ for tool in cargo docker x86_64-w64-mingw32-gcc x86_64-w64-mingw32-windres arm-n
     command -v "$tool" > /dev/null || die "$tool is missing"
 done
 [[ $PUBLISH == 0 ]] || command -v gh > /dev/null || die "gh is missing"
+[[ $PUBLISH == 0 || -f "$SIGNING_KEY" ]] || die "$SIGNING_KEY is missing: a published release is signed (UC10)"
 rustup target list --installed | grep -qx x86_64-pc-windows-gnu || die "rustup target add x86_64-pc-windows-gnu"
 [[ -f "$ROM" ]] || die "$ROM is missing (your HeartGold USA ROM)"
 [[ -f crates/goldlink-core-sys/melonDS/CMakeLists.txt ]] || die "git submodule update --init (melonDS)"
@@ -219,6 +225,19 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             z.write(full, os.path.relpath(full, base))
 PY
 (cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" > SHA256SUMS)
+# The signature the launcher's Update button checks (UC10), made with the maintainer's key and
+# checked against the public key built into this release's program.
+if [[ -f "$SIGNING_KEY" ]]; then
+    cargo build -q --release -p goldlink-sign
+    SIGN="${CARGO_TARGET_DIR:-$ROOT/target}/release/goldlink-sign"
+    BUILT_IN="$(python3 -I -c 'import re,sys; s=open(sys.argv[1]).read(); b=s[s.index("RELEASE_KEY"):].split("];")[0]; print("".join(h[2:] for h in re.findall(r"0x[0-9a-fA-F]{2}", b)))' crates/goldlink/src/update.rs)"
+    [[ "$("$SIGN" public "$SIGNING_KEY")" == "$BUILT_IN" ]] || die "$SIGNING_KEY isn't the key built into GoldLink (update.rs RELEASE_KEY)"
+    "$SIGN" sign "$SIGNING_KEY" "$VERSION" "$OUT/SHA256SUMS" > "$OUT/SHA256SUMS.sig"
+    "$SIGN" verify "$BUILT_IN" "$VERSION" "$OUT/SHA256SUMS" "$OUT/SHA256SUMS.sig" > /dev/null || die "the new signature doesn't check"
+    echo "[*] signed: SHA256SUMS.sig"
+else
+    echo "[!] no signing key ($SIGNING_KEY): unsigned, so the Update button won't install it"
+fi
 ls -l "$OUT"/*.tar.gz "$OUT"/*.zip
 
 # ---------------------------------------------------------------------------
@@ -234,7 +253,8 @@ fi
 step 7 "GitHub"
 if [[ $PUBLISH == 1 ]]; then
     gh release create "$VERSION" -R "$REPOSITORY" --draft --target "$COMMIT" --title "GoldLink $VERSION" \
-        --notes-file "$OUT/notes.md" "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/SHA256SUMS"
+        --notes-file "$OUT/notes.md" "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/SHA256SUMS" \
+        "$OUT/SHA256SUMS.sig"
     echo "[*] draft release $VERSION created: review and publish it on GitHub"
 else
     echo "[*] not published (--publish creates a draft GitHub release)"

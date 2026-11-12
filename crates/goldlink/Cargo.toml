@@ -32,6 +32,12 @@ png = "0.17"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 dirs = "6"
+tar = { version = "0.4", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+sha2 = "0.10"
+hex = "0.4"
+goldlink-sign = { path = "../goldlink-sign" }
 
 # The BizHawk version's launcher's choices, kept: OpenGL on Linux and macOS; on Windows wgpu
 # (Direct3D 12, with Windows' software adapter when there's no usable GPU), since many Windows

@@ -1,0 +1,15 @@
+[package]
+name = "goldlink-sign"
+version = "0.1.0"
+description = "GoldLink's release signatures: the maintainer signs a release's SHA256SUMS, the launcher checks it before updating"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ring = "0.17"
+hex = "0.4"

@@ -257,8 +257,13 @@ pub struct Launcher {
     message: Option<(String, bool)>,
     /// Press Play at once (`goldlink --play`).
     pub autoplay: bool,
-    update: Option<Receiver<Option<String>>>,
-    update_note: Option<String>,
+    /// The update check's answer, while it's asked.
+    update: Option<Receiver<Option<crate::update::Available>>>,
+    /// A newer release (UC10): the note, and its button when it can be installed from here.
+    available: Option<crate::update::Available>,
+    /// An update being installed, and where it is.
+    updating: Option<Receiver<crate::update::Stage>>,
+    stage: Option<crate::update::Stage>,
 }
 
 /// What the launcher wants next.
@@ -271,6 +276,10 @@ pub enum Next {
 impl Launcher {
     pub fn new(paths: Paths) -> Self {
         let release = load_release(&paths);
+        // The last update's leftovers (the old program, no longer running).
+        if release.is_ok() {
+            crate::update::clean_up(&paths.install);
+        }
         let mut message = import_bizhawk(&paths).map(|m| (m, false));
         let crashes = crate::crash::take_new(&paths.data);
         if let Some(newest) = crashes.first() {
@@ -302,12 +311,164 @@ impl Launcher {
             message,
             autoplay: false,
             update,
-            update_note: None,
+            available: None,
+            updating: None,
+            stage: None,
         }
     }
 
     pub fn version(&self) -> Option<&str> {
         self.release.as_ref().ok().map(|r| r.version.as_str())
+    }
+
+    /// Something is under way (Play, the ROM's buttons and the update wait).
+    fn busy(&self) -> bool {
+        self.work.is_some() || self.updating.is_some()
+    }
+
+    /// Installs the newer release (UC10): download, check, put in place, restart.
+    fn start_update(&mut self) {
+        let Some(update) = self.available.clone() else {
+            return;
+        };
+        self.message = None;
+        self.stage = Some(crate::update::Stage::Downloading(0, 0));
+        self.updating = Some(crate::update::start(
+            update,
+            self.paths.install.clone(),
+            crate::update::RELEASE_KEY,
+        ));
+    }
+
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        use crate::update::Stage;
+        let Some(rx) = &self.updating else {
+            return;
+        };
+        while let Ok(stage) = rx.try_recv() {
+            let end = matches!(stage, Stage::Done(_) | Stage::Failed(_));
+            if let Stage::Done(program) = &stage {
+                match crate::update::restart(program) {
+                    Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                    Err(e) => {
+                        self.stage = Some(Stage::Failed(e));
+                        self.updating = None;
+                        return;
+                    }
+                }
+            }
+            self.stage = Some(stage);
+            if end {
+                self.updating = None;
+                return;
+            }
+        }
+    }
+
+    /// The newer release's note: its button, how the update goes, or why it didn't.
+    fn update_note(&mut self, ui: &mut egui::Ui) {
+        use crate::theme::{self, Kind};
+        use crate::update::Stage;
+        let Some(a) = self.available.clone() else {
+            return;
+        };
+        let failed = matches!(self.stage, Some(Stage::Failed(_)));
+        let colour = if failed { theme::RED } else { theme::AMBER };
+        theme::inset(ui, colour, |ui| {
+            let line = |ui: &mut egui::Ui, text: &str| {
+                ui.label(
+                    egui::RichText::new(text)
+                        .font(theme::text(17.0))
+                        .color(colour),
+                );
+            };
+            match &self.stage {
+                None => {
+                    line(ui, &format!("GoldLink {} is out.", a.tag));
+                    ui.add_space(4.0);
+                    let width = ui.available_width();
+                    if a.installable() {
+                        ui.horizontal(|ui| {
+                            let size = egui::vec2((width - 8.0) * 0.6, 34.0);
+                            let busy = self.busy();
+                            if theme::button(ui, &format!("Update to {}", a.tag), Kind::Primary, size, !busy)
+                                .on_hover_text("Downloads it, checks it and restarts GoldLink. Your saves stay as they are.")
+                                .clicked()
+                            {
+                                self.start_update();
+                            }
+                            let size = egui::vec2(ui.available_width(), 34.0);
+                            if theme::button(ui, "What's new", Kind::Neutral, size, true).clicked() {
+                                open_link(&a.page);
+                            }
+                        });
+                    } else if theme::button(
+                        ui,
+                        "Open the release page",
+                        Kind::Neutral,
+                        egui::vec2(width, 34.0),
+                        true,
+                    )
+                    .clicked()
+                    {
+                        open_link(&a.page);
+                    }
+                }
+                Some(Stage::Downloading(done, total)) => {
+                    let mb = |b: u64| b as f32 / (1u64 << 20) as f32;
+                    let text = if *total > 0 {
+                        format!(
+                            "Downloading GoldLink {}…  {:.0} / {:.0} MB",
+                            a.tag,
+                            mb(*done),
+                            mb(*total)
+                        )
+                    } else {
+                        format!("Downloading GoldLink {}…", a.tag)
+                    };
+                    line(ui, &text);
+                    let part = if *total > 0 {
+                        *done as f32 / *total as f32
+                    } else {
+                        0.0
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(part)
+                            .desired_height(10.0)
+                            .fill(theme::AMBER),
+                    );
+                }
+                Some(Stage::Checking) => line(ui, "Checking the download…"),
+                Some(Stage::Installing) => line(ui, "Installing…"),
+                Some(Stage::Done(_)) => {
+                    line(ui, &format!("GoldLink {} is installed. Restarting…", a.tag))
+                }
+                Some(Stage::Failed(e)) => {
+                    line(ui, &format!("The update didn't go through: {e}"));
+                    ui.add_space(4.0);
+                    let width = ui.available_width();
+                    ui.horizontal(|ui| {
+                        if theme::button(
+                            ui,
+                            "Try again",
+                            Kind::Neutral,
+                            egui::vec2((width - 8.0) * 0.5, 34.0),
+                            true,
+                        )
+                        .clicked()
+                        {
+                            self.start_update();
+                        }
+                        let size = egui::vec2(ui.available_width(), 34.0);
+                        if theme::button(ui, "Open the release page", Kind::Neutral, size, true)
+                            .clicked()
+                        {
+                            open_link(&a.page);
+                        }
+                    });
+                }
+            }
+        });
     }
 
     fn has_rom(&self) -> bool {
@@ -404,18 +565,19 @@ impl Launcher {
     /// The ROM screen (UC8 §2.1): your game, then PLAY.
     pub fn ui(&mut self, ctx: &egui::Context, art: &crate::theme::Art) -> Next {
         use crate::theme::{self, Kind};
-        if self.autoplay && self.work.is_none() && self.release.is_ok() && self.has_rom() {
+        if self.autoplay && !self.busy() && self.release.is_ok() && self.has_rom() {
             self.autoplay = false;
             self.play();
         }
         let next = self.poll();
         if let Some(rx) = &self.update
-            && let Ok(note) = rx.try_recv()
+            && let Ok(found) = rx.try_recv()
         {
-            self.update_note = note;
+            self.available = found;
             self.update = None;
         }
-        if self.work.is_some() || self.update.is_some() {
+        self.poll_update(ctx);
+        if self.busy() || self.update.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
         egui::CentralPanel::default()
@@ -481,16 +643,12 @@ impl Launcher {
                             );
                         });
                     }
-                    if let Some(note) = &self.update_note {
-                        theme::inset(ui, theme::AMBER, |ui| {
-                            ui.label(egui::RichText::new(note.as_str()).color(theme::AMBER));
-                        });
-                    }
+                    self.update_note(ui);
                     ui.add_space(6.0);
                     let label = if self.has_rom() { "Choose another ROM…" } else { "Choose your ROM…" };
                     let kind = if self.has_rom() { Kind::Neutral } else { Kind::Primary };
                     let h = if self.has_rom() { 34.0 } else { 46.0 };
-                    if theme::button(ui, label, kind, egui::vec2(ui.available_width(), h), self.work.is_none())
+                    if theme::button(ui, label, kind, egui::vec2(ui.available_width(), h), !self.busy())
                         .clicked()
                     {
                         self.pick_rom();
@@ -508,7 +666,7 @@ impl Launcher {
                     None => ("Tip: your saves live in your GoldLink folder, not next to the program.".to_owned(), false),
                 };
                 theme::tip_line(ui, c.tip, &tip, error);
-                if theme::big_button(ui, art, c.button, Some("play"), "PLAY", Kind::Go, ready && self.work.is_none())
+                if theme::big_button(ui, art, c.button, Some("play"), "PLAY", Kind::Go, ready && !self.busy())
                     .clicked()
                 {
                     self.play();
@@ -516,6 +674,23 @@ impl Launcher {
             });
         next
     }
+}
+
+/// Opens a web page in the system's browser.
+pub fn open_link(url: &str) {
+    if !url.starts_with("https://") {
+        return;
+    }
+    let mut command = if cfg!(windows) {
+        let mut c = std::process::Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open")
+    } else {
+        std::process::Command::new("xdg-open")
+    };
+    command.arg(url).spawn().ok();
 }
 
 /// Opens a folder in the system's file manager.
