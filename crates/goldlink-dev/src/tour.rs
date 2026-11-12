@@ -22,6 +22,12 @@ enum Step {
     Until(Scene, u32),
     Wait(u32),
     Press(Keys),
+    /// The touch screen as the DS draws it, saved as `<n>-<name>-raw.png`.
+    Raw(&'static str),
+    /// The lead: this species holding this item at this level, alone in the party (debug
+    /// command 14 preset 9; the buffer's address from hg-engine/build/rom_gen.ld, the constants
+    /// from its headers, as link_e2e_probe.lua does; PROBE_ROOT is the repository).
+    Lead(&'static str, &'static str, u8),
     /// Presses A every second until the battle's touch screen waits in this menu (or gives up).
     MashUntilMenu(i8, u32),
     /// A touch on the touch screen (held a few frames).
@@ -117,11 +123,81 @@ const LEARN_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=mega: the Key Stone, a Mega Stone holder, a wild battle's fight menu;
+/// the touch screen's MEGA button off, then lit (for the HUD's reading of it).
+const MEGA_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    // The Key Stone comes with the game cleared (debug command 16 bit 3), with messages: B
+    // closes them (the tour's save faces Falkner, and A would talk to him; the field must be free
+    // for the next debug commands).
+    Step::Debug(C::COOP_DEBUG_GIVE_HMS as u8, 8),
+    Step::Wait(120),
+    Step::Press(Keys::B),
+    Step::Wait(90),
+    Step::Press(Keys::B),
+    Step::Wait(90),
+    Step::Press(Keys::B),
+    Step::Wait(90),
+    Step::Press(Keys::B),
+    Step::Wait(90),
+    Step::Press(Keys::B),
+    Step::Wait(90),
+    Step::Press(Keys::B),
+    Step::Wait(240),
+    Step::Lead("GENGAR", "GENGARITE", 50),
+    Step::Wait(400),
+    Step::Lead("GENGAR", "GENGARITE", 50),
+    Step::Wait(400),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 5),
+    Step::Until(Scene::Battle, 300),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 5),
+    Step::Until(Scene::Battle, 600),
+    Step::MashUntilMenu(goldlink::goldlink_bridge::battle_ui::menu::FIGHT, 60 * 60),
+    Step::Wait(40),
+    Step::Raw("mega-off"),
+    Step::Shot("mega-off"),
+    Step::Touch(212, 172),
+    Step::Wait(40),
+    Step::Raw("mega-on"),
+    Step::Shot("mega-on"),
+    // The first move with MEGA lit: Gengar mega-evolves before it attacks.
+    Step::Touch(64, 52),
+    Step::Wait(60 * 9),
+    Step::Shot("mega-evolved"),
+    Step::Close,
+];
+
+/// hg-engine's `#define NAME value` in one of its headers.
+fn engine_constant(root: &std::path::Path, header: &str, name: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(root.join("hg-engine").join(header)).ok()?;
+    text.lines().find_map(|l| {
+        let mut w = l.split_whitespace();
+        (w.next() == Some("#define") && w.next() == Some(name))
+            .then(|| w.next()?.parse().ok())
+            .flatten()
+    })
+}
+
+/// A symbol's address from hg-engine's build (rom_gen.ld: `name = 0x...;`).
+fn engine_symbol(root: &std::path::Path, name: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(root.join("hg-engine/build/rom_gen.ld")).ok()?;
+    let prefix = format!("{name} = 0x");
+    text.lines()
+        .find_map(|l| {
+            l.strip_prefix(&prefix)?
+                .strip_suffix(';')
+                .map(str::to_owned)
+        })
+        .and_then(|h| u32::from_str_radix(&h, 16).ok())
+}
+
 fn steps() -> &'static [Step] {
     match std::env::var("GOLDLINK_DEV_TOUR_ROUTE").as_deref() {
         Ok("faint") => FAINT_STEPS,
         Ok("intro") => intro_steps(),
         Ok("learn") => LEARN_STEPS,
+        Ok("mega") => MEGA_STEPS,
         _ => STEPS,
     }
 }
@@ -193,6 +269,8 @@ struct State {
     log: Vec<String>,
     sized: bool,
     last_menu: Option<(i8, bool)>,
+    /// A debug command waiting for the ROM's answer: its sequence number, command, and frames.
+    pending: Option<(u8, u8, u32)>,
 }
 
 #[derive(Clone)]
@@ -309,6 +387,30 @@ impl FrameHook for TourHook {
         let Some(step) = steps().get(s.step).copied() else {
             return;
         };
+        // A debug command's answer before the next step (the ROM refuses some while busy).
+        if let Some((seq, cmd, frames)) = s.pending {
+            let at = emu.mailbox_offset();
+            let ack = at + DIAG + std::mem::offset_of!(goldlink_abi::CoopDiagnostics, debug_ack);
+            let ram = emu.nds.main_ram();
+            let line = if ram[ack] == seq {
+                Some(format!("debug {cmd}: result {}", ram[at + DEBUG_RESULT]))
+            } else if frames > 600 {
+                Some(format!("debug {cmd}: no answer"))
+            } else {
+                None
+            };
+            match line {
+                Some(line) => {
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                    s.pending = None;
+                }
+                None => {
+                    s.pending = Some((seq, cmd, frames + 1));
+                    return;
+                }
+            }
+        }
         let at = emu.mailbox_offset();
         let scene = if emu.mailbox().is_some() {
             let ram = emu.nds.main_ram();
@@ -359,6 +461,59 @@ impl FrameHook for TourHook {
                 s.holding = 6;
                 true
             }
+            Step::Raw(name) => {
+                s.taken += 1;
+                let path = self.0.dir.join(format!("{}-{name}-raw.png", s.taken));
+                let px = emu.nds.framebuffer(1);
+                let img = egui::ColorImage {
+                    size: [256, 192],
+                    pixels: px
+                        .iter()
+                        .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+                        .collect(),
+                };
+                let line = match write_png(&path, &img) {
+                    Ok(()) => format!("raw {}", path.display()),
+                    Err(e) => format!("raw {name} failed: {e}"),
+                };
+                eprintln!("tour: {line}");
+                s.log.push(line);
+                true
+            }
+            Step::Lead(species, item, level) => {
+                let root = std::path::PathBuf::from(
+                    std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()),
+                );
+                let found = (
+                    engine_symbol(&root, "gCoopDebugMonBuffer"),
+                    engine_constant(
+                        &root,
+                        "include/constants/species.h",
+                        &format!("SPECIES_{species}"),
+                    ),
+                    engine_constant(&root, "include/constants/item.h", &format!("ITEM_{item}")),
+                );
+                if let (Some(buf), Some(sp), Some(it)) = found {
+                    let at = (buf - 0x0200_0000) as usize;
+                    let ram = emu.nds.main_ram_mut();
+                    ram[at + 0xEC..at + 0xEE].copy_from_slice(&(sp as u16).to_le_bytes());
+                    ram[at + 0xEE..at + 0xF0].copy_from_slice(&(it as u16).to_le_bytes());
+                    ram[at + 0xF0] = level;
+                    s.seq = s.seq.wrapping_add(1).max(1);
+                    let at = emu.mailbox_offset();
+                    let ram = emu.nds.main_ram_mut();
+                    ram[at + DEBUG_RESULT] = 0;
+                    ram[at + DEBUG_CMD] = C::COOP_DEBUG_GIVE_TEST_MON as u8;
+                    ram[at + DEBUG_ARG] = 9;
+                    ram[at + DEBUG_SEQ] = s.seq;
+                    s.pending = Some((s.seq, C::COOP_DEBUG_GIVE_TEST_MON as u8, 0));
+                } else {
+                    let line = format!("lead {species}/{item}: not found ({found:?})");
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
+                true
+            }
             Step::Touch(x, y) => {
                 input.touch = Some((x, y));
                 s.holding = 6;
@@ -367,9 +522,11 @@ impl FrameHook for TourHook {
             Step::Debug(cmd, arg) => {
                 s.seq = s.seq.wrapping_add(1).max(1);
                 let ram = emu.nds.main_ram_mut();
+                ram[at + DEBUG_RESULT] = 0;
                 ram[at + DEBUG_CMD] = cmd;
                 ram[at + DEBUG_ARG] = arg;
                 ram[at + DEBUG_SEQ] = s.seq;
+                s.pending = Some((s.seq, cmd, 0));
                 true
             }
             Step::Shot(name) => {

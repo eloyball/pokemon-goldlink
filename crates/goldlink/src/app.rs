@@ -78,6 +78,8 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
+    /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit).
+    mega: Option<bool>,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -140,6 +142,7 @@ impl GameApp {
             textbox: None,
             wide: None,
             wide_side: 0,
+            mega: None,
 
             settings_open: false,
             messages,
@@ -277,6 +280,7 @@ impl GameApp {
             } else {
                 self.last_seq = frame.seq;
                 if self.config.video.layout == Layout::OneScreen {
+                    self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
                     let img = hud::recolour_textbox(rows);
                     match &mut self.textbox {
@@ -695,7 +699,7 @@ impl GameApp {
                     }
                 }
                 if hud_draws {
-                    if let Some(at) = hud::draw(ui, frame, b) {
+                    if let Some(at) = hud::draw(ui, frame, b, self.mega) {
                         self.one.tap = Some((at, Instant::now()));
                     }
                 } else if let Some(tb) = &self.textbox {

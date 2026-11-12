@@ -48,6 +48,32 @@ const TAP_RUN: (u16, u16) = (128, 172);
 const TAP_POKEMON: (u16, u16) = (216, 168);
 const TAP_MOVES: [(u16, u16); 4] = [(64, 52), (192, 52), (64, 116), (192, 116)];
 const TAP_CANCEL: (u16, u16) = (128, 172);
+/// hg-engine's MEGA button in the fight menu (src/battle/battle_input.c SkillMenuTouchData).
+const TAP_MEGA: (u16, u16) = (212, 172);
+/// MEGA lit (the touch screen's icon turns this yellow).
+const MEGA_LIT_TOP: Color32 = Color32::from_rgb(0xF3, 0xF3, 0x61);
+const MEGA_LIT_BOTTOM: Color32 = Color32::from_rgb(0xA8, 0x9A, 0x30);
+
+/// hg-engine's MEGA button as the touch screen shows it (`bottom`: the touch screen's pixels,
+/// 0x00RRGGBB): None when it isn't offered (CANCEL then runs to the right edge), else whether
+/// it's lit. Measured on the running game: its dark edge at x 178 (CANCEL's blue there
+/// without it); its icon's middle (212, 172) grey when off, yellow when lit.
+pub fn mega_state(bottom: &[u32]) -> Option<bool> {
+    let px = |x: usize, y: usize| bottom.get(y * 256 + x).map_or(0, |p| p & 0xFF_FFFF);
+    let edge = (162..186).filter(|&y| px(178, y) == 0x41_4141).count();
+    if edge < 12 {
+        return None;
+    }
+    let lit = (204..222)
+        .flat_map(|x| (164..182).map(move |y| (x, y)))
+        .any(|(x, y)| {
+            let p = px(x, y);
+            let (r, g, b) = (p >> 16, (p >> 8) & 0xFF, p & 0xFF);
+            r > 200 && g > 200 && b < 150
+        });
+    Some(lit)
+}
+
 /// The two-option menus' buttons (top, bottom).
 const TAP_OPTIONS: [(u16, u16); 2] = [(128, 68), (128, 140)];
 /// The target menu's buttons: player left, opponent right, player right, opponent left.
@@ -283,7 +309,12 @@ impl Ctx<'_> {
 /// Tab shows the touch screen (`Sense::CLICK`, not `Sense::click()`, which is focusable).
 ///
 /// The band for a menu the HUD draws. Returns the touch to send when a button was clicked.
-pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16)> {
+pub fn draw(
+    ui: &mut egui::Ui,
+    frame: Rect,
+    hud: &BattleHud,
+    mega: Option<bool>,
+) -> Option<(u16, u16)> {
     let s = frame.height() / ROWS;
     let band = band(frame);
     let mut c = Ctx {
@@ -302,7 +333,7 @@ pub fn draw(ui: &mut egui::Ui, frame: Rect, hud: &BattleHud) -> Option<(u16, u16
         party_balls(c.ui.painter(), band.left_top(), balls, s);
     }
     match (hud.menu, &hud.options) {
-        (menu::FIGHT, _) => fight(&mut c, hud),
+        (menu::FIGHT, _) => fight(&mut c, hud, mega),
         (menu::TARGET, _) => targets(&mut c, hud),
         (_, Some((top, bottom))) => two_options(&mut c, hud, top, bottom),
         _ => commands(&mut c, hud),
@@ -363,7 +394,7 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
     }
 }
 
-fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
+fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<bool>) {
     // Two columns of moves, then a column for the highlighted move and BACK.
     let w = c.w;
     let info_x = w - 57.0;
@@ -452,8 +483,40 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud) {
             c.tap = Some(TAP_MOVES[i]);
         }
     }
-    // The right column: the highlighted move's type, and back.
+    // The right column: MEGA when hg-engine offers it (lit when chosen), else the highlighted
+    // move's power and accuracy; then BACK. With MEGA, the key cursor's last row is BACK, MEGA.
     let info = c.rect(info_x, 4.0, w - 4.0, 23.5);
+    if let Some(lit) = mega {
+        let font = c.fit_caps(&[("MEGA", info)], 7.0);
+        let (top, bottom) = if lit {
+            (MEGA_LIT_TOP, MEGA_LIT_BOTTOM)
+        } else {
+            (PANEL_TOP, PANEL)
+        };
+        c.command(
+            "mega",
+            info,
+            "MEGA",
+            top,
+            bottom,
+            font,
+            hud.cursor == Some((2, 1)),
+            TAP_MEGA,
+        );
+        let back = c.rect(info_x, 25.5, w - 4.0, 44.0);
+        let back_font = c.fit_caps(&[("BACK", back)], 7.0);
+        c.command(
+            "cancel",
+            back,
+            "BACK",
+            PANEL_TOP,
+            PANEL,
+            back_font,
+            hud.cursor == Some((2, 0)),
+            TAP_CANCEL,
+        );
+        return;
+    }
     let shown = selected.and_then(|i| hud.moves[i].as_ref());
     let p = c.ui.painter();
     p.rect_filled(info, CornerRadius::same((2.0 * c.s) as u8), PANEL);
