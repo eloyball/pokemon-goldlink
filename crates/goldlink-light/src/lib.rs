@@ -11,13 +11,12 @@
 //!    meets the ground), with a range check so far backgrounds behind an edge stay clean;
 //! 3. a key light (the sun by day, a low warm sun in the evening, the moon at night, a ceiling
 //!    light indoors) over a coloured ambient: lit faces lean warm, shade leans cool; indoors
-//!    and in caves a warm light over the player's head lights the room around them (corners
+//!    and in caves a warm light high above the player lights the room around them (corners
 //!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
 //!    become point lights placed in 3D, casting warm pools on the ground, and glow a little;
 //!    then a soft bloom from what's brightest;
-//! 5. a slight blur of what's far behind the player and of the screen's top and bottom (a
-//!    soft tilt-shift);
+//! 5. a slight blur of what's far behind the player;
 //! 6. the time of day's colour grade and a vignette.
 //!
 //! Pixels where the 3D scene doesn't show (a text box, menus) are left exactly as they are.
@@ -133,17 +132,17 @@ struct Preset {
     points: f32,
     /// The light sources' own small glow.
     glow: f32,
-    /// A light over the player's head (colour times strength; zero: none) and its reach: the
-    /// room's light indoors, a lantern's in caves, a faint one at night.
+    /// A light above the player (colour times strength; zero: none), how high above them and
+    /// its reach: the room's light indoors (high and wide, so the room is lit around them
+    /// rather than a pool at their feet), a lantern's in caves, a faint one at night.
     player_light: V3,
+    player_height: f32,
     player_range: f32,
     /// Bloom: what's brighter than `bloom_from` (linear luminance) spreads a soft halo.
     bloom: f32,
     bloom_from: f32,
-    /// The most the far blur (what lies well behind the player) and the edge blur (the screen's
-    /// top and bottom) mix in.
+    /// The most the far blur (what lies well behind the player) mixes in.
     far_blur: f32,
-    edge_blur: f32,
     grade: Grade,
 }
 
@@ -207,11 +206,11 @@ fn preset(place: Place, phase: Phase) -> Preset {
         points: 0.0,
         glow: 0.0,
         player_light: [0.0; 3],
+        player_height: 0.0,
         player_range: 1.0,
         bloom: 0.16,
         bloom_from: 0.65,
         far_blur: 0.45,
-        edge_blur: 0.5,
         grade: phase_grade(phase),
     };
     match place {
@@ -238,7 +237,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 points: 1.6,
                 glow: 0.6,
                 player_light: scale([1.0, 0.86, 0.66], 0.30),
-                player_range: 90.0,
+                player_height: 40.0,
+                player_range: 110.0,
                 bloom: 0.55,
                 bloom_from: 0.22,
                 ..outdoor
@@ -258,12 +258,12 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 ao: 1.9,
                 points: 0.0,
                 glow: 0.0,
-                player_light: scale([1.0, 0.80, 0.55], 1.25),
-                player_range: 115.0,
-                bloom: 0.4,
-                bloom_from: 0.45,
+                player_light: scale([1.0, 0.82, 0.58], 0.85),
+                player_height: 70.0,
+                player_range: 210.0,
+                bloom: 0.3,
+                bloom_from: 0.6,
                 far_blur: 0.0,
-                edge_blur: 0.4,
                 grade: Grade {
                     tint: [1.05, 1.0, 0.93],
                     shadow: [0.94, 0.94, 1.08],
@@ -281,12 +281,12 @@ fn preset(place: Place, phase: Phase) -> Preset {
             ao: 1.5,
             points: 0.0,
             glow: 0.0,
-            player_light: scale([1.0, 0.84, 0.62], 0.85),
-            player_range: 140.0,
+            player_light: scale([1.0, 0.84, 0.62], 0.75),
+            player_height: 60.0,
+            player_range: 190.0,
             bloom: 0.35,
             bloom_from: 0.45,
             far_blur: 0.0,
-            edge_blur: 0.45,
             grade: Grade {
                 tint: [0.97, 0.98, 1.04],
                 shadow: [0.92, 0.95, 1.10],
@@ -368,6 +368,8 @@ pub struct Lighting {
     stack: Vec<u32>,
     /// The vignette for (width, height, strength), per pixel.
     vignette: (usize, usize, f32, Vec<f32>),
+    /// Where the player stood last frame (view space), for [`Lighting::focus`].
+    focus: Option<V3>,
 }
 
 impl Default for Lighting {
@@ -478,6 +480,7 @@ impl Lighting {
             label: Vec::new(),
             stack: Vec::new(),
             vignette: (0, 0, 0.0, Vec::new()),
+            focus: None,
         }
     }
 
@@ -593,9 +596,9 @@ impl Lighting {
         if let Some(f) = focus
             && lum(p.player_light) > 0.0
         {
-            // Over the player's head, a little toward the camera.
+            // Above the player, a little toward the camera.
             lights.push(PointLight {
-                pos: add(f, [0.0, 26.0, 12.0]),
+                pos: add(f, [0.0, p.player_height, 12.0]),
                 colour: p.player_light,
                 range: p.player_range,
             });
@@ -644,10 +647,11 @@ impl Lighting {
         if p.bloom > 0.0 {
             self.bloom(w, h, p.bloom, p.bloom_from);
         }
-        // 5. A slight blur of what lies far behind the player and of the screen's edges.
-        if p.far_blur > 0.0 || p.edge_blur > 0.0 {
-            let focus_z = focus.map_or(f32::INFINITY, |f| -f[2]);
-            self.soft_blur(w, h, focus_z, p.far_blur, p.edge_blur);
+        // 5. A slight blur of what lies far behind the player.
+        if p.far_blur > 0.0
+            && let Some(f) = focus
+        {
+            self.far_blur(w, h, -f[2], p.far_blur);
         }
         // 6. The grade and the vignette; 2D-only pixels as they were.
         {
@@ -871,7 +875,7 @@ impl Lighting {
             patches.push(patch);
         }
         patches.retain(|p| p.size >= 3);
-        patches.sort_by(|a, b| b.size.cmp(&a.size));
+        patches.sort_by_key(|p| std::cmp::Reverse(p.size));
         patches.truncate(MAX_LIGHTS);
         patches
             .iter()
@@ -925,20 +929,43 @@ impl Lighting {
         }
     }
 
-    /// Where the player stands: the 3D scene at the screen's middle (the camera follows them).
-    fn focus(&self, w: usize, h: usize) -> Option<V3> {
+    /// Where the player stands: the ground at the screen's middle (the camera follows them),
+    /// eased from frame to frame. The ground, not the player's sprite: it's the furthest of
+    /// what shows there, and doesn't change with the walking animation.
+    fn focus(&mut self, w: usize, h: usize) -> Option<V3> {
         let (cx, cy) = (w / 2, h / 2 + 4);
-        let (mut sum, mut cnt) = ([0.0f32; 3], 0.0f32);
-        for y in cy.saturating_sub(4)..(cy + 5).min(h) {
-            for x in cx.saturating_sub(4)..(cx + 5).min(w) {
-                let c = self.cells[y * w + x];
-                if c.layer != 0 {
+        let window = || {
+            (cy.saturating_sub(6)..(cy + 7).min(h))
+                .flat_map(move |y| (cx.saturating_sub(6)..(cx + 7).min(w)).map(move |x| y * w + x))
+        };
+        let far = window()
+            .filter(|&i| self.cells[i].layer != 0)
+            .map(|i| self.cells[i].pos[2])
+            .reduce(f32::min);
+        let now = far.map(|far| {
+            let (mut sum, mut cnt) = ([0.0f32; 3], 0.0f32);
+            for i in window() {
+                let c = self.cells[i];
+                if c.layer != 0 && c.pos[2] < far + 6.0 {
                     sum = add(sum, c.pos);
                     cnt += 1.0;
                 }
             }
-        }
-        (cnt > 0.0).then(|| scale(sum, 1.0 / cnt))
+            scale(sum, 1.0 / cnt)
+        });
+        // Eased toward where it is now; a jump (a new map, a warp) is taken at once.
+        self.focus = match (self.focus, now) {
+            (Some(was), Some(now)) => {
+                let d = sub(now, was);
+                Some(if dot(d, d) < 64.0 * 64.0 {
+                    add(was, scale(d, 0.25))
+                } else {
+                    now
+                })
+            }
+            (_, now) => now,
+        };
+        self.focus
     }
 
     /// Bloom: what's brighter than `from` (linear luminance), and the light sources, at half
@@ -984,6 +1011,7 @@ impl Lighting {
         }
         let (cells, half) = (&self.cells, &self.half);
         par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
+            // What's (nearly) black takes none: a room's dark surround doesn't glow.
             let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (hh - 1) as f32);
             let (y0, ty) = (fy as usize, fy.fract());
             let y1 = (y0 + 1).min(hh - 1);
@@ -996,15 +1024,15 @@ impl Lighting {
                 let x1 = (x0 + 1).min(hw - 1);
                 let top = mix(half[y0 * hw + x0], half[y0 * hw + x1], tx);
                 let bottom = mix(half[y1 * hw + x0], half[y1 * hw + x1], tx);
-                *o = add(*o, scale(mix(top, bottom, ty), strength));
+                let takes = (lum(cells[y * w + x].base) / 0.04).min(1.0);
+                *o = add(*o, scale(mix(top, bottom, ty), strength * takes));
             }
         });
     }
 
     /// A slight blur, mixed in up to `far` for what lies well behind the player (past
-    /// `focus_z`) and up to `edge` toward the screen's top and bottom (and a little its sides):
-    /// a soft tilt-shift. Only the 3D scene blurs, only with itself (text boxes don't bleed in).
-    fn soft_blur(&mut self, w: usize, h: usize, focus_z: f32, far: f32, edge: f32) {
+    /// `focus_z`). Only the 3D scene blurs, only with itself (text boxes don't bleed in).
+    fn far_blur(&mut self, w: usize, h: usize, focus_z: f32, far: f32) {
         const R: isize = 2;
         let smooth = |a: f32, b: f32, v: f32| {
             let t = ((v - a) / (b - a)).clamp(0.0, 1.0);
@@ -1039,17 +1067,12 @@ impl Lighting {
         }
         let (cells, across, count) = (&self.cells, &self.tmp3, &self.tmp1);
         par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
-            let yn = ((y as f32 + 0.5) - h as f32 / 2.0).abs() / (h as f32 / 2.0);
-            let edge_y = smooth(0.45, 1.0, yn);
             for (x, o) in row.iter_mut().enumerate() {
                 let c = cells[y * w + x];
                 if c.layer == 0 {
                     continue;
                 }
-                let xn = ((x as f32 + 0.5) - w as f32 / 2.0).abs() / (w as f32 / 2.0);
-                let by_edge = edge * edge_y.max(0.6 * smooth(0.7, 1.0, xn));
-                let by_depth = far * smooth(30.0, 250.0, -c.pos[2] - focus_z);
-                let t = by_edge.max(by_depth);
+                let t = far * smooth(30.0, 250.0, -c.pos[2] - focus_z);
                 if t <= 0.01 {
                     continue;
                 }

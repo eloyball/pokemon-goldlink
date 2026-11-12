@@ -34,6 +34,10 @@ enum Step {
     Touch(u16, u16),
     Debug(u8, u8),
     Shot(&'static str),
+    /// Holds the keys for the frames; with a name, records every frame (UC11's lighting) as
+    /// `<dir>/rec-<name>/<frame>.bin`: the wide top screen and the 3D scene's buffers (see
+    /// `record_frame`).
+    Walk(Keys, u32, &'static str),
     /// Presses A every second until the naming screen is open (found in RAM by its keyboard's
     /// first row, as `NamingScreenAppData` holds it), then logs where its data and the pointers
     /// to it are, and the VBlank callback (the addresses goldlink_bridge::naming needs). With
@@ -297,6 +301,72 @@ fn engine_symbol(root: &std::path::Path, name: &str) -> Option<u32> {
         .and_then(|h| u32::from_str_radix(&h, 16).ok())
 }
 
+/// GOLDLINK_DEV_TOUR_ROUTE=pokecenter (UC11's lighting): the debug warp to Cherrygrove (in
+/// front of its Pokémon Center), frames recorded walking the town, then inside the centre.
+const POKECENTER_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
+    Step::Wait(400),
+    Step::Shot("cherrygrove"),
+    Step::Walk(Keys::DOWN, 40, "town-down"),
+    Step::Walk(Keys::UP, 40, "town-up"),
+    Step::Walk(Keys::UP, 40, "enter"),
+    Step::Wait(150),
+    Step::Shot("pokecenter"),
+    Step::Walk(Keys::UP, 48, "center-up"),
+    Step::Wait(20),
+    Step::Shot("pokecenter-counter"),
+    Step::Walk(Keys::LEFT, 48, "center-left"),
+    Step::Walk(Keys::RIGHT, 96, "center-right"),
+    Step::Wait(20),
+    Step::Shot("pokecenter-side"),
+    Step::Walk(Keys::LEFT, 48, ""),
+    Step::Walk(Keys::DOWN, 120, "center-down"),
+    Step::Wait(20),
+    Step::Shot("center-door"),
+    Step::Close,
+];
+
+/// One recorded frame: `proj` (16 x i32, 20.12), `w_depth` (u32), the map (u32), the activity
+/// (u32), the wide picture's side (u32); then the wide top screen ((256 + 2 * side) x 192 u32,
+/// 0x00RRGGBB), the depth (384 x 192 u32) and the layer mask (384 x 192 u8). Nothing when the
+/// top screen doesn't show the 3D scene.
+fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
+    use goldlink_abi::{CoopCommBlock, CoopPlayerState};
+    use std::mem::offset_of;
+    let mut b = goldlink_core::LightBuffers::default();
+    if !emu.nds.light_buffers(&mut b) {
+        return Ok(());
+    }
+    let player = offset_of!(CoopCommBlock, local_player);
+    let (activity, map) = emu.mailbox().map_or((0, 0), |mb| {
+        let m = player + offset_of!(CoopPlayerState, map_id);
+        (
+            mb[player + offset_of!(CoopPlayerState, activity)] as u32,
+            u16::from_le_bytes([mb[m], mb[m + 1]]) as u32,
+        )
+    });
+    let side = emu.wide();
+    let wide = if side > 0 {
+        emu.nds.wide_frame(0, side)
+    } else {
+        emu.nds.framebuffer(0).to_vec()
+    };
+    let mut out = Vec::with_capacity(84 + wide.len() * 4 + b.depth.len() * 5);
+    for v in b.proj {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [u32::from(b.w_depth), map, activity, side as u32] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in wide.iter().chain(&b.depth) {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&b.layer);
+    std::fs::write(path, out)
+}
+
 fn steps() -> &'static [Step] {
     match std::env::var("GOLDLINK_DEV_TOUR_ROUTE").as_deref() {
         Ok("faint") => FAINT_STEPS,
@@ -305,6 +375,7 @@ fn steps() -> &'static [Step] {
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
+        Ok("pokecenter") => POKECENTER_STEPS,
         _ => STEPS,
     }
 }
@@ -567,6 +638,17 @@ impl FrameHook for TourHook {
                 scene == want || s.frames >= max
             }
             Step::Wait(n) => s.frames >= n,
+            Step::Walk(k, n, name) => {
+                input.keys |= k;
+                if !name.is_empty() {
+                    let dir = self.0.dir.join(format!("rec-{name}"));
+                    let _ = std::fs::create_dir_all(&dir);
+                    if let Err(e) = record_frame(emu, &dir.join(format!("{:04}.bin", s.frames))) {
+                        eprintln!("tour: record {name}: {e}");
+                    }
+                }
+                s.frames >= n
+            }
             Step::MashUntilMenu(want, max) => {
                 use goldlink::goldlink_bridge::battle_ui::menu;
                 let b = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());

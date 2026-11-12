@@ -236,7 +236,8 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t
     const bool strips = soft2d.WideOwner[0] == top && soft2d.WideDrawn[0] > 0;
     for (int y = 0; y < 192; y++)
     {
-        std::memcpy(depth + y * width, soft.GetWideDepthLine(y), width * 4);
+        // The depth of the picture on screen (the buffer itself is already the next frame's).
+        std::memcpy(depth + y * width, soft.GetShownDepthLine(y), width * 4);
         uint8_t *row = layer + y * width;
         std::memcpy(row, soft2d.Layer3D[y], width);
         if (!strips)
@@ -247,9 +248,8 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t
                     row[x] = (colour[x] >> 24) != 0 ? 1 : 0;
         }
     }
-    std::memcpy(proj, gpu.GPU3D.ProjMatrix, 16 * 4);
-    const bool w = gpu.GPU3D.RenderNumPolygons > 0 && gpu.GPU3D.RenderPolygonRAM[0]->WBuffer;
-    return w ? 2 : 1;
+    std::memcpy(proj, gpu.GPU3D.ShownProjMatrix, 16 * 4);
+    return gpu.GPU3D.ShownWBuffer ? 2 : 1;
 }
 
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)

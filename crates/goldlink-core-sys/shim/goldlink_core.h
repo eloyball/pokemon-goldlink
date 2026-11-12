@@ -101,8 +101,8 @@ void gl_core_set_wide(GlCore *core, int side);
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // What GoldLink's lighting needs from the top screen (UC11), each (256 + 2*64) x 192, the screen's
-// x=0 at column 64: the 3D depth, where the 3D layer shows (1 on top, 2 under a 2D layer, 0
-// not), and the projection matrix (20.12). Returns 0 when the top screen can't show the
+// x=0 at column 64: the depth of the 3D picture on screen, where the 3D layer shows (1 on top,
+// 2 under a 2D layer, 0 not), and the projection most of that picture's polygons used (20.12). Returns 0 when the top screen can't show the
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16]);
