@@ -105,6 +105,8 @@ pub struct GameApp {
     mega_icon: Option<egui::TextureHandle>,
     /// The lighting's buffers and worker threads (UC11), from the first lit frame.
     lighting: Option<goldlink_light::Lighting>,
+    /// The camera's steps half way on repeated frames (UC11).
+    smooth: crate::smooth::Smooth,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -173,6 +175,7 @@ impl GameApp {
             mega: None,
             mega_icon: None,
             lighting: None,
+            smooth: crate::smooth::Smooth::new(),
 
             settings_open: false,
             messages,
@@ -370,23 +373,47 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 let light = if lit { frame.light.clone() } else { None };
-                Some((frame.pixels.clone(), wide, frame.wide_side, light))
+                Some((
+                    frame.pixels.clone(),
+                    wide,
+                    frame.wide_side,
+                    light,
+                    frame.seq,
+                ))
             }
         };
         let options = match self.config.video.filter {
             Filter::Nearest => egui::TextureOptions::NEAREST,
             Filter::Linear => egui::TextureOptions::LINEAR,
         };
-        let Some((mut pixels, mut wide, side, light)) = shown else {
+        let Some((mut pixels, mut wide, side, light, seq)) = shown else {
             if self.texture.is_none() {
                 let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
                 self.texture = Some(ctx.load_texture("screens", img, options));
             }
             return;
         };
+        // The top picture as the game drew it, for the smooth camera.
+        let smooth = self.config.video.smooth;
+        let raw_top = smooth.then(|| wide.clone().unwrap_or_else(|| pixels[..256 * 192].to_vec()));
         if lit {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
+        // With the smooth camera, the pictures go up at twice the size (a half step can be half
+        // a DS pixel), the top one half way on the frames that show that.
+        let between = match &raw_top {
+            Some(raw) => {
+                let (top, w) = match &wide {
+                    Some(wide) => (&wide[..], 256 + 2 * side),
+                    None => (&pixels[..256 * 192], 256),
+                };
+                self.smooth.frame(seq, raw, top, w)
+            }
+            None => {
+                self.smooth.reset();
+                None
+            }
+        };
         let image = |px: &[u32], w: usize, h: usize| egui::ColorImage {
             size: [w, h],
             pixels: px
@@ -394,15 +421,28 @@ impl GameApp {
                 .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
                 .collect(),
         };
+        use crate::smooth::double;
         if let Some(wide) = &wide {
             let w = 256 + 2 * side;
-            let img = image(wide, w, 192);
+            let img = match (smooth, &between) {
+                (false, _) => image(wide, w, 192),
+                (true, Some(mid)) => image(mid, 2 * w, 384),
+                (true, None) => image(&double(wide, w, 192), 2 * w, 384),
+            };
             match &mut self.wide {
-                Some(t) if t.size() == [w, 192] => t.set(img, options),
-                _ => self.wide = Some(ctx.load_texture("wide", img, options)),
+                Some(t) => t.set(img, options),
+                None => self.wide = Some(ctx.load_texture("wide", img, options)),
             }
         }
-        let img = image(&pixels, 256, 384);
+        let img = match (smooth, &between) {
+            (false, _) => image(&pixels, 256, 384),
+            (true, Some(mid)) if wide.is_none() => {
+                let mut both = mid.clone();
+                both.extend(double(&pixels[256 * 192..], 256, 192));
+                image(&both, 512, 768)
+            }
+            (true, _) => image(&double(&pixels, 256, 384), 512, 768),
+        };
         match &mut self.texture {
             Some(t) => t.set(img, options),
             None => self.texture = Some(ctx.load_texture("screens", img, options)),
@@ -512,6 +552,10 @@ impl GameApp {
                 changed |= ui
                     .checkbox(&mut v.lighting, "Lighting")
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut v.smooth, "Smooth camera")
+                    .on_hover_text("The overworld scrolls in half steps on the frames the game repeats")
                     .changed();
                 if self.release_ui && ui.checkbox(&mut v.fullscreen, "Fullscreen (F11)").changed() {
                     changed = true;

@@ -55,6 +55,8 @@ pub struct Video {
     pub lighting: bool,
     /// The game fills the screen (the launcher stays a window).
     pub fullscreen: bool,
+    /// The overworld's camera steps shown half way on the frames the game repeats (UC11).
+    pub smooth: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,6 +100,7 @@ impl Default for Video {
             wide: true,
             lighting: true,
             fullscreen: true,
+            smooth: true,
         }
     }
 }
