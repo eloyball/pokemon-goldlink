@@ -55,7 +55,8 @@ pub struct Video {
     pub lighting: bool,
     /// The game fills the screen (the launcher stays a window).
     pub fullscreen: bool,
-    /// The overworld's camera steps shown half way on the frames the game repeats (UC11).
+    /// The smooth camera (UC11): where the game draws a new 3D scene every other frame, the
+    /// frame between shows the scene half way, rendered from the game's own polygons.
     pub smooth: bool,
 }
 

@@ -78,6 +78,8 @@ unsafe extern "C" {
         layer: *mut u8,
         proj: *mut i32,
     ) -> c_int;
+    pub fn gl_core_set_mid(core: *mut GlCore, on: c_int);
+    pub fn gl_core_mid_frame(core: *mut GlCore, side: c_int, out: *mut u32, depth: *mut u32) -> c_int;
     pub fn gl_core_audio(core: *mut GlCore, out: *mut i16, max_frames: u32) -> u32;
     pub fn gl_core_set_audio_rate(core: *mut GlCore, rate: f64);
     pub fn gl_core_registers(core: *mut GlCore, cpu: c_int, out: *mut u32);

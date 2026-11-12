@@ -10,7 +10,6 @@ pub mod launcher;
 pub mod layout;
 pub mod lobby;
 pub mod shell;
-pub mod smooth;
 pub mod theme;
 pub mod typing;
 pub mod update;

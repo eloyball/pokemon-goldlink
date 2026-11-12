@@ -40,6 +40,9 @@ pub enum Command {
     Wide(usize),
     /// Hand the lighting its buffers with each frame (UC11).
     Lighting(bool),
+    /// The smooth camera (UC11): melonDS makes a halfway picture when the game shows a new 3D
+    /// scene after repeating the last one ([`Frame::mid`]).
+    Smooth(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -55,6 +58,11 @@ pub struct Frame {
     pub seq: u64,
     /// What the lighting needs (UC11), with it on and the top screen showing the 3D scene.
     pub light: Option<LightFrame>,
+    /// The smooth camera's halfway picture (UC11), when this frame has one: the top screen as
+    /// `wide` lays it out (`256 + 2 * wide_side` wide), shown in its place. Empty otherwise.
+    pub mid: Vec<u32>,
+    /// Its 3D depth (as [`LightBuffers::depth`]), for the lighting.
+    pub mid_depth: Vec<u32>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -144,6 +152,8 @@ impl Runner {
                 wide_side: 0,
                 seq: 0,
                 light: None,
+                mid: Vec::new(),
+                mid_depth: Vec::new(),
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -243,15 +253,6 @@ impl LightFrame {
             COOP_ACTIVITY_FIELD | COOP_ACTIVITY_EVENT | COOP_ACTIVITY_TRANSITION
         )
     }
-
-    /// Walking about or an overworld event (not a transition into a battle or a warp).
-    pub fn walking(&self) -> bool {
-        use goldlink_abi::CoopActivity::*;
-        matches!(
-            self.activity as u32,
-            COOP_ACTIVITY_FIELD | COOP_ACTIVITY_EVENT
-        )
-    }
 }
 
 /// The lighting's view of this frame (in `spare`'s buffers when there is one), when the top
@@ -294,6 +295,8 @@ fn run(
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
     let mut lighting = false;
+    // The smooth camera's halfway picture and depth (swapped with the shared frame's).
+    let (mut mid, mut mid_depth) = (Vec::new(), Vec::new());
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
     let mut light: Option<LightFrame> = None;
     loop {
@@ -339,6 +342,7 @@ fn run(
                 }
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
+                Command::Smooth(on) => emu.nds.set_mid(on),
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -360,8 +364,14 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
+        if !emu.nds.mid_frame(side, &mut mid, &mut mid_depth) {
+            mid.clear();
+            mid_depth.clear();
+        }
         {
             let mut f = lock(&shared.frame);
+            std::mem::swap(&mut f.mid, &mut mid);
+            std::mem::swap(&mut f.mid_depth, &mut mid_depth);
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;

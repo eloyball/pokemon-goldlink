@@ -252,6 +252,32 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t
     return gpu.GPU3D.ShownWBuffer ? 2 : 1;
 }
 
+void gl_core_set_mid(GlCore *core, int on)
+{
+    auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
+    soft.MidWanted = on != 0;
+}
+
+int gl_core_mid_frame(GlCore *core, int side, uint32_t *out, uint32_t *depth)
+{
+    constexpr int maxSide = melonDS::GPU2D::SoftRenderer::MaxSide;
+    static_assert(melonDS::GPU3D::MaxWideSide == maxSide);
+    side = std::clamp(side, 0, maxSide);
+    melonDS::GPU &gpu = core->nds->GPU;
+    auto &soft = static_cast<melonDS::SoftRenderer &>(gpu.GPU3D.GetCurrentRenderer());
+    if (!soft.MidShown || !(core->nds->PowerControl9 & (1 << 15)))
+        return 0;
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
+    const int width = 256 + 2 * side;
+    for (int y = 0; y < 192; y++)
+    {
+        std::memcpy(out + y * width, &soft2d.MidPicture[y][maxSide - side], width * 4);
+        if (depth)
+            std::memcpy(depth + y * (256 + 2 * maxSide), soft.GetMidShownDepthLine(y), (256 + 2 * maxSide) * 4);
+    }
+    return width;
+}
+
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
 {
     auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());

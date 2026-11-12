@@ -1395,7 +1395,6 @@ dependencies = [
  "goldlink-sign",
  "hex",
  "png 0.17.16",
- "rayon",
  "rfd",
  "serde_json",
  "sha2",
