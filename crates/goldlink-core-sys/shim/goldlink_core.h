@@ -102,8 +102,9 @@ void gl_core_set_wide(GlCore *core, int side);
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 
 // Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx) whose main-engine sprite
-// pieces (by their top-left corner) are drawn moved by dx, from the next frame on: the one-screen
-// layout moves the battle's HP boxes toward the wider picture's edges. At most 8; 0 clears.
+// pieces (by their centre) are drawn moved by dx, from the next frame on: the one-screen layout
+// moves the battle's HP boxes toward the wider picture's edges. At most 8; 0 clears. None while
+// the main engine draws the touch screen.
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count);
 
 // Up to max_frames stereo frames (interleaved L, R) of audio produced so far. Returns how many.

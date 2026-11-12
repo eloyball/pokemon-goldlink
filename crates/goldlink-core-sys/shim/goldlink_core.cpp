@@ -223,6 +223,11 @@ void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
 {
     auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());
     count = std::clamp(count, 0, melonDS::GPU2D::SoftRenderer::MaxObjMove);
+    // Only while the main engine draws the top screen (POWCNT1 bit 15): a screen the battle opens
+    // on the touch screen with the main engine (the nickname keyboard after a catch) keeps its
+    // sprites where they are.
+    if (!(core->nds->PowerControl9 & (1 << 15)))
+        count = 0;
     for (int i = 0; i < count; i++)
     {
         const int32_t *r = rects + i * 5;
