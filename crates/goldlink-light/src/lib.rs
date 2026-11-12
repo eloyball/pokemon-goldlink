@@ -10,11 +10,15 @@
 //! 2. ambient occlusion: nearby geometry in front of a surface darkens it a little (where a wall
 //!    meets the ground), with a range check so far backgrounds behind an edge stay clean;
 //! 3. a key light (the sun by day, a low warm sun in the evening, the moon at night, a ceiling
-//!    light indoors) over a coloured ambient: lit faces lean warm, shade leans cool;
+//!    light indoors) over a coloured ambient: lit faces lean warm, shade leans cool; indoors
+//!    and in caves a warm light over the player's head lights the room around them (corners
+//!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
 //!    become point lights placed in 3D, casting warm pools on the ground, and glow a little;
-//! 5. a very slight blur of what's far behind the player;
-//! 6. the time of day's colour grade and a soft vignette.
+//!    then a soft bloom from what's brightest;
+//! 5. a slight blur of what's far behind the player and of the screen's top and bottom (a
+//!    soft tilt-shift);
+//! 6. the time of day's colour grade and a vignette.
 //!
 //! Pixels where the 3D scene doesn't show (a text box, menus) are left exactly as they are.
 //! Battles and menus get [`Lighting::grade`] only: a small grade, no lighting.
@@ -127,9 +131,19 @@ struct Preset {
     ao: f32,
     /// Point lights from bright pixels (0: none).
     points: f32,
+    /// The light sources' own small glow.
     glow: f32,
-    /// The far blur's most (0..1).
+    /// A light over the player's head (colour times strength; zero: none) and its reach: the
+    /// room's light indoors, a lantern's in caves, a faint one at night.
+    player_light: V3,
+    player_range: f32,
+    /// Bloom: what's brighter than `bloom_from` (linear luminance) spreads a soft halo.
+    bloom: f32,
+    bloom_from: f32,
+    /// The most the far blur (what lies well behind the player) and the edge blur (the screen's
+    /// top and bottom) mix in.
     far_blur: f32,
+    edge_blur: f32,
     grade: Grade,
 }
 
@@ -138,6 +152,8 @@ struct Grade {
     tint: V3,
     /// Shadows' tint (blended out as they get lighter).
     shadow: V3,
+    /// Highlights' tint (blended in as they get lighter).
+    highlight: V3,
     saturation: f32,
     exposure: f32,
     vignette: f32,
@@ -147,111 +163,137 @@ fn phase_grade(phase: Phase) -> Grade {
     match phase {
         Phase::Morning => Grade {
             tint: [1.03, 0.995, 0.98],
-            shadow: [0.97, 0.97, 1.05],
-            saturation: 1.03,
+            shadow: [0.95, 0.96, 1.07],
+            highlight: [1.05, 1.0, 0.95],
+            saturation: 1.07,
             exposure: 1.0,
-            vignette: 0.14,
+            vignette: 0.18,
         },
         Phase::Day => Grade {
             tint: [1.01, 1.0, 0.99],
-            shadow: [0.96, 0.98, 1.05],
-            saturation: 1.04,
+            shadow: [0.93, 0.97, 1.08],
+            highlight: [1.06, 1.01, 0.93],
+            saturation: 1.1,
             exposure: 1.0,
-            vignette: 0.12,
+            vignette: 0.16,
         },
         Phase::Evening => Grade {
             // The game's own evening is already orange: little more.
             tint: [1.01, 0.995, 0.985],
             shadow: [0.95, 0.96, 1.06],
+            highlight: [1.02, 1.0, 0.98],
             saturation: 0.97,
             exposure: 0.98,
-            vignette: 0.18,
+            vignette: 0.2,
         },
         Phase::Night => Grade {
-            tint: [0.90, 0.93, 1.07],
-            shadow: [0.92, 0.94, 1.10],
-            saturation: 0.86,
-            exposure: 0.90,
-            vignette: 0.24,
+            tint: [0.93, 0.96, 1.08],
+            shadow: [0.90, 0.94, 1.14],
+            highlight: [1.04, 1.0, 0.94],
+            saturation: 1.02,
+            exposure: 0.98,
+            vignette: 0.30,
         },
     }
 }
 
 fn preset(place: Place, phase: Phase) -> Preset {
     let sun = normalize([-0.5, 0.7, 0.5]);
+    let outdoor = Preset {
+        ambient: scale([0.76, 0.84, 1.0], 0.66),
+        key: scale([1.0, 0.91, 0.78], 0.74),
+        key_dir: sun,
+        ao: 1.3,
+        points: 0.0,
+        glow: 0.0,
+        player_light: [0.0; 3],
+        player_range: 1.0,
+        bloom: 0.16,
+        bloom_from: 0.65,
+        far_blur: 0.45,
+        edge_blur: 0.5,
+        grade: phase_grade(phase),
+    };
     match place {
         Place::Outdoor => match phase {
             Phase::Morning => Preset {
-                ambient: scale([0.80, 0.80, 0.96], 0.75),
-                key: scale([1.0, 0.86, 0.76], 0.50),
-                key_dir: sun,
-                ao: 1.0,
-                points: 0.0,
-                glow: 0.0,
-                far_blur: 0.2,
-                grade: phase_grade(phase),
+                ambient: scale([0.82, 0.80, 0.96], 0.74),
+                key: scale([1.0, 0.86, 0.74], 0.58),
+                ..outdoor
             },
-            Phase::Day => Preset {
-                ambient: scale([0.80, 0.86, 1.0], 0.75),
-                key: scale([1.0, 0.93, 0.82], 0.52),
-                key_dir: sun,
-                ao: 1.0,
-                points: 0.0,
-                glow: 0.0,
-                far_blur: 0.2,
-                grade: phase_grade(phase),
-            },
+            Phase::Day => outdoor,
             Phase::Evening => Preset {
                 ambient: scale([0.80, 0.80, 0.96], 0.74),
-                key: scale([1.0, 0.88, 0.72], 0.50),
+                key: scale([1.0, 0.88, 0.72], 0.52),
                 key_dir: normalize([-0.8, 0.35, 0.48]),
-                ao: 1.0,
-                points: 0.0,
-                glow: 0.0,
-                far_blur: 0.2,
-                grade: phase_grade(phase),
+                bloom: 0.25,
+                bloom_from: 0.5,
+                ..outdoor
             },
             Phase::Night => Preset {
-                ambient: scale([0.64, 0.70, 1.0], 0.80),
-                key: scale([0.62, 0.72, 1.0], 0.24),
+                ambient: scale([0.62, 0.72, 1.0], 0.82),
+                key: scale([0.62, 0.74, 1.0], 0.26),
                 key_dir: normalize([0.3, 0.8, 0.5]),
-                ao: 1.1,
-                points: 1.0,
-                glow: 0.3,
-                far_blur: 0.2,
-                grade: phase_grade(phase),
+                ao: 1.3,
+                points: 1.6,
+                glow: 0.6,
+                player_light: scale([1.0, 0.86, 0.66], 0.30),
+                player_range: 90.0,
+                bloom: 0.55,
+                bloom_from: 0.22,
+                ..outdoor
             },
         },
-        Place::Indoor => Preset {
-            ambient: scale([0.86, 0.83, 0.80], 0.80),
-            key: scale([1.0, 0.90, 0.76], 0.40),
-            key_dir: normalize([-0.2, 0.8, 0.55]),
-            ao: 1.0,
-            points: 0.0,
-            glow: 0.0,
-            far_blur: 0.0,
-            grade: Grade {
-                tint: [1.04, 1.0, 0.95],
-                shadow: [0.96, 0.96, 1.04],
-                saturation: 1.04,
-                exposure: 1.0,
-                vignette: 0.16,
-            },
-        },
+        Place::Indoor => {
+            // Rooms look the same at any hour in the game; here they're darker at night.
+            let dim = match phase {
+                Phase::Night => 0.76,
+                Phase::Evening => 0.9,
+                _ => 1.0,
+            };
+            Preset {
+                ambient: scale([0.86, 0.80, 0.74], 0.52 * dim),
+                key: scale([1.0, 0.92, 0.80], 0.22),
+                key_dir: normalize([-0.2, 0.8, 0.55]),
+                ao: 1.9,
+                points: 0.0,
+                glow: 0.0,
+                player_light: scale([1.0, 0.80, 0.55], 1.25),
+                player_range: 115.0,
+                bloom: 0.4,
+                bloom_from: 0.45,
+                far_blur: 0.0,
+                edge_blur: 0.4,
+                grade: Grade {
+                    tint: [1.05, 1.0, 0.93],
+                    shadow: [0.94, 0.94, 1.08],
+                    highlight: [1.05, 1.0, 0.92],
+                    saturation: 1.08,
+                    exposure: 1.0,
+                    vignette: 0.34,
+                },
+            }
+        }
         Place::Cave => Preset {
-            ambient: scale([0.66, 0.71, 0.90], 0.82),
-            key: scale([0.86, 0.86, 1.0], 0.30),
+            ambient: scale([0.62, 0.68, 0.90], 0.62),
+            key: scale([0.86, 0.86, 1.0], 0.24),
             key_dir: normalize([0.0, 0.85, 0.5]),
-            ao: 1.1,
+            ao: 1.5,
             points: 0.0,
             glow: 0.0,
+            player_light: scale([1.0, 0.84, 0.62], 0.85),
+            player_range: 140.0,
+            bloom: 0.35,
+            bloom_from: 0.45,
             far_blur: 0.0,
+            edge_blur: 0.45,
             grade: Grade {
-                tint: [0.96, 0.98, 1.04],
-                shadow: [0.94, 0.96, 1.08],
-                saturation: 0.95,
-                exposure: 0.97,
-                vignette: 0.24,
+                tint: [0.97, 0.98, 1.04],
+                shadow: [0.92, 0.95, 1.10],
+                highlight: [1.04, 1.0, 0.94],
+                saturation: 1.0,
+                exposure: 1.0,
+                vignette: 0.34,
             },
         },
     }
@@ -264,6 +306,7 @@ fn small_grade(phase: Phase) -> Grade {
     Grade {
         tint: mix([1.0; 3], g.tint, t),
         shadow: mix([1.0; 3], g.shadow, t),
+        highlight: mix([1.0; 3], g.highlight, t),
         saturation: 1.0 + (g.saturation - 1.0) * t + 0.03,
         exposure: 1.0 + (g.exposure - 1.0) * t,
         vignette: 0.06,
@@ -272,8 +315,8 @@ fn small_grade(phase: Phase) -> Grade {
 
 /// Ambient occlusion's reach, in view units (a tile is 16).
 const AO_RANGE: f32 = 20.0;
-/// A point light's reach.
-const LIGHT_RANGE: f32 = 80.0;
+/// A window light's reach.
+const LIGHT_RANGE: f32 = 90.0;
 /// At most this many point lights (the biggest bright patches).
 const MAX_LIGHTS: usize = 16;
 /// Neighbours further apart than this in depth (one pixel apart) are different surfaces.
@@ -289,6 +332,7 @@ const SRGB_STEPS: usize = 4096;
 struct PointLight {
     pos: V3,
     colour: V3,
+    range: f32,
 }
 
 /// One pixel's colour (linear), position (view space) and what it shows.
@@ -315,6 +359,9 @@ pub struct Lighting {
     nrm: Vec<V3>,
     tmp3: Vec<V3>,
     out: Vec<V3>,
+    /// Half-size buffers for the bloom.
+    half: Vec<V3>,
+    half_tmp: Vec<V3>,
     ao: Vec<f32>,
     tmp1: Vec<f32>,
     label: Vec<u32>,
@@ -374,21 +421,6 @@ fn pack(table: &[u8], c: V3) -> u32 {
     q(c[0]) << 16 | q(c[1]) << 8 | q(c[2])
 }
 
-/// The 3x3 neighbours of (x, y) inside a `w` x `h` picture, with the tent weights (4 the
-/// middle, 2 the sides, 1 the corners).
-fn around(x: usize, y: usize, w: usize, h: usize) -> impl Iterator<Item = (usize, f32)> {
-    (y.saturating_sub(1)..(y + 2).min(h)).flat_map(move |yy| {
-        (x.saturating_sub(1)..(x + 2).min(w)).map(move |xx| {
-            let k = match (xx == x, yy == y) {
-                (true, true) => 4.0,
-                (true, false) | (false, true) => 2.0,
-                _ => 1.0,
-            };
-            (yy * w + xx, k)
-        })
-    })
-}
-
 impl Lighting {
     pub fn new() -> Self {
         let mut to_linear = [0f32; 256];
@@ -439,6 +471,8 @@ impl Lighting {
             nrm: Vec::new(),
             tmp3: Vec::new(),
             out: Vec::new(),
+            half: Vec::new(),
+            half_tmp: Vec::new(),
             ao: Vec::new(),
             tmp1: Vec::new(),
             label: Vec::new(),
@@ -549,15 +583,27 @@ impl Lighting {
 
         self.normals(w, h);
         self.occlusion(w, h, p.ao);
-        let lights = if p.points > 0.0 {
+        let mut lights = if p.points > 0.0 {
             self.find_lights(w, h, p.points)
         } else {
             Vec::new()
         };
+        let window_lights = !lights.is_empty();
+        let focus = self.focus(w, h);
+        if let Some(f) = focus
+            && lum(p.player_light) > 0.0
+        {
+            // Over the player's head, a little toward the camera.
+            lights.push(PointLight {
+                pos: add(f, [0.0, 26.0, 12.0]),
+                colour: p.player_light,
+                range: p.player_range,
+            });
+        }
 
         // 3. Ambient, key light and point lights, on each pixel's own colour.
         {
-            let norm = lum(p.ambient) + lum(p.key) * 0.85;
+            let norm = lum(p.ambient) + lum(p.key) * 0.85 + lum(p.player_light) * 0.45;
             let (cells, nrm, ao) = (&self.cells, &self.nrm, &self.ao);
             let lights = &lights;
             par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
@@ -577,11 +623,11 @@ impl Lighting {
                     for l in lights {
                         let v = sub(l.pos, c.pos);
                         let d2 = dot(v, v);
-                        if d2 >= LIGHT_RANGE * LIGHT_RANGE {
+                        if d2 >= l.range * l.range {
                             continue;
                         }
                         let d = d2.sqrt().max(1e-3);
-                        let fall = 1.0 - d / LIGHT_RANGE;
+                        let fall = 1.0 - d / l.range;
                         let facing = (dot(n, v) / d).max(0.0);
                         light = add(light, scale(l.colour, fall * fall * (0.3 + 0.7 * facing)));
                     }
@@ -591,13 +637,17 @@ impl Lighting {
             });
         }
 
-        // 4. A little glow around the light sources.
-        if p.glow > 0.0 && !lights.is_empty() {
+        // 4. A little glow around the light sources, and a soft bloom from what's brightest.
+        if p.glow > 0.0 && window_lights {
             self.glow(w, h, p.glow);
         }
-        // 5. A very slight blur of what lies far behind the player.
-        if p.far_blur > 0.0 {
-            self.far_blur(w, h, p.far_blur);
+        if p.bloom > 0.0 {
+            self.bloom(w, h, p.bloom, p.bloom_from);
+        }
+        // 5. A slight blur of what lies far behind the player and of the screen's edges.
+        if p.far_blur > 0.0 || p.edge_blur > 0.0 {
+            let focus_z = focus.map_or(f32::INFINITY, |f| -f[2]);
+            self.soft_blur(w, h, focus_z, p.far_blur, p.edge_blur);
         }
         // 6. The grade and the vignette; 2D-only pixels as they were.
         {
@@ -834,6 +884,7 @@ impl Lighting {
                 PointLight {
                     pos: add(scale(p.pos, k), scale(normalize(p.nrm), 6.0)),
                     colour: scale(colour, power),
+                    range: LIGHT_RANGE,
                 }
             })
             .collect()
@@ -874,45 +925,143 @@ impl Lighting {
         }
     }
 
-    /// What lies well behind the player (the screen's middle) gets a light 3x3 blur, mixed in
-    /// up to `most`; only with neighbours of the 3D scene.
-    fn far_blur(&mut self, w: usize, h: usize, most: f32) {
+    /// Where the player stands: the 3D scene at the screen's middle (the camera follows them).
+    fn focus(&self, w: usize, h: usize) -> Option<V3> {
         let (cx, cy) = (w / 2, h / 2 + 4);
-        let (mut zs, mut cnt) = (0.0f32, 0.0f32);
+        let (mut sum, mut cnt) = ([0.0f32; 3], 0.0f32);
         for y in cy.saturating_sub(4)..(cy + 5).min(h) {
             for x in cx.saturating_sub(4)..(cx + 5).min(w) {
                 let c = self.cells[y * w + x];
                 if c.layer != 0 {
-                    zs += -c.pos[2];
+                    sum = add(sum, c.pos);
                     cnt += 1.0;
                 }
             }
         }
-        if cnt == 0.0 {
+        (cnt > 0.0).then(|| scale(sum, 1.0 / cnt))
+    }
+
+    /// Bloom: what's brighter than `from` (linear luminance), and the light sources, at half
+    /// size, spread over about eight pixels and added back, on the 3D scene.
+    fn bloom(&mut self, w: usize, h: usize, strength: f32, from: f32) {
+        let (hw, hh) = (w / 2, h / 2);
+        if hw == 0 || hh == 0 {
             return;
         }
-        let focus = zs / cnt;
-        self.tmp3.copy_from_slice(&self.out);
-        let (cells, sharp) = (&self.cells, &self.tmp3);
-        par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
-            for (x, out) in row.iter_mut().enumerate() {
-                let c = cells[y * w + x];
-                if c.layer == 0 || c.emissive {
-                    continue;
-                }
-                let t = ((-c.pos[2] - focus - 40.0) / 300.0).clamp(0.0, 1.0) * most;
-                if t <= 0.0 {
-                    continue;
-                }
-                let mut sum = [0.0f32; 3];
-                let mut wsum = 0.0;
-                for (j, k) in around(x, y, w, h) {
-                    if cells[j].layer != 0 {
-                        sum = add(sum, scale(sharp[j], k));
-                        wsum += k;
+        self.half.resize(hw * hh, [0.0; 3]);
+        self.half_tmp.resize(hw * hh, [0.0; 3]);
+        {
+            let (cells, out) = (&self.cells, &self.out);
+            par_rows(self.pool.as_ref(), &mut self.half, hw, |y, row| {
+                for (x, o) in row.iter_mut().enumerate() {
+                    let mut sum = [0.0f32; 3];
+                    for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                        let i = (2 * y + dy) * w + 2 * x + dx;
+                        let c = out[i];
+                        let l = lum(c);
+                        let k = if cells[i].layer == 0 {
+                            0.0
+                        } else if cells[i].emissive {
+                            1.0
+                        } else {
+                            ((l - from) / (1.0 - from).max(0.05)).clamp(0.0, 1.0)
+                        };
+                        sum = add(sum, scale(c, k));
                     }
+                    *o = scale(sum, 0.25);
                 }
-                *out = mix(*out, scale(sum, 1.0 / wsum), t);
+            });
+        }
+        for _ in 0..2 {
+            box_blur(
+                self.pool.as_ref(),
+                &mut self.half,
+                &mut self.half_tmp,
+                hw,
+                hh,
+                3,
+            );
+        }
+        let (cells, half) = (&self.cells, &self.half);
+        par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
+            let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (hh - 1) as f32);
+            let (y0, ty) = (fy as usize, fy.fract());
+            let y1 = (y0 + 1).min(hh - 1);
+            for (x, o) in row.iter_mut().enumerate() {
+                if cells[y * w + x].layer == 0 {
+                    continue;
+                }
+                let fx = ((x as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (hw - 1) as f32);
+                let (x0, tx) = (fx as usize, fx.fract());
+                let x1 = (x0 + 1).min(hw - 1);
+                let top = mix(half[y0 * hw + x0], half[y0 * hw + x1], tx);
+                let bottom = mix(half[y1 * hw + x0], half[y1 * hw + x1], tx);
+                *o = add(*o, scale(mix(top, bottom, ty), strength));
+            }
+        });
+    }
+
+    /// A slight blur, mixed in up to `far` for what lies well behind the player (past
+    /// `focus_z`) and up to `edge` toward the screen's top and bottom (and a little its sides):
+    /// a soft tilt-shift. Only the 3D scene blurs, only with itself (text boxes don't bleed in).
+    fn soft_blur(&mut self, w: usize, h: usize, focus_z: f32, far: f32, edge: f32) {
+        const R: isize = 2;
+        let smooth = |a: f32, b: f32, v: f32| {
+            let t = ((v - a) / (b - a)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        // Across, then down: the 3D neighbours' sum and count.
+        {
+            let (cells, out) = (&self.cells, &self.out);
+            par_rows(self.pool.as_ref(), &mut self.tmp3, w, |y, row| {
+                for (x, o) in row.iter_mut().enumerate() {
+                    let mut s = [0.0f32; 3];
+                    for xx in (x as isize - R).max(0)..=(x as isize + R).min(w as isize - 1) {
+                        let j = y * w + xx as usize;
+                        if cells[j].layer != 0 {
+                            s = add(s, out[j]);
+                        }
+                    }
+                    *o = s;
+                }
+            });
+            par_rows(self.pool.as_ref(), &mut self.tmp1, w, |y, row| {
+                for (x, o) in row.iter_mut().enumerate() {
+                    let mut n = 0.0;
+                    for xx in (x as isize - R).max(0)..=(x as isize + R).min(w as isize - 1) {
+                        if cells[y * w + xx as usize].layer != 0 {
+                            n += 1.0;
+                        }
+                    }
+                    *o = n;
+                }
+            });
+        }
+        let (cells, across, count) = (&self.cells, &self.tmp3, &self.tmp1);
+        par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
+            let yn = ((y as f32 + 0.5) - h as f32 / 2.0).abs() / (h as f32 / 2.0);
+            let edge_y = smooth(0.45, 1.0, yn);
+            for (x, o) in row.iter_mut().enumerate() {
+                let c = cells[y * w + x];
+                if c.layer == 0 {
+                    continue;
+                }
+                let xn = ((x as f32 + 0.5) - w as f32 / 2.0).abs() / (w as f32 / 2.0);
+                let by_edge = edge * edge_y.max(0.6 * smooth(0.7, 1.0, xn));
+                let by_depth = far * smooth(30.0, 250.0, -c.pos[2] - focus_z);
+                let t = by_edge.max(by_depth);
+                if t <= 0.01 {
+                    continue;
+                }
+                let (mut s, mut n) = ([0.0f32; 3], 0.0);
+                for yy in (y as isize - R).max(0)..=(y as isize + R).min(h as isize - 1) {
+                    let j = yy as usize * w + x;
+                    s = add(s, across[j]);
+                    n += count[j];
+                }
+                if n > 0.0 {
+                    *o = mix(*o, scale(s, 1.0 / n), t);
+                }
             }
         });
     }
@@ -968,6 +1117,8 @@ fn apply_grade(c: V3, g: &Grade, vignette: f32) -> V3 {
     let c = add([l; 3], scale(sub(c, [l; 3]), g.saturation));
     let lift = (l * 4.0).min(1.0);
     let c = mul(c, mix(g.shadow, [1.0; 3], lift));
+    let high = ((l - 0.35) / 0.65).clamp(0.0, 1.0);
+    let c = mul(c, mix([1.0; 3], g.highlight, high));
     scale(c, vignette).map(|v| v.max(0.0))
 }
 
