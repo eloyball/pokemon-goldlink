@@ -243,6 +243,15 @@ impl LightFrame {
             COOP_ACTIVITY_FIELD | COOP_ACTIVITY_EVENT | COOP_ACTIVITY_TRANSITION
         )
     }
+
+    /// Walking about or an overworld event (not a transition into a battle or a warp).
+    pub fn walking(&self) -> bool {
+        use goldlink_abi::CoopActivity::*;
+        matches!(
+            self.activity as u32,
+            COOP_ACTIVITY_FIELD | COOP_ACTIVITY_EVENT
+        )
+    }
 }
 
 /// The lighting's view of this frame (in `spare`'s buffers when there is one), when the top

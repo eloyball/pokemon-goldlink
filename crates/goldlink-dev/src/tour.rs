@@ -328,6 +328,31 @@ const POKECENTER_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=walk (UC11's smooth camera): frames recorded walking down, up, left
+/// and right from where the save stands.
+const WALK_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Shot("start"),
+    Step::Walk(Keys::DOWN, 96, "down"),
+    Step::Walk(Keys::UP, 96, "up"),
+    Step::Walk(Keys::LEFT, 96, "left"),
+    Step::Walk(Keys::RIGHT, 96, "right"),
+    Step::Wait(20),
+    Step::Shot("end"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=battle-intro (UC11's smooth camera): a wild battle's intro, every
+/// frame recorded.
+const BATTLE_INTRO_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Walk(Keys::NONE, 600, "intro"),
+    Step::Close,
+];
+
 /// One recorded frame: `proj` (16 x i32, 20.12), `w_depth` (u32), the map (u32), the activity
 /// (u32), the wide picture's side (u32); then the wide top screen ((256 + 2 * side) x 192 u32,
 /// 0x00RRGGBB), the depth (384 x 192 u32) and the layer mask (384 x 192 u8). Nothing when the
@@ -376,6 +401,8 @@ fn steps() -> &'static [Step] {
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
+        Ok("walk") => WALK_STEPS,
+        Ok("battle-intro") => BATTLE_INTRO_STEPS,
         _ => STEPS,
     }
 }

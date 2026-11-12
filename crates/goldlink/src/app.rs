@@ -201,8 +201,9 @@ impl GameApp {
         };
         if let Some(r) = &self.runner {
             r.send(Command::Wide(side));
-            // The lighting's buffers come with each frame only while it's on.
-            r.send(Command::Lighting(v.lighting));
+            // The 3D scene's buffers come with each frame only while the lighting or the smooth
+            // camera is on.
+            r.send(Command::Lighting(v.lighting || v.smooth));
         }
     }
 
@@ -331,6 +332,7 @@ impl GameApp {
     fn update_texture(&mut self, ctx: &egui::Context) {
         let Some(runner) = &self.runner else { return };
         let lit = self.config.video.lighting;
+        let smooth = self.config.video.smooth;
         let shown = {
             let frame = lock(&runner.shared.frame);
             if frame.seq == self.last_seq {
@@ -372,7 +374,11 @@ impl GameApp {
                     && !frame.wide.is_empty())
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
-                let light = if lit { frame.light.clone() } else { None };
+                let light = if lit || smooth {
+                    frame.light.clone()
+                } else {
+                    None
+                };
                 Some((
                     frame.pixels.clone(),
                     wide,
@@ -394,7 +400,6 @@ impl GameApp {
             return;
         };
         // The top picture as the game drew it, for the smooth camera.
-        let smooth = self.config.video.smooth;
         let raw_top = smooth.then(|| wide.clone().unwrap_or_else(|| pixels[..256 * 192].to_vec()));
         if lit {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
@@ -407,7 +412,18 @@ impl GameApp {
                     Some(wide) => (&wide[..], 256 + 2 * side),
                     None => (&pixels[..256 * 192], 256),
                 };
-                self.smooth.frame(seq, raw, top, w)
+                // Walking about and the overworld's events only: never a battle (its intro's
+                // sweeps would tear its sprites) or a transition into one.
+                let scene = light
+                    .as_ref()
+                    .filter(|l| l.walking())
+                    .map(|l| crate::smooth::Depth {
+                        depth: &l.buffers.depth,
+                        layer: &l.buffers.layer,
+                        proj: l.buffers.proj,
+                        width: goldlink_core::LightBuffers::WIDTH,
+                    });
+                self.smooth.frame(seq, raw, top, w, scene.as_ref())
             }
             None => {
                 self.smooth.reset();

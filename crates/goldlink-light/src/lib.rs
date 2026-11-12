@@ -1220,6 +1220,57 @@ fn invert(m: &[i32; 16]) -> Option<[f64; 16]> {
     Some(inv.map(|v| v / det))
 }
 
+/// One frame's camera (its projection): a pixel of the `width` x 192 buffers and its depth to
+/// view space, and back. Pixel coordinates are continuous, with pixel centres at +0.5.
+#[derive(Debug, Clone, Copy)]
+pub struct Camera {
+    proj: [[f32; 4]; 4],
+    inv: [[f32; 4]; 4],
+    width: f32,
+}
+
+impl Camera {
+    /// None when the projection has no inverse.
+    pub fn new(proj: &[i32; 16], width: usize) -> Option<Self> {
+        let inv = unprojection(proj)?;
+        let mut rows = [[0f32; 4]; 4];
+        for (r, row) in rows.iter_mut().enumerate() {
+            for (c, v) in row.iter_mut().enumerate() {
+                *v = proj[r * 4 + c] as f32 / 4096.0;
+            }
+        }
+        Some(Self {
+            proj: rows,
+            inv,
+            width: width as f32,
+        })
+    }
+
+    /// The view-space point a pixel (at `col`, `row`, continuous) with this 24-bit Z depth
+    /// shows, if it's in front of the camera.
+    pub fn unproject(&self, col: f32, row: f32, depth: u32) -> Option<[f32; 3]> {
+        let xn = (col - self.width / 2.0) / 128.0;
+        let yn = 1.0 - row / (HEIGHT as f32 / 2.0);
+        let zn = depth as f32 / 8_388_607.5 - 1.0;
+        unproject(&self.inv, xn, yn, zn)
+    }
+
+    /// Where a view-space point shows (continuous pixel coordinates), if in front of the camera.
+    pub fn project(&self, p: [f32; 3]) -> Option<(f32, f32)> {
+        let m = &self.proj;
+        let c = |i: usize| p[0] * m[0][i] + p[1] * m[1][i] + p[2] * m[2][i] + m[3][i];
+        let w = c(3);
+        if w.abs() < 1e-9 {
+            return None;
+        }
+        let (xn, yn) = (c(0) / w, c(1) / w);
+        Some((
+            xn * 128.0 + self.width / 2.0,
+            (1.0 - yn) * (HEIGHT as f32 / 2.0),
+        ))
+    }
+}
+
 /// The inverse projection's rows, for [`unproject`].
 fn unprojection(proj: &[i32; 16]) -> Option<[[f32; 4]; 4]> {
     let inv = invert(proj)?;
@@ -1358,6 +1409,23 @@ mod tests {
         // Near the lamp, warmer and brighter than without it; far away, the same.
         assert!(r(lamp[70 * 256 + 128]) > r(plain[70 * 256 + 128]) + 8);
         assert_eq!(lamp[140 * 256 + 10], plain[140 * 256 + 10]);
+    }
+
+    #[test]
+    fn the_camera_projects_back_where_it_unprojected() {
+        let cam = Camera::new(&PROJ, 384).expect("invertible");
+        for (col, row, z) in [
+            (200.5f32, 100.5f32, -600.0f64),
+            (10.5, 5.5, -900.0),
+            (380.5, 190.5, -300.0),
+        ] {
+            let p = cam.unproject(col, row, depth_of(z)).expect("in front");
+            let (c, r) = cam.project(p).expect("in front");
+            assert!(
+                (c - col).abs() < 0.01 && (r - row).abs() < 0.01,
+                "{col},{row} -> {c},{r}"
+            );
+        }
     }
 
     #[test]
