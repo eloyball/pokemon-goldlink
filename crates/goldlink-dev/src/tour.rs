@@ -45,6 +45,13 @@ enum Step {
     /// waits for the others' (or gives up after the frames).
     Mark(&'static str),
     Peer(&'static str, u32),
+    /// Presses A every 30 frames while a field script runs (a message, a prompt), until the
+    /// field has been free for a second (or the frames run out).
+    Settle(u32),
+    /// Presses A every 40 frames, only while a field script runs (a request's prompt: Yes is
+    /// the cursor's first place; nothing in the field is talked to), until the game leaves the
+    /// overworld (a battle) or the frames run out.
+    MashTask(u32),
     /// Presses A every second until the naming screen is open (found in RAM by its keyboard's
     /// first row, as `NamingScreenAppData` holds it), then logs where its data and the pointers
     /// to it are, and the VBlank callback (the addresses goldlink_bridge::naming needs). With
@@ -296,6 +303,25 @@ fn engine_constant(root: &std::path::Path, header: &str, name: &str) -> Option<u
 }
 
 /// A symbol's address from hg-engine's build (rom_gen.ld: `name = 0x...;`).
+/// Whether a field script runs (link_e2e_probe.lua's field_task: gFieldSysPtr's task).
+fn field_task(ram: &[u8]) -> bool {
+    static PTR: OnceLock<Option<u32>> = OnceLock::new();
+    let Some(ptr) = *PTR.get_or_init(|| {
+        let root = PathBuf::from(std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()));
+        engine_symbol(&root, "gFieldSysPtr")
+    }) else {
+        return false;
+    };
+    let u32_at = |addr: u32| -> Option<u32> {
+        let off = addr.checked_sub(0x0200_0000)? as usize;
+        Some(u32::from_le_bytes(ram.get(off..off + 4)?.try_into().ok()?))
+    };
+    u32_at(ptr)
+        .filter(|&f| (0x0200_0000..0x0240_0000).contains(&f))
+        .and_then(|f| u32_at(f + 0x10))
+        .is_some_and(|task| task != 0)
+}
+
 fn engine_symbol(root: &std::path::Path, name: &str) -> Option<u32> {
     let text = std::fs::read_to_string(root.join("hg-engine/build/rom_gen.ld")).ok()?;
     let prefix = format!("{name} = 0x");
@@ -448,12 +474,14 @@ const TEAM_STEPS: [&[Step]; 3] = [
         Step::Wait(30),
         Step::Mark("ready"),
         Step::Peer("ready", 9000),
+        Step::Settle(1800),
         Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 5),
         Step::Wait(300),
         Step::Mark("lead"),
         Step::Peer("lead", 6000),
         Step::Wait(60),
         Step::Debug(C::COOP_DEBUG_LINK as u8, 8 + 1),
+        Step::MashTask(6000),
         Step::Mash(60 * 240),
         Step::Close,
     ],
@@ -464,11 +492,12 @@ const TEAM_STEPS: [&[Step]; 3] = [
         Step::Wait(30),
         Step::Mark("ready"),
         Step::Peer("ready", 9000),
+        Step::Settle(1800),
         Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 5),
         Step::Wait(300),
         Step::Mark("lead"),
         Step::Peer("lead", 6000),
-        Step::Wait(240),
+        Step::MashTask(6000),
         Step::Mash(60 * 240),
         Step::Close,
     ],
@@ -479,11 +508,12 @@ const TEAM_STEPS: [&[Step]; 3] = [
         Step::Wait(30),
         Step::Mark("ready"),
         Step::Peer("ready", 9000),
+        Step::Settle(1800),
         Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 6),
         Step::Wait(300),
         Step::Mark("lead"),
         Step::Peer("lead", 6000),
-        Step::Wait(240),
+        Step::MashTask(6000),
         Step::Mash(60 * 240),
         Step::Close,
     ],
@@ -644,6 +674,8 @@ struct State {
     /// saved at every emulated frame, as `<dir>/film/<frame>.png`, for the lighting's and the
     /// smooth camera's frame-by-frame checks).
     emu_frames: u64,
+    /// Frames the field has been free in a row (Step::Settle).
+    idle: u32,
     /// Frames shown so far (the window has them), as of the last pre_frame.
     published: u64,
     filmed: u64,
@@ -898,6 +930,29 @@ impl FrameHook for TourHook {
                     input.keys |= Keys::A;
                 }
                 s.frames >= n
+            }
+            Step::Settle(max) => {
+                let busy = field_task(emu.nds.main_ram());
+                if busy {
+                    s.idle = 0;
+                    if s.frames % 30 < 3 {
+                        input.keys |= Keys::A;
+                    }
+                } else {
+                    s.idle += 1;
+                }
+                s.idle >= 60 || s.frames >= max
+            }
+            Step::MashTask(max) => {
+                if field_task(emu.nds.main_ram()) && s.frames % 40 < 3 {
+                    input.keys |= Keys::A;
+                }
+                if s.frames >= max {
+                    let line = format!("step {}: gave up waiting to leave the field", s.step);
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
+                (scene != Scene::Overworld && scene != Scene::Unknown) || s.frames >= max
             }
             Step::Mark(name) => {
                 let path = mark_path(&role().0, name);

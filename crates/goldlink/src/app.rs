@@ -96,7 +96,7 @@ pub struct GameApp {
     typing: crate::typing::Typing,
     /// The game's text box, re-inked for the battle HUD (one-screen layout).
     textbox: Option<egui::TextureHandle>,
-    /// The game's text box shows (the band shows in battles only then, or with a menu).
+    /// The band belongs over the game's text box rows (hud::game_textbox_shown).
     game_textbox: bool,
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
