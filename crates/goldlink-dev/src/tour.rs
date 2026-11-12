@@ -36,6 +36,9 @@ enum Step {
 const FAINT_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(60),
+    // A healthy second Pokémon (a shiny Haunter, debug preset 1), so the game asks.
+    Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 1),
+    Step::Wait(300),
     Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 100),
     Step::Until(Scene::Battle, 600),
     Step::Wait(60 * 16),
@@ -86,10 +89,39 @@ fn intro_steps() -> &'static [Step] {
     })
 }
 
+/// GOLDLINK_DEV_TOUR_ROUTE=learn: a level 27 Geodude one EXP point short of 28 (debug preset 10)
+/// beats a wild Pokémon and learns Stealth Rock: "forget a move?", then "give up on it?".
+const LEARN_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 10),
+    Step::Wait(300),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Until(Scene::Battle, 600),
+    Step::MashUntilMenu(
+        goldlink::goldlink_bridge::battle_ui::menu::KEEP_FORGET_MOVE,
+        60 * 120,
+    ),
+    Step::Wait(30),
+    Step::Shot("learn-forget"),
+    // The lower choice (keep the old moves): the game asks whether to give up on the new one.
+    Step::Press(Keys::DOWN),
+    Step::Wait(20),
+    Step::Press(Keys::A),
+    Step::MashUntilMenu(
+        goldlink::goldlink_bridge::battle_ui::menu::GIVE_UP_ON_MOVE,
+        60 * 30,
+    ),
+    Step::Wait(30),
+    Step::Shot("learn-give-up"),
+    Step::Close,
+];
+
 fn steps() -> &'static [Step] {
     match std::env::var("GOLDLINK_DEV_TOUR_ROUTE").as_deref() {
         Ok("faint") => FAINT_STEPS,
         Ok("intro") => intro_steps(),
+        Ok("learn") => LEARN_STEPS,
         _ => STEPS,
     }
 }
@@ -307,12 +339,12 @@ impl FrameHook for TourHook {
                     eprintln!("tour: menu {now:?} at frame {}", s.frames);
                     s.last_menu = now;
                 }
-                // A only in the command and fight menus (FIGHT, then the first move), so no
-                // other question is answered for the player.
-                let fighting = b.as_ref().is_some_and(|b| {
-                    b.waiting && (menu::COMMANDS.contains(&b.menu) || b.menu == menu::FIGHT)
+                // A for the menus (FIGHT, then the first move) and the messages, but never for a
+                // two-option question: those are what the route waits for.
+                let question = b.as_ref().is_some_and(|b| {
+                    b.waiting && (menu::YES_NO..=menu::SWITCH_OR_KEEP).contains(&b.menu)
                 });
-                if !there && fighting && (30..36).contains(&(s.frames % 60)) {
+                if !there && !question && (30..36).contains(&(s.frames % 60)) {
                     input.keys |= Keys::A;
                 }
                 if !there && s.frames >= max {
