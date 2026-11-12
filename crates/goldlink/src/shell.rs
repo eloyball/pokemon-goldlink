@@ -721,7 +721,8 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
 mod tests {
     //! The session's life end to end (UC8 §2.2), in this process: egui without a window, the
     //! real emulator and the real relay. Ignored by default: it needs the development ROM and the
-    //! e2e harness's TEAM01 fixture (a save in the overworld and the relay's campaign):
+    //! TEAM01 fixture in build/fixtures/session (dev/setup_fixtures.sh: a save in the overworld
+    //! and the relay's campaign):
     //!
     //!     cargo build --release --manifest-path coop-relay/Cargo.toml
     //!     cargo test -p goldlink --lib -- --ignored session
@@ -845,10 +846,10 @@ mod tests {
     fn session_leave_saves_and_returns_then_a_backup_restores() {
         let rom = std::fs::read(env_or("GOLDLINK_TEST_ROM", "hg-engine/test.nds"))
             .expect("the development ROM");
-        let instance = env_or("GOLDLINK_TEST_INSTANCE", "instances/agent-team-a");
+        let instance = env_or("GOLDLINK_TEST_INSTANCE", "build/fixtures/session");
         let campaign = env_or(
             "GOLDLINK_TEST_CAMPAIGN",
-            "build/probe-stress/campaigns/TEAM01.json",
+            "build/fixtures/session/TEAM01.json",
         );
         let relay_bin = env_or("GOLDLINK_RELAY", "coop-relay/target/release/coop-relay");
 

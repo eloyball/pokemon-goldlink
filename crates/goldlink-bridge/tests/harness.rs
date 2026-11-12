@@ -45,10 +45,10 @@ fn rom() -> Arc<Vec<u8>> {
 fn saves() -> [PathBuf; 4] {
     let r = repo();
     [
-        r.join("BizHawk/NDS/SaveRAM/test.SaveRAM"),
-        r.join("BizHawk/coop_saves/unassigned-20261025-232946.sav"),
-        r.join("instances/p2/coop_saves/TEST02-C7BE7B93.sav"),
-        r.join("instances/p2/coop_saves/unassigned-20261025-233004.sav"),
+        r.join("build/fixtures/saves/a.sav"),
+        r.join("build/fixtures/saves/b.sav"),
+        r.join("build/fixtures/saves/c.sav"),
+        r.join("build/fixtures/saves/d.sav"),
     ]
 }
 
@@ -666,8 +666,8 @@ fn six_saves() -> [PathBuf; 6] {
         four[1].clone(),
         four[2].clone(),
         four[3].clone(),
-        r.join("BizHawk/coop_saves/TEST03-BC71B831.sav"),
-        r.join("instances/p2/coop_saves/TEST03-BC71B831.sav"),
+        r.join("build/fixtures/saves/e.sav"),
+        r.join("build/fixtures/saves/f.sav"),
     ]
 }
 

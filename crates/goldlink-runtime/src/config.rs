@@ -86,7 +86,8 @@ fn names(list: &[&str]) -> Vec<String> {
 impl Default for Video {
     fn default() -> Self {
         Self {
-            layout: Layout::Vertical,
+            // One screen with the wider picture (UC9); the two-screen layouts stay in settings.
+            layout: Layout::OneScreen,
             gap: 0,
             filter: Filter::Nearest,
             integer_scale: false,

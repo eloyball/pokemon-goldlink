@@ -68,7 +68,10 @@ mod tests {
 
     #[test]
     fn vertical_fits_and_centres() {
-        let v = Video::default();
+        let v = Video {
+            layout: Layout::Vertical,
+            ..Video::default()
+        };
         let (t, b) = screens(Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 768.0)), &v);
         assert_eq!(t.size(), vec2(512.0, 384.0));
         assert_eq!(t.min, pos2(244.0, 0.0));
