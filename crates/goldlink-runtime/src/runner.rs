@@ -295,6 +295,9 @@ fn run(
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
     let mut lighting = false;
+    // The emulation's own time per frame while the smooth camera is on (sum in ms, frames):
+    // more than it can afford, and the smooth camera goes off (a slower computer).
+    let mut slow = (0.0f64, 0u32);
     // The smooth camera's halfway picture and depth (swapped with the shared frame's).
     let (mut mid, mut mid_depth) = (Vec::new(), Vec::new());
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
@@ -342,7 +345,10 @@ fn run(
                 }
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
-                Command::Smooth(on) => emu.nds.set_mid(on),
+                Command::Smooth(on) => {
+                    emu.set_mid(on);
+                    slow = (0.0, 0);
+                }
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -351,7 +357,20 @@ fn run(
         for h in hooks.iter_mut() {
             h.pre_frame(&mut emu, &mut input);
         }
+        let started = Instant::now();
         emu.frame(input);
+        if emu.mid() {
+            slow.0 += started.elapsed().as_secs_f64() * 1000.0;
+            slow.1 += 1;
+            if slow.1 == 240 {
+                // 13 of the 16.7 ms a frame has, over four seconds.
+                if slow.0 / f64::from(slow.1) > 13.0 {
+                    emu.set_mid(false);
+                    lock(&shared.events).push(Event::SmoothTooSlow);
+                }
+                slow = (0.0, 0);
+            }
+        }
         for h in hooks.iter_mut() {
             h.post_frame(&mut emu);
         }

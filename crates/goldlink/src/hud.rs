@@ -783,26 +783,25 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
     );
 }
 
-/// Whether the band belongs over the game's text box rows (144 to 191 of the top screen): the
-/// game's text box shows there (its inside is one colour, FBFBFB: 84–94% of rows 150 to 184
-/// with words in it), or nothing much does (dark: before the box opens in a battle's intro).
-/// A link battle's VS screen draws the bottom player's party there instead (0.5% box colour,
-/// light): the band would hide it.
+/// Whether the band belongs over the game's text box rows (144 to 191 of the top screen) in a
+/// battle: yes, but for a screen the game draws there itself, as a link battle's VS screen with
+/// the bottom player's party on a light ground (58% of rows 150 to 184 light, the text box's own
+/// inside FBFBFB not counted). The text box, its opening (black, a grey frame) and the dark rows
+/// before it keep the band.
 pub fn game_textbox_shown(top_screen_rows: &[u32]) -> bool {
     const INSIDE: u32 = 0xFB_FBFB;
-    let (mut inside, mut dark, mut all) = (0u32, 0u32, 0u32);
+    let (mut light, mut all) = (0u32, 0u32);
     for y in 6..41 {
         for x in 8..248 {
             if let Some(&px) = top_screen_rows.get(y * 256 + x) {
                 let px = px & 0xFF_FFFF;
                 all += 1;
-                inside += u32::from(px == INSIDE);
                 let lum = ((px >> 16) & 0xFF) + ((px >> 8) & 0xFF) + (px & 0xFF);
-                dark += u32::from(lum < 3 * 48);
+                light += u32::from(px != INSIDE && lum > 3 * 180);
             }
         }
     }
-    all > 0 && (inside * 10 > all * 3 || dark * 10 > all * 9)
+    all == 0 || light * 10 < all * 4
 }
 
 /// The game's text box rows (144 to 191 of the top screen) with only its words kept: the text
@@ -895,7 +894,14 @@ mod tests {
         // The link battle's VS screen: a light background with party balls.
         let vs = vec![0x00E3_EBEBu32; 256 * rows];
         assert!(!game_textbox_shown(&vs));
-        // Dark rows (the intro, before the box opens): the band, as with the box.
+        // Dark rows (the intro, before the box opens) and the box opening: the band.
         assert!(game_textbox_shown(&vec![0x0018_1818; 256 * rows]));
+        let mut opening = vec![0u32; 256 * rows];
+        for y in 10..30 {
+            for x in 30..220 {
+                opening[y * 256 + x] = 0x0099_9999;
+            }
+        }
+        assert!(game_textbox_shown(&opening));
     }
 }

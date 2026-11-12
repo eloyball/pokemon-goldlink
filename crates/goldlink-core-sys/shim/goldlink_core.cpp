@@ -275,7 +275,15 @@ void gl_core_set_mid(GlCore *core, int on)
 {
     auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
     soft.MidWanted = on != 0;
-    core->nds->GPU.GPU3D.RecordScenes = on != 0;
+    // A fresh start: nothing logged before (a power cycle, the setting turned on again) is replayed.
+    auto &gpu3d = core->nds->GPU.GPU3D;
+    gpu3d.RecordScenes = on != 0;
+    gpu3d.ScenesRecorded = 0;
+    gpu3d.SceneLog.clear();
+    gpu3d.LastSceneLog.clear();
+    gpu3d.PrevSceneLog.clear();
+    gpu3d.SceneStart.clear();
+    gpu3d.LastSceneStart.clear();
     core->mid = on != 0;
     gl_core_apply_view(core);
 }

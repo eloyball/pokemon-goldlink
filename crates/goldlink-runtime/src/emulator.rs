@@ -50,6 +50,8 @@ pub enum Event {
     SaveFailed(String),
     BackupTaken(PathBuf),
     BackupFailed(String),
+    /// The smooth camera was turned off: the emulation couldn't keep up with it (UC11).
+    SmoothTooSlow,
 }
 
 pub struct Emulator {
@@ -64,6 +66,8 @@ pub struct Emulator {
     events: Vec<Event>,
     /// The wider picture's side (UC9 §4), kept across power cycles.
     wide: usize,
+    /// The smooth camera (UC11), kept across power cycles.
+    mid: bool,
     /// The DS clock at the last power cycle, and the frame count then (the game's clock).
     clock_at_boot: (chrono::NaiveDateTime, u64),
 }
@@ -88,6 +92,7 @@ impl Emulator {
             frame: 0,
             events: Vec::new(),
             wide: 0,
+            mid: false,
             clock_at_boot: (chrono::NaiveDateTime::default(), 0),
         };
         emu.boot()?;
@@ -102,6 +107,16 @@ impl Emulator {
 
     pub fn wide(&self) -> usize {
         self.wide
+    }
+
+    /// The smooth camera (UC11): melonDS makes halfway pictures ([`Nds::mid_frame`]).
+    pub fn set_mid(&mut self, on: bool) {
+        self.mid = on;
+        self.nds.set_mid(on);
+    }
+
+    pub fn mid(&self) -> bool {
+        self.mid
     }
 
     /// The game's ROM, as the DS runs it.
@@ -119,8 +134,9 @@ impl Emulator {
             .load_rom(&self.rom, save.as_deref())
             .map_err(|e| e.to_string())?;
         self.set_clock();
-        // A power cycle resets the GPU: the wider picture again.
+        // A power cycle resets the GPU: the wider picture again, and the smooth camera.
         self.nds.set_wide(self.wide);
+        self.nds.set_mid(self.mid);
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
         Ok(())
@@ -137,6 +153,7 @@ impl Emulator {
             .map_err(|e| e.to_string())?;
         self.set_clock();
         self.nds.set_wide(self.wide);
+        self.nds.set_mid(self.mid);
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
         // NitroSDK's HW_RESET_PARAMETER_BUF (0x027FFC20), which OS_GetResetParameter reads; main

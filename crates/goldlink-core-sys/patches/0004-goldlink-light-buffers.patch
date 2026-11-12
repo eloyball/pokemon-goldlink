@@ -10,7 +10,8 @@ GoldLink's change to melonDS (UC11): what the lighting needs from a frame.
 - The smooth camera: when the game shows a new 3D scene after repeating the last one (its 30 a
   second), the halfway picture is made from the game's own drawing commands. GPU3D logs each
   scene's command words and keeps a savestate of the engine as each scene starts
-  (RecordScenes); GPU3D_Soft replays the new scene's words on a copy of the engine from that
+  (RecordScenes; without the polygon and vertex memory, which a scene starts without:
+  LightSnapshot); GPU3D_Soft replays the new scene's words on a copy of the engine from that
   state (Replay: no interrupts, DMA or stalls), each matrix parameter part way from the same word
   of the last scene (where the camera has moved a whole number of pixels: its step between the
   two pictures, halved and rounded down, so things keep their places in the pixel grid) (the scenes lined up word by word; a matrix pairs only with a near one), lets
@@ -178,7 +179,7 @@ index 0a0a1b4..6c47340 100644
      void DrawWideSides(u32 line, int n3dline, u32* dst);
      void FinishPixels(u32* px, int count);
 diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
-index 54f5119..188a8c3 100644
+index 54f5119..291e9fb 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
 @@ -20,6 +20,7 @@
@@ -198,7 +199,31 @@ index 54f5119..188a8c3 100644
  
      RenderDispCnt = 0;
      RenderAlphaRef = 0;
-@@ -489,7 +492,7 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+@@ -409,6 +412,10 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+         u32 index = UINT32_MAX;
+         file->Var32(&index);
+         LastStripPolygon = (index == UINT32_MAX) ? nullptr : &PolygonRAM[index];
++        // GoldLink (UC11): a light snapshot has no polygon memory, and a new scene continues no
++        // strip from the last.
++        if (LightSnapshot)
++            LastStripPolygon = nullptr;
+     }
+ 
+     file->Var32(&CurRAMBank);
+@@ -421,10 +428,11 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+ 
+     for (Vertex& vtx : VertexRAM)
+     {
++        if (LightSnapshot) break; // GoldLink (UC11)
+         vtx.DoSavestate(file);
+     }
+ 
+-    for(int i = 0; i < 2048*2; i++)
++    for(int i = 0; i < 2048*2 && !LightSnapshot; i++)
+     {
+         Polygon* poly = &PolygonRAM[i];
+ 
+@@ -489,7 +497,7 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
                      poly->Degenerate = true;
              }
  
@@ -207,7 +232,23 @@ index 54f5119..188a8c3 100644
          }
      }
  
-@@ -1138,12 +1141,16 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -511,7 +519,14 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
+     }
+ 
+     file->Var32(&RenderNumPolygons);
+-    if (file->Saving)
++    if (LightSnapshot)
++    {
++        // GoldLink (UC11): the render list points into the polygon memory left out; a copy
++        // loaded from a light snapshot has none.
++        if (!file->Saving)
++            RenderNumPolygons = 0;
++    }
++    else if (file->Saving)
+     {
+         for (const Polygon* p : RenderPolygonRAM)
+         {
+@@ -1138,12 +1153,16 @@ void GPU3D::SubmitPolygon() noexcept
                  posX = (u32)(((u64)posX * (256 + 2 * WideSide)) / den);
              else
                  posX = ((posX * Viewport[4]) / den) + Viewport[0] + WideSide;
@@ -226,7 +267,7 @@ index 54f5119..188a8c3 100644
  
          // hi-res positions
          // to consider: only do this when using the GL renderer? apply the aforementioned quirk to this?
-@@ -1209,6 +1216,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1209,6 +1228,7 @@ void GPU3D::SubmitPolygon() noexcept
          else                   VertexSlotsFree = 0b1110;
      }
  
@@ -234,7 +275,7 @@ index 54f5119..188a8c3 100644
      Polygon* poly = &CurPolygonRAM[NumPolygons++];
      poly->NumVertices = 0;
  
-@@ -1277,7 +1285,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1277,7 +1297,7 @@ void GPU3D::SubmitPolygon() noexcept
      // (ie two W's that span 12 bits or less will be brought to 16 bits)
  
      u32 vtop = 0, vbot = 0;
@@ -243,7 +284,7 @@ index 54f5119..188a8c3 100644
      s32 xtop = 256, xbot = 0;
      u32 wsize = 0;
  
-@@ -1309,7 +1317,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1309,7 +1329,7 @@ void GPU3D::SubmitPolygon() noexcept
      poly->YTop = ytop; poly->YBottom = ybot;
      poly->XTop = xtop; poly->XBottom = xbot;
  
@@ -252,7 +293,7 @@ index 54f5119..188a8c3 100644
  
      poly->SortKey = (ybot << 8) | ytop;
      if (poly->Translucent) poly->SortKey |= 0x10000;
-@@ -1366,7 +1374,7 @@ void GPU3D::SubmitVertex() noexcept
+@@ -1366,7 +1386,7 @@ void GPU3D::SubmitVertex() noexcept
  
      UpdateClipMatrix();
      vertextrans->Position[0] = WideX((vertex[0]*ClipMatrix[0] + vertex[1]*ClipMatrix[4] + vertex[2]*ClipMatrix[8] + vertex[3]*ClipMatrix[12]) >> 12);
@@ -261,7 +302,7 @@ index 54f5119..188a8c3 100644
      vertextrans->Position[2] = (vertex[0]*ClipMatrix[2] + vertex[1]*ClipMatrix[6] + vertex[2]*ClipMatrix[10] + vertex[3]*ClipMatrix[14]) >> 12;
      vertextrans->Position[3] = (vertex[0]*ClipMatrix[3] + vertex[1]*ClipMatrix[7] + vertex[2]*ClipMatrix[11] + vertex[3]*ClipMatrix[15]) >> 12;
  
-@@ -1588,7 +1596,7 @@ void GPU3D::BoxTest(const u32* params) noexcept
+@@ -1588,7 +1608,7 @@ void GPU3D::BoxTest(const u32* params) noexcept
          s32 z = cube[i].Position[2];
  
          cube[i].Position[0] = WideX(((s64)x*ClipMatrix[0] + (s64)y*ClipMatrix[4] + (s64)z*ClipMatrix[8] + (s64)0x1000*ClipMatrix[12]) >> 12);
@@ -270,7 +311,7 @@ index 54f5119..188a8c3 100644
          cube[i].Position[2] = ((s64)x*ClipMatrix[2] + (s64)y*ClipMatrix[6] + (s64)z*ClipMatrix[10] + (s64)0x1000*ClipMatrix[14]) >> 12;
          cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
      }
-@@ -1699,7 +1707,7 @@ void GPU3D::CmdFIFOWrite(const CmdFIFOEntry& entry) noexcept
+@@ -1699,7 +1719,7 @@ void GPU3D::CmdFIFOWrite(const CmdFIFOEntry& entry) noexcept
              // has 64 entries. this is less complicated than trying to make STMxx stall-able.
  
              CmdStallQueue.Write(entry);
@@ -279,7 +320,7 @@ index 54f5119..188a8c3 100644
              return;
          }
  
-@@ -1742,7 +1750,7 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
+@@ -1742,7 +1762,7 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
                  CmdFIFOWrite(entry);
              }
  
@@ -288,7 +329,7 @@ index 54f5119..188a8c3 100644
                  NDS.GXFIFOUnstall();
          }
  
-@@ -1753,9 +1761,21 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
+@@ -1753,9 +1773,21 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
      return ret;
  }
  
@@ -310,7 +351,7 @@ index 54f5119..188a8c3 100644
  
      //printf("FIFO: processing %02X %08X. Levels: FIFO=%d, PIPE=%d\n", entry.Command, entry.Param, CmdFIFO->Level(), CmdPIPE->Level());
  
-@@ -2414,6 +2434,7 @@ void GPU3D::Run() noexcept
+@@ -2414,6 +2446,7 @@ void GPU3D::Run() noexcept
  
  void GPU3D::CheckFIFOIRQ() noexcept
  {
@@ -318,7 +359,7 @@ index 54f5119..188a8c3 100644
      bool irq = false;
      switch (GXStat >> 30)
      {
-@@ -2427,6 +2448,7 @@ void GPU3D::CheckFIFOIRQ() noexcept
+@@ -2427,6 +2460,7 @@ void GPU3D::CheckFIFOIRQ() noexcept
  
  void GPU3D::CheckFIFODMA() noexcept
  {
@@ -326,7 +367,7 @@ index 54f5119..188a8c3 100644
      if (CmdFIFO.Level() < 128)
          NDS.CheckDMAs(0, 0x07);
  }
-@@ -2460,14 +2482,43 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2460,14 +2494,43 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -370,7 +411,7 @@ index 54f5119..188a8c3 100644
                  if (NumPolygons)
                  {
                      // separate translucent polygons from opaque ones
-@@ -2531,6 +2582,25 @@ void GPU3D::VBlank() noexcept
+@@ -2531,6 +2594,27 @@ void GPU3D::VBlank() noexcept
              NumVertices = 0;
              NumPolygons = 0;
              NumOpaquePolygons = 0;
@@ -384,9 +425,11 @@ index 54f5119..188a8c3 100644
 +                LastSceneLog = std::move(SceneLog);
 +                SceneLog.clear();
 +                LastSceneStart = std::move(SceneStart);
-+                Savestate state(4 * 1024 * 1024);
++                Savestate state(256 * 1024);
 +                RecordScenes = false; // not part of the state
++                LightSnapshot = true;
 +                DoSavestate(&state);
++                LightSnapshot = false;
 +                RecordScenes = true;
 +                state.Finish();
 +                const u8* bytes = static_cast<const u8*>(state.Buffer());
@@ -397,7 +440,7 @@ index 54f5119..188a8c3 100644
              FlushRequest = 0;
          }
 diff --git a/src/GPU3D.h b/src/GPU3D.h
-index 2e99abd..96c4ffd 100644
+index 2e99abd..0fba9a2 100644
 --- a/src/GPU3D.h
 +++ b/src/GPU3D.h
 @@ -20,6 +20,7 @@
@@ -408,7 +451,7 @@ index 2e99abd..96c4ffd 100644
  #include <memory>
  
  #include "Savestate.h"
-@@ -243,6 +244,33 @@ public:
+@@ -243,6 +244,36 @@ public:
      {
          return WideActive() ? (s32)(((s64)x * 256) / (256 + 2 * WideSide)) : x;
      }
@@ -426,6 +469,9 @@ index 2e99abd..96c4ffd 100644
 +    // (GPU3D_Soft::RenderMid). A copy has Replay on: it raises no interrupt, DMA or stall.
 +    bool RecordScenes = false;
 +    bool Replay = false;
++    // A scene's start snapshot leaves out the polygon and vertex memory (a scene starts with
++    // none; most of a savestate's 1.5 MB).
++    bool LightSnapshot = false;
 +    int ScenesRecorded = 0;
 +    std::vector<u64> SceneLog, LastSceneLog, PrevSceneLog;
 +    std::vector<u8> SceneStart, LastSceneStart;
@@ -442,7 +488,7 @@ index 2e99abd..96c4ffd 100644
  
      s32 ProjMatrixStack[16] {};
      s32 PosMatrixStack[32][16] {};
-@@ -341,6 +369,17 @@ public:
+@@ -341,6 +372,17 @@ public:
      std::array<Polygon*,2048> RenderPolygonRAM {};
      u32 RenderNumPolygons = 0;
  
@@ -461,7 +507,7 @@ index 2e99abd..96c4ffd 100644
      u32 FlushAttributes = 0;
      u32 ScrolledLine[256]; // not part of the hardware state, don't serialize
 diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
-index e6ef98c..c056f2b 100644
+index e6ef98c..e02a375 100644
 --- a/src/GPU3D_Soft.cpp
 +++ b/src/GPU3D_Soft.cpp
 @@ -19,6 +19,7 @@
@@ -518,7 +564,7 @@ index e6ef98c..c056f2b 100644
  
      if (threaded)
          // If this renderer is threaded, notify the main thread that we're done with the frame.
-@@ -1763,16 +1765,202 @@ void SoftRenderer::RenderFrame(GPU& gpu)
+@@ -1763,16 +1765,204 @@ void SoftRenderer::RenderFrame(GPU& gpu)
  
      FrameIdentical = !(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical;
  
@@ -583,9 +629,9 @@ index e6ef98c..c056f2b 100644
 +        for (s32 sx = -8; sx <= 8; sx++)
 +        {
 +            u32 hits = 0;
-+            for (int y = GPU3D::MaxTall + 8; y < GPU3D::MaxTall + 192 - 8; y += 4)
++            for (int y = GPU3D::MaxTall + 8; y < GPU3D::MaxTall + 192 - 8; y += 6)
 +            {
-+                for (int x = GPU3D::MaxWideSide + 8; x < GPU3D::MaxWideSide + 256 - 8; x += 4)
++                for (int x = GPU3D::MaxWideSide + 8; x < GPU3D::MaxWideSide + 256 - 8; x += 6)
 +                {
 +                    const u32 c = now[y * ScanlineWidth + FirstPixelOffset + x];
 +                    if ((c >> 24) == 0)
@@ -693,7 +739,9 @@ index e6ef98c..c056f2b 100644
 +        Savestate state(const_cast<u8*>(g.LastSceneStart.data()), (u32)g.LastSceneStart.size(), false);
 +        if (state.Error)
 +            return;
++        m.LightSnapshot = true;
 +        m.DoSavestate(&state);
++        m.LightSnapshot = false;
 +    }
 +    m.Replay = true;
 +    m.RecordScenes = false;
@@ -724,7 +772,7 @@ index e6ef98c..c056f2b 100644
  }
  
  void SoftRenderer::RestartFrame(GPU& gpu)
-@@ -1825,12 +2013,12 @@ u32* SoftRenderer::GetLine(int line)
+@@ -1825,12 +2015,12 @@ u32* SoftRenderer::GetLine(int line)
              Platform::Semaphore_Wait(Sema_ScanlineCount);
      }
  

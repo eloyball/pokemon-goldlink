@@ -494,6 +494,10 @@ impl GameApp {
                 Event::SaveFailed(e) => {
                     self.say(format!("Your save couldn't be written: {e}"), true)
                 }
+                Event::SmoothTooSlow => self.say(
+                    "The smooth camera is off: this computer can't keep up with it (Settings → Smooth camera)".to_owned(),
+                    false,
+                ),
                 Event::BackupFailed(e) => {
                     self.say(format!("A backup couldn't be written: {e}"), true)
                 }
