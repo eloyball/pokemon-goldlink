@@ -347,10 +347,14 @@ impl Launcher {
         };
         while let Ok(stage) = rx.try_recv() {
             let end = matches!(stage, Stage::Done(_) | Stage::Failed(_));
+            if let Stage::Failed(e) = &stage {
+                self.message = Some((format!("The update didn't go through: {e}"), true));
+            }
             if let Stage::Done(program) = &stage {
                 match crate::update::restart(program) {
                     Ok(()) => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                     Err(e) => {
+                        self.message = Some((e.clone(), true));
                         self.stage = Some(Stage::Failed(e));
                         self.updating = None;
                         return;
@@ -443,8 +447,9 @@ impl Launcher {
                 Some(Stage::Done(_)) => {
                     line(ui, &format!("GoldLink {} is installed. Restarting…", a.tag))
                 }
-                Some(Stage::Failed(e)) => {
-                    line(ui, &format!("The update didn't go through: {e}"));
+                Some(Stage::Failed(_)) => {
+                    // Why: in the tip line below (poll_update), where a longer reason fits.
+                    line(ui, "The update didn't go through.");
                     ui.add_space(4.0);
                     let width = ui.available_width();
                     ui.horizontal(|ui| {
@@ -655,16 +660,29 @@ impl Launcher {
                     let label = if self.has_rom() { "Choose another ROM…" } else { "Choose your ROM…" };
                     let kind = if self.has_rom() { Kind::Neutral } else { Kind::Primary };
                     let h = if self.has_rom() { 34.0 } else { 46.0 };
-                    if theme::button(ui, label, kind, egui::vec2(ui.available_width(), h), !self.busy())
-                        .clicked()
-                    {
-                        self.pick_rom();
-                    }
-                    if theme::button(ui, "Open your GoldLink folder", Kind::Neutral, egui::vec2(ui.available_width(), 34.0), true)
-                        .on_hover_text("Saves, settings, backups")
-                        .clicked()
-                    {
-                        open_folder(&self.paths.data);
+                    // With an update's note there's no room for both rows: one row of halves.
+                    let halves = self.available.is_some();
+                    let (rom_w, folder, folder_w, folder_h) = if halves {
+                        let half = (ui.available_width() - 8.0) / 2.0;
+                        (half, "Your GoldLink folder", half, h)
+                    } else {
+                        (ui.available_width(), "Open your GoldLink folder", ui.available_width(), 34.0)
+                    };
+                    let mut row = |ui: &mut egui::Ui| {
+                        if theme::button(ui, label, kind, egui::vec2(rom_w, h), !self.busy()).clicked() {
+                            self.pick_rom();
+                        }
+                        if theme::button(ui, folder, Kind::Neutral, egui::vec2(folder_w, folder_h), true)
+                            .on_hover_text("Saves, settings, backups")
+                            .clicked()
+                        {
+                            open_folder(&self.paths.data);
+                        }
+                    };
+                    if halves {
+                        ui.horizontal(|ui| row(ui));
+                    } else {
+                        row(ui);
                     }
                 });
                 let (tip, error) = match &self.message {

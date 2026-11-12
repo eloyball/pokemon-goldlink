@@ -13,10 +13,12 @@ Unpack, start `GoldLink` (`GoldLink.exe` on Windows), choose your ROM the first 
 press **Play**. The `README.txt` inside says more. Coming from the BizHawk version: your worlds,
 your place in them and your saves come over on the first start.
 
-**Updating:** unpack the new version anywhere and start it. Your worlds, saves, settings and ROM
-live in your GoldLink folder, not the program's, so nothing needs copying; delete the old
-version's folder once the new one runs. On Linux, run the new folder's `./install.sh` again so
-the app menu starts the new version.
+**Updating:** from v0.6.1 on, GoldLink tells you when a new version is out: press **Update** on
+the screen with PLAY and it downloads, checks and installs it, then restarts. From v0.6 or older,
+by hand: unpack the new version anywhere and start it. Your worlds, saves, settings and ROM live
+in your GoldLink folder, not the program's, so nothing needs copying; delete the old version's
+folder once the new one runs. On Linux, run the new folder's `./install.sh` again so the app
+menu starts the new version.
 
 Windows shows an "unknown publisher" warning for this unsigned program: **More info > Run anyway**.
 

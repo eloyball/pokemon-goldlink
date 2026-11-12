@@ -352,10 +352,7 @@ fn inside(path: &Path) -> Result<PathBuf, String> {
 pub fn install(dir: &Path, files: &[File]) -> Result<(), String> {
     let staging = dir.join(STAGING);
     let cant_write = |e: &dyn std::fmt::Display| {
-        format!(
-            "GoldLink can't write to its folder ({e}): {}. Update by hand from the release page.",
-            dir.display()
-        )
+        format!("GoldLink can't write to its folder ({e}): update by hand from the release page")
     };
     std::fs::remove_dir_all(&staging).ok();
     let staged = (|| -> std::io::Result<()> {

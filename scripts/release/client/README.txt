@@ -47,6 +47,14 @@ BizHawk's) folder.
 If GoldLink closes unexpectedly it saves a report in that folder (crashes/); pass it on to
 whoever helps your group.
 
+Updating
+--------
+When a new version is out, the screen with PLAY says so: press "Update to vX.Y". GoldLink
+downloads it, checks that it's the real thing (signed by GoldLink's maintainer), installs it in
+this folder and restarts. Your saves and settings aren't touched. If that can't be done (no
+internet, or a folder you can't write to), it says why and offers the download page: unpack the
+new version anywhere, start it, and delete this folder once it runs.
+
 Licenses
 --------
 GoldLink's program is free software under the GNU GPL, version 3 or later (it contains the
