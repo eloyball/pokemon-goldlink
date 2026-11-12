@@ -219,6 +219,39 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
     return width;
 }
 
+int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16])
+{
+    static_assert(melonDS::GPU3D::MaxWideSide == melonDS::GPU2D::SoftRenderer::MaxSide);
+    constexpr int side = melonDS::GPU3D::MaxWideSide;
+    constexpr int width = 256 + 2 * side;
+    melonDS::GPU &gpu = core->nds->GPU;
+    const uint32_t cnt = gpu.GPU2D_A.DispCnt;
+    if (!(core->nds->PowerControl9 & (1 << 15)) || ((cnt >> 16) & 3) != 1 || !(cnt & (1 << 3)))
+        return 0;
+    auto &soft = static_cast<melonDS::SoftRenderer &>(gpu.GPU3D.GetCurrentRenderer());
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
+    // The side strips' mask, when the 2D engine composed them for this picture; otherwise the
+    // sides show the 3D layer alone (gl_core_wide_frame).
+    const uint32_t *top = gpu.Framebuffer[gpu.FrontBuffer][0].get();
+    const bool strips = soft2d.WideOwner[0] == top && soft2d.WideDrawn[0] > 0;
+    for (int y = 0; y < 192; y++)
+    {
+        std::memcpy(depth + y * width, soft.GetWideDepthLine(y), width * 4);
+        uint8_t *row = layer + y * width;
+        std::memcpy(row, soft2d.Layer3D[y], width);
+        if (!strips)
+        {
+            const uint32_t *colour = soft.GetWideLine(y);
+            for (int x = 0; x < width; x++)
+                if (x < side || x >= side + 256)
+                    row[x] = (colour[x] >> 24) != 0 ? 1 : 0;
+        }
+    }
+    std::memcpy(proj, gpu.GPU3D.ProjMatrix, 16 * 4);
+    const bool w = gpu.GPU3D.RenderNumPolygons > 0 && gpu.GPU3D.RenderPolygonRAM[0]->WBuffer;
+    return w ? 2 : 1;
+}
+
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
 {
     auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());

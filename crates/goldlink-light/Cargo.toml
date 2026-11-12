@@ -1,0 +1,16 @@
+[package]
+name = "goldlink-light"
+version = "0.1.0"
+description = "GoldLink's lighting (UC11): the overworld lit per game pixel from the 3D scene's depth, and a colour grade for the rest"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# A pool of worker threads that stays up between frames (spawning threads per step cost more
+# than the steps).
+rayon = "1"

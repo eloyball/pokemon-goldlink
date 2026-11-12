@@ -51,6 +51,10 @@ pub struct Video {
     pub integer_scale: bool,
     /// One screen: a wider picture in the overworld and in battles (UC9 §4).
     pub wide: bool,
+    /// Light and shade in the overworld, a small colour grade elsewhere (UC11).
+    pub lighting: bool,
+    /// The game fills the screen (the launcher stays a window).
+    pub fullscreen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,6 +96,8 @@ impl Default for Video {
             filter: Filter::Nearest,
             integer_scale: false,
             wide: true,
+            lighting: true,
+            fullscreen: true,
         }
     }
 }

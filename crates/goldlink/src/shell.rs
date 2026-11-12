@@ -112,7 +112,9 @@ impl Shell {
         ))
     }
 
+    /// A window of this size (the launcher is never fullscreen; the game turns it on after).
     fn resize(ctx: &egui::Context, size: egui::Vec2, min: egui::Vec2) {
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(false));
         ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(min));
         ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
     }
@@ -280,6 +282,8 @@ impl Shell {
                         played,
                     }
                 } else {
+                    // The settings as the player left them in the game.
+                    self.config = game.config().clone();
                     game.shutdown();
                     let message = match error {
                         Some(e) => (format!("{e} Your game was saved."), true),
@@ -420,6 +424,10 @@ impl Shell {
                 &code,
             );
             Self::resize(ctx, game.window_size(2.0), game.window_size(1.0));
+            // The game fills the screen (the player's setting; F11 switches).
+            if self.config.video.fullscreen {
+                ctx.send_viewport_cmd(ViewportCommand::Fullscreen(true));
+            }
             return Stage::Playing {
                 game: Box::new(game),
                 code,

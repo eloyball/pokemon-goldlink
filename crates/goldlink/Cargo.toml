@@ -25,6 +25,7 @@ goldlink-runtime = { path = "../goldlink-runtime" }
 goldlink-bridge = { path = "../goldlink-bridge" }
 goldlink-proto = { path = "../goldlink-proto" }
 goldlink-rom = { path = "../goldlink-rom" }
+goldlink-light = { path = "../goldlink-light" }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 serde_json = "1"
 ureq = "3"

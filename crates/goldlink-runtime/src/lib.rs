@@ -13,4 +13,4 @@ pub mod saves;
 
 pub use emulator::{Emulator, Event, GameSetup, Input, screen_hash};
 pub use files::write_atomic;
-pub use runner::{Command, FrameHook, Runner, Shared};
+pub use runner::{Command, Frame, FrameHook, LightFrame, Runner, Shared};

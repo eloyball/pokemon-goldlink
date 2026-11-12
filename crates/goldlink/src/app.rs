@@ -103,6 +103,8 @@ pub struct GameApp {
     /// its Mega symbol cut from there.
     mega: Option<bool>,
     mega_icon: Option<egui::TextureHandle>,
+    /// The lighting's buffers and worker threads (UC11), from the first lit frame.
+    lighting: Option<goldlink_light::Lighting>,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -170,6 +172,7 @@ impl GameApp {
             wide_side: 0,
             mega: None,
             mega_icon: None,
+            lighting: None,
 
             settings_open: false,
             messages,
@@ -195,7 +198,14 @@ impl GameApp {
         };
         if let Some(r) = &self.runner {
             r.send(Command::Wide(side));
+            // The lighting's buffers come with each frame only while it's on.
+            r.send(Command::Lighting(v.lighting));
         }
+    }
+
+    /// The player's settings, as changed in the game.
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// The release program's game window (UC8): no World panel; the top bar, Esc's menu and
@@ -317,12 +327,14 @@ impl GameApp {
 
     fn update_texture(&mut self, ctx: &egui::Context) {
         let Some(runner) = &self.runner else { return };
-        let image = {
+        let lit = self.config.video.lighting;
+        let shown = {
             let frame = lock(&runner.shared.frame);
             if frame.seq == self.last_seq {
                 None
             } else {
                 self.last_seq = frame.seq;
+                // What the HUD reads, from the game's own pixels.
                 if self.config.video.layout == Layout::OneScreen {
                     self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
                     if self.mega.is_some() {
@@ -350,58 +362,100 @@ impl GameApp {
                             ))
                         }
                     }
-                    // The wider top screen, when the emulation thread makes it.
-                    self.wide_side = frame.wide_side;
-                    if frame.wide_side > 0 && !frame.wide.is_empty() {
-                        let w = 256 + 2 * frame.wide_side;
-                        let img = egui::ColorImage {
-                            size: [w, 192],
-                            pixels: frame
-                                .wide
-                                .iter()
-                                .map(|&p| {
-                                    egui::Color32::from_rgb(
-                                        (p >> 16) as u8,
-                                        (p >> 8) as u8,
-                                        p as u8,
-                                    )
-                                })
-                                .collect(),
-                        };
-                        let options = match self.config.video.filter {
-                            Filter::Nearest => egui::TextureOptions::NEAREST,
-                            Filter::Linear => egui::TextureOptions::LINEAR,
-                        };
-                        match &mut self.wide {
-                            Some(t) if t.size() == [w, 192] => t.set(img, options),
-                            _ => self.wide = Some(ctx.load_texture("wide", img, options)),
-                        }
-                    }
                 }
-                let px: Vec<egui::Color32> = frame
-                    .pixels
-                    .iter()
-                    .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
-                    .collect();
-                Some(egui::ColorImage {
-                    size: [256, 384],
-                    pixels: px,
-                })
+                // The wider top screen, when the emulation thread makes it (one-screen layout).
+                let wide = (self.config.video.layout == Layout::OneScreen
+                    && frame.wide_side > 0
+                    && !frame.wide.is_empty())
+                .then(|| frame.wide.clone());
+                self.wide_side = frame.wide_side;
+                let light = if lit { frame.light.clone() } else { None };
+                Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
         };
         let options = match self.config.video.filter {
             Filter::Nearest => egui::TextureOptions::NEAREST,
             Filter::Linear => egui::TextureOptions::LINEAR,
         };
-        match (&mut self.texture, image) {
-            (Some(t), Some(img)) => t.set(img, options),
-            (None, img) => {
-                let img =
-                    img.unwrap_or_else(|| egui::ColorImage::new([256, 384], egui::Color32::BLACK));
+        let Some((mut pixels, mut wide, side, light)) = shown else {
+            if self.texture.is_none() {
+                let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
                 self.texture = Some(ctx.load_texture("screens", img, options));
             }
-            (Some(_), None) => {}
+            return;
+        };
+        if lit {
+            self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
+        let image = |px: &[u32], w: usize, h: usize| egui::ColorImage {
+            size: [w, h],
+            pixels: px
+                .iter()
+                .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+                .collect(),
+        };
+        if let Some(wide) = &wide {
+            let w = 256 + 2 * side;
+            let img = image(wide, w, 192);
+            match &mut self.wide {
+                Some(t) if t.size() == [w, 192] => t.set(img, options),
+                _ => self.wide = Some(ctx.load_texture("wide", img, options)),
+            }
+        }
+        let img = image(&pixels, 256, 384);
+        match &mut self.texture {
+            Some(t) => t.set(img, options),
+            None => self.texture = Some(ctx.load_texture("screens", img, options)),
+        }
+    }
+
+    /// The lighting (UC11): the overworld lit on the top screen (the wider picture when it's
+    /// shown, else the screen), everything else (battles, menus, the touch screen) graded.
+    fn light(
+        &mut self,
+        pixels: &mut [u32],
+        wide: Option<&mut [u32]>,
+        side: usize,
+        light: Option<&goldlink_runtime::LightFrame>,
+    ) {
+        use goldlink_light::{Phase, Place, Scene};
+        let lighting = self
+            .lighting
+            .get_or_insert_with(goldlink_light::Lighting::new);
+        let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
+        let phase = Phase::of_hour(hour);
+        let world = light.filter(|l| l.overworld());
+        let scene = world.map(|l| {
+            (
+                Scene {
+                    depth: &l.buffers.depth,
+                    layer: &l.buffers.layer,
+                    proj: l.buffers.proj,
+                    width: goldlink_core::LightBuffers::WIDTH,
+                },
+                Place::of_map(l.map),
+            )
+        });
+        let middle = goldlink_core::Nds::MAX_WIDE_SIDE;
+        let (top, bottom) = pixels.split_at_mut(256 * 192);
+        match wide {
+            Some(wide) => {
+                let w = 256 + 2 * side;
+                match &scene {
+                    Some((s, place)) => {
+                        lighting.overworld(wide, w, middle - side, s, *place, phase)
+                    }
+                    None => lighting.grade(wide, w, 192, phase),
+                }
+                // The DS screen alone shows where the wider picture doesn't (menus, the title).
+                lighting.grade(top, 256, 192, phase);
+            }
+            None => match &scene {
+                Some((s, place)) => lighting.overworld(top, 256, middle, s, *place, phase),
+                None => lighting.grade(top, 256, 192, phase),
+            },
+        }
+        lighting.grade(bottom, 256, 192, phase);
     }
 
     fn collect_events(&mut self) {
@@ -455,6 +509,14 @@ impl GameApp {
                     changed |= ui.radio_value(&mut v.filter, Filter::Linear, "Smooth").changed();
                 });
                 changed |= ui.checkbox(&mut v.integer_scale, "Whole-number scaling only").changed();
+                changed |= ui
+                    .checkbox(&mut v.lighting, "Lighting")
+                    .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+                    .changed();
+                if self.release_ui && ui.checkbox(&mut v.fullscreen, "Fullscreen (F11)").changed() {
+                    changed = true;
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Fullscreen(v.fullscreen));
+                }
                 if v.layout == Layout::OneScreen {
                     changed |= ui.checkbox(&mut v.wide, "Widescreen in the overworld and in battles").changed();
                 }
@@ -843,6 +905,12 @@ impl GameApp {
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F3)) {
                 self.details_open = !self.details_open;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
+                let v = &mut self.config.video;
+                v.fullscreen = !v.fullscreen;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(v.fullscreen));
+                self.save_config();
             }
         } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             match self.world.as_mut() {

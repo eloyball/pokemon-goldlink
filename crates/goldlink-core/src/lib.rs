@@ -172,6 +172,23 @@ pub fn set_log_sink(sink: Option<LogSink>) {
     unsafe { sys::gl_set_log_callback(if sink.is_some() { Some(forward) } else { None }) };
 }
 
+/// The top screen's 3D depth and where the 3D layer shows, for the lighting (UC11). Each is
+/// [`LightBuffers::WIDTH`] x 192, the screen's x = 0 at column [`Nds::MAX_WIDE_SIDE`].
+#[derive(Debug, Clone, Default)]
+pub struct LightBuffers {
+    /// 24-bit depth: Z (0..0xFFFFFF over the projection's near..far) or W (`w_depth`).
+    pub depth: Vec<u32>,
+    /// 1: the 3D scene on top; 2: under a 2D layer (text box, a banner, menus); 0: 2D only.
+    pub layer: Vec<u8>,
+    /// The projection matrix, 20.12, as the DS keeps it (row by row, vectors on the left).
+    pub proj: [i32; 16],
+    pub w_depth: bool,
+}
+
+impl LightBuffers {
+    pub const WIDTH: usize = SCREEN_WIDTH + 2 * Nds::MAX_WIDE_SIDE;
+}
+
 /// One emulated Nintendo DS.
 pub struct Nds {
     raw: NonNull<sys::GlCore>,
@@ -378,6 +395,25 @@ impl Nds {
             );
         }
         out
+    }
+
+    /// What the lighting needs from the top screen (UC11) into `out`; false when the top screen
+    /// can't show the 3D scene (then `out` is left as it was).
+    pub fn light_buffers(&self, out: &mut LightBuffers) -> bool {
+        let n = LightBuffers::WIDTH * SCREEN_HEIGHT;
+        out.depth.resize(n, 0);
+        out.layer.resize(n, 0);
+        // SAFETY: depth and layer hold 384 * 192 each, what the shim writes; proj holds 16.
+        let kind = unsafe {
+            sys::gl_core_light_buffers(
+                self.ptr(),
+                out.depth.as_mut_ptr(),
+                out.layer.as_mut_ptr(),
+                out.proj.as_mut_ptr(),
+            )
+        };
+        out.w_depth = kind == 2;
+        kind != 0
     }
 
     /// Rectangles `[x0, y0, x1, y1, dx]` (screen pixels, end exclusive) whose main-engine sprite

@@ -64,6 +64,8 @@ pub struct Emulator {
     events: Vec<Event>,
     /// The wider picture's side (UC9 §4), kept across power cycles.
     wide: usize,
+    /// The DS clock at the last power cycle, and the frame count then (the game's clock).
+    clock_at_boot: (chrono::NaiveDateTime, u64),
 }
 
 impl Emulator {
@@ -86,6 +88,7 @@ impl Emulator {
             frame: 0,
             events: Vec::new(),
             wide: 0,
+            clock_at_boot: (chrono::NaiveDateTime::default(), 0),
         };
         emu.boot()?;
         Ok(emu)
@@ -115,10 +118,7 @@ impl Emulator {
         self.nds
             .load_rom(&self.rom, save.as_deref())
             .map_err(|e| e.to_string())?;
-        match self.rtc {
-            Some(at) => self.nds.set_rtc(at),
-            None => self.nds.set_rtc_now(),
-        }
+        self.set_clock();
         // A power cycle resets the GPU: the wider picture again.
         self.nds.set_wide(self.wide);
         self.watcher
@@ -135,10 +135,7 @@ impl Emulator {
         self.nds
             .load_rom(&self.rom, (!cart.is_empty()).then_some(cart.as_slice()))
             .map_err(|e| e.to_string())?;
-        match self.rtc {
-            Some(at) => self.nds.set_rtc(at),
-            None => self.nds.set_rtc_now(),
-        }
+        self.set_clock();
         self.nds.set_wide(self.wide);
         self.watcher
             .reset(self.flash_writes.load(Ordering::Relaxed));
@@ -147,6 +144,22 @@ impl Emulator {
         let at = RESET_PARAMETER & (MAIN_RAM_SIZE - 1);
         self.nds.main_ram_mut()[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
         Ok(())
+    }
+
+    fn set_clock(&mut self) {
+        let at = self
+            .rtc
+            .unwrap_or_else(|| chrono::Local::now().naive_local());
+        self.nds.set_rtc(at);
+        self.clock_at_boot = (at, self.frame);
+    }
+
+    /// The DS clock now, as the game reads it: the clock at boot plus the frames run since (the
+    /// DS draws 59.8261 frames a second).
+    pub fn clock(&self) -> chrono::NaiveDateTime {
+        let (at, frame) = self.clock_at_boot;
+        let ms = (self.frame - frame) as f64 * 1000.0 / 59.8261;
+        at + chrono::Duration::milliseconds(ms as i64)
     }
 
     /// The cart's save file.

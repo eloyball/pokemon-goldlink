@@ -1,0 +1,71 @@
+GoldLink's change to melonDS (UC11): what the lighting needs from a frame.
+
+- GPU3D_Soft: GetWideDepthLine gives the wide 3D line's depth buffer (as GetWideLine its colour).
+- GPU2D_Soft: Layer3D records, per main-engine line, where the 3D layer shows in the composed
+  picture (on top, under a 2D layer, or not at all), for the screen and the wide picture's
+  side strips; a text box or menu drawn over the 3D scene is left out of the lighting.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
+index 1159273..5c3e483 100644
+--- a/src/GPU2D_Soft.cpp
++++ b/src/GPU2D_Soft.cpp
+@@ -113,6 +113,10 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+     int n3dline = line;
+     line = GPU.VCount;
+ 
++    // GoldLink (UC11): this line's 3D mask starts empty; DrawScanline_BGOBJ fills it.
++    if (CurUnit->Num == 0 && line < 192)
++        memset(Layer3D[line], 0, sizeof(Layer3D[line]));
++
+     if (CurUnit->Num == 0)
+     {
+         auto bgDirty = GPU.VRAMDirty_ABG.DeriveState(GPU.VRAMMap_ABG, GPU);
+@@ -846,11 +850,19 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+ 
+     if (!GPU.GPU3D.IsRendererAccelerated())
+     {
++        // GoldLink (UC11): where the 3D layer shows, for the lighting
++        u8* mask = (CurUnit->Num == 0 && line < 192) ? Layer3D[line] : nullptr;
+         for (int i = 0; i < 256; i++)
+         {
+             u32 val1 = BGOBJLine[i];
+             u32 val2 = BGOBJLine[256+i];
+ 
++            if (mask)
++            {
++                int col = i + SideShift + MaxSide;
++                if (col >= 0 && col < 256 + 2 * MaxSide)
++                    mask[col] = ((val1 >> 24) & 0xC0) == 0x40 ? 1 : ((val2 >> 24) & 0xC0) == 0x40 ? 2 : 0;
++            }
+             BGOBJLine[i] = ColorComposite(i, val1, val2);
+         }
+     }
+diff --git a/src/GPU2D_Soft.h b/src/GPU2D_Soft.h
+index 0a0a1b4..61703d0 100644
+--- a/src/GPU2D_Soft.h
++++ b/src/GPU2D_Soft.h
+@@ -44,6 +44,9 @@ public:
+     u32 WideSides[2][192][2 * MaxSide] {};
+     // The framebuffer each engine's strips belong to (the GPU's back buffer at the time).
+     u32* WideOwner[2] {};
++    // GoldLink (UC11): per main-engine line, where the 3D layer shows: 1 on top, 2 under a
++    // 2D layer (opaque or blended), 0 not at all. Column = screen x + MaxSide (the wide sides included).
++    u8 Layer3D[192][256 + 2 * MaxSide] {};
+     // The strips' width when drawn.
+     int WideDrawn[2] {};
+ 
+diff --git a/src/GPU3D_Soft.h b/src/GPU3D_Soft.h
+index e8fb4bf..a649e56 100644
+--- a/src/GPU3D_Soft.h
++++ b/src/GPU3D_Soft.h
+@@ -42,6 +42,8 @@ public:
+     u32* GetLine(int line) override;
+     // GoldLink: the whole wide line (RenderWidth pixels; the screen starts MaxWideSide in).
+     u32* GetWideLine(int line);
++    // GoldLink (UC11): the wide line's depth (24-bit Z or W, as the polygon chose), same layout.
++    const u32* GetWideDepthLine(int line) const { return &DepthBuffer[(line * ScanlineWidth) + FirstPixelOffset]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+     void EnableRenderThread();

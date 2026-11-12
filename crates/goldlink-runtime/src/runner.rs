@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use goldlink_core::{SCREEN_HEIGHT, SCREEN_WIDTH};
+use goldlink_core::{LightBuffers, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 use crate::emulator::{Emulator, Event, Input};
 
@@ -38,6 +38,8 @@ pub enum Command {
     Reboot,
     /// The wider picture (UC9 §4): pixels kept on each side of the top screen (0: off).
     Wide(usize),
+    /// Hand the lighting its buffers with each frame (UC11).
+    Lighting(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -51,6 +53,19 @@ pub struct Frame {
     pub wide_side: usize,
     /// Counts frames; changes when the pixels do.
     pub seq: u64,
+    /// What the lighting needs (UC11), with it on and the top screen showing the 3D scene.
+    pub light: Option<LightFrame>,
+}
+
+/// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
+#[derive(Debug, Clone)]
+pub struct LightFrame {
+    pub buffers: LightBuffers,
+    /// The ROM's `CoopActivity` for the local player (the overworld, a battle, a menu...).
+    pub activity: u8,
+    pub map: u16,
+    /// The DS clock's hour (the game's time of day).
+    pub hour: u32,
 }
 
 /// Interleaved stereo i16 samples waiting for the sound card.
@@ -128,6 +143,7 @@ impl Runner {
                 wide: Vec::new(),
                 wide_side: 0,
                 seq: 0,
+                light: None,
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -218,6 +234,43 @@ pub fn audio_nudge(fill: usize, target: usize) -> f64 {
     1.0 + 0.005 * err.clamp(-1.0, 1.0)
 }
 
+impl LightFrame {
+    /// The overworld shows: walking, an event, a warp (not a battle, a menu or the title).
+    pub fn overworld(&self) -> bool {
+        use goldlink_abi::CoopActivity::*;
+        matches!(
+            self.activity as u32,
+            COOP_ACTIVITY_FIELD | COOP_ACTIVITY_EVENT | COOP_ACTIVITY_TRANSITION
+        )
+    }
+}
+
+/// The lighting's view of this frame (in `spare`'s buffers when there is one), when the top
+/// screen can show the 3D scene.
+fn light_frame(emu: &Emulator, spare: Option<LightFrame>) -> Option<LightFrame> {
+    use goldlink_abi::{CoopCommBlock, CoopPlayerState};
+    use std::mem::offset_of;
+    let mut f = spare.unwrap_or(LightFrame {
+        buffers: LightBuffers::default(),
+        activity: 0,
+        map: 0,
+        hour: 12,
+    });
+    if !emu.nds.light_buffers(&mut f.buffers) {
+        return None;
+    }
+    let player = offset_of!(CoopCommBlock, local_player);
+    let (activity, map) = emu.mailbox().map_or((0, 0), |mb| {
+        let a = mb[player + offset_of!(CoopPlayerState, activity)];
+        let m = player + offset_of!(CoopPlayerState, map_id);
+        (a, u16::from_le_bytes([mb[m], mb[m + 1]]))
+    });
+    f.activity = activity;
+    f.map = map;
+    f.hour = chrono::Timelike::hour(&emu.clock());
+    Some(f)
+}
+
 fn run(
     mut emu: Emulator,
     mut hooks: Vec<Box<dyn FrameHook>>,
@@ -231,6 +284,9 @@ fn run(
     let mut audio_buf = vec![0i16; 4096];
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
+    let mut lighting = false;
+    // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
+    let mut light: Option<LightFrame> = None;
     loop {
         // Commands (blocking while paused).
         loop {
@@ -273,6 +329,7 @@ fn run(
                     }
                 }
                 Command::Wide(side) => emu.set_wide(side),
+                Command::Lighting(on) => lighting = on,
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -293,12 +350,14 @@ fn run(
         } else {
             Vec::new()
         };
+        let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;
             f.seq = emu.frame_count();
+            light = std::mem::replace(&mut f.light, light_now);
         }
         let events = emu.take_events();
         if !events.is_empty() {
