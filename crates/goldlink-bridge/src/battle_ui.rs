@@ -542,10 +542,13 @@ fn s32_at(r: &Ram<'_>, addr: u32) -> i32 {
 
 /// The game's HP boxes with how far to move them: the opponents' `shift` to the left, the
 /// player's to the right. melonDS moves the sprite pieces whose centre lies in a box (the
-/// pieces are 64 x 64 and reach above the box, so their centres sit on its middle row).
+/// pieces are 64 x 64 and reach above the box, so their centres sit on its middle row). Only
+/// boxes the game draws: in the intro the player's trainer slides through where the player's
+/// box will be, before it shows, and its pieces were moved (a second trainer, 43 pixels on).
 pub fn box_moves(ui: &BattleUi, shift: i32) -> Vec<[i32; 5]> {
     ui.boxes
         .iter()
+        .filter(|b| b.drawn)
         .map(|b| {
             let [x0, y0, x1, y1] = b.rect();
             let dx = if b.players() { shift } else { -shift };

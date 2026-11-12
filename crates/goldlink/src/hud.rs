@@ -783,6 +783,23 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
     );
 }
 
+/// Whether the game's battle text box shows in its rows (144 to 191 of the top screen): its
+/// inside is one colour (FBFBFB), 84–94% of rows 150 to 184 with words in it. A link battle's
+/// VS screen draws the bottom player's party there instead (0.5%): the band would hide it.
+pub fn game_textbox_shown(top_screen_rows: &[u32]) -> bool {
+    const INSIDE: u32 = 0xFB_FBFB;
+    let (mut inside, mut all) = (0u32, 0u32);
+    for y in 6..41 {
+        for x in 8..248 {
+            if let Some(&px) = top_screen_rows.get(y * 256 + x) {
+                all += 1;
+                inside += u32::from(px & 0xFF_FFFF == INSIDE);
+            }
+        }
+    }
+    all > 0 && inside * 10 > all * 3
+}
+
 /// The game's text box rows (144 to 191 of the top screen) with only its words kept: the text
 /// colour becomes white, its shadow a near black, everything else transparent. The game prints
 /// battle messages in one palette (measured: text 515159, shadow A2A2AA on FBFBFB; the box's
@@ -854,5 +871,25 @@ fn party_balls(p: &egui::Painter, band_top_left: Pos2, balls: &[Ball; 6], s: f32
             // A status condition: a small amber mark, as the game's ball shows one.
             p.circle_filled(c + vec2(r * 0.7, -r * 0.7), 1.3 * s, theme::AMBER);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_game_text_box_is_told_from_a_vs_screen() {
+        let rows = (ROWS - SCENE_ROWS) as usize;
+        // The text box: its inside, a line of words.
+        let mut text = vec![0x00FB_FBFBu32; 256 * rows];
+        for x in 20..200 {
+            text[12 * 256 + x] = 0x0051_5159;
+        }
+        assert!(game_textbox_shown(&text));
+        // The link battle's VS screen: a light background with party balls.
+        let vs = vec![0x00E3_EBEBu32; 256 * rows];
+        assert!(!game_textbox_shown(&vs));
+        assert!(!game_textbox_shown(&vec![0; 256 * rows]));
     }
 }

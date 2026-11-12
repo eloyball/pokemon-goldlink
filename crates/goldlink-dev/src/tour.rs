@@ -38,6 +38,13 @@ enum Step {
     /// `<dir>/rec-<name>/<frame>.bin`: the wide top screen and the 3D scene's buffers (see
     /// `record_frame`).
     Walk(Keys, u32, &'static str),
+    /// Presses A every 40 frames (as link_e2e_probe.lua's battles) for the frames.
+    Mash(u32),
+    /// Windows in step (GOLDLINK_DEV_TOUR_ROLE A, B..., GOLDLINK_DEV_TOUR_ROLES all of them,
+    /// GOLDLINK_DEV_TOUR_MARKS a shared folder): Mark leaves `mark_<role>_<name>` there; Peer
+    /// waits for the others' (or gives up after the frames).
+    Mark(&'static str),
+    Peer(&'static str, u32),
     /// Presses A every second until the naming screen is open (found in RAM by its keyboard's
     /// first row, as `NamingScreenAppData` holds it), then logs where its data and the pointers
     /// to it are, and the VBlank callback (the addresses goldlink_bridge::naming needs). With
@@ -353,6 +360,135 @@ const BATTLE_INTRO_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=link-a / link-b (dev/run_visual_pair.sh link): two windows in one
+/// room, a link battle between them (debug command 12, 6 on A and 7 on B, as
+/// link_e2e_probe.lua), A every 40 frames through it.
+const LINK_STEPS: [&[Step]; 2] = [
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Wait(120),
+        Step::Debug(C::COOP_DEBUG_LINK as u8, 6),
+        Step::Mash(60 * 150),
+        Step::Close,
+    ],
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Wait(120),
+        Step::Debug(C::COOP_DEBUG_LINK as u8, 7),
+        Step::Mash(60 * 150),
+        Step::Close,
+    ],
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=boss-a / boss-b (dev/run_visual_pair.sh boss): two teamed windows
+/// fight Falkner together (the 2v2 team boss, as link_e2e_probe.lua's boss mode): a lead
+/// (debug 14 preset 4), the warp to Violet Gym (debug 5 preset 10), up to him, A.
+const BOSS_STEPS: [&[Step]; 2] = [
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 4),
+        Step::Wait(300),
+        Step::Debug(C::COOP_DEBUG_WARP as u8, 10),
+        Step::Wait(600),
+        Step::Walk(Keys::UP, 24, ""),
+        Step::Wait(40),
+        Step::Mark("at_boss"),
+        Step::Peer("at_boss", 3600),
+        Step::Press(Keys::A),
+        Step::Mash(60 * 240),
+        Step::Close,
+    ],
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 4),
+        Step::Wait(300),
+        Step::Debug(C::COOP_DEBUG_WARP as u8, 10),
+        Step::Wait(600),
+        Step::Walk(Keys::UP, 24, ""),
+        Step::Wait(40),
+        Step::Mark("at_boss"),
+        Step::Peer("at_boss", 3600),
+        // B a little after A, so A waits first.
+        Step::Wait(300),
+        Step::Press(Keys::A),
+        Step::Mash(60 * 240),
+        Step::Close,
+    ],
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=team-a ... team-d (dev/run_visual_pair.sh team): four windows, A+B
+/// against C+D (the campaign's teams), as link_e2e_probe.lua's team mode: leads (debug 14:
+/// preset 5 Golem for A and B, 6 Magikarp for C and D), A asks C to battle (debug 12, 8 + C's
+/// remote slot 1), the others say Yes to the team battle's prompt (A every 40 frames).
+const TEAM_STEPS: [&[Step]; 3] = [
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 5),
+        Step::Wait(300),
+        Step::Mark("lead"),
+        Step::Peer("lead", 6000),
+        Step::Wait(60),
+        Step::Debug(C::COOP_DEBUG_LINK as u8, 8 + 1),
+        Step::Mash(60 * 240),
+        Step::Close,
+    ],
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 5),
+        Step::Wait(300),
+        Step::Mark("lead"),
+        Step::Peer("lead", 6000),
+        Step::Wait(240),
+        Step::Mash(60 * 240),
+        Step::Close,
+    ],
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Press(Keys::B),
+        Step::Wait(30),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 6),
+        Step::Wait(300),
+        Step::Mark("lead"),
+        Step::Peer("lead", 6000),
+        Step::Wait(240),
+        Step::Mash(60 * 240),
+        Step::Close,
+    ],
+];
+
 /// One recorded frame: `proj` (16 x i32, 20.12), `w_depth` (u32), the map (u32), the activity
 /// (u32), the wide picture's side (u32); then the wide top screen ((256 + 2 * side) x 192 u32,
 /// 0x00RRGGBB), the depth (384 x 192 u32) and the layer mask (384 x 192 u8). Nothing when the
@@ -362,7 +498,11 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
     use std::mem::offset_of;
     let mut b = goldlink_core::LightBuffers::default();
     if !emu.nds.light_buffers(&mut b) {
-        return Ok(());
+        // No 3D scene on the top screen: the picture all the same, the buffers empty.
+        let n = goldlink_core::LightBuffers::WIDTH * 192;
+        b.depth = vec![0; n];
+        b.layer = vec![0; n];
+        b.proj = [0; 16];
     }
     let player = offset_of!(CoopCommBlock, local_player);
     let (activity, map) = emu.mailbox().map_or((0, 0), |mb| {
@@ -389,7 +529,21 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&b.layer);
-    std::fs::write(path, out)
+    std::fs::write(path, out)?;
+    // The battle HUD's view of the frame (UC9's band), beside it.
+    let ui = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());
+    let line = match ui {
+        Some(b) => format!(
+            "menu {} waiting {} message {} boxes {} drawn {}\n",
+            b.menu,
+            b.waiting,
+            b.message.len(),
+            b.boxes.len(),
+            b.boxes.iter().filter(|x| x.drawn).count()
+        ),
+        None => "no battle ui\n".to_owned(),
+    };
+    std::fs::write(path.with_extension("txt"), line)
 }
 
 fn steps() -> &'static [Step] {
@@ -403,6 +557,14 @@ fn steps() -> &'static [Step] {
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
+        Ok("link-a") => LINK_STEPS[0],
+        Ok("link-b") => LINK_STEPS[1],
+        Ok("boss-a") => BOSS_STEPS[0],
+        Ok("boss-b") => BOSS_STEPS[1],
+        Ok("team-a") => TEAM_STEPS[0],
+        Ok("team-b") => TEAM_STEPS[1],
+        Ok("team-c") => TEAM_STEPS[2],
+        Ok("team-d") => TEAM_STEPS[2],
         _ => STEPS,
     }
 }
@@ -478,6 +640,36 @@ struct State {
     pending: Option<(u8, u8, u32)>,
     /// Text for the window's keyboard, taken by `input()` before the next frame.
     typed: Option<&'static str>,
+    /// Emulated frames so far, and the last one filmed (GOLDLINK_DEV_TOUR_FILM=1: the window
+    /// saved at every emulated frame, as `<dir>/film/<frame>.png`, for the lighting's and the
+    /// smooth camera's frame-by-frame checks).
+    emu_frames: u64,
+    /// Frames shown so far (the window has them), as of the last pre_frame.
+    published: u64,
+    filmed: u64,
+    film_requested: bool,
+}
+
+fn filming() -> bool {
+    std::env::var("GOLDLINK_DEV_TOUR_FILM").is_ok_and(|v| v == "1")
+}
+
+/// This window's role and the others' (GOLDLINK_DEV_TOUR_ROLES, default "AB").
+fn role() -> (String, Vec<String>) {
+    let me = std::env::var("GOLDLINK_DEV_TOUR_ROLE").unwrap_or_else(|_| "A".into());
+    let all = std::env::var("GOLDLINK_DEV_TOUR_ROLES").unwrap_or_else(|_| "AB".into());
+    let peers = all
+        .chars()
+        .map(|c| c.to_string())
+        .filter(|r| *r != me)
+        .collect();
+    (me, peers)
+}
+
+fn mark_path(role: &str, name: &str) -> PathBuf {
+    let dir = std::env::var_os("GOLDLINK_DEV_TOUR_MARKS")
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    dir.join(format!("mark_{role}_{name}"))
 }
 
 #[derive(Clone)]
@@ -566,17 +758,30 @@ impl Tour {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             }
         }
-        if let Some(name) = s.shot.clone() {
+        let image = ctx.input(|i| {
+            i.raw.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        // The film: a picture per emulated frame, written on its own thread.
+        if s.film_requested {
+            if let Some(img) = &image {
+                s.film_requested = false;
+                let path = self.dir.join("film").join(format!("{:06}.png", s.filmed));
+                let img = img.clone();
+                std::thread::spawn(move || {
+                    let _ = std::fs::create_dir_all(path.parent().expect("film folder"));
+                    if let Err(e) = write_png(&path, &img) {
+                        eprintln!("tour: film: {e}");
+                    }
+                });
+            }
+        } else if let Some(name) = s.shot.clone() {
             if !s.requested {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
                 s.requested = true;
             }
-            let image = ctx.input(|i| {
-                i.raw.events.iter().find_map(|e| match e {
-                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                    _ => None,
-                })
-            });
             if let Some(img) = image {
                 s.taken += 1;
                 let path = self.dir.join(format!("{}-{name}.png", s.taken));
@@ -589,6 +794,11 @@ impl Tour {
                 s.shot = None;
                 s.requested = false;
             }
+        }
+        if filming() && s.shot.is_none() && !s.film_requested && s.published != s.filmed {
+            s.filmed = s.published;
+            s.film_requested = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
         if s.shot.is_none()
             && steps()
@@ -605,7 +815,25 @@ pub struct TourHook(Tour);
 
 impl FrameHook for TourHook {
     fn pre_frame(&mut self, emu: &mut Emulator, input: &mut Input) {
+        // Filming: the emulation waits (a while at most) for the window to film the last frame,
+        // so every frame is filmed.
+        if filming() {
+            let start = std::time::Instant::now();
+            loop {
+                let mut s = self.0.state();
+                s.published = s.emu_frames;
+                if s.published == 0
+                    || (s.filmed == s.published && !s.film_requested)
+                    || start.elapsed() > std::time::Duration::from_millis(300)
+                {
+                    break;
+                }
+                drop(s);
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        }
         let mut s = self.0.state();
+        s.emu_frames += 1;
         if s.holding > 0 {
             s.holding -= 1;
             match s.step.checked_sub(1).and_then(|i| steps().get(i)) {
@@ -665,6 +893,29 @@ impl FrameHook for TourHook {
                 scene == want || s.frames >= max
             }
             Step::Wait(n) => s.frames >= n,
+            Step::Mash(n) => {
+                if s.frames % 40 < 3 {
+                    input.keys |= Keys::A;
+                }
+                s.frames >= n
+            }
+            Step::Mark(name) => {
+                let path = mark_path(&role().0, name);
+                if let Err(e) = std::fs::write(&path, b"1") {
+                    eprintln!("tour: mark {}: {e}", path.display());
+                }
+                eprintln!("tour: mark {name}");
+                true
+            }
+            Step::Peer(name, max) => {
+                let there = role().1.iter().all(|r| mark_path(r, name).exists());
+                if !there && s.frames >= max {
+                    let line = format!("step {}: gave up waiting for the peer's {name}", s.step);
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
+                there || s.frames >= max
+            }
             Step::Walk(k, n, name) => {
                 input.keys |= k;
                 if !name.is_empty() {

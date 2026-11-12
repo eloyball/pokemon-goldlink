@@ -96,6 +96,8 @@ pub struct GameApp {
     typing: crate::typing::Typing,
     /// The game's text box, re-inked for the battle HUD (one-screen layout).
     textbox: Option<egui::TextureHandle>,
+    /// The game's text box shows (the band shows in battles only then, or with a menu).
+    game_textbox: bool,
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
@@ -170,6 +172,7 @@ impl GameApp {
             one: OneScreen::default(),
             typing: Default::default(),
             textbox: None,
+            game_textbox: true,
             wide: None,
             wide_side: 0,
             mega: None,
@@ -356,6 +359,7 @@ impl GameApp {
                         }
                     }
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
+                    self.game_textbox = hud::game_textbox_shown(rows);
                     let img = hud::recolour_textbox(rows);
                     match &mut self.textbox {
                         Some(t) => t.set(img, egui::TextureOptions::NEAREST),
@@ -857,7 +861,9 @@ impl GameApp {
         let hud_draws = battle.is_some_and(hud::handles);
         let rows = |to: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, to));
         match battle {
-            Some(b) => {
+            // The band only with something for it: the HUD's menu or the game's text box (a link
+            // battle's VS screen draws the bottom player's party where the band would be).
+            Some(b) if hud_draws || self.game_textbox => {
                 // The scene above the band.
                 let band = hud::band(frame);
                 let scene_rows = hud::SCENE_ROWS / 192.0;
@@ -915,7 +921,7 @@ impl GameApp {
                 }
                 return;
             }
-            None => {
+            _ => {
                 match &wide {
                     Some(w) => p.image(w.id(), frame, rows(1.0), egui::Color32::WHITE),
                     None => p.image(t.id(), middle, TOP_UV, egui::Color32::WHITE),

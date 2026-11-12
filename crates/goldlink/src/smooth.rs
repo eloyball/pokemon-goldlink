@@ -20,8 +20,10 @@ use goldlink_light::Camera;
 
 /// The furthest a step can go, in DS pixels (running, cycling).
 const REACH: i32 = 8;
-/// Below this share of the picture changing, nothing moved.
-const LEAST_CHANGE: f32 = 0.01;
+/// Below this share of the picture changing, the camera didn't move: a camera step changes
+/// 40–65% of it (the Pokémon Centre's plain floor included), sprites walking or turning a few
+/// percent (taken for a step, the whole scene jumped for a frame).
+const LEAST_CHANGE: f32 = 0.15;
 /// The share of the changed pixels a camera move must explain to count as one.
 const LEAST_MATCH: f32 = 0.45;
 /// The neighbourhood that sorts a pixel (its radius).
@@ -138,7 +140,12 @@ impl Smooth {
             // The game showed the same 3D picture again (what's 2D may change: a map's name
             // sliding in over the walk).
             let same = match scene {
-                Some(sc) if sc.width >= w && sc.layer.len() >= sc.width * HEIGHT => {
+                // (Only when the last new picture's layers are known too.)
+                Some(sc)
+                    if sc.width >= w
+                        && sc.layer.len() >= sc.width * HEIGHT
+                        && self.layer.len() == n =>
+                {
                     let x0 = (sc.width - w) / 2;
                     (0..n).all(|i| {
                         raw[i] == self.raw[i]
@@ -572,6 +579,50 @@ mod tests {
         }
         assert!(wrong < (w * HEIGHT) / 100, "{wrong} pixels off");
         assert_eq!(mid[(2 * 96) * 2 * w + 2 * (w / 2)], 0x00FF_0000);
+    }
+
+    #[test]
+    fn sprites_moving_alone_are_not_a_camera_step() {
+        let w = 256;
+        let depth = vec![0x80_0000u32; w * HEIGHT];
+        let layer = vec![1u8; w * HEIGHT];
+        let scene = Depth {
+            depth: &depth,
+            layer: &layer,
+            proj: ORTHO,
+            width: w,
+        };
+        let a = view(0, 0, w);
+        // The same scene with a 40x40 patch of it moved 4 pixels: a sprite walking.
+        let mut b = a.clone();
+        for y in 40..80 {
+            for x in 40..80 {
+                b[y * w + x + 4] = a[y * w + x];
+            }
+        }
+        let mut s = Smooth::new();
+        s.frame(1, &a, &a, w, Some(&scene));
+        assert!(s.frame(3, &b, &b, w, Some(&scene)).is_none());
+    }
+
+    #[test]
+    fn a_first_picture_without_its_scene_doesnt_stop_it() {
+        // The first new picture can come before the 3D scene's buffers (the game booting):
+        // the next ones must still be told apart (all of their pixels compared).
+        let w = 256;
+        let depth = vec![0x80_0000u32; w * HEIGHT];
+        let layer = vec![1u8; w * HEIGHT];
+        let scene = Depth {
+            depth: &depth,
+            layer: &layer,
+            proj: ORTHO,
+            width: w,
+        };
+        let (a, b) = (view(0, 0, w), view(4, 2, w));
+        let mut s = Smooth::new();
+        assert!(s.frame(1, &a, &a, w, None).is_none());
+        assert!(s.frame(2, &a, &a, w, Some(&scene)).is_none(), "a repeat");
+        assert!(s.frame(3, &b, &b, w, Some(&scene)).is_some(), "half way");
     }
 
     #[test]
