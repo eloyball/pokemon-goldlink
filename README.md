@@ -17,10 +17,57 @@ melonDS emulator built in: one program, nothing else to install.
 - **A server for your group.** One person runs the relay (below); everyone else just needs its
   address and the world code.
 
+## Installing
+
+GoldLink has no installer: it runs from its own folder. Put that folder somewhere you can write
+to (your home folder, not `Program Files`), because the **Update** button installs new versions
+into it.
+
+### Windows
+
+1. From the [latest release](https://github.com/eloyball/pokemon-goldlink/releases/latest),
+   download `GoldLink-vX.Y-windows.zip`.
+2. Right-click the zip, choose **Extract All…**, and extract it to a folder of yours, for example
+   `C:\Users\<you>\Games`. That gives you a `GoldLink-vX.Y` folder; you can rename it to
+   `GoldLink`.
+3. Open the folder and double-click `GoldLink.exe`. If Windows says it protected your PC (an
+   unknown publisher), choose **More info**, then **Run anyway**.
+4. For the Start menu: right-click `GoldLink.exe` and choose **Pin to Start** (on Windows 11 it
+   may be under **Show more options**). For the desktop: **Send to → Desktop (create
+   shortcut)**.
+
+### Linux
+
+In a terminal, set `V` to the version you're installing (the latest is shown on the
+[releases page](https://github.com/eloyball/pokemon-goldlink/releases/latest)):
+
+```sh
+V=v0.6.1
+cd ~/Downloads
+curl -LO https://github.com/eloyball/pokemon-goldlink/releases/download/$V/GoldLink-$V-linux.tar.gz
+mkdir -p ~/Games
+tar xzf GoldLink-$V-linux.tar.gz -C ~/Games
+mv ~/Games/GoldLink-$V ~/Games/GoldLink
+~/Games/GoldLink/install.sh
+```
+
+`install.sh` adds GoldLink to your app menu (under Games), with its icon. Start it from there, or
+with `~/Games/GoldLink/GoldLink`. If you move the folder, run `install.sh` again from its new
+place. Fish shell users: write `set V v0.6.1` instead of `V=v0.6.1`.
+
+To uninstall: `~/Games/GoldLink/install.sh --uninstall`, then delete `~/Games/GoldLink`. Your
+saves stay in `~/.local/share/goldlink`.
+
+### Updating
+
+From v0.6.1 on, the launcher tells you when a new version is out: press **Update to vX.Y** and
+it downloads it, checks its signature, installs it in the same folder and restarts. The Start
+menu pin and the app menu entry keep working. From v0.6 or older, update by hand once: install
+v0.6.1 as above, then delete the old folder (your saves aren't in it).
+
 ## Playing
 
-1. Unpack the release anywhere and start `GoldLink` (`GoldLink.exe` on Windows). On Linux,
-   `./install.sh` adds it to your app menu.
+1. Start GoldLink.
 2. The first time, choose your HeartGold ROM.
 3. Press **PLAY**, pick your avatar, then **Create a world** (and share its code) or
    **Join a world** with a code and the server address your host gave you.
