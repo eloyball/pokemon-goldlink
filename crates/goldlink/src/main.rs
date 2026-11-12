@@ -88,6 +88,7 @@ fn main() -> ExitCode {
             hooks: Vec::new(),
             title: "GoldLink".into(),
             extra_ui: None,
+            extra_input: None,
             release_look: None,
         })
     })();

@@ -34,7 +34,112 @@ enum Step {
     Touch(u16, u16),
     Debug(u8, u8),
     Shot(&'static str),
+    /// Presses A every second until the naming screen is open (found in RAM by its keyboard's
+    /// first row, as `NamingScreenAppData` holds it), then logs where its data and the pointers
+    /// to it are, and the VBlank callback (the addresses goldlink_bridge::naming needs). With
+    /// true, also taps the intro's touch-only buttons (NO INFO NEEDED, the controls' Touch).
+    MashUntilNaming(u32, bool),
+    /// Types this on the window's keyboard ('\n' Enter, '\x08' Backspace), as a player would.
+    Type(&'static str),
+    /// Logs the naming screen's entry (its character codes) and what naming::read sees.
+    NamingLog,
     Close,
+}
+
+/// GOLDLINK_DEV_TOUR_ROUTE=naming (a new world): Oak's speech up to the name keyboard; the
+/// keyboard's addresses; then a name typed on the window's keyboard across the three pages,
+/// a delete, and Enter.
+const NAMING_STEPS: &[Step] = &[
+    Step::Wait(240),
+    // NO INFO NEEDED, where it is on the touch screen.
+    Step::Touch(128, 152),
+    Step::Wait(90),
+    Step::MashUntilNaming(60 * 180, true),
+    Step::Wait(90),
+    Step::NamingLog,
+    Step::Shot("naming-open"),
+    Step::Type("Lyra-2!"),
+    Step::Wait(240),
+    Step::NamingLog,
+    Step::Raw("naming-typed"),
+    Step::Shot("naming-typed"),
+    Step::Type("\x08\x08?"),
+    Step::Wait(180),
+    Step::NamingLog,
+    Step::Shot("naming-edited"),
+    Step::Type("\n"),
+    Step::Wait(240),
+    Step::NamingLog,
+    Step::Shot("naming-done"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=catch: a wild Pokémon caught with a Master Ball, and its nickname
+/// typed on the window's keyboard (the naming screen opened from inside the battle).
+const CATCH_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    // Three Master Balls.
+    Step::Debug(C::COOP_DEBUG_CHALLENGE as u8, 7),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Until(Scene::Battle, 600),
+    Step::Wait(60 * 15),
+    // BAG (m5_probe.lua throw_ball): Down, Left, Left; the Poké Balls pocket; the second ball
+    // (the Master Ball); USE.
+    Step::Press(Keys::DOWN),
+    Step::Wait(30),
+    Step::Press(Keys::LEFT),
+    Step::Wait(30),
+    Step::Press(Keys::LEFT),
+    Step::Wait(60),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::RIGHT),
+    Step::Wait(30),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::RIGHT),
+    Step::Wait(30),
+    Step::Shot("catch-balls"),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    // The catch, the Pokédex entry, "Give a nickname?" (A: yes), to the keyboard.
+    Step::MashUntilNaming(60 * 60, false),
+    Step::Wait(90),
+    Step::NamingLog,
+    Step::Shot("catch-naming"),
+    Step::Type("Ratty"),
+    Step::Wait(180),
+    Step::NamingLog,
+    Step::Shot("catch-typed"),
+    Step::Type("\n"),
+    Step::Wait(60 * 6),
+    Step::Shot("catch-done"),
+    Step::Close,
+];
+
+/// NamingScreenAppData's keyboard, its first row with the capitals up (CHAR_A..CHAR_J,
+/// CHAR_SPACE, CHAR_COMMA, CHAR_PERIOD), and that row's place in the data.
+const UPPER_ROW: [u16; 13] = [
+    299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 478, 429, 430,
+];
+const UPPER_ROW_AT: usize = 0x3A + 26;
+
+/// NamingScreenAppData's offset in main RAM, found by its keyboard row (not ROM's copy of it:
+/// its max length is a name's).
+fn find_naming(ram: &[u8]) -> Option<usize> {
+    let row: Vec<u8> = UPPER_ROW.iter().flat_map(|c| c.to_le_bytes()).collect();
+    ram.windows(row.len())
+        .enumerate()
+        .filter(|(i, w)| i % 2 == 0 && *w == row.as_slice())
+        .filter_map(|(i, _)| i.checked_sub(UPPER_ROW_AT))
+        .find(|&d| {
+            let max = u32::from_le_bytes(ram[d + 0x0C..d + 0x10].try_into().unwrap());
+            (1..=12).contains(&max)
+        })
 }
 
 /// GOLDLINK_DEV_TOUR_ROUTE=faint: a level 100 wild Pokémon knocks out the lead, for the
@@ -198,6 +303,8 @@ fn steps() -> &'static [Step] {
         Ok("intro") => intro_steps(),
         Ok("learn") => LEARN_STEPS,
         Ok("mega") => MEGA_STEPS,
+        Ok("naming") => NAMING_STEPS,
+        Ok("catch") => CATCH_STEPS,
         _ => STEPS,
     }
 }
@@ -271,6 +378,8 @@ struct State {
     last_menu: Option<(i8, bool)>,
     /// A debug command waiting for the ROM's answer: its sequence number, command, and frames.
     pending: Option<(u8, u8, u32)>,
+    /// Text for the window's keyboard, taken by `input()` before the next frame.
+    typed: Option<&'static str>,
 }
 
 #[derive(Clone)]
@@ -313,6 +422,32 @@ fn write_png(path: &std::path::Path, img: &egui::ColorImage) -> Result<(), Strin
 impl Tour {
     fn state(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The window's input: what Step::Type types, as key events and text.
+    pub fn input(&self) -> goldlink::ExtraInput {
+        let tour = self.clone();
+        Box::new(move |raw| {
+            let Some(text) = tour.state().typed.take() else {
+                return;
+            };
+            // A headless window may not have the focus; a player typing does.
+            raw.focused = true;
+            let key = |key| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            };
+            for c in text.chars() {
+                raw.events.push(match c {
+                    '\n' => key(egui::Key::Enter),
+                    '\x08' => key(egui::Key::Backspace),
+                    c => egui::Event::Text(c.to_string()),
+                });
+            }
+        })
     }
 
     pub fn hook(&self) -> TourHook {
@@ -459,6 +594,62 @@ impl FrameHook for TourHook {
             Step::Press(k) => {
                 input.keys |= k;
                 s.holding = 6;
+                true
+            }
+            Step::MashUntilNaming(max, taps) => {
+                let found = (s.frames % 20 == 0)
+                    .then(|| find_naming(emu.nds.main_ram()))
+                    .flatten();
+                if let Some(d) = found {
+                    let ram = emu.nds.main_ram();
+                    let addr = d as u32 + 0x0200_0000;
+                    let ptrs: Vec<String> = (0..ram.len() / 4)
+                        .filter(|i| {
+                            u32::from_le_bytes(ram[i * 4..i * 4 + 4].try_into().unwrap()) == addr
+                        })
+                        .map(|i| format!("{:#010x}", i * 4 + 0x0200_0000))
+                        .collect();
+                    let vblank = u32::from_le_bytes(ram[0x1D_110C..0x1D_1110].try_into().unwrap());
+                    let line = format!(
+                        "naming data {addr:#010x}, pointed to from {ptrs:?}; gSystem vblank {vblank:#010x}"
+                    );
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                } else {
+                    // A for Oak's speech; taps for the touch-only buttons (NO INFO NEEDED, the
+                    // controls explanation's Touch). Both taps are blank keys on the keyboard.
+                    match s.frames % 120 {
+                        0..6 if taps => input.touch = Some((128, 152)),
+                        30..36 | 90..96 => input.keys |= Keys::A,
+                        60..66 if taps => input.touch = Some((215, 172)),
+                        _ => {}
+                    }
+                }
+                if found.is_none() && s.frames >= max {
+                    let line = format!("step {}: gave up waiting for the naming screen", s.step);
+                    eprintln!("tour: {line}");
+                    s.log.push(line);
+                }
+                found.is_some() || s.frames >= max
+            }
+            Step::Type(text) => {
+                s.typed = Some(text);
+                true
+            }
+            Step::NamingLog => {
+                let ram = emu.nds.main_ram();
+                let entry = find_naming(ram).map(|d| {
+                    (0..0x20)
+                        .map(|i| u16::from_le_bytes([ram[d + 0xD8 + 2 * i], ram[d + 0xD9 + 2 * i]]))
+                        .take_while(|&c| c != 0xFFFF)
+                        .collect::<Vec<_>>()
+                });
+                let line = format!(
+                    "naming entry {entry:?}; read {:?}",
+                    goldlink::goldlink_bridge::naming::read(ram)
+                );
+                eprintln!("tour: {line}");
+                s.log.push(line);
                 true
             }
             Step::Raw(name) => {

@@ -298,6 +298,7 @@ fn window_with_bridge(
         ]),
         title: "GoldLink (dev)".into(),
         extra_ui: Some(dev_ui(panel)),
+        extra_input: tour::shared().map(|t| t.input()),
         // The tour shows the release look (GOLDLINK_DEV_TOUR_WORLD names the world in its bar).
         release_look: std::env::var("GOLDLINK_DEV_TOUR_WORLD").ok(),
     })

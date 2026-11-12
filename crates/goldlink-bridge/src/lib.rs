@@ -12,6 +12,7 @@ pub mod config;
 pub mod hook;
 pub mod layout;
 pub mod link;
+pub mod naming;
 pub mod net;
 pub mod quic;
 pub mod sanitize;

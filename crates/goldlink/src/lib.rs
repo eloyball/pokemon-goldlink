@@ -11,6 +11,7 @@ pub mod layout;
 pub mod lobby;
 pub mod shell;
 pub mod theme;
+pub mod typing;
 pub mod update;
 pub mod world_ui;
 
@@ -67,6 +68,10 @@ pub fn avatar_files() -> Vec<PathBuf> {
 /// More UI drawn over the game each frame (the dev binary's panels; the release has none).
 pub type ExtraUi = Box<dyn FnMut(&eframe::egui::Context)>;
 
+/// More input before each frame (the dev binary's tour types on the keyboard; the release has
+/// none).
+pub type ExtraInput = Box<dyn FnMut(&mut eframe::egui::RawInput)>;
+
 /// One game in a window.
 pub struct Session {
     pub setup: GameSetup,
@@ -77,6 +82,7 @@ pub struct Session {
     pub hooks: Vec<Box<dyn FrameHook>>,
     pub title: String,
     pub extra_ui: Option<ExtraUi>,
+    pub extra_input: Option<ExtraInput>,
     /// The release window's look for this world (its top bar, Esc's menu; UC8) instead of the
     /// in-window World panel: the dev binary's screenshots show what players see.
     pub release_look: Option<String>,
@@ -92,6 +98,7 @@ pub fn run(session: Session) -> Result<(), String> {
         mut hooks,
         title,
         extra_ui,
+        extra_input,
         release_look,
     } = session;
     let (config, note) = Config::load(&data_dir);
@@ -129,6 +136,7 @@ pub fn run(session: Session) -> Result<(), String> {
                     (_, bridge) => app::GameApp::new(runner, bridge, config, data_dir, notes),
                 };
                 app.extra_ui = extra_ui;
+                app.extra_input = extra_input;
                 Ok(Box::new(app))
             }),
         )

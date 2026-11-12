@@ -254,6 +254,7 @@ pub struct Bridge {
     new_game_intro: bool,
     /// The battle's menu, when one runs (UC9 §3.2: the one-screen HUD).
     battle_ui: Option<crate::battle_ui::BattleUi>,
+    naming: Option<crate::naming::Naming>,
     game_text: Option<crate::battle_ui::GameText>,
     /// The wider picture's side when the window shows it: the game's HP boxes are moved out
     /// toward its edges by that much (0: left where the game puts them).
@@ -332,6 +333,7 @@ impl Bridge {
             game_started: false,
             new_game_intro: false,
             battle_ui: None,
+            naming: None,
             game_text: None,
             box_shift: 0,
             backups: Backups::new(dir.join("coop_backups")),
@@ -399,6 +401,11 @@ impl Bridge {
     /// The battle's menu as the game shows it on the touch screen, when a battle runs.
     pub fn battle_ui(&self) -> Option<crate::battle_ui::BattleUi> {
         self.battle_ui.clone()
+    }
+
+    /// The naming screen, while it's open (a nickname, a box's name, the player's name).
+    pub fn naming(&self) -> Option<crate::naming::Naming> {
+        self.naming
     }
 
     /// The battle's menu with its words, for the one-screen HUD (once the ROM's text is read).
@@ -713,6 +720,7 @@ impl Bridge {
             self.new_game_intro = oak_speech_running(ram);
             self.game_started = ram[mailbox + WAS_IN_ACTIVE_SESSION] == 1 || self.new_game_intro;
             self.battle_ui = crate::battle_ui::read(ram);
+            self.naming = crate::naming::read(ram);
         }
         if self.update_save_slot(m, mailbox) {
             actions.cart_replaced = true;

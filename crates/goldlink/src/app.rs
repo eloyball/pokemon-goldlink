@@ -27,6 +27,25 @@ const BOTTOM_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egu
 /// How long the HUD holds a touch on the game's button (then lets go).
 const TAP: Duration = Duration::from_millis(100);
 
+/// The naming screen's hint: the computer's keyboard types the name.
+fn typing_hint(p: &egui::Painter, room: egui::Rect, align: egui::Align2) {
+    let font = egui::FontId::proportional((room.height() * 0.45).clamp(11.0, 16.0));
+    // One line when it fits, else one line each (no separator left hanging at a line's end).
+    let line = "Type on your keyboard   ·   Enter: OK   ·   Backspace: delete";
+    let mut galley = p.layout_no_wrap(line.to_owned(), font.clone(), theme::TEXT);
+    if galley.size().x > room.width() {
+        let lines = "Type on your keyboard\nEnter: OK\nBackspace: delete";
+        galley = p.layout(lines.to_owned(), font, theme::TEXT, room.width());
+    }
+    let at = align.align_size_within_rect(galley.size(), room).min;
+    p.rect_filled(
+        egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(10.0, 4.0)),
+        4.0,
+        egui::Color32::from_black_alpha(170),
+    );
+    p.galley(at, galley, theme::TEXT);
+}
+
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameAction {
@@ -73,6 +92,8 @@ pub struct GameApp {
     last_seq: u64,
     bottom: egui::Rect,
     one: OneScreen,
+    /// Typing a name on the keyboard while the game's naming screen is open.
+    typing: crate::typing::Typing,
     /// The game's text box, re-inked for the battle HUD (one-screen layout).
     textbox: Option<egui::TextureHandle>,
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
@@ -87,6 +108,8 @@ pub struct GameApp {
     messages: VecDeque<Message>,
     /// Drawn after everything else (dev panels).
     pub extra_ui: Option<crate::ExtraUi>,
+    /// Merged into each frame's input first (the dev tour's typing).
+    pub extra_input: Option<crate::ExtraInput>,
     /// The release program's look (UC8): the top bar, the Esc menu and the Details panel instead
     /// of the in-window World panel (goldlink-dev keeps that).
     release_ui: bool,
@@ -141,6 +164,7 @@ impl GameApp {
             last_seq: u64::MAX,
             bottom: egui::Rect::NOTHING,
             one: OneScreen::default(),
+            typing: Default::default(),
             textbox: None,
             wide: None,
             wide_side: 0,
@@ -150,6 +174,7 @@ impl GameApp {
             settings_open: false,
             messages,
             extra_ui: None,
+            extra_input: None,
             release_ui: false,
             menu_open: false,
             details_open: false,
@@ -250,7 +275,19 @@ impl GameApp {
         });
         let mut keys = goldlink_core::Keys::NONE;
         if focused && !self.blocked() && !typing {
-            keys |= self.controls.keyboard(&held);
+            if self.typing.naming.is_some() {
+                // Naming: the letters type (crate::typing); the arrows still move the cursor.
+                let arrows = [
+                    egui::Key::ArrowUp,
+                    egui::Key::ArrowDown,
+                    egui::Key::ArrowLeft,
+                    egui::Key::ArrowRight,
+                ];
+                let held = held.into_iter().filter(|k| arrows.contains(k)).collect();
+                keys |= self.controls.keyboard(&held);
+            } else {
+                keys |= self.controls.keyboard(&held);
+            }
         }
         let blocked = self.blocked();
         if let Some(g) = &mut self.gilrs {
@@ -263,6 +300,10 @@ impl GameApp {
             (true, Some(p)) if !self.blocked() && !over_panel => touch_at(self.bottom, p),
             _ => None,
         };
+        // A typed character's key on the naming screen.
+        if let Some(at) = self.typing.touch() {
+            touch = Some(at);
+        }
         // The battle HUD's click: the game's button, held a moment, then let go.
         if let Some((at, since)) = self.one.tap {
             if since.elapsed() < TAP {
@@ -740,6 +781,16 @@ impl GameApp {
                 p.image(t.id(), top, TOP_UV, egui::Color32::WHITE);
                 p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
                 self.bottom = bottom;
+                if self.typing.naming.is_some() {
+                    // Beside the keyboard, when there's room.
+                    let room = egui::Rect::from_min_max(
+                        egui::pos2(bottom.right() + 16.0, bottom.top()),
+                        egui::pos2(frame.right() - 16.0, bottom.bottom()),
+                    );
+                    if room.width() >= 140.0 {
+                        typing_hint(&p, room, egui::Align2::LEFT_CENTER);
+                    }
+                }
                 return;
             }
             None => {
@@ -750,6 +801,7 @@ impl GameApp {
             }
         }
         let wanted = matches!(scene, Scene::StartMenu | Scene::App)
+            || self.typing.naming.is_some()
             || battle.is_some_and(|b| b.bag_or_party || (b.waiting && !hud_draws));
         let modal = self.one.by_hand.unwrap_or(wanted);
         self.bottom = egui::Rect::NOTHING;
@@ -766,6 +818,14 @@ impl GameApp {
                 egui::StrokeKind::Outside,
             );
             self.bottom = r;
+            if self.typing.naming.is_some() {
+                // Under the keyboard, in the frame's margin.
+                let room = egui::Rect::from_min_max(
+                    egui::pos2(frame.left(), r.bottom() + 6.0),
+                    egui::pos2(frame.right(), frame.bottom()),
+                );
+                typing_hint(&p, room, egui::Align2::CENTER_CENTER);
+            }
         }
     }
 
@@ -790,9 +850,10 @@ impl GameApp {
                 _ => self.settings_open = !self.settings_open,
             }
         }
-        let (scene, battle) = match &self.bridge {
+        let (scene, battle, naming) = match &self.bridge {
             Some(b) => {
                 let mut b = goldlink_bridge::hook::lock(b);
+                let naming = b.naming();
                 let one = self.config.video.layout == Layout::OneScreen;
                 // The wider picture moves the game's HP boxes out toward its edges.
                 b.box_shift = if one && self.config.video.wide {
@@ -800,14 +861,23 @@ impl GameApp {
                 } else {
                     0
                 };
-                if one {
-                    (b.scene(), b.battle_hud())
+                // The naming screen (a nickname after a catch opens inside the battle) is
+                // all on the touch screen: no HUD then.
+                if one && naming.is_none() {
+                    (b.scene(), b.battle_hud(), naming)
+                } else if one {
+                    (b.scene(), None, naming)
                 } else {
-                    (Scene::Unknown, None)
+                    (Scene::Unknown, None, naming)
                 }
             }
-            _ => (Scene::Unknown, None),
+            _ => (Scene::Unknown, None, None),
         };
+        {
+            let listen = !self.blocked() && !ctx.wants_keyboard_input() && ctx.input(|i| i.focused);
+            let events = ctx.input(|i| i.events.clone());
+            self.typing.update(naming, &events, listen);
+        }
         if self.config.video.layout == Layout::OneScreen {
             self.one.follow(scene);
             if !self.blocked()
@@ -897,6 +967,12 @@ impl GameApp {
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _ = self.ui(ctx);
+    }
+
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        if let Some(extra) = self.extra_input.as_mut() {
+            extra(raw);
+        }
     }
 
     #[cfg(not(windows))]
