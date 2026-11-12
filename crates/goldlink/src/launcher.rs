@@ -575,6 +575,13 @@ impl Launcher {
         {
             self.available = found;
             self.update = None;
+            // GOLDLINK_TEST_PRESS_UPDATE=1: the button pressed as soon as it's there (the
+            // update's release test: its headless display takes no clicks).
+            if std::env::var_os("GOLDLINK_TEST_PRESS_UPDATE").is_some()
+                && self.available.as_ref().is_some_and(|a| a.installable())
+            {
+                self.start_update();
+            }
         }
         self.poll_update(ctx);
         if self.busy() || self.update.is_some() {
