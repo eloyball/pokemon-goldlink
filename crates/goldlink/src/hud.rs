@@ -54,6 +54,41 @@ const TAP_MEGA: (u16, u16) = (212, 172);
 const MEGA_LIT_TOP: Color32 = Color32::from_rgb(0xF3, 0xF3, 0x61);
 const MEGA_LIT_BOTTOM: Color32 = Color32::from_rgb(0xA8, 0x9A, 0x30);
 
+/// The MEGA button the HUD draws: lit or not, and the game's Mega symbol as a texture.
+#[derive(Debug, Clone, Copy)]
+pub struct Mega {
+    pub lit: bool,
+    pub icon: Option<egui::TextureId>,
+}
+
+/// The game's Mega symbol, cut from its MEGA button on the touch screen (`bottom`: its pixels,
+/// 0x00RRGGBB): the 20 x 20 square around (213, 173), with the button's blues behind it made
+/// clear. Grey when off, in colour when lit, as the game draws it.
+pub fn mega_icon(bottom: &[u32]) -> egui::ColorImage {
+    const X0: usize = 203;
+    const Y0: usize = 163;
+    const N: usize = 20;
+    let mut pixels = vec![Color32::TRANSPARENT; N * N];
+    for y in 0..N {
+        for x in 0..N {
+            let (dx, dy) = (x as f32 - 9.5, y as f32 - 9.5);
+            if dx * dx + dy * dy > 10.2 * 10.2 {
+                continue;
+            }
+            let p = bottom.get((Y0 + y) * 256 + X0 + x).copied().unwrap_or(0) & 0xFF_FFFF;
+            // CANCEL's button colours, around the symbol's dark ring.
+            if matches!(p, 0x28_92CB | 0x41_5971 | 0x30_79AA | 0x38_698A) {
+                continue;
+            }
+            pixels[y * N + x] = Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
+        }
+    }
+    egui::ColorImage {
+        size: [N, N],
+        pixels,
+    }
+}
+
 /// hg-engine's MEGA button as the touch screen shows it (`bottom`: the touch screen's pixels,
 /// 0x00RRGGBB): None when it isn't offered (CANCEL then runs to the right edge), else whether
 /// it's lit. Measured on the running game: its dark edge at x 178 (CANCEL's blue there
@@ -254,6 +289,23 @@ impl Ctx<'_> {
         selected: bool,
         tap: (u16, u16),
     ) {
+        self.button(id, r, label, top, bottom, font, selected, tap, None);
+    }
+
+    /// A command button with an icon left of its label (MEGA: the game's own Mega symbol).
+    #[allow(clippy::too_many_arguments)]
+    fn button(
+        &mut self,
+        id: &str,
+        r: Rect,
+        label: &str,
+        top: Color32,
+        bottom: Color32,
+        font: FontId,
+        selected: bool,
+        tap: (u16, u16),
+        icon: Option<egui::TextureId>,
+    ) {
         let response = self
             .ui
             .interact(r, egui::Id::new(("goldlink-hud", id)), egui::Sense::CLICK);
@@ -287,15 +339,31 @@ impl Ctx<'_> {
             chevron(r),
             Stroke::new((0.8 * self.s).max(1.5), BUTTON_EDGE),
         ));
-        // The label in white with a dark outline all round, legible on either half.
-        outlined_text(
-            p,
-            r.center() + vec2(0.0, 0.3 * self.s),
-            egui::Align2::CENTER_CENTER,
-            label,
-            font,
-            self.s,
-        );
+        // The label in white with a dark outline all round, legible on either half; an icon
+        // goes before it, the two centred together.
+        let mut at = r.center() + vec2(0.0, 0.3 * self.s);
+        if let Some(icon) = icon {
+            let gap = 3.0 * self.s;
+            let label_w = p
+                .layout_no_wrap(label.to_owned(), font.clone(), INK)
+                .size()
+                .x;
+            // A round symbol can reach half into the slanted end that text keeps clear of.
+            let side = (r.height() * 0.72)
+                .min(label_room(r) + r.height() * 0.15 - label_w - gap)
+                .max(0.0);
+            let left = r.center().x - (side + gap + label_w) / 2.0;
+            let icon_rect =
+                Rect::from_min_size(pos2(left, r.center().y - side / 2.0), vec2(side, side));
+            p.image(
+                icon,
+                icon_rect,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+            at.x = left + side + gap + label_w / 2.0;
+        }
+        outlined_text(p, at, egui::Align2::CENTER_CENTER, label, font, self.s);
         if selected {
             brackets(p, r, self.s);
         }
@@ -313,7 +381,7 @@ pub fn draw(
     ui: &mut egui::Ui,
     frame: Rect,
     hud: &BattleHud,
-    mega: Option<bool>,
+    mega: Option<Mega>,
 ) -> Option<(u16, u16)> {
     let s = frame.height() / ROWS;
     let band = band(frame);
@@ -394,7 +462,7 @@ fn commands(c: &mut Ctx<'_>, hud: &BattleHud) {
     }
 }
 
-fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<bool>) {
+fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
     // Two columns of moves, then a column for the highlighted move and BACK.
     let w = c.w;
     let info_x = w - 57.0;
@@ -486,14 +554,16 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<bool>) {
     // The right column: MEGA when hg-engine offers it (lit when chosen), else the highlighted
     // move's power and accuracy; then BACK. With MEGA, the key cursor's last row is BACK, MEGA.
     let info = c.rect(info_x, 4.0, w - 4.0, 23.5);
-    if let Some(lit) = mega {
-        let font = c.fit_caps(&[("MEGA", info)], 7.0);
+    if let Some(Mega { lit, icon }) = mega {
+        // MEGA's label as large as BACK's; the symbol beside it takes the room that's left.
+        let back = c.rect(info_x, 25.5, w - 4.0, 44.0);
+        let font = c.fit_caps(&[("BACK", back)], 7.0);
         let (top, bottom) = if lit {
             (MEGA_LIT_TOP, MEGA_LIT_BOTTOM)
         } else {
             (PANEL_TOP, PANEL)
         };
-        c.command(
+        c.button(
             "mega",
             info,
             "MEGA",
@@ -502,6 +572,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<bool>) {
             font,
             hud.cursor == Some((2, 1)),
             TAP_MEGA,
+            icon,
         );
         let back = c.rect(info_x, 25.5, w - 4.0, 44.0);
         let back_font = c.fit_caps(&[("BACK", back)], 7.0);

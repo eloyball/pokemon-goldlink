@@ -78,8 +78,10 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
-    /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit).
+    /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
+    /// its Mega symbol cut from there.
     mega: Option<bool>,
+    mega_icon: Option<egui::TextureHandle>,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -143,6 +145,7 @@ impl GameApp {
             wide: None,
             wide_side: 0,
             mega: None,
+            mega_icon: None,
 
             settings_open: false,
             messages,
@@ -281,6 +284,19 @@ impl GameApp {
                 self.last_seq = frame.seq;
                 if self.config.video.layout == Layout::OneScreen {
                     self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
+                    if self.mega.is_some() {
+                        let img = hud::mega_icon(&frame.pixels[256 * 192..]);
+                        match &mut self.mega_icon {
+                            Some(t) => t.set(img, egui::TextureOptions::NEAREST),
+                            None => {
+                                self.mega_icon = Some(ctx.load_texture(
+                                    "mega-icon",
+                                    img,
+                                    egui::TextureOptions::NEAREST,
+                                ))
+                            }
+                        }
+                    }
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
                     let img = hud::recolour_textbox(rows);
                     match &mut self.textbox {
@@ -699,7 +715,11 @@ impl GameApp {
                     }
                 }
                 if hud_draws {
-                    if let Some(at) = hud::draw(ui, frame, b, self.mega) {
+                    let mega = self.mega.map(|lit| hud::Mega {
+                        lit,
+                        icon: self.mega_icon.as_ref().map(egui::TextureHandle::id),
+                    });
+                    if let Some(at) = hud::draw(ui, frame, b, mega) {
                         self.one.tap = Some((at, Instant::now()));
                     }
                 } else if let Some(tb) = &self.textbox {
