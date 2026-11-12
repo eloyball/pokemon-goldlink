@@ -33,22 +33,7 @@ struct GlCore
     GlSaveCallback on_save = nullptr;
     void *save_ctx = nullptr;
     std::vector<uint8_t> state; // the last gl_core_savestate
-    // The wider picture's side as asked (the 3D view gets a margin past it while the smooth
-    // camera is on: gl_core_set_mid) and whether the smooth camera is on.
-    int wide_side = 0;
-    bool mid = false;
 };
-
-// The 3D view: the wider picture's side, and while the smooth camera is on a margin of 8 pixels
-// past it on each side and 8 rows above and below (half a step never reaches where the game's
-// polygons are clipped); the picture shown is the same.
-static void gl_core_apply_view(GlCore *core)
-{
-    auto &gpu3d = core->nds->GPU.GPU3D;
-    const int margin = core->mid ? 8 : 0;
-    gpu3d.WideSide = std::clamp(core->wide_side + margin, 0, melonDS::GPU3D::MaxWideSide);
-    gpu3d.TallSide = core->mid ? melonDS::GPU3D::MaxTall : 0;
-}
 
 // Called by platform.cpp's Platform::WriteNDSSave (the cart and the NDS carry the GlCore as
 // their userdata).
@@ -187,8 +172,7 @@ const uint32_t *gl_core_framebuffer(GlCore *core, int screen)
 
 void gl_core_set_wide(GlCore *core, int side)
 {
-    core->wide_side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
-    gl_core_apply_view(core);
+    core->nds->GPU.GPU3D.WideSide = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
 }
 
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
@@ -218,11 +202,8 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
             }
             if (unit >= 0)
             {
-                // The left strip is kept from its outer edge, as wide as drawn (the 3D view can
-                // be wider than the picture: the smooth camera's margin).
                 const uint32_t *strips = soft2d.WideSides[unit][y];
-                row[x] = sx < 0 ? strips[x + soft2d.WideDrawn[unit] - side]
-                                : strips[melonDS::GPU2D::SoftRenderer::MaxSide + (sx - 256)];
+                row[x] = sx < 0 ? strips[x] : strips[melonDS::GPU2D::SoftRenderer::MaxSide + (sx - 256)];
                 continue;
             }
             uint32_t c = wide[x];
@@ -269,43 +250,6 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t
     }
     std::memcpy(proj, gpu.GPU3D.ShownProjMatrix, 16 * 4);
     return gpu.GPU3D.ShownWBuffer ? 2 : 1;
-}
-
-void gl_core_set_mid(GlCore *core, int on)
-{
-    auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
-    soft.MidWanted = on != 0;
-    // A fresh start: nothing logged before (a power cycle, the setting turned on again) is replayed.
-    auto &gpu3d = core->nds->GPU.GPU3D;
-    gpu3d.RecordScenes = on != 0;
-    gpu3d.ScenesRecorded = 0;
-    gpu3d.SceneLog.clear();
-    gpu3d.LastSceneLog.clear();
-    gpu3d.PrevSceneLog.clear();
-    gpu3d.SceneStart.clear();
-    gpu3d.LastSceneStart.clear();
-    core->mid = on != 0;
-    gl_core_apply_view(core);
-}
-
-int gl_core_mid_frame(GlCore *core, int side, uint32_t *out, uint32_t *depth)
-{
-    constexpr int maxSide = melonDS::GPU2D::SoftRenderer::MaxSide;
-    static_assert(melonDS::GPU3D::MaxWideSide == maxSide);
-    side = std::clamp(side, 0, maxSide);
-    melonDS::GPU &gpu = core->nds->GPU;
-    auto &soft = static_cast<melonDS::SoftRenderer &>(gpu.GPU3D.GetCurrentRenderer());
-    if (!soft.MidShown || !(core->nds->PowerControl9 & (1 << 15)))
-        return 0;
-    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
-    const int width = 256 + 2 * side;
-    for (int y = 0; y < 192; y++)
-    {
-        std::memcpy(out + y * width, &soft2d.MidPicture[y][maxSide - side], width * 4);
-        if (depth)
-            std::memcpy(depth + y * (256 + 2 * maxSide), soft.GetMidShownDepthLine(y), (256 + 2 * maxSide) * 4);
-    }
-    return width;
 }
 
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)

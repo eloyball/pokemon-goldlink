@@ -416,34 +416,6 @@ impl Nds {
         kind != 0
     }
 
-    /// The smooth camera (UC11): while on, when the game shows a new 3D scene after repeating
-    /// the last one, melonDS also renders the scene with each polygon half way from the last
-    /// scene and composes that picture as it composes the frame ([`Nds::mid_frame`]).
-    pub fn set_mid(&mut self, on: bool) {
-        // SAFETY: the core is alive; the shim only sets a flag.
-        unsafe { sys::gl_core_set_mid(self.ptr(), c_int::from(on)) }
-    }
-
-    /// The frame just shown's halfway picture (`256 + 2*side` x 192, laid out as
-    /// [`Nds::wide_frame`]) into `out`, and its 3D depth into `depth` (as
-    /// [`LightBuffers::depth`]); false when the frame has none.
-    pub fn mid_frame(&self, side: usize, out: &mut Vec<u32>, depth: &mut Vec<u32>) -> bool {
-        let side = side.min(Self::MAX_WIDE_SIDE);
-        out.resize((SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT, 0);
-        depth.resize(LightBuffers::WIDTH * SCREEN_HEIGHT, 0);
-        // SAFETY: out holds (256 + 2 * side) * 192 pixels and depth 384 * 192, what the shim
-        // writes.
-        let width = unsafe {
-            sys::gl_core_mid_frame(
-                self.ptr(),
-                side as c_int,
-                out.as_mut_ptr(),
-                depth.as_mut_ptr(),
-            )
-        };
-        width > 0
-    }
-
     /// Rectangles `[x0, y0, x1, y1, dx]` (screen pixels, end exclusive) whose main-engine sprite
     /// pieces (by their top-left corner) are drawn moved by `dx`, from the next frame: the
     /// one-screen layout moves the battle's HP boxes toward the wider picture's edges. At most 8

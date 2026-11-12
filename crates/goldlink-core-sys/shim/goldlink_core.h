@@ -106,14 +106,6 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16]);
-// The smooth camera (UC11): on (1) or off (0). While on, when the game shows a new 3D scene after
-// repeating the last one, melonDS renders the scene with each polygon half way from the last
-// scene and composes that picture as it composes the frame.
-void gl_core_set_mid(GlCore *core, int on);
-// The halfway picture of the frame just shown, as gl_core_wide_frame lays the top screen out
-// (`256 + 2*side` x 192), and its 3D depth as gl_core_light_buffers (when `depth` isn't null).
-// Returns its width, or 0 when the frame has none.
-int gl_core_mid_frame(GlCore *core, int side, uint32_t *out, uint32_t *depth);
 
 // Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx) whose main-engine sprite
 // pieces (by their centre) are drawn moved by dx, from the next frame on: the one-screen layout

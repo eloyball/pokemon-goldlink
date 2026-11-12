@@ -219,10 +219,6 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
-    // GOLDLINK_DEV_MID=1: the smooth camera's halfway pictures on (UC11; timing it headless).
-    if std::env::var("GOLDLINK_DEV_MID").is_ok_and(|v| v == "1") {
-        machine.nds.set_mid(true);
-    }
     if args.bridge {
         let Some(dir) = args.config_dir.clone().or(args.data.clone()) else {
             return usage(

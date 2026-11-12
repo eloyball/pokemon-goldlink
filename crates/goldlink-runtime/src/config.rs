@@ -55,9 +55,6 @@ pub struct Video {
     pub lighting: bool,
     /// The game fills the screen (the launcher stays a window).
     pub fullscreen: bool,
-    /// The smooth camera (UC11): where the game draws a new 3D scene every other frame, the
-    /// frame between shows the scene half way, rendered from the game's own polygons.
-    pub smooth: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,7 +98,6 @@ impl Default for Video {
             wide: true,
             lighting: true,
             fullscreen: true,
-            smooth: true,
         }
     }
 }

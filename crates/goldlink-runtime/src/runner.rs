@@ -40,9 +40,6 @@ pub enum Command {
     Wide(usize),
     /// Hand the lighting its buffers with each frame (UC11).
     Lighting(bool),
-    /// The smooth camera (UC11): melonDS makes a halfway picture when the game shows a new 3D
-    /// scene after repeating the last one ([`Frame::mid`]).
-    Smooth(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -58,11 +55,6 @@ pub struct Frame {
     pub seq: u64,
     /// What the lighting needs (UC11), with it on and the top screen showing the 3D scene.
     pub light: Option<LightFrame>,
-    /// The smooth camera's halfway picture (UC11), when this frame has one: the top screen as
-    /// `wide` lays it out (`256 + 2 * wide_side` wide), shown in its place. Empty otherwise.
-    pub mid: Vec<u32>,
-    /// Its 3D depth (as [`LightBuffers::depth`]), for the lighting.
-    pub mid_depth: Vec<u32>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -152,8 +144,6 @@ impl Runner {
                 wide_side: 0,
                 seq: 0,
                 light: None,
-                mid: Vec::new(),
-                mid_depth: Vec::new(),
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -295,11 +285,6 @@ fn run(
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
     let mut lighting = false;
-    // The emulation's own time per frame while the smooth camera is on (sum in ms, frames):
-    // more than it can afford, and the smooth camera goes off (a slower computer).
-    let mut slow = (0.0f64, 0u32);
-    // The smooth camera's halfway picture and depth (swapped with the shared frame's).
-    let (mut mid, mut mid_depth) = (Vec::new(), Vec::new());
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
     let mut light: Option<LightFrame> = None;
     loop {
@@ -345,10 +330,6 @@ fn run(
                 }
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
-                Command::Smooth(on) => {
-                    emu.set_mid(on);
-                    slow = (0.0, 0);
-                }
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -357,20 +338,7 @@ fn run(
         for h in hooks.iter_mut() {
             h.pre_frame(&mut emu, &mut input);
         }
-        let started = Instant::now();
         emu.frame(input);
-        if emu.mid() {
-            slow.0 += started.elapsed().as_secs_f64() * 1000.0;
-            slow.1 += 1;
-            if slow.1 == 240 {
-                // 13 of the 16.7 ms a frame has, over four seconds.
-                if slow.0 / f64::from(slow.1) > 13.0 {
-                    emu.set_mid(false);
-                    lock(&shared.events).push(Event::SmoothTooSlow);
-                }
-                slow = (0.0, 0);
-            }
-        }
         for h in hooks.iter_mut() {
             h.post_frame(&mut emu);
         }
@@ -383,14 +351,8 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
-        if !emu.nds.mid_frame(side, &mut mid, &mut mid_depth) {
-            mid.clear();
-            mid_depth.clear();
-        }
         {
             let mut f = lock(&shared.frame);
-            std::mem::swap(&mut f.mid, &mut mid);
-            std::mem::swap(&mut f.mid_depth, &mut mid_depth);
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;

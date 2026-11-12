@@ -7,21 +7,6 @@ GoldLink's change to melonDS (UC11): what the lighting needs from a frame.
 - GPU3D: the projection matrix most of a frame's polygons were drawn with (a frame can end on a
   pass with its own, such as a 2D overlay), kept with the frame through the swap and the render
   (RenderProjMatrix, then ShownProjMatrix), and whether the frame on screen used W-buffering.
-- The smooth camera: when the game shows a new 3D scene after repeating the last one (its 30 a
-  second), the halfway picture is made from the game's own drawing commands. GPU3D logs each
-  scene's command words and keeps a savestate of the engine as each scene starts
-  (RecordScenes; without the polygon and vertex memory, which a scene starts without:
-  LightSnapshot); GPU3D_Soft replays the new scene's words on a copy of the engine from that
-  state (Replay: no interrupts, DMA or stalls), each matrix parameter part way from the same word
-  of the last scene (where the camera has moved a whole number of pixels: its step between the
-  two pictures, halved and rounded down, so things keep their places in the pixel grid) (the scenes lined up word by word; a matrix pairs only with a near one), lets
-  the copy's swap sort the polygons,
-  and renders them into its own buffers (MidColor, MidDepth). GPU2D_Soft composes that picture
-  line by line as it composes the frame (MidPicture): the same backgrounds, sprites, effects and
-  side strips over the halfway 3D picture. While it's on, the 3D view has a margin past the
-  picture (the shim widens GPU3D::WideSide by 8; GPU3D::TallSide adds 8 rows above and below as
-  WideSide adds columns: clip-space y scaled, the buffers RenderHeight rows, the line readers
-  offset), so what's just outside the picture is drawn too. Off unless the frontend asks.
 - GPU2D_Soft: Layer3D records, per main-engine line, where the 3D layer shows in the composed
   picture (on top, under a 2D layer, or not at all), for the screen and the wide picture's
   side strips; a text box or menu drawn over the 3D scene is left out of the lighting.
@@ -29,7 +14,7 @@ GoldLink's change to melonDS (UC11): what the lighting needs from a frame.
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
 diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
-index 1159273..8c89233 100644
+index 1159273..5c3e483 100644
 --- a/src/GPU2D_Soft.cpp
 +++ b/src/GPU2D_Soft.cpp
 @@ -113,6 +113,10 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
@@ -43,99 +28,12 @@ index 1159273..8c89233 100644
      if (CurUnit->Num == 0)
      {
          auto bgDirty = GPU.VRAMDirty_ABG.DeriveState(GPU.VRAMMap_ABG, GPU);
-@@ -308,6 +312,86 @@ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
-     // GoldLink: the wide picture's side strips (only for the regular display)
-     if (dispmode == 1 && GPU.GPU3D.WideSide > 0 && line < 192)
-         DrawWideSides(line, n3dline, dst);
-+
-+    // GoldLink (UC11): the halfway picture's line, when the 3D renderer made one for this frame.
-+    if (dispmode == 1 && CurUnit->Num == 0 && line < 192 && !GPU.GPU3D.IsRendererAccelerated()
-+        && static_cast<melonDS::SoftRenderer&>(GPU.GPU3D.GetCurrentRenderer()).MidComposing)
-+        DrawMidLine(line, n3dline);
-+}
-+
-+// GoldLink (UC11): the line again over the halfway 3D picture, the screen and (with a wider
-+// picture) its side strips, as DrawScanline and DrawWideSides compose them. Everything a pass
-+// changes is put back.
-+void SoftRenderer::DrawMidLine(u32 line, int n3dline)
-+{
-+    const int unit = CurUnit->Num;
-+    auto& soft3d = static_cast<melonDS::SoftRenderer&>(GPU.GPU3D.GetCurrentRenderer());
-+    const u32* mid3D = soft3d.GetMidWideLine(n3dline);
-+    const int m = melonDS::GPU3D::MaxWideSide;
-+    const int side = std::min(GPU.GPU3D.WideSide, MaxSide);
-+
-+    alignas(8) u32 savedOBJ[256];
-+    alignas(8) u8 savedOBJWindow[256];
-+    memcpy(savedOBJ, OBJLine[unit], sizeof(savedOBJ));
-+    memcpy(savedOBJWindow, OBJWindow[unit], sizeof(savedOBJWindow));
-+    auto mosaicY = CurUnit->OBJMosaicY;
-+    auto mosaicYCount = CurUnit->OBJMosaicYCount;
-+    u16 xpos[4];
-+    memcpy(xpos, CurUnit->BGXPos, sizeof(xpos));
-+    s32 xref[2] = {CurUnit->BGXRefInternal[0], CurUnit->BGXRefInternal[1]};
-+    s32 yref[2] = {CurUnit->BGYRefInternal[0], CurUnit->BGYRefInternal[1]};
-+    u32* saved3D = _3DLine;
-+    MidPass = true;
-+
-+    u32* out = MidPicture[line];
-+    for (int pass = 0; pass < 3; pass++)
-+    {
-+        if (pass > 0 && side == 0)
-+            break;
-+        SideShift = pass == 0 ? 0 : pass == 1 ? -256 : 256;
-+        for (int i = 0; i < 4; i++)
-+            CurUnit->BGXPos[i] = (u16)(xpos[i] + SideShift);
-+        for (int i = 0; i < 2; i++)
-+        {
-+            CurUnit->BGXRefInternal[i] = xref[i] + SideShift * CurUnit->BGRotA[i];
-+            CurUnit->BGYRefInternal[i] = yref[i] + SideShift * CurUnit->BGRotC[i];
-+        }
-+        memset(Side3DLine, 0, sizeof(Side3DLine));
-+        if (pass == 0)
-+            for (int x = 0; x < 256; x++) Side3DLine[x] = mid3D[m + x];
-+        else if (pass == 1)
-+            for (int x = 256 - side; x < 256; x++) Side3DLine[x] = mid3D[m - 256 + x];
-+        else
-+            for (int x = 0; x < side; x++) Side3DLine[x] = mid3D[m + 256 + x];
-+        _3DLine = Side3DLine;
-+
-+        DrawSprites(line, CurUnit);
-+        CurUnit->OBJMosaicY = mosaicY;
-+        CurUnit->OBJMosaicYCount = mosaicYCount;
-+        DrawScanline_BGOBJ(line);
-+        FinishPixels(BGOBJLine, 256);
-+
-+        if (pass == 0)
-+            memcpy(out + MaxSide, &BGOBJLine[0], 256 * 4);
-+        else if (pass == 1)
-+            memcpy(out + MaxSide - side, &BGOBJLine[256 - side], side * 4);
-+        else
-+            memcpy(out + MaxSide + 256, &BGOBJLine[0], side * 4);
-+    }
-+
-+    MidPass = false;
-+    SideShift = 0;
-+    memcpy(CurUnit->BGXPos, xpos, sizeof(xpos));
-+    for (int i = 0; i < 2; i++)
-+    {
-+        CurUnit->BGXRefInternal[i] = xref[i];
-+        CurUnit->BGYRefInternal[i] = yref[i];
-+    }
-+    memcpy(OBJLine[unit], savedOBJ, sizeof(savedOBJ));
-+    memcpy(OBJWindow[unit], savedOBJWindow, sizeof(savedOBJWindow));
-+    CurUnit->OBJMosaicY = mosaicY;
-+    CurUnit->OBJMosaicYCount = mosaicYCount;
-+    _3DLine = saved3D;
- }
- 
- // GoldLink: master brightness and the 32-bit conversion, as DrawScanline does for a line.
-@@ -846,11 +930,19 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -846,11 +850,19 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
      if (!GPU.GPU3D.IsRendererAccelerated())
      {
 +        // GoldLink (UC11): where the 3D layer shows, for the lighting
-+        u8* mask = (CurUnit->Num == 0 && line < 192 && !MidPass) ? Layer3D[line] : nullptr;
++        u8* mask = (CurUnit->Num == 0 && line < 192) ? Layer3D[line] : nullptr;
          for (int i = 0; i < 256; i++)
          {
              u32 val1 = BGOBJLine[i];
@@ -151,46 +49,24 @@ index 1159273..8c89233 100644
          }
      }
 diff --git a/src/GPU2D_Soft.h b/src/GPU2D_Soft.h
-index 0a0a1b4..6c47340 100644
+index 0a0a1b4..90e8c40 100644
 --- a/src/GPU2D_Soft.h
 +++ b/src/GPU2D_Soft.h
-@@ -44,6 +44,13 @@ public:
+@@ -44,6 +44,9 @@ public:
      u32 WideSides[2][192][2 * MaxSide] {};
      // The framebuffer each engine's strips belong to (the GPU's back buffer at the time).
      u32* WideOwner[2] {};
 +    // GoldLink (UC11): per main-engine line, where the 3D layer shows: 1 on top, 2 under a
 +    // 2D layer (opaque or blended), 0 not at all. Column = screen x + MaxSide (the wide sides included).
 +    u8 Layer3D[192][256 + 2 * MaxSide] {};
-+    // GoldLink (UC11): the smooth camera's halfway picture, composed line by line as the frame
-+    // is (the same backgrounds, sprites and effects over the halfway 3D picture), the screen's
-+    // x=0 at column MaxSide, its side strips around it.
-+    u32 MidPicture[192][256 + 2 * MaxSide] {};
      // The strips' width when drawn.
      int WideDrawn[2] {};
  
-@@ -61,6 +68,9 @@ private:
-     alignas(8) u32 BGOBJLine[256*3];
-     // GoldLink: 0, or the shift (-256 the left strip, +256 the right) of a side pass.
-     int SideShift = 0;
-+    // GoldLink (UC11): composing the halfway picture (the lighting's 3D mask is left alone).
-+    bool MidPass = false;
-+    void DrawMidLine(u32 line, int n3dline);
-     alignas(8) u32 Side3DLine[256];
-     void DrawWideSides(u32 line, int n3dline, u32* dst);
-     void FinishPixels(u32* px, int count);
 diff --git a/src/GPU3D.cpp b/src/GPU3D.cpp
-index 54f5119..291e9fb 100644
+index 54f5119..9696904 100644
 --- a/src/GPU3D.cpp
 +++ b/src/GPU3D.cpp
-@@ -20,6 +20,7 @@
- #include <string.h>
- #include <algorithm>
- #include "NDS.h"
-+#include "Savestate.h"
- #include "GPU.h"
- #include "FIFO.h"
- #include "GPU3D_Soft.h"
-@@ -169,6 +170,8 @@ void GPU3D::SetCurrentRenderer(std::unique_ptr<Renderer3D>&& renderer) noexcept
+@@ -169,6 +169,8 @@ void GPU3D::SetCurrentRenderer(std::unique_ptr<Renderer3D>&& renderer) noexcept
  void GPU3D::ResetRenderingState() noexcept
  {
      RenderNumPolygons = 0;
@@ -199,75 +75,7 @@ index 54f5119..291e9fb 100644
  
      RenderDispCnt = 0;
      RenderAlphaRef = 0;
-@@ -409,6 +412,10 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
-         u32 index = UINT32_MAX;
-         file->Var32(&index);
-         LastStripPolygon = (index == UINT32_MAX) ? nullptr : &PolygonRAM[index];
-+        // GoldLink (UC11): a light snapshot has no polygon memory, and a new scene continues no
-+        // strip from the last.
-+        if (LightSnapshot)
-+            LastStripPolygon = nullptr;
-     }
- 
-     file->Var32(&CurRAMBank);
-@@ -421,10 +428,11 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
- 
-     for (Vertex& vtx : VertexRAM)
-     {
-+        if (LightSnapshot) break; // GoldLink (UC11)
-         vtx.DoSavestate(file);
-     }
- 
--    for(int i = 0; i < 2048*2; i++)
-+    for(int i = 0; i < 2048*2 && !LightSnapshot; i++)
-     {
-         Polygon* poly = &PolygonRAM[i];
- 
-@@ -489,7 +497,7 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
-                     poly->Degenerate = true;
-             }
- 
--            if (poly->YBottom > 192) poly->Degenerate = true;
-+            if (poly->YBottom > 192 + 2 * MaxTall) poly->Degenerate = true;
-         }
-     }
- 
-@@ -511,7 +519,14 @@ void GPU3D::DoSavestate(Savestate* file) noexcept
-     }
- 
-     file->Var32(&RenderNumPolygons);
--    if (file->Saving)
-+    if (LightSnapshot)
-+    {
-+        // GoldLink (UC11): the render list points into the polygon memory left out; a copy
-+        // loaded from a light snapshot has none.
-+        if (!file->Saving)
-+            RenderNumPolygons = 0;
-+    }
-+    else if (file->Saving)
-     {
-         for (const Polygon* p : RenderPolygonRAM)
-         {
-@@ -1138,12 +1153,16 @@ void GPU3D::SubmitPolygon() noexcept
-                 posX = (u32)(((u64)posX * (256 + 2 * WideSide)) / den);
-             else
-                 posX = ((posX * Viewport[4]) / den) + Viewport[0] + WideSide;
--            posY = ((posY * Viewport[5]) / den) + Viewport[3];
-+            if (TallActive())
-+                posY = (u32)(((u64)posY * (192 + 2 * TallSide)) / den);
-+            else
-+                posY = ((posY * Viewport[5]) / den) + Viewport[3] + TallSide;
-         }
- 
-         // the wide buffer's column (the screen's x=0 is MaxWideSide in)
-         vtx->FinalPosition[0] = (posX + MaxWideSide - WideSide) & 0x1FF;
--        vtx->FinalPosition[1] = posY & 0xFF;
-+        // the tall buffer's row (the screen's y=0 is MaxTall in)
-+        vtx->FinalPosition[1] = (posY + MaxTall - TallSide) & 0xFF;
- 
-         // hi-res positions
-         // to consider: only do this when using the GL renderer? apply the aforementioned quirk to this?
-@@ -1209,6 +1228,7 @@ void GPU3D::SubmitPolygon() noexcept
+@@ -1209,6 +1211,7 @@ void GPU3D::SubmitPolygon() noexcept
          else                   VertexSlotsFree = 0b1110;
      }
  
@@ -275,99 +83,7 @@ index 54f5119..291e9fb 100644
      Polygon* poly = &CurPolygonRAM[NumPolygons++];
      poly->NumVertices = 0;
  
-@@ -1277,7 +1297,7 @@ void GPU3D::SubmitPolygon() noexcept
-     // (ie two W's that span 12 bits or less will be brought to 16 bits)
- 
-     u32 vtop = 0, vbot = 0;
--    s32 ytop = 192, ybot = 0;
-+    s32 ytop = 192 + 2 * MaxTall, ybot = 0;
-     s32 xtop = 256, xbot = 0;
-     u32 wsize = 0;
- 
-@@ -1309,7 +1329,7 @@ void GPU3D::SubmitPolygon() noexcept
-     poly->YTop = ytop; poly->YBottom = ybot;
-     poly->XTop = xtop; poly->XBottom = xbot;
- 
--    if (ybot > 192) poly->Degenerate = true;
-+    if (ybot > 192 + 2 * MaxTall) poly->Degenerate = true;
- 
-     poly->SortKey = (ybot << 8) | ytop;
-     if (poly->Translucent) poly->SortKey |= 0x10000;
-@@ -1366,7 +1386,7 @@ void GPU3D::SubmitVertex() noexcept
- 
-     UpdateClipMatrix();
-     vertextrans->Position[0] = WideX((vertex[0]*ClipMatrix[0] + vertex[1]*ClipMatrix[4] + vertex[2]*ClipMatrix[8] + vertex[3]*ClipMatrix[12]) >> 12);
--    vertextrans->Position[1] = (vertex[0]*ClipMatrix[1] + vertex[1]*ClipMatrix[5] + vertex[2]*ClipMatrix[9] + vertex[3]*ClipMatrix[13]) >> 12;
-+    vertextrans->Position[1] = TallY((vertex[0]*ClipMatrix[1] + vertex[1]*ClipMatrix[5] + vertex[2]*ClipMatrix[9] + vertex[3]*ClipMatrix[13]) >> 12);
-     vertextrans->Position[2] = (vertex[0]*ClipMatrix[2] + vertex[1]*ClipMatrix[6] + vertex[2]*ClipMatrix[10] + vertex[3]*ClipMatrix[14]) >> 12;
-     vertextrans->Position[3] = (vertex[0]*ClipMatrix[3] + vertex[1]*ClipMatrix[7] + vertex[2]*ClipMatrix[11] + vertex[3]*ClipMatrix[15]) >> 12;
- 
-@@ -1588,7 +1608,7 @@ void GPU3D::BoxTest(const u32* params) noexcept
-         s32 z = cube[i].Position[2];
- 
-         cube[i].Position[0] = WideX(((s64)x*ClipMatrix[0] + (s64)y*ClipMatrix[4] + (s64)z*ClipMatrix[8] + (s64)0x1000*ClipMatrix[12]) >> 12);
--        cube[i].Position[1] = ((s64)x*ClipMatrix[1] + (s64)y*ClipMatrix[5] + (s64)z*ClipMatrix[9] + (s64)0x1000*ClipMatrix[13]) >> 12;
-+        cube[i].Position[1] = TallY(((s64)x*ClipMatrix[1] + (s64)y*ClipMatrix[5] + (s64)z*ClipMatrix[9] + (s64)0x1000*ClipMatrix[13]) >> 12);
-         cube[i].Position[2] = ((s64)x*ClipMatrix[2] + (s64)y*ClipMatrix[6] + (s64)z*ClipMatrix[10] + (s64)0x1000*ClipMatrix[14]) >> 12;
-         cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
-     }
-@@ -1699,7 +1719,7 @@ void GPU3D::CmdFIFOWrite(const CmdFIFOEntry& entry) noexcept
-             // has 64 entries. this is less complicated than trying to make STMxx stall-able.
- 
-             CmdStallQueue.Write(entry);
--            NDS.GXFIFOStall();
-+            if (!Replay) NDS.GXFIFOStall();
-             return;
-         }
- 
-@@ -1742,7 +1762,7 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
-                 CmdFIFOWrite(entry);
-             }
- 
--            if (CmdStallQueue.IsEmpty())
-+            if (CmdStallQueue.IsEmpty() && !Replay)
-                 NDS.GXFIFOUnstall();
-         }
- 
-@@ -1753,9 +1773,21 @@ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
-     return ret;
- }
- 
-+// GoldLink (UC11): one command word, straight into the pipe and executed (a replay copy).
-+void GPU3D::ReplayCommand(u8 command, u32 param) noexcept
-+{
-+    CmdFIFOEntry entry;
-+    entry.Command = command;
-+    entry.Param = param;
-+    CmdPIPE.Write(entry);
-+    ExecuteCommand();
-+}
-+
- void GPU3D::ExecuteCommand() noexcept
- {
-     CmdFIFOEntry entry = CmdFIFORead();
-+    if (RecordScenes) // GoldLink (UC11)
-+        SceneLog.push_back(((u64)entry.Command << 32) | entry.Param);
- 
-     //printf("FIFO: processing %02X %08X. Levels: FIFO=%d, PIPE=%d\n", entry.Command, entry.Param, CmdFIFO->Level(), CmdPIPE->Level());
- 
-@@ -2414,6 +2446,7 @@ void GPU3D::Run() noexcept
- 
- void GPU3D::CheckFIFOIRQ() noexcept
- {
-+    if (Replay) return; // GoldLink (UC11)
-     bool irq = false;
-     switch (GXStat >> 30)
-     {
-@@ -2427,6 +2460,7 @@ void GPU3D::CheckFIFOIRQ() noexcept
- 
- void GPU3D::CheckFIFODMA() noexcept
- {
-+    if (Replay) return; // GoldLink (UC11)
-     if (CmdFIFO.Level() < 128)
-         NDS.CheckDMAs(0, 0x07);
- }
-@@ -2460,14 +2494,43 @@ bool YSort(Polygon* a, Polygon* b)
+@@ -2460,14 +2463,43 @@ bool YSort(Polygon* a, Polygon* b)
      return a->SortKey < b->SortKey;
  }
  
@@ -411,84 +127,19 @@ index 54f5119..291e9fb 100644
                  if (NumPolygons)
                  {
                      // separate translucent polygons from opaque ones
-@@ -2531,6 +2594,27 @@ void GPU3D::VBlank() noexcept
+@@ -2531,6 +2563,7 @@ void GPU3D::VBlank() noexcept
              NumVertices = 0;
              NumPolygons = 0;
              NumOpaquePolygons = 0;
 +            NumFrameProj = 0; // GoldLink (UC11)
-+
-+            // GoldLink (UC11): the scene just swapped and the one before it, and the state the
-+            // next scene starts from (the swapped scene's start moves on with it).
-+            if (RecordScenes)
-+            {
-+                PrevSceneLog = std::move(LastSceneLog);
-+                LastSceneLog = std::move(SceneLog);
-+                SceneLog.clear();
-+                LastSceneStart = std::move(SceneStart);
-+                Savestate state(256 * 1024);
-+                RecordScenes = false; // not part of the state
-+                LightSnapshot = true;
-+                DoSavestate(&state);
-+                LightSnapshot = false;
-+                RecordScenes = true;
-+                state.Finish();
-+                const u8* bytes = static_cast<const u8*>(state.Buffer());
-+                SceneStart.assign(bytes, bytes + state.Length());
-+                ScenesRecorded++;
-+            }
  
              FlushRequest = 0;
          }
 diff --git a/src/GPU3D.h b/src/GPU3D.h
-index 2e99abd..0fba9a2 100644
+index 2e99abd..6677995 100644
 --- a/src/GPU3D.h
 +++ b/src/GPU3D.h
-@@ -20,6 +20,7 @@
- #define GPU3D_H
- 
- #include <array>
-+#include <vector>
- #include <memory>
- 
- #include "Savestate.h"
-@@ -243,6 +244,36 @@ public:
-     {
-         return WideActive() ? (s32)(((s64)x * 256) / (256 + 2 * WideSide)) : x;
-     }
-+    // GoldLink (UC11): a margin of rows above and below the 3D picture (the smooth camera's:
-+    // half a step never reaches where the game's polygons are clipped). With TallSide > 0 and a
-+    // full-screen viewport, clip-space y is scaled as WideX scales x, the viewport maps onto
-+    // 192 + 2*TallSide rows, and the buffers have MaxTall more rows on each side, the screen's
-+    // y=0 at row MaxTall. The middle 192 rows are as before.
-+    static constexpr int MaxTall = 8;
-+
-+    // GoldLink (UC11): the smooth camera's replay. While RecordScenes is on, each scene's command
-+    // words (command << 32 | parameter, between buffer swaps) are logged and the engine's state
-+    // is kept as each scene starts (a savestate). The halfway picture replays the new scene's
-+    // commands on a copy of the engine from its start, each matrix half way to the last scene's
-+    // (GPU3D_Soft::RenderMid). A copy has Replay on: it raises no interrupt, DMA or stall.
-+    bool RecordScenes = false;
-+    bool Replay = false;
-+    // A scene's start snapshot leaves out the polygon and vertex memory (a scene starts with
-+    // none; most of a savestate's 1.5 MB).
-+    bool LightSnapshot = false;
-+    int ScenesRecorded = 0;
-+    std::vector<u64> SceneLog, LastSceneLog, PrevSceneLog;
-+    std::vector<u8> SceneStart, LastSceneStart;
-+    void ReplayCommand(u8 command, u32 param) noexcept;
-+    int TallSide = 0;
-+    bool TallActive() const noexcept
-+    {
-+        return TallSide > 0 && Viewport[3] == 0 && Viewport[5] == 192;
-+    }
-+    s32 TallY(s32 y) const noexcept
-+    {
-+        return TallActive() ? (s32)(((s64)y * 192) / (192 + 2 * TallSide)) : y;
-+    }
- 
-     s32 ProjMatrixStack[16] {};
-     s32 PosMatrixStack[32][16] {};
-@@ -341,6 +372,17 @@ public:
+@@ -341,6 +341,17 @@ public:
      std::array<Polygon*,2048> RenderPolygonRAM {};
      u32 RenderNumPolygons = 0;
  
@@ -507,351 +158,41 @@ index 2e99abd..0fba9a2 100644
      u32 FlushAttributes = 0;
      u32 ScrolledLine[256]; // not part of the hardware state, don't serialize
 diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
-index e6ef98c..e02a375 100644
+index e6ef98c..6ded003 100644
 --- a/src/GPU3D_Soft.cpp
 +++ b/src/GPU3D_Soft.cpp
-@@ -19,6 +19,7 @@
- #include "GPU3D_Soft.h"
- 
- #include <algorithm>
-+#include <unordered_map>
- #include <stdio.h>
- #include <string.h>
- #include "NDS.h"
-@@ -1466,7 +1467,7 @@ void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y)
-         const int left = GPU3D::MaxWideSide - side;
-         const int right = GPU3D::MaxWideSide + 256 + side;
-         const bool up = y > 0;
--        const bool down = y < 191;
-+        const bool down = y < RenderHeight - 1;
- 
-         for (int x = 0; x < RenderWidth; x++)
-         {
-@@ -1667,7 +1668,8 @@ void SoftRenderer::ClearBuffers(const GPU& gpu)
- 
-         // the rear-plane bitmap repeats every 256 pixels: each row starts MaxWideSide left of it
-         u8 xoff0 = xoff - GPU3D::MaxWideSide;
--        for (int y = 0; y < ScanlineWidth*192; y+=ScanlineWidth)
-+        yoff -= GPU3D::MaxTall; // and each column MaxTall above it
-+        for (int y = 0; y < ScanlineWidth*RenderHeight; y+=ScanlineWidth)
-         {
-             xoff = xoff0;
-             for (int x = 0; x < RenderWidth; x++)
-@@ -1706,7 +1708,7 @@ void SoftRenderer::ClearBuffers(const GPU& gpu)
- 
-         polyid |= (gpu.GPU3D.RenderClearAttr1 & 0x8000);
- 
--        for (int y = 0; y < ScanlineWidth*192; y+=ScanlineWidth)
-+        for (int y = 0; y < ScanlineWidth*RenderHeight; y+=ScanlineWidth)
-         {
-             for (int x = 0; x < RenderWidth; x++)
-             {
-@@ -1730,7 +1732,7 @@ void SoftRenderer::RenderPolygons(const GPU& gpu, bool threaded, Polygon** polyg
- 
-     RenderScanline(gpu, 0, j);
- 
--    for (s32 y = 1; y < 192; y++)
-+    for (s32 y = 1; y < RenderHeight; y++)
-     {
-         RenderScanline(gpu, y, j);
-         ScanlineFinalPass(gpu.GPU3D, y-1);
-@@ -1740,7 +1742,7 @@ void SoftRenderer::RenderPolygons(const GPU& gpu, bool threaded, Polygon** polyg
-             Platform::Semaphore_Post(Sema_ScanlineCount);
-     }
- 
--    ScanlineFinalPass(gpu.GPU3D, 191);
-+    ScanlineFinalPass(gpu.GPU3D, RenderHeight - 1);
- 
-     if (threaded)
-         // If this renderer is threaded, notify the main thread that we're done with the frame.
-@@ -1763,16 +1765,204 @@ void SoftRenderer::RenderFrame(GPU& gpu)
+@@ -1763,6 +1763,9 @@ void SoftRenderer::RenderFrame(GPU& gpu)
  
      FrameIdentical = !(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical;
  
 +    // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
-+    memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset + GPU3D::MaxTall * ScanlineWidth], sizeof(ShownDepth));
-+
-+    // GoldLink (UC11): the halfway picture composed this frame was the one just shown. A new
-+    // scene after the game repeated the last one (once, or twice now and then) gets its own.
-+    MidShown = MidComposing;
-+    if (MidShown)
-+        memcpy(MidShownDepth, MidDepth, sizeof(MidDepth));
-+    MidComposing = false;
-+    const bool newScene = !gpu.GPU3D.RenderFrameIdentical;
-+    const int renders = RendersSinceScene + 1;
-+    RendersSinceScene = newScene ? 0 : renders;
++    memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
 +
      if (RenderThreadRunning.load(std::memory_order_relaxed))
      {
          // "Render thread, you're up! Get moving."
-         Platform::Semaphore_Post(Sema_RenderStart);
-     }
--    else if (!FrameIdentical)
-+    else
-+    {
-+        if (!FrameIdentical)
-+        {
-+            ClearBuffers(gpu);
-+            RenderPolygons(gpu, false, &gpu.GPU3D.RenderPolygonRAM[0], gpu.GPU3D.RenderNumPolygons);
-+        }
-+        if (newScene && MidWanted)
-+        {
-+            // The halfway picture (over the buffers: the new scene's are put back), then the
-+            // new scene's picture kept for the next.
-+            if (renders == 2 || renders == 3)
-+            {
-+                SavedColor.assign(ColorBuffer, ColorBuffer + BufferSize);
-+                SavedDepth.assign(DepthBuffer, DepthBuffer + BufferSize);
-+                SavedAttr.assign(AttrBuffer, AttrBuffer + BufferSize);
-+                RenderMid(gpu);
-+                std::copy(SavedColor.begin(), SavedColor.end(), ColorBuffer);
-+                std::copy(SavedDepth.begin(), SavedDepth.end(), DepthBuffer);
-+                std::copy(SavedAttr.begin(), SavedAttr.end(), AttrBuffer);
-+            }
-+            PrevColor.assign(ColorBuffer, ColorBuffer + BufferSize);
-+        }
-+    }
-+}
-+
-+// GoldLink (UC11): the camera's step between the last new scene's 3D picture and this one's, in
-+// whole pixels: the shift (up to 8 each way) under which most of a sample of the picture's drawn
-+// pixels match.
-+void SoftRenderer::MeasureStep(s32& dx, s32& dy) const
-+{
-+    dx = dy = 0;
-+    if (PrevColor.size() != (size_t)BufferSize)
-+        return;
-+    const u32* now = ColorBuffer;
-+    const u32* was = PrevColor.data();
-+    u32 best = 0;
-+    for (s32 sy = -8; sy <= 8; sy++)
-+    {
-+        for (s32 sx = -8; sx <= 8; sx++)
-+        {
-+            u32 hits = 0;
-+            for (int y = GPU3D::MaxTall + 8; y < GPU3D::MaxTall + 192 - 8; y += 6)
-+            {
-+                for (int x = GPU3D::MaxWideSide + 8; x < GPU3D::MaxWideSide + 256 - 8; x += 6)
-+                {
-+                    const u32 c = now[y * ScanlineWidth + FirstPixelOffset + x];
-+                    if ((c >> 24) == 0)
-+                        continue;
-+                    hits += (c == was[(y - sy) * ScanlineWidth + FirstPixelOffset + x - sx]);
-+                }
-+            }
-+            if (hits > best)
-+            {
-+                best = hits;
-+                dx = sx;
-+                dy = sy;
-+            }
-+        }
-+    }
-+}
-+
-+// GoldLink (UC11): the scenes' matrix commands (their parameters are what moves between scenes).
-+static bool IsMatrixCommand(u32 command)
-+{
-+    return command >= 0x16 && command <= 0x1C;
-+}
-+
-+// Whether two command words stand for the same one in the two scenes: the same command, and the
-+// same parameter, but for what moves or changes between scenes: a matrix's (near: a camera step
-+// moves a translation a few units; the next map piece with the same model sits hundreds away),
-+// an animated texture's, a material's colours.
-+static bool SameWord(u64 a, u64 b)
-+{
-+    const u32 command = (u32)(a >> 32);
-+    if (command != (u32)(b >> 32))
-+        return false;
-+    if (IsMatrixCommand(command))
-+    {
-+        const s64 d = (s64)(s32)(u32)a - (s64)(s32)(u32)b;
-+        return d >= -16 * 4096 && d <= 16 * 4096;
-+    }
-+    if (command == 0x2A || command == 0x30 || command == 0x31)
-+        return true;
-+    return (u32)a == (u32)b;
-+}
-+
-+// GoldLink (UC11): the halfway picture. The new scene's command words are replayed on a copy of
-+// the geometry engine from the state the scene started in, each matrix parameter half way to
-+// the same word of the last scene (the scenes lined up word by word; where one has words the
-+// other hasn't, as an object coming into view, they're taken as they are); the copy's swap
-+// sorts its polygons as the hardware's, and this renderer draws them.
-+void SoftRenderer::RenderMid(GPU& gpu)
-+{
-+    GPU3D& g = gpu.GPU3D;
-+    if (g.ScenesRecorded < 3 || g.LastSceneStart.empty() || g.PrevSceneLog.empty() || g.LastSceneLog.empty())
-+        return;
-+    const std::vector<u64>& a = g.PrevSceneLog;
-+    const std::vector<u64>& b = g.LastSceneLog;
-+
-+    // Line the scenes up: the same words pair; at a difference, the nearest place where the next
-+    // few words agree again (skipping a run in one or the other).
-+    constexpr size_t Run = 8, Reach = 16384;
-+    std::vector<s64> pair(b.size(), -1);
-+    size_t i = 0, j = 0;
-+    const auto agree = [&](size_t ia, size_t jb) {
-+        for (size_t r = 0; r < Run; r++)
-+        {
-+            if (ia + r >= a.size() || jb + r >= b.size())
-+                return ia + r >= a.size() && jb + r >= b.size();
-+            if (!SameWord(a[ia + r], b[jb + r]))
-+                return false;
-+        }
-+        return true;
-+    };
-+    while (j < b.size() && i < a.size())
-+    {
-+        if (SameWord(a[i], b[j]))
-+        {
-+            pair[j++] = (s64)i++;
-+            continue;
-+        }
-+        size_t skipA = Reach + 1, skipB = Reach + 1;
-+        for (size_t d = 1; d <= Reach && (skipA > Reach || skipB > Reach); d++)
-+        {
-+            if (skipA > Reach && i + d < a.size() && agree(i + d, j)) skipA = d;
-+            if (skipB > Reach && j + d < b.size() && agree(i, j + d)) skipB = d;
-+        }
-+        if (skipA > Reach && skipB > Reach)
-+            break;
-+        if (skipA <= skipB) i += skipA;
-+        else j += skipB;
-+    }
-+
-+    // The halfway moment: where the camera has moved a whole number of pixels (its step from the
-+    // last picture to the new one, halved and rounded down), so every vertex keeps its place in
-+    // the pixel grid as on a real frame and things stay just as they sit against each other (half
-+    // a pixel would round each object its own way: a roof's rim peeking out from under a tree
-+    // for a frame). In a room's straight-on view that holds for every vertex; in a town's
-+    // perspective, at the depth that fills most of the picture. No camera step: half way.
-+    s32 stepx = 0, stepy = 0;
-+    MeasureStep(stepx, stepy);
-+    const s32 step = std::abs(stepy) >= std::abs(stepx) ? std::abs(stepy) : std::abs(stepx);
-+    const s64 num = step >= 2 ? step / 2 : 1, den = step >= 2 ? step : 2;
-+
-+    if (!MidEngine)
-+        MidEngine = std::make_unique<GPU3D>(gpu.NDS);
-+    GPU3D& m = *MidEngine;
-+    {
-+        Savestate state(const_cast<u8*>(g.LastSceneStart.data()), (u32)g.LastSceneStart.size(), false);
-+        if (state.Error)
-+            return;
-+        m.LightSnapshot = true;
-+        m.DoSavestate(&state);
-+        m.LightSnapshot = false;
-+    }
-+    m.Replay = true;
-+    m.RecordScenes = false;
-+    m.WideSide = g.WideSide;
-+    m.TallSide = g.TallSide;
-+    for (size_t k = 0; k < b.size(); k++)
-     {
--        ClearBuffers(gpu);
--        RenderPolygons(gpu, false, &gpu.GPU3D.RenderPolygonRAM[0], gpu.GPU3D.RenderNumPolygons);
-+        const u8 command = (u8)(b[k] >> 32);
-+        u32 param = (u32)b[k];
-+        if (pair[k] >= 0 && IsMatrixCommand(command))
-+        {
-+            const s64 from = (s32)(u32)a[pair[k]], to = (s32)param;
-+            param = (u32)(s32)(from + ((to - from) * num) / den);
-+        }
-+        m.ReplayCommand(command, param);
-     }
-+    if (!m.FlushRequest)
-+        return;
-+    m.VBlank();
-+
-+    ClearBuffers(gpu);
-+    RenderPolygons(gpu, false, &m.RenderPolygonRAM[0], m.RenderNumPolygons);
-+    memcpy(MidColor, ColorBuffer, sizeof(MidColor));
-+    memcpy(MidDepth, &DepthBuffer[FirstPixelOffset + GPU3D::MaxTall * ScanlineWidth], sizeof(MidDepth));
-+    MidComposing = true;
- }
- 
- void SoftRenderer::RestartFrame(GPU& gpu)
-@@ -1825,12 +2015,12 @@ u32* SoftRenderer::GetLine(int line)
-             Platform::Semaphore_Wait(Sema_ScanlineCount);
-     }
- 
--    return &ColorBuffer[(line * ScanlineWidth) + FirstPixelOffset + GPU3D::MaxWideSide];
-+    return &ColorBuffer[((line + GPU3D::MaxTall) * ScanlineWidth) + FirstPixelOffset + GPU3D::MaxWideSide];
- }
- 
- u32* SoftRenderer::GetWideLine(int line)
- {
--    return &ColorBuffer[(line * ScanlineWidth) + FirstPixelOffset];
-+    return &ColorBuffer[((line + GPU3D::MaxTall) * ScanlineWidth) + FirstPixelOffset];
- }
- 
- }
 diff --git a/src/GPU3D_Soft.h b/src/GPU3D_Soft.h
-index e8fb4bf..5c47048 100644
+index e8fb4bf..262b524 100644
 --- a/src/GPU3D_Soft.h
 +++ b/src/GPU3D_Soft.h
-@@ -23,6 +23,7 @@
- #include "Platform.h"
- #include <thread>
- #include <atomic>
-+#include <vector>
- 
- namespace melonDS
- {
-@@ -42,6 +43,24 @@ public:
+@@ -42,6 +42,12 @@ public:
      u32* GetLine(int line) override;
      // GoldLink: the whole wide line (RenderWidth pixels; the screen starts MaxWideSide in).
      u32* GetWideLine(int line);
 +    // GoldLink (UC11): the wide line's depth (24-bit Z or W, as the polygon chose), same layout.
-+    const u32* GetWideDepthLine(int line) const { return &DepthBuffer[((line + GPU3D::MaxTall) * ScanlineWidth) + FirstPixelOffset]; }
++    const u32* GetWideDepthLine(int line) const { return &DepthBuffer[(line * ScanlineWidth) + FirstPixelOffset]; }
 +    // GoldLink (UC11): the depth of the picture on screen. The next frame's 3D is rendered at
 +    // line 215, before the frame ends, so DepthBuffer is then a frame ahead of the screen;
 +    // RenderFrame keeps the shown one first.
 +    const u32* GetShownDepthLine(int line) const { return &ShownDepth[line * ScanlineWidth]; }
-+
-+    // GoldLink (UC11): the smooth camera's halfway picture. When the game shows a new 3D scene
-+    // after it repeated the last one (its 30 a second), RenderFrame also renders the new scene
-+    // replayed with each matrix half way from the last scene's (GPU3D::RecordScenes); the 2D
-+    // engine composes that picture while the frame shows (GPU2D_Soft::MidPicture), as it
-+    // composes the frame.
-+    bool MidWanted = false;
-+    // The halfway 3D picture is composed this frame; it was the frame just shown.
-+    bool MidComposing = false;
-+    bool MidShown = false;
-+    const u32* GetMidWideLine(int line) const { return &MidColor[((line + GPU3D::MaxTall) * ScanlineWidth) + FirstPixelOffset]; }
-+    const u32* GetMidShownDepthLine(int line) const { return &MidShownDepth[line * ScanlineWidth]; }
  
      void SetupRenderThread(GPU& gpu);
      void EnableRenderThread();
-@@ -466,12 +485,29 @@ private:
-     // are MaxWideSide wider on each side, the screen's x=0 at column MaxWideSide.
-     static constexpr int RenderWidth = 256 + 2 * GPU3D::MaxWideSide;
-     static constexpr int ScanlineWidth = RenderWidth + 2;
--    static constexpr int NumScanlines = 194;
-+    // GoldLink (UC11): MaxTall more rows above and below (GPU3D::TallSide), the screen's y=0 at
-+    // row MaxTall; the line readers below give the screen's rows.
-+    static constexpr int RenderHeight = 192 + 2 * GPU3D::MaxTall;
-+    static constexpr int NumScanlines = RenderHeight + 2;
-     static constexpr int BufferSize = ScanlineWidth * NumScanlines;
-     static constexpr int FirstPixelOffset = ScanlineWidth + 1;
+@@ -472,6 +478,7 @@ private:
  
      u32 ColorBuffer[BufferSize * 2];
      u32 DepthBuffer[BufferSize * 2];
 +    u32 ShownDepth[ScanlineWidth * 192] {};
-+    // GoldLink (UC11): the halfway picture's colour (laid out as ColorBuffer) and depth (for the
-+    // frame it's composed in, then for the frame shown), and the renders since the scene changed.
-+    u32 MidColor[BufferSize] {};
-+    u32 MidDepth[ScanlineWidth * 192] {};
-+    u32 MidShownDepth[ScanlineWidth * 192] {};
-+    // The copy of the geometry engine the new scene is replayed on.
-+    std::unique_ptr<GPU3D> MidEngine;
-+    // The last new scene's 3D picture, and the new one's buffers while the halfway one is drawn.
-+    std::vector<u32> PrevColor, SavedColor, SavedDepth, SavedAttr;
-+    // The camera's step from the last scene's picture to the new one's (whole pixels).
-+    void MeasureStep(s32& dx, s32& dy) const;
-+    int RendersSinceScene = 0;
-+    void RenderMid(GPU& gpu);
      u32 AttrBuffer[BufferSize * 2];
  
      // attribute buffer:

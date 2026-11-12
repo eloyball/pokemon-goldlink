@@ -201,9 +201,8 @@ impl GameApp {
         };
         if let Some(r) = &self.runner {
             r.send(Command::Wide(side));
-            // The 3D scene's buffers come with each frame only while the lighting is on.
+            // The lighting's buffers come with each frame only while it's on.
             r.send(Command::Lighting(v.lighting));
-            r.send(Command::Smooth(v.smooth));
         }
     }
 
@@ -332,7 +331,6 @@ impl GameApp {
     fn update_texture(&mut self, ctx: &egui::Context) {
         let Some(runner) = &self.runner else { return };
         let lit = self.config.video.lighting;
-        let smooth = self.config.video.smooth;
         let shown = {
             let frame = lock(&runner.shared.frame);
             if frame.seq == self.last_seq {
@@ -375,28 +373,8 @@ impl GameApp {
                     && !frame.wide.is_empty())
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
-                let mut light = if lit { frame.light.clone() } else { None };
-                let mut pixels = frame.pixels.clone();
-                let mut wide = wide;
-                // The smooth camera's halfway picture, when this frame has one (melonDS made it
-                // from the game's own scene: UC11): shown in the top picture's place, lit with
-                // its own depth.
-                if smooth && !frame.mid.is_empty() {
-                    match &mut wide {
-                        Some(w) if w.len() == frame.mid.len() => w.copy_from_slice(&frame.mid),
-                        Some(_) => {}
-                        None if frame.mid.len() == 256 * 192 => {
-                            pixels[..256 * 192].copy_from_slice(&frame.mid)
-                        }
-                        None => {}
-                    }
-                    if let Some(l) = &mut light
-                        && l.buffers.depth.len() == frame.mid_depth.len()
-                    {
-                        l.buffers.depth.copy_from_slice(&frame.mid_depth);
-                    }
-                }
-                Some((pixels, wide, frame.wide_side, light))
+                let light = if lit { frame.light.clone() } else { None };
+                Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
         };
         let options = match self.config.video.filter {
@@ -424,8 +402,8 @@ impl GameApp {
             let w = 256 + 2 * side;
             let img = image(wide, w, 192);
             match &mut self.wide {
-                Some(t) => t.set(img, options),
-                None => self.wide = Some(ctx.load_texture("wide", img, options)),
+                Some(t) if t.size() == [w, 192] => t.set(img, options),
+                _ => self.wide = Some(ctx.load_texture("wide", img, options)),
             }
         }
         let img = image(&pixels, 256, 384);
@@ -494,10 +472,6 @@ impl GameApp {
                 Event::SaveFailed(e) => {
                     self.say(format!("Your save couldn't be written: {e}"), true)
                 }
-                Event::SmoothTooSlow => self.say(
-                    "The smooth camera is off: this computer can't keep up with it (Settings → Smooth camera)".to_owned(),
-                    false,
-                ),
                 Event::BackupFailed(e) => {
                     self.say(format!("A backup couldn't be written: {e}"), true)
                 }
@@ -542,10 +516,6 @@ impl GameApp {
                 changed |= ui
                     .checkbox(&mut v.lighting, "Lighting")
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
-                    .changed();
-                changed |= ui
-                    .checkbox(&mut v.smooth, "Smooth camera")
-                    .on_hover_text("60 pictures a second where the game draws 30: each in-between one made from the game's own scene")
                     .changed();
                 if self.release_ui && ui.checkbox(&mut v.fullscreen, "Fullscreen (F11)").changed() {
                     changed = true;
