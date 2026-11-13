@@ -175,6 +175,29 @@ void gl_core_set_wide(GlCore *core, int side)
     core->nds->GPU.GPU3D.WideSide = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
 }
 
+void gl_core_set_steady(GlCore *core, int on)
+{
+    core->nds->GPU.GPU3D.OrthoWanted = on != 0;
+}
+
+int gl_core_steady_shift(GlCore *core, float *xy)
+{
+    melonDS::GPU &gpu = core->nds->GPU;
+    const auto &gpu3d = gpu.GPU3D;
+    xy[0] = gpu3d.ShownOrthoShift[0];
+    xy[1] = gpu3d.ShownOrthoShift[1];
+    if (!gpu3d.ShownOrtho)
+        return 0;
+    // 2D drawn over the scene on the top screen (a text box, a town's banner): it mustn't move
+    // with the scene, so the picture isn't slid.
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
+    int over = 0;
+    for (int y = 0; y < 192; y++)
+        for (int x = 0; x < 256; x++)
+            over += soft2d.Layer3D[y][melonDS::GPU3D::MaxWideSide + x] == 2;
+    return over > 128 ? 2 : 1;
+}
+
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
 {
     side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);

@@ -1,0 +1,224 @@
+GoldLink's change to melonDS (UC11): the overworld drawn with an orthographic camera, its world
+locked to the screen's pixels.
+
+- GPU3D: with OrthoWanted (set by GoldLink while the game is in the overworld), a field
+  perspective projection is replaced, once the camera matrix after it is known, by an
+  orthographic one with the same angle and the same scale at the player's distance (the object
+  nearest the screen's centre; changed only when it has clearly changed for a few scenes), the
+  camera shifted so the world's origin always lands at the same point within a pixel: the scene
+  moves rigidly in whole pixels. Depth is the perspective's z/w matched in value and slope at
+  that distance (the game's depth bias for sprites, shadows and the surf mount is kept), every w
+  is a constant 64, the frame is Z-buffered. The shift goes with the frame through the swap and
+  the render (OrthoShift, RenderOrthoShift, ShownOrthoShift) for GoldLink to slide the shown
+  picture back by it at the screen's resolution. Rooms, which the game already draws
+  orthographically, keep their projection and are only snapped.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-12 21:00:31.087922503 -0500
++++ b/src/GPU3D.h	2026-11-12 21:01:20.057819953 -0500
+@@ -244,6 +244,42 @@
+         return WideActive() ? (s32)(((s64)x * 256) / (256 + 2 * WideSide)) : x;
+     }
+ 
++    // GoldLink (UC11): the overworld drawn with an orthographic camera, its world locked to the
++    // screen's pixels. HeartGold's field camera is a narrow perspective one; as it moves, the
++    // ground near the bottom of the screen slides 1.6 times as fast as at the top, every corner
++    // re-rounds to another whole pixel and the scene shimmers. With OrthoWanted (GoldLink sets
++    // it while the game is in the overworld and the setting is on), a field projection (the
++    // perspective HeartGold loads before each object) is replaced, once the camera matrix after
++    // it is known, by an orthographic one: the same angle, the same scale at the player's
++    // distance, and the camera shifted so the world's origin always lands at the same point
++    // within a pixel. Every world point then keeps its sub-pixel phase: the scene moves in whole
++    // pixels, rigidly. OrthoShift is that shift (pixels, screen x and y); GoldLink slides the
++    // shown picture back by it at the screen's resolution.
++    //
++    // Depth keeps the game's own: z/w of the perspective, matched in value and slope at the
++    // player's distance (the game draws sprites, shadows and the surf mount with a second
++    // projection whose depth term pulls them toward the camera; a plain orthographic depth loses
++    // that). Every w is OrthoW, a constant, so the fixed-point terms keep their precision, and
++    // the frame is depth-buffered by Z (with constant w, W-buffering can't sort).
++    static constexpr double OrthoW = 64;
++    bool OrthoWanted = false;
++    double OrthoDepth = 656;       // the player's distance (view units), from the last scenes
++    bool OrthoArmed = false;       // a field projection was loaded: the camera matrix comes next
++    s32 OrthoPersp[16] {};         // that projection
++    bool OrthoScene = false;       // the scene being built uses it
++    float OrthoShift[2] {};        // the scene being built's shift
++    float RenderOrthoShift[2] {};  // the frame being rendered's
++    float ShownOrthoShift[2] {};   // the frame on screen's
++    bool RenderOrtho = false, ShownOrtho = false;
++    bool OrthoFlushed = false;     // the scene flushed (waiting for the swap) used it
++    float OrthoFlushedShift[2] {};
++    double OrthoNear = 0;          // this scene: the object nearest the screen's centre (distance)
++    double OrthoNearScore = 1e30;
++    int OrthoDepthVotes = 0;
++    void OrthoProjection(const s32* camera) noexcept;
++    void OrthoObject() noexcept;
++    void OrthoEndScene() noexcept;
++
+     s32 ProjMatrixStack[16] {};
+     s32 PosMatrixStack[32][16] {};
+     s32 VecMatrixStack[32][16] {};
+--- a/src/GPU3D.cpp	2026-11-12 21:00:31.087858162 -0500
++++ b/src/GPU3D.cpp	2026-11-12 21:01:37.238117410 -0500
+@@ -16,6 +16,7 @@
+     with melonDS. If not, see http://www.gnu.org/licenses/.
+ */
+ 
++#include <cmath>
+ #include <stdio.h>
+ #include <string.h>
+ #include <algorithm>
+@@ -189,6 +190,12 @@
+ 
+ void GPU3D::Reset() noexcept
+ {
++    // GoldLink (UC11): nothing of the last game's orthographic overworld carries over.
++    OrthoArmed = OrthoScene = OrthoFlushed = RenderOrtho = ShownOrtho = false;
++    OrthoDepth = 656;
++    OrthoDepthVotes = 0;
++    OrthoNearScore = 1e30;
++
+     CmdFIFO.Clear();
+     CmdPIPE.Clear();
+ 
+@@ -2088,6 +2095,8 @@
+             VertexPipelineCmdDelayed4();
+             FlushRequest = 1;
+             FlushAttributes = entry.Param & 0x3;
++            if (OrthoScene) FlushAttributes &= ~0x2; // GoldLink (UC11): Z-buffering, w is constant
++            OrthoEndScene();
+             CycleCount = 325;
+             // probably safe to just reset all pipelines
+             // but needs checked
+@@ -2159,6 +2168,11 @@
+                     if (MatrixMode == 0)
+                     {
+                         MatrixLoad4x4(ProjMatrix, (s32*)ExecParams);
++                        // GoldLink (UC11): a field perspective; replaced once the camera is known.
++                        OrthoArmed = OrthoWanted && ProjMatrix[11] == -0x1000 && ProjMatrix[15] == 0
++                            && ProjMatrix[3] == 0 && ProjMatrix[7] == 0 && ProjMatrix[0] > 0 && ProjMatrix[5] > 0;
++                        if (OrthoArmed)
++                            memcpy(OrthoPersp, ProjMatrix, sizeof(OrthoPersp));
+                         ClipMatrixDirty = true;
+                         AddCycles(18);
+                     }
+@@ -2191,6 +2205,9 @@
+                     }
+                     else
+                     {
++                        // GoldLink (UC11): the camera, after a field perspective.
++                        if (OrthoArmed && MatrixMode == 2)
++                            OrthoProjection((s32*)ExecParams);
+                         MatrixLoad4x3(PosMatrix, (s32*)ExecParams);
+                         if (MatrixMode == 2)
+                             MatrixLoad4x3(VecMatrix, (s32*)ExecParams);
+@@ -2242,6 +2259,7 @@
+                         if (MatrixMode == 2)
+                         {
+                             MatrixMult4x3(VecMatrix, (s32*)ExecParams);
++                            OrthoObject(); // GoldLink (UC11)
+                             AddCycles(35 + 30 - 12);
+                         }
+                         else AddCycles(35 - 12);
+@@ -2481,6 +2499,81 @@
+     }
+ }
+ 
++// GoldLink (UC11): see GPU3D.h, OrthoWanted.
++void GPU3D::OrthoProjection(const s32* camera) noexcept
++{
++    OrthoArmed = false;
++    const s32* p = OrthoPersp;
++    const double K = OrthoW, d = OrthoDepth;
++    // The perspective's depth z/w = -m10 - m14/vz, as a line through its value and slope at -d.
++    const double m10 = p[10] / 4096.0, m14 = p[14] / 4096.0;
++    const double c1 = m14 / (d * d), c0 = -m10 + 2 * m14 / d;
++    s32 m[16] {};
++    m[0] = (s32)std::lround(K * p[0] / d);
++    m[5] = (s32)std::lround(K * p[5] / d);
++    m[10] = (s32)std::lround(K * c1 * 4096);
++    m[14] = (s32)std::lround(K * c0 * 4096);
++    m[15] = (s32)std::lround(K * 4096);
++    // Where the world's origin lands (the camera's translation through that view), shifted to
++    // the middle of its pixel: every world point keeps its phase within a pixel.
++    const double cx = (camera[9] / 4096.0) * (m[0] / 4096.0) / K;
++    const double cy = (camera[10] / 4096.0) * (m[5] / 4096.0) / K;
++    const double x = Viewport[0] + (cx + 1) * Viewport[4] / 2.0;
++    const double y = Viewport[3] + (1 - cy) * Viewport[5] / 2.0;
++    const double ox = std::floor(x) + 0.5 - x, oy = std::floor(y) + 0.5 - y;
++    m[12] = (s32)std::lround(K * ox * 2.0 / Viewport[4] * 4096);
++    m[13] = (s32)std::lround(-K * oy * 2.0 / Viewport[5] * 4096);
++    memcpy(ProjMatrix, m, sizeof(m));
++    ClipMatrixDirty = true;
++    OrthoShift[0] = (float)ox;
++    OrthoShift[1] = (float)oy;
++    OrthoScene = true;
++}
++
++// GoldLink (UC11): an object placed in the scene (its position in view space is the position
++// matrix's translation): the one nearest the screen's centre, through the game's perspective,
++// is taken for the player, whose distance the orthographic scale is matched at.
++void GPU3D::OrthoObject() noexcept
++{
++    if (!OrthoScene)
++        return;
++    const double vx = PosMatrix[12] / 4096.0, vy = PosMatrix[13] / 4096.0, vz = PosMatrix[14] / 4096.0;
++    if (vz > -16)
++        return;
++    const double sx = (OrthoPersp[0] / 4096.0) * vx / -vz, sy = (OrthoPersp[5] / 4096.0) * vy / -vz;
++    const double score = sx * sx + (sy + 0.15) * (sy + 0.15); // the player stands a little low
++    if (score < OrthoNearScore)
++    {
++        OrthoNearScore = score;
++        OrthoNear = -vz;
++    }
++}
++
++// GoldLink (UC11): a scene was flushed. The matched distance follows the player only when it
++// has clearly changed for a few scenes (another camera: indoors, a cutscene's), never step by
++// step: a scale that wobbles would make the picture breathe.
++void GPU3D::OrthoEndScene() noexcept
++{
++    OrthoFlushed = OrthoScene;
++    memcpy(OrthoFlushedShift, OrthoShift, sizeof(OrthoFlushedShift));
++    if (OrthoScene && OrthoNearScore < 0.05)
++    {
++        if (std::abs(OrthoNear - OrthoDepth) > OrthoDepth * 0.03)
++        {
++            if (++OrthoDepthVotes >= 3)
++            {
++                OrthoDepth = OrthoNear;
++                OrthoDepthVotes = 0;
++            }
++        }
++        else
++            OrthoDepthVotes = 0;
++    }
++    OrthoScene = false;
++    OrthoArmed = false;
++    OrthoNearScore = 1e30;
++}
++
+ void GPU3D::VBlank() noexcept
+ {
+     if (GeometryEnabled)
+@@ -2490,6 +2583,8 @@
+             // GoldLink (UC11): what the screen showed this frame is what was rendered last.
+             memcpy(ShownProjMatrix, RenderProjMatrix, sizeof(RenderProjMatrix));
+             ShownWBuffer = RenderNumPolygons > 0 && RenderPolygonRAM[0]->WBuffer;
++            ShownOrtho = RenderOrtho;
++            memcpy(ShownOrthoShift, RenderOrthoShift, sizeof(ShownOrthoShift));
+             if (FlushRequest)
+             {
+                 // GoldLink (UC11): the projection most of the new frame's polygons used.
+@@ -2499,6 +2594,8 @@
+                         most = i;
+                 if (most >= 0)
+                     memcpy(RenderProjMatrix, FrameProj[most].Matrix, sizeof(RenderProjMatrix));
++                RenderOrtho = OrthoFlushed;
++                memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
+ 
+                 if (NumPolygons)
+                 {

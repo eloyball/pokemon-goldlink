@@ -380,6 +380,22 @@ impl Nds {
         unsafe { sys::gl_core_set_wide(self.ptr(), side.min(Self::MAX_WIDE_SIDE) as c_int) }
     }
 
+    /// The steady overworld (UC11): field scenes drawn with an orthographic camera locked to the
+    /// pixels. GoldLink turns it on only while the game is in the overworld.
+    pub fn set_steady(&mut self, on: bool) {
+        // SAFETY: a plain setter on the live core.
+        unsafe { sys::gl_core_set_steady(self.ptr(), c_int::from(on)) }
+    }
+
+    /// When the picture on screen was drawn steady and nothing 2D is drawn over the scene: the
+    /// shift (pixels, x then y) it was drawn with, to be taken back at the screen's resolution.
+    pub fn steady_shift(&self) -> Option<[f32; 2]> {
+        let mut xy = [0f32; 2];
+        // SAFETY: the shim writes two floats.
+        let on = unsafe { sys::gl_core_steady_shift(self.ptr(), xy.as_mut_ptr()) };
+        (on == 1).then_some(xy)
+    }
+
     /// A screen `256 + 2 * side` pixels wide (0x00RRGGBB, 192 rows): the screen as shown in the
     /// middle, the 3D layer on the sides.
     pub fn wide_frame(&self, screen: usize, side: usize) -> Vec<u32> {

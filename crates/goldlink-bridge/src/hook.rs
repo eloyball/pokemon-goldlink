@@ -63,6 +63,15 @@ impl FrameHook for BridgeHook {
             b.pre_frame(emu.nds.main_ram_mut(), mailbox);
             b.moved_boxes()
         };
+        // The steady overworld (UC11) only in the overworld: battles and menus keep their own
+        // cameras.
+        let field = emu.mailbox().is_some_and(|mb| {
+            matches!(
+                crate::bridge::scene_of(mb),
+                crate::bridge::Scene::Overworld | crate::bridge::Scene::StartMenu
+            )
+        });
+        emu.set_in_field(field);
         // The wider picture: the game's HP boxes out toward its edges, from this frame on.
         emu.nds.set_sprite_move(&moved);
     }

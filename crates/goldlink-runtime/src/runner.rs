@@ -40,6 +40,8 @@ pub enum Command {
     Wide(usize),
     /// Hand the lighting its buffers with each frame (UC11).
     Lighting(bool),
+    /// The steady overworld (UC11).
+    Steady(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -55,6 +57,9 @@ pub struct Frame {
     pub seq: u64,
     /// What the lighting needs (UC11), with it on and the top screen showing the 3D scene.
     pub light: Option<LightFrame>,
+    /// The steady overworld (UC11): the shift (DS pixels, x then y) this top picture was drawn
+    /// with; the window slides it back by that at the screen's resolution.
+    pub steady_shift: Option<[f32; 2]>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -144,6 +149,7 @@ impl Runner {
                 wide_side: 0,
                 seq: 0,
                 light: None,
+                steady_shift: None,
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -330,6 +336,7 @@ fn run(
                 }
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
+                Command::Steady(on) => emu.set_steady(on),
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -356,6 +363,7 @@ fn run(
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;
+            f.steady_shift = emu.nds.steady_shift();
             f.seq = emu.frame_count();
             light = std::mem::replace(&mut f.light, light_now);
         }

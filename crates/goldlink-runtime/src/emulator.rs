@@ -64,6 +64,10 @@ pub struct Emulator {
     events: Vec<Event>,
     /// The wider picture's side (UC9 §4), kept across power cycles.
     wide: usize,
+    /// The steady overworld (UC11): the setting, and whether the game is in the overworld now
+    /// (the bridge says, each frame). melonDS draws field scenes steady when both are true.
+    steady: bool,
+    in_field: bool,
     /// The DS clock at the last power cycle, and the frame count then (the game's clock).
     clock_at_boot: (chrono::NaiveDateTime, u64),
 }
@@ -88,6 +92,8 @@ impl Emulator {
             frame: 0,
             events: Vec::new(),
             wide: 0,
+            steady: false,
+            in_field: false,
             clock_at_boot: (chrono::NaiveDateTime::default(), 0),
         };
         emu.boot()?;
@@ -102,6 +108,16 @@ impl Emulator {
 
     pub fn wide(&self) -> usize {
         self.wide
+    }
+
+    /// The steady overworld setting (UC11).
+    pub fn set_steady(&mut self, on: bool) {
+        self.steady = on;
+    }
+
+    /// Whether the game is in the overworld (walking or its start menu), from the bridge.
+    pub fn set_in_field(&mut self, field: bool) {
+        self.in_field = field;
     }
 
     /// The game's ROM, as the DS runs it.
@@ -174,6 +190,8 @@ impl Emulator {
     /// Runs one frame with this input, then writes the cart's save file if the game just saved.
     pub fn frame(&mut self, input: Input) {
         self.nds.set_input(input.keys, input.touch);
+        // Every frame, so a power cycle (which resets melonDS) can't leave it off or on.
+        self.nds.set_steady(self.steady && self.in_field);
         self.nds.run_frame();
         self.frame += 1;
         self.after_frame();

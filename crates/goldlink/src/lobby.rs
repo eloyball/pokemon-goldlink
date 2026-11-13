@@ -873,6 +873,12 @@ impl Lobby {
             .checkbox(&mut v.lighting, "Lighting")
             .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
             .changed();
+        changed |= ui
+            .checkbox(&mut v.steady, "Steady overworld")
+            .on_hover_text(
+                "A flat camera that keeps the town's pixels still as you move; off: the game's own perspective, which shimmers",
+            )
+            .changed();
         theme::caption(ui, "Sound");
         let a = &mut config.audio;
         changed |= ui

@@ -53,6 +53,9 @@ pub struct Video {
     pub wide: bool,
     /// Light and shade in the overworld, a small colour grade elsewhere (UC11).
     pub lighting: bool,
+    /// The overworld drawn with a flat (orthographic) camera locked to the pixels: no shimmer as
+    /// the camera moves (UC11). Off: the game's own perspective.
+    pub steady: bool,
     /// The game fills the screen (the launcher stays a window).
     pub fullscreen: bool,
 }
@@ -97,6 +100,7 @@ impl Default for Video {
             integer_scale: false,
             wide: true,
             lighting: true,
+            steady: true,
             fullscreen: true,
         }
     }

@@ -101,6 +101,8 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
+    /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
+    steady_shift: Option<[f32; 2]>,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
     /// its Mega symbol cut from there.
     mega: Option<bool>,
@@ -173,6 +175,7 @@ impl GameApp {
             game_textbox: true,
             wide: None,
             wide_side: 0,
+            steady_shift: None,
             mega: None,
             mega_icon: None,
             lighting: None,
@@ -203,6 +206,7 @@ impl GameApp {
             r.send(Command::Wide(side));
             // The lighting's buffers come with each frame only while it's on.
             r.send(Command::Lighting(v.lighting));
+            r.send(Command::Steady(v.steady));
         }
     }
 
@@ -373,6 +377,7 @@ impl GameApp {
                     && !frame.wide.is_empty())
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
+                self.steady_shift = frame.steady_shift;
                 let light = if lit { frame.light.clone() } else { None };
                 Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
@@ -516,6 +521,10 @@ impl GameApp {
                 changed |= ui
                     .checkbox(&mut v.lighting, "Lighting")
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+                    .changed();
+                changed |= ui
+                    .checkbox(&mut v.steady, "Steady overworld")
+                    .on_hover_text("A flat camera that keeps the town's pixels still as you move; off: the game's own perspective, which shimmers")
                     .changed();
                 if self.release_ui && ui.checkbox(&mut v.fullscreen, "Fullscreen (F11)").changed() {
                     changed = true;
@@ -862,9 +871,20 @@ impl GameApp {
                 return;
             }
             _ => {
+                // The steady overworld: slid back by the shift it was drawn with (UC11).
+                let shift = self
+                    .steady_shift
+                    .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
                 match &wide {
-                    Some(w) => p.image(w.id(), frame, rows(1.0), egui::Color32::WHITE),
-                    None => p.image(t.id(), middle, TOP_UV, egui::Color32::WHITE),
+                    Some(w) => {
+                        let cols = (256 + 2 * self.wide_side) as f32;
+                        let (r, uv) = slide(frame, rows(1.0), shift, cols);
+                        p.image(w.id(), r, uv, egui::Color32::WHITE)
+                    }
+                    None => {
+                        let (r, uv) = slide(middle, TOP_UV, shift, 256.0);
+                        p.image(t.id(), r, uv, egui::Color32::WHITE)
+                    }
                 };
             }
         }
@@ -980,7 +1000,11 @@ impl GameApp {
                     self.bottom = bottom;
                     if let Some(t) = &self.texture {
                         let p = ui.painter();
-                        p.image(t.id(), top, TOP_UV, egui::Color32::WHITE);
+                        let shift = self
+                            .steady_shift
+                            .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
+                        let (top, uv) = slide(top, TOP_UV, shift, 256.0);
+                        p.image(t.id(), top, uv, egui::Color32::WHITE);
                         p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
                     }
                 }
@@ -1063,5 +1087,53 @@ impl eframe::App for GameApp {
 impl Drop for GameApp {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// The steady overworld (UC11): the top picture `uv` (the DS screen's 192 rows, `cols` columns
+/// across), drawn into `dst`, slid by `shift` DS pixels: melonDS drew the scene that far off so
+/// it moves in whole pixels, and this takes it back at the screen's resolution. What would come
+/// from outside the picture is left out (a sliver under a pixel wide at the edges).
+fn slide(
+    dst: egui::Rect,
+    uv: egui::Rect,
+    shift: Option<[f32; 2]>,
+    cols: f32,
+) -> (egui::Rect, egui::Rect) {
+    let Some([sx, sy]) = shift else {
+        return (dst, uv);
+    };
+    let moved = uv.translate(egui::vec2(sx / cols * uv.width(), sy / 192.0 * uv.height()));
+    let kept = moved.intersect(uv);
+    if !kept.is_positive() {
+        return (dst, uv);
+    }
+    let at = |p: egui::Pos2| {
+        egui::pos2(
+            dst.left() + (p.x - moved.left()) / moved.width() * dst.width(),
+            dst.top() + (p.y - moved.top()) / moved.height() * dst.height(),
+        )
+    };
+    (egui::Rect::from_min_max(at(kept.min), at(kept.max)), kept)
+}
+
+#[cfg(test)]
+mod slide_tests {
+    use super::*;
+
+    #[test]
+    fn slide_takes_the_shift_back_and_crops_the_edge() {
+        let dst = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(512.0, 384.0));
+        // Drawn 0.5 px right and 0.25 px down: shown from 0.5 px further right and 0.25 down.
+        let (r, uv) = slide(dst, TOP_UV, Some([0.5, 0.25]), 256.0);
+        assert!((uv.min.x - 0.5 / 256.0).abs() < 1e-6);
+        assert!((uv.min.y - 0.25 / 384.0).abs() < 1e-6);
+        assert!((uv.max.x - 1.0).abs() < 1e-6 && (uv.max.y - 0.5).abs() < 1e-6);
+        // The picture keeps its scale (2 window points per DS pixel): it moved 1 point left and
+        // 0.5 up, and the sliver past the right and bottom edges is left out.
+        assert!((r.min.x - 0.0).abs() < 1e-3 && (r.min.y - 0.0).abs() < 1e-3);
+        assert!((r.max.x - 511.0).abs() < 1e-3 && (r.max.y - 383.5).abs() < 1e-3);
+        // Nothing to take back.
+        assert_eq!(slide(dst, TOP_UV, None, 256.0), (dst, TOP_UV));
     }
 }
