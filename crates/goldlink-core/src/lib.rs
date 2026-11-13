@@ -387,6 +387,13 @@ impl Nds {
         unsafe { sys::gl_core_set_steady(self.ptr(), c_int::from(on)) }
     }
 
+    /// Whether the game is in the overworld: the wider picture's side strips then leave the
+    /// game's 2D layers (its interface there) out.
+    pub fn set_field(&mut self, on: bool) {
+        // SAFETY: a plain setter on the live core.
+        unsafe { sys::gl_core_set_field(self.ptr(), c_int::from(on)) }
+    }
+
     /// When the picture on screen was drawn steady and nothing 2D is drawn over the scene: the
     /// shift (pixels, x then y) it was drawn with, to be taken back at the screen's resolution.
     pub fn steady_shift(&self) -> Option<[f32; 2]> {

@@ -66,6 +66,7 @@ unsafe extern "C" {
     pub fn gl_core_framebuffer(core: *mut GlCore, screen: c_int) -> *const u32;
     pub fn gl_core_set_wide(core: *mut GlCore, side: c_int);
     pub fn gl_core_set_steady(core: *mut GlCore, on: c_int);
+    pub fn gl_core_set_field(core: *mut GlCore, on: c_int);
     pub fn gl_core_steady_shift(core: *mut GlCore, xy: *mut f32) -> c_int;
     pub fn gl_core_set_sprite_move(core: *mut GlCore, rects: *const i32, count: c_int);
     pub fn gl_core_wide_frame(

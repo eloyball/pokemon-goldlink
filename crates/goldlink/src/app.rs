@@ -98,6 +98,9 @@ pub struct GameApp {
     textbox: Option<egui::TextureHandle>,
     /// The band belongs over the game's text box rows (hud::game_textbox_shown).
     game_textbox: bool,
+    /// Frames in a row the game's text box rows have shown something else (the band steps aside
+    /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
+    textbox_away: u32,
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
@@ -173,6 +176,7 @@ impl GameApp {
             typing: Default::default(),
             textbox: None,
             game_textbox: true,
+            textbox_away: 0,
             wide: None,
             wide_side: 0,
             steady_shift: None,
@@ -358,7 +362,12 @@ impl GameApp {
                         }
                     }
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
-                    self.game_textbox = hud::game_textbox_shown(rows);
+                    if hud::game_textbox_shown(rows) {
+                        self.textbox_away = 0;
+                    } else {
+                        self.textbox_away = self.textbox_away.saturating_add(1);
+                    }
+                    self.game_textbox = self.textbox_away < 20;
                     let img = hud::recolour_textbox(rows);
                     match &mut self.textbox {
                         Some(t) => t.set(img, egui::TextureOptions::NEAREST),
@@ -805,7 +814,14 @@ impl GameApp {
             .filter(|_| self.wide_side > 0 && frame.width() > middle.width() + 1.0)
             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu | Scene::Battle));
         if frame.width() > middle.width() + 1.0 {
-            p.rect_filled(frame, 0.0, hud::BAND);
+            // Between two scenes (a warp's fade, a battle loading) the screen is black: the
+            // sides too, not the band's colour.
+            let fill = if scene == Scene::Changing {
+                egui::Color32::BLACK
+            } else {
+                hud::BAND
+            };
+            p.rect_filled(frame, 0.0, fill);
         }
         let hud_draws = battle.is_some_and(hud::handles);
         let rows = |to: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, to));

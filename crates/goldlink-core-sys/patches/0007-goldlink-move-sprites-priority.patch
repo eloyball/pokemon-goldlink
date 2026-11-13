@@ -1,0 +1,46 @@
+GoldLink's change to melonDS (UC9 §3.2): sprite pieces of the lowest priority stay put.
+
+The HP boxes are moved by rectangle (patch 0002); the player's platform reaches under its box,
+and its tip (a 64x32 piece of priority 3) was moved with the box while the box was drawn. The
+battle's boxes use priorities 0 and 1; priority 3 is the scenery under the battlers, never moved.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU2D_Soft.h	2026-11-12 22:33:22.245055785 -0500
++++ b/src/GPU2D_Soft.h	2026-11-12 22:33:22.255652348 -0500
+@@ -70,11 +70,13 @@
+     // A sprite piece's x for this pass (moved when its centre lies in an ObjMove rectangle).
+     // Shifted past the line's end, it lies outside this strip: -512 makes the callers skip it
+     // (they skip x <= -width).
+-    s32 SpriteX(u16 attrib1, u32 top, s32 width, s32 height) const
++    s32 SpriteX(u16 attrib1, u32 top, s32 width, s32 height, u16 attrib2) const
+     {
+         s32 x = (s32)(attrib1 << 23) >> 23;
+         s32 dx = 0;
+-        if (CurUnit->Num == 0)
++        // GoldLink: priority 3 is the scenery under the battlers (the player's platform reaches
++        // under its HP box): never moved with a box.
++        if (CurUnit->Num == 0 && ((attrib2 >> 10) & 3) != 3)
+         {
+             s32 cx = x + width / 2, cy = (s32)top + height / 2;
+             for (int r = 0; r < ObjMoveCount; r++)
+--- a/src/GPU2D_Soft.cpp	2026-11-12 22:33:22.244994199 -0500
++++ b/src/GPU2D_Soft.cpp	2026-11-12 22:33:22.255570975 -0500
+@@ -1799,7 +1799,7 @@
+                     continue;
+                 ypos = (sprline - ypos) & 0xFF;
+ 
+-                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, boundwidth, boundheight);
++                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, boundwidth, boundheight, attrib[2]);
+                 if (xpos <= -boundwidth)
+                     continue;
+ 
+@@ -1823,7 +1823,7 @@
+                     continue;
+                 ypos = (sprline - ypos) & 0xFF;
+ 
+-                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, width, height);
++                s32 xpos = SpriteX(attrib[1], attrib[0] & 0xFF, width, height, attrib[2]);
+                 if (xpos <= -width)
+                     continue;
+ 

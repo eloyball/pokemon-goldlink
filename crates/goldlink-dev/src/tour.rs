@@ -376,6 +376,23 @@ const WALK_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=gate (UC11): from a save standing at a gatehouse's east door, into it,
+/// then left and right inside, every frame recorded.
+const GATE_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Shot("outside"),
+    Step::Walk(Keys::LEFT, 40, "enter"),
+    Step::Until(Scene::Overworld, 600),
+    Step::Wait(90),
+    Step::Shot("inside"),
+    Step::Walk(Keys::LEFT, 64, "left"),
+    Step::Walk(Keys::RIGHT, 48, "right"),
+    Step::Wait(20),
+    Step::Shot("end"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=battle-intro (UC11's smooth camera): a wild battle's intro, every
 /// frame recorded.
 const BATTLE_INTRO_STEPS: &[Step] = &[
@@ -586,6 +603,7 @@ fn steps() -> &'static [Step] {
         Ok("catch") => CATCH_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
+        Ok("gate") => GATE_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],

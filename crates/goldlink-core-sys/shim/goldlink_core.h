@@ -100,6 +100,8 @@ void gl_core_set_wide(GlCore *core, int side);
 // The steady overworld (UC11, patch 0005): field scenes drawn with an orthographic camera locked
 // to the pixels while `on`. GoldLink turns it on in the overworld only.
 void gl_core_set_steady(GlCore *core, int on);
+// Whether the game is in the overworld (UC11, patch 0006): its side strips leave its 2D layers out.
+void gl_core_set_field(GlCore *core, int on);
 // Whether the picture on screen was drawn so (0: no; 1: yes; 2: yes, with 2D drawn over the
 // scene, such as a text box, which mustn't move with it), and the shift (pixels, x then y) it was
 // drawn with, which the window takes back at the screen's resolution.
