@@ -33,6 +33,7 @@ pub const ROOM_REJECTION: usize = of!(B, room_rejection);
 pub const HEARTBEAT_BRIDGE: usize = of!(B, heartbeat_bridge);
 pub const LOCAL_PLAYER_SEQ: usize = of!(B, local_player_seq);
 pub const LOCAL_AVATAR: usize = of!(B, local_avatar);
+pub const WIDE_SIDE: usize = of!(B, wide_side);
 pub const LIMIT_MAP_ID: usize = of!(B, limit_map_id);
 pub const LIMIT_SPECIES: usize = of!(B, limit_species);
 pub const DIAG: usize = of!(B, diag);
@@ -192,8 +193,8 @@ mod tests {
             [0x1A8, 0x1AA, 0x1AB, 0x1AC, 0x1AE]
         );
         assert_eq!(
-            [HEARTBEAT_BRIDGE, LOCAL_PLAYER_SEQ, LOCAL_AVATAR],
-            [0x1B0, 0x1B4, 0x1BE]
+            [HEARTBEAT_BRIDGE, LOCAL_PLAYER_SEQ, LOCAL_AVATAR, WIDE_SIDE],
+            [0x1B0, 0x1B4, 0x1BE, 0x1BF]
         );
         assert_eq!([LIMIT_MAP_ID, LIMIT_SPECIES, DIAG], [0x1C0, 0x1C2, 0x1C4]);
         assert_eq!(

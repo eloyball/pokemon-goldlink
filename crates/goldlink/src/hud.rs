@@ -807,12 +807,29 @@ pub fn game_textbox_shown(top_screen_rows: &[u32]) -> bool {
 /// The game's text box rows (144 to 191 of the top screen) with only its words kept: the text
 /// colour becomes white, its shadow a near black, everything else transparent. The game prints
 /// battle messages in one palette (measured: text 515159, shadow A2A2AA on FBFBFB; the box's
-/// bottom border is the text colour too, so only the box's inside is kept).
+/// bottom border is the text colour too, so only the box's inside is kept). Only from an open
+/// box, its inside at least half FBFBFB: the box fades in and out (and so does the whole screen),
+/// and on the way its frame and inside pass through the text colour, which drew white blocks.
 pub fn recolour_textbox(top_screen_rows: &[u32]) -> egui::ColorImage {
     const TEXT: u32 = 0x51_5159;
     const SHADOW: u32 = 0xA2_A2AA;
+    const INSIDE: u32 = 0xFB_FBFB;
     let rows = (ROWS - SCENE_ROWS) as usize;
     let mut pixels = vec![Color32::TRANSPARENT; 256 * rows];
+    let inside = (6..41.min(rows))
+        .flat_map(|y| (8..248).map(move |x| y * 256 + x))
+        .filter(|&i| {
+            top_screen_rows
+                .get(i)
+                .is_some_and(|&px| px & 0xFF_FFFF == INSIDE)
+        })
+        .count();
+    if inside * 2 < (41.min(rows) - 6) * 240 {
+        return egui::ColorImage {
+            size: [256, rows],
+            pixels,
+        };
+    }
     // The box's inside (rows 150 to 184, columns 8 to 247): its borders share the text colour.
     for y in 6..41.min(rows) {
         for x in 8..248 {
@@ -903,5 +920,25 @@ mod tests {
             }
         }
         assert!(game_textbox_shown(&opening));
+    }
+
+    #[test]
+    fn words_only_come_from_an_open_box() {
+        let rows = (ROWS - SCENE_ROWS) as usize;
+        let ink = |img: &egui::ColorImage| img.pixels.iter().filter(|&&c| c == INK).count();
+        // The open box: its words.
+        let mut open = vec![0x00FB_FBFBu32; 256 * rows];
+        for x in 20..200 {
+            open[12 * 256 + x] = 0x0051_5159;
+        }
+        assert_eq!(ink(&recolour_textbox(&open)), 180);
+        // The box fading in: its darker right part passes through the text colour. No words.
+        let mut fading = vec![0x00D6_D6D6u32; 256 * rows];
+        for y in 6..41 {
+            for x in 235..248 {
+                fading[y * 256 + x] = 0x0051_5159;
+            }
+        }
+        assert_eq!(ink(&recolour_textbox(&fading)), 0);
     }
 }

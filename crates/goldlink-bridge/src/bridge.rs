@@ -259,6 +259,9 @@ pub struct Bridge {
     /// The wider picture's side when the window shows it: the game's HP boxes are moved out
     /// toward its edges by that much (0: left where the game puts them).
     pub box_shift: i32,
+    /// The wider picture's side the window shows, in DS pixels (0: the DS's own picture): the
+    /// ROM culls the top screen's sprites for it (gCoopCommBlock.wide_side).
+    pub wide_side: u8,
     backups: Backups,
     next_backup: Option<Instant>,
     pending_restore: Option<PathBuf>,
@@ -336,6 +339,7 @@ impl Bridge {
             naming: None,
             game_text: None,
             box_shift: 0,
+            wide_side: 0,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
             pending_restore: None,
@@ -713,6 +717,7 @@ impl Bridge {
             let ram = m.main_ram();
             put_u32(ram, mailbox + HEARTBEAT_BRIDGE, self.bridge_heartbeat);
             ram[mailbox + LOCAL_AVATAR] = self.avatar_id;
+            ram[mailbox + WIDE_SIDE] = self.wide_side;
         }
         self.read_local_player(m.main_ram(), mailbox);
         {

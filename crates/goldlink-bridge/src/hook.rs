@@ -60,6 +60,7 @@ impl FrameHook for BridgeHook {
         let mailbox = emu.mailbox_offset();
         let moved = {
             let mut b = lock(&self.bridge);
+            b.wide_side = emu.wide().min(usize::from(u8::MAX)) as u8;
             b.pre_frame(emu.nds.main_ram_mut(), mailbox);
             b.moved_boxes()
         };

@@ -428,7 +428,7 @@ const BATTLE_INTRO_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(90),
     Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
-    Step::Walk(Keys::NONE, 600, "intro"),
+    Step::Walk(Keys::NONE, 900, "intro"),
     Step::Close,
 ];
 

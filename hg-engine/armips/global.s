@@ -15,6 +15,7 @@
 .include "armips/asm/overworlds.s" // code for overworlds, specifically repointing gOWTagToFileNum and making dimorphism a byte instead of a halfword.
 
 .include "armips/asm/no_partner_double_battles.s" // allows no partner double battles
+.include "armips/asm/coop_wide.s" // co-op: the game prepares the client's wider picture (sprite culling, battle slide-ins and outs)
 
 .if FAIRY_TYPE_IMPLEMENTED == 1
 

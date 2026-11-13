@@ -18,7 +18,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 --- a/src/GPU3D.h	2026-11-12 21:00:31.087922503 -0500
 +++ b/src/GPU3D.h	2026-11-12 21:59:33.440831871 -0500
 @@ -244,6 +244,49 @@
-         return WideActive() ? (s32)(((s64)x * 256) / (256 + 2 * WideSide)) : x;
+         return WideActive() ? (s32)(((s64)x * 256 - (x < 0 ? 255 + 2 * WideSide : 0)) / (256 + 2 * WideSide)) : x;
      }
  
 +    // GoldLink (UC11): the overworld drawn with an orthographic camera, its world locked to the

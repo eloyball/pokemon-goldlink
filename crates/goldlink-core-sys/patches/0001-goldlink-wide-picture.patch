@@ -4,6 +4,9 @@ GoldLink's change to melonDS (UC9 §4): a wider picture.
   clip-space x scaled by 256 / (256 + 2 * WideSide) before clipping, and the viewport maps them
   onto 256 + 2 * WideSide pixels: the 3D view keeps more of the scene on each side, and the
   middle 256 pixels are as before. Position tests are left alone (the game reads them back).
+  The scaled x is rounded down and the viewport adds back what that can lose (less than one
+  clip-space unit), so an edge on a whole pixel stays on it: rounded toward zero, everything
+  right of the screen's middle (a battle's Pokémon) landed a pixel left of the DS's.
 - GPU3D_Soft: the buffers are MaxWideSide (64) wider on each side; GetLine still gives the
   screen's 256 pixels to the 2D engine; GetWideLine gives the whole line.
 - GPU2D_Soft: each regular-display line also gets its side strips, composed by running the line
@@ -227,7 +230,7 @@ index 1204741d..54f5119d 100644
              den <<= 1;
 -            posX = ((posX * Viewport[4]) / den) + Viewport[0];
 +            if (WideActive())
-+                posX = (u32)(((u64)posX * (256 + 2 * WideSide)) / den);
++                posX = (u32)(((u64)posX * (256 + 2 * WideSide) + (255 + 2 * WideSide)) / den);
 +            else
 +                posX = ((posX * Viewport[4]) / den) + Viewport[0] + WideSide;
              posY = ((posY * Viewport[5]) / den) + Viewport[3];
@@ -279,7 +282,7 @@ index 08c2208c..2e99abd4 100644
 +    }
 +    s32 WideX(s32 x) const noexcept
 +    {
-+        return WideActive() ? (s32)(((s64)x * 256) / (256 + 2 * WideSide)) : x;
++        return WideActive() ? (s32)(((s64)x * 256 - (x < 0 ? 255 + 2 * WideSide : 0)) / (256 + 2 * WideSide)) : x;
 +    }
 +
      s32 ProjMatrixStack[16] {};

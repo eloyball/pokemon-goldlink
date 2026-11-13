@@ -658,7 +658,7 @@ struct CoopCommBlock
     u32 bridge_hb_last_seen;                                    // 0x1B8
     u16 bridge_stale_frames;                                    // 0x1BC
     u8  local_avatar;                                           // 0x1BE bridge: this player's avatar (docs/CUSTOM_SPRITES_PLAN.md; 0 the save's own)
-    u8  pad1BF;                                                 // 0x1BF
+    u8  wide_side;                                              // 0x1BF bridge: the widescreen strips' width in DS pixels, each side (0: the DS's own picture)
     // Validation limits published by the ROM so the bridge can bounds-check
     // relay data without duplicating game constants.
     u16 limit_map_id;                                           // 0x1C0 exclusive: map_id < limit
@@ -748,6 +748,7 @@ COOP_ASSERT_OFFSET(CoopCommBlock, local_player_seq, 0x1B4);
 COOP_ASSERT_OFFSET(CoopCommBlock, bridge_hb_last_seen, 0x1B8);
 COOP_ASSERT_OFFSET(CoopCommBlock, bridge_stale_frames, 0x1BC);
 COOP_ASSERT_OFFSET(CoopCommBlock, local_avatar, 0x1BE);
+COOP_ASSERT_OFFSET(CoopCommBlock, wide_side, 0x1BF);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_map_id, 0x1C0);
 COOP_ASSERT_OFFSET(CoopCommBlock, limit_species, 0x1C2);
 COOP_ASSERT_OFFSET(CoopCommBlock, diag, 0x1C4);
