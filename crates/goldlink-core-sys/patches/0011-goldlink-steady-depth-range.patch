@@ -1,0 +1,68 @@
+GoldLink's change to melonDS (UC11): the steady overworld's depth keeps the camera's whole range.
+
+- GPU3D: the orthographic projection's depth line (0005: the perspective's z/w matched in value
+  and slope at the player's distance) is scaled so the camera's near and far distances land on
+  the near and far planes. Unscaled, it reached the far plane well before the camera's far
+  distance and ground some way behind the player was clipped away (black bands). One scale per
+  camera (from the first projection seen with it), so the game's depth-bias projection keeps
+  its offset.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.cpp	2026-11-13 11:52:58.532492283 -0500
++++ b/src/GPU3D.cpp	2026-11-13 11:52:58.543720124 -0500
+@@ -2525,6 +2525,8 @@
+             at = NumOrthoCameras < 8 ? NumOrthoCameras++ : 0;
+             OrthoCameras[at] = OrthoCamera {};
+             memcpy(OrthoCameras[at].Key, key, sizeof(key));
++            OrthoCameras[at].MainM10 = p[10] / 4096.0;
++            OrthoCameras[at].MainM14 = p[14] / 4096.0;
+         }
+         OrthoCameraAt = at;
+         if (OrthoCameras[at].Depth > 0)
+@@ -2533,10 +2535,30 @@
+         // The perspective's depth z/w = -m10 - m14/vz, as a line through its value and slope at -d.
+         const double m10 = p[10] / 4096.0, m14 = p[14] / 4096.0;
+         const double c1 = m14 / (d * d), c0 = -m10 + 2 * m14 / d;
++        // That line climbs faster with distance than the perspective's depth, so it reached the
++        // far plane well before the camera's far distance: ground some way behind the player was
++        // clipped away (black bands). Scaled so the camera's near and far distances (solved from
++        // the main projection: m10 = -(f+n)/(f-n), m14 = -2fn/(f-n)) land on the near and far
++        // planes, as in the perspective; the same scale for every projection of the scene, so a
++        // depth bias (the second projection's m14) keeps its offset.
++        const OrthoCamera& cam = OrthoCameras[at];
++        const double a = -cam.MainM10, b = -cam.MainM14;
++        double sa = 1, sb = 0;
++        if (b > 0 && a > 1)
++        {
++            const double n = b / (a + 1), f = b / (a - 1);
++            const double mc1 = cam.MainM14 / (d * d), mc0 = -cam.MainM10 + 2 * cam.MainM14 / d;
++            const double ln = mc0 - mc1 * n, lf = mc0 - mc1 * f;
++            if (lf > ln)
++            {
++                sa = 2 / (lf - ln);
++                sb = -1 - sa * ln;
++            }
++        }
+         m[0] = (s32)std::lround(K * p[0] / d);
+         m[5] = (s32)std::lround(K * p[5] / d);
+-        m[10] = (s32)std::lround(K * c1 * 4096);
+-        m[14] = (s32)std::lround(K * c0 * 4096);
++        m[10] = (s32)std::lround(K * sa * c1 * 4096);
++        m[14] = (s32)std::lround(K * (sa * c0 + sb) * 4096);
+         m[15] = (s32)std::lround(K * 4096);
+     }
+     else
+--- a/src/GPU3D.h	2026-11-13 11:52:58.534256520 -0500
++++ b/src/GPU3D.h	2026-11-13 11:52:58.543348876 -0500
+@@ -280,7 +280,9 @@
+     // The player's distance is learned once per camera setup (the projection's scale and the
+     // camera's angle), from the first scenes, and kept: walking, stairs or another object passing
+     // the centre never change the scale, so the picture never zooms.
+-    struct OrthoCamera { s32 Key[5]; double Depth; double Seen[5]; int NumSeen; };
++    // Main: the first projection seen with this camera (m10, m14): the depth range it keeps
++    // (its near and far) is what every projection of the scene is scaled to (OrthoProjection).
++    struct OrthoCamera { s32 Key[5]; double Depth; double Seen[5]; int NumSeen; double MainM10, MainM14; };
+     OrthoCamera OrthoCameras[8] {};
+     int NumOrthoCameras = 0, OrthoCameraAt = -1;
+     void OrthoProjection(const s32* camera) noexcept;

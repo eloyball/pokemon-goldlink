@@ -1,0 +1,182 @@
+GoldLink's change to melonDS (UC9 §4): the side strips follow a window's outline past the screen's
+edge.
+
+- GPU2D_Soft: each line records where windows 0 and 1 are inside on the screen (none while
+  windows are off). A strip pixel is inside a window when the window reaches that far past the
+  edge: inside at the edge, its outline is followed from the nearest lines where it shows within
+  the screen, continued at its own rate (a circle grazing the edge reaches a pixel or two past it,
+  a wipe at the edge covers the strip). Replaces 0010's copy of the edge's window state across
+  the whole strip.
+- With the wider picture, a window inside up to column 254 with its end register at 255 (as far
+  as it goes) also takes column 255: no one-pixel line between the screen and the right strip.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU2D_Soft.cpp	2026-11-13 11:59:11.148565485 -0500
++++ b/src/GPU2D_Soft.cpp	2026-11-13 12:18:25.979071976 -0500
+@@ -344,6 +344,85 @@
+ // shifted by 256 (backgrounds' scroll and affine references, sprites' x, the 3D layer taken
+ // from the wide 3D buffer), so what lies just off each edge is drawn as the game would draw it;
+ // everything a pass changes is put back.
++// GoldLink: where window w is inside on this line of the screen (as CalculateWindowMask runs it,
++// from the same state): its first inside column and one past its last (-1, -1 if none).
++void SoftRenderer::RecordWindow(u32 line, int w, u32 active, const u8* coords, bool enabled)
++{
++    s16 first = -1, last = -1;
++    if (enabled)
++    {
++        for (int i = 0; i < 256; i++)
++        {
++            if (i == coords[1])      active &= ~0x2;
++            else if (i == coords[0]) active |=  0x2;
++            if (active == 0x3)
++            {
++                if (first < 0) first = (s16)i;
++                last = (s16)(i + 1);
++            }
++        }
++    }
++    WinL[0][w][line] = first;
++    WinR[0][w][line] = last;
++}
++
++// GoldLink: how far past the screen's left (side 0) or right edge window w reaches on this line.
++// Inside at the edge, the window may end just past it or far past it: its outline is followed
++// from the nearest lines above and below where it shows within the screen, continued at the
++// rate it was moving there, and the nearer guess taken (a circle that only grazes the edge
++// reaches a pixel or two past it). Where its edge is the screen's on every line (a wipe), it
++// covers the whole strip. Lines below this one come from the frame before.
++int SoftRenderer::WindowReach(int w, int side, u32 line)
++{
++    auto at = [&](int y) -> int {
++        const int frame = y <= (int)line ? 0 : 1;
++        return side == 0 ? WinL[frame][w][y] : (WinR[frame][w][y] < 0 ? -1 : 256 - WinR[frame][w][y]);
++    };
++    // at(y): the distance from the edge to where the window starts (0: at the edge, -1: none).
++    if (at(line) != 0)
++        return 0;
++    int reach = MaxSide;
++    for (int dir = -1; dir <= 1; dir += 2)
++    {
++        int y = (int)line + dir;
++        while (y >= 0 && y < 192 && at(y) == 0)
++            y += dir;
++        if (y < 0 || y >= 192 || at(y) < 0)
++            continue;
++        const int p = at(y), d = std::abs(y - (int)line);
++        const int further = y + dir;
++        const int step = (further >= 0 && further < 192 && at(further) > 0) ? at(further) - p : 1;
++        const int beyond = d * std::max(step, 0) - p; // past the edge, by the outline's own rate
++        reach = std::min(reach, std::max(beyond, 0));
++    }
++    return reach;
++}
++
++// GoldLink: a strip pass's window mask: outside, the sprites' own window (drawn for the strip),
++// then windows 1 and 0 where they reach past the edge.
++void SoftRenderer::SideWindowMask(u32 line)
++{
++    const u8* win = CurUnit->WinCnt;
++    const u32 cnt = CurUnit->DispCnt;
++    const int left = SideShift < 0 ? 1 : 0;
++    // Recorded for the main engine's lines (the top screen's strips) only.
++    const bool main = CurUnit->Num == 0 && line < 192;
++    const int reach0 = main && (cnt & (1 << 13)) ? WindowReach(0, left ? 0 : 1, line) : 0;
++    const int reach1 = main && (cnt & (1 << 14)) ? WindowReach(1, left ? 0 : 1, line) : 0;
++    for (int i = 0; i < 256; i++)
++    {
++        const int k = left ? 256 - i : i + 1; // pixels past the edge
++        u8 m = win[2];
++        if ((cnt & (1 << 15)) && OBJWindow[CurUnit->Num][i])
++            m = win[3];
++        if (k <= reach1)
++            m = win[1];
++        if (k <= reach0)
++            m = win[0];
++        WindowMask[i] = m;
++    }
++}
++
+ void SoftRenderer::DrawWideSides(u32 line, int n3dline, u32* dst)
+ {
+     const int side = std::min(GPU.GPU3D.WideSide, MaxSide);
+@@ -366,9 +445,6 @@
+         memcpy(NotFill[0], NotFill[1], sizeof(NotFill[0]));
+         memset(NotFill[1], 0, sizeof(NotFill[1]));
+     }
+-    // The line's window mask at the screen's edges (the main pass just computed it).
+-    EdgeWindow[0] = WindowMask[0];
+-    EdgeWindow[1] = WindowMask[255];
+     // Full-width 2D layers continue into the strips only over the 3D scene (the overworld,
+     // battles); a menu's own backgrounds stay out of them.
+     EdgeLayers = unit == 0 && (CurUnit->DispCnt & 0x108) == 0x108;
+@@ -839,17 +915,49 @@
+             *(u64*)&BGOBJLine[i] = backdrop;
+     }
+ 
++    WinActiveAtLine[0] = CurUnit->Win0Active;
++    WinActiveAtLine[1] = CurUnit->Win1Active;
+     if (CurUnit->DispCnt & 0xE000)
+     {
+         if (SideShift != 0)
+-            // the strips continue each window from the screen's edge on this line
+-            memset(WindowMask, SideShift < 0 ? EdgeWindow[0] : EdgeWindow[1], 256);
++            // the strips continue each window past the screen's edge
++            SideWindowMask(line);
+         else
+             CurUnit->CalculateWindowMask(line, WindowMask, OBJWindow[CurUnit->Num]);
+     }
+     else
+         memset(WindowMask, 0xFF, 256);
+ 
++    // GoldLink: where each window is inside on this line of the screen, for the strips (none
++    // while windows are off, so a strip never reads an earlier screen's windows).
++    if (SideShift == 0 && CurUnit->Num == 0 && line < 192)
++    {
++        if (line == 0)
++        {
++            memcpy(WinL[1], WinL[0], sizeof(WinL[0]));
++            memcpy(WinR[1], WinR[0], sizeof(WinR[0]));
++        }
++        const u32 cnt = CurUnit->DispCnt;
++        RecordWindow(line, 0, WinActiveAtLine[0], CurUnit->Win0Coords, cnt & (1 << 13));
++        RecordWindow(line, 1, WinActiveAtLine[1], CurUnit->Win1Coords, cnt & (1 << 14));
++        // A window can't take the screen's last column when it starts at 0: its end register
++        // stops at 255. On the DS that column is the screen's edge; in the wider picture it would
++        // be a one-pixel line between the screen and the strip, so a window inside up to column
++        // 254 with its end at 255 takes column 255 too.
++        if (GPU.GPU3D.WideSide > 0)
++        {
++            const u8* ends[2] = {CurUnit->Win0Coords, CurUnit->Win1Coords};
++            for (int w = 1; w >= 0; w--)
++            {
++                if (WinR[0][w][line] == 255 && ends[w][1] == 255 && !(w == 1 && WinR[0][0][line] == 256))
++                {
++                    WindowMask[255] = CurUnit->WinCnt[w];
++                    WinR[0][w][line] = 256;
++                }
++            }
++        }
++    }
++
+     ApplySpriteMosaicX();
+     CurBGXMosaicTable = MosaicTable[CurUnit->BGMosaicSize[0]].data();
+ 
+--- a/src/GPU2D_Soft.h	2026-11-13 11:59:11.150347686 -0500
++++ b/src/GPU2D_Soft.h	2026-11-13 12:18:25.979139232 -0500
+@@ -72,7 +72,14 @@
+     int SideShift = 0;
+     // GoldLink: the line's window mask at the screen's left and right edge, which the strips
+     // continue; and whether full-width 2D layers continue into them (over the 3D scene).
+-    u8 EdgeWindow[2] {};
++    // [frame: this one, the last][window][line]: where each window is inside on the screen's
++    // lines (first column, one past the last; -1 none), which the strips extend past the edges.
++    s16 WinL[2][2][192] {};
++    s16 WinR[2][2][192] {};
++    u32 WinActiveAtLine[2] {}; // the windows' state as the line's mask starts
++    void RecordWindow(u32 line, int w, u32 active, const u8* coords, bool enabled);
++    int WindowReach(int w, int side, u32 line);
++    void SideWindowMask(u32 line);
+     bool EdgeLayers = false;
+     s32 TextColourAt(u32 line, u32 bgnum, u16 xpos);
+     int TextFilledAtEdges(u32 line, u32 bgnum, u16 x0);
