@@ -395,6 +395,21 @@ const SPOT_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=gate-out: from a save at a gatehouse's east door, into it and back
+/// out (the map transitions both ways), every frame recorded.
+const GATE_OUT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::LEFT, 40, "enter"),
+    Step::Until(Scene::Overworld, 600),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 150, "leave"),
+    Step::Until(Scene::Overworld, 600),
+    Step::Wait(60),
+    Step::Shot("outside"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=gate (UC11): from a save standing at a gatehouse's east door, into it,
 /// then left and right inside, every frame recorded.
 const GATE_STEPS: &[Step] = &[
@@ -652,6 +667,7 @@ fn steps() -> &'static [Step] {
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
+        Ok("gate-out") => GATE_OUT_STEPS,
         Ok("spot") => SPOT_STEPS,
         Ok("cave") => CAVE_STEPS,
         Ok("sideways") => SIDEWAYS_STEPS,

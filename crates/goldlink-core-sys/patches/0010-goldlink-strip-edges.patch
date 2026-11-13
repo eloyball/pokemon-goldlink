@@ -1,0 +1,189 @@
+GoldLink's change to melonDS (UC9 §4): the wide picture's side strips continue the screen's 2D
+effects from its edges.
+
+- GPU2D_Soft: in a strip's pass each window takes the line's window state at the screen's edge
+  beside it (a wipe or an iris covers the strip once it reaches that edge), where 0001 had the
+  strips outside every window. A 256-pixel-wide text background that's a fill (each line it
+  shows at both edges is one colour over 8 pixels there, this frame and the last: a battle's
+  closing squares, a wipe) continues as that colour, over the 3D scene only; other 256-wide
+  layers stay out of the strips (a text box, a banner at one edge, a picture, a patterned panel).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU2D_Soft.cpp	2026-11-13 10:33:39.576044050 -0500
++++ b/src/GPU2D_Soft.cpp	2026-11-13 10:45:17.062499899 -0500
+@@ -360,6 +360,18 @@
+     u16 xpos[4];
+     memcpy(xpos, CurUnit->BGXPos, sizeof(xpos));
+     s32 xref[2] = {CurUnit->BGXRefInternal[0], CurUnit->BGXRefInternal[1]};
++    // A new frame: what each layer showed over the last one decides whether it's a fill.
++    if (line == 0 && unit == 0)
++    {
++        memcpy(NotFill[0], NotFill[1], sizeof(NotFill[0]));
++        memset(NotFill[1], 0, sizeof(NotFill[1]));
++    }
++    // The line's window mask at the screen's edges (the main pass just computed it).
++    EdgeWindow[0] = WindowMask[0];
++    EdgeWindow[1] = WindowMask[255];
++    // Full-width 2D layers continue into the strips only over the 3D scene (the overworld,
++    // battles); a menu's own backgrounds stay out of them.
++    EdgeLayers = unit == 0 && (CurUnit->DispCnt & 0x108) == 0x108;
+     s32 yref[2] = {CurUnit->BGYRefInternal[0], CurUnit->BGYRefInternal[1]};
+     u32* saved3D = _3DLine;
+ 
+@@ -830,7 +842,8 @@
+     if (CurUnit->DispCnt & 0xE000)
+     {
+         if (SideShift != 0)
+-            memset(WindowMask, CurUnit->WinCnt[2], 256); // the sides are outside every window
++            // the strips continue each window from the screen's edge on this line
++            memset(WindowMask, SideShift < 0 ? EdgeWindow[0] : EdgeWindow[1], 256);
+         else
+             CurUnit->CalculateWindowMask(line, WindowMask, OBJWindow[CurUnit->Num]);
+     }
+@@ -1044,15 +1057,32 @@
+     u16 bgcnt = CurUnit->BGCnt[bgnum];
+ 
+     // GoldLink: a 256-pixel-wide map has nothing off screen (shifted, it would repeat itself:
+-    // a text box would show again on each side), so the side strips leave it out.
++    // a text box would show again on each side). A layer that's a fill (every line it shows at
++    // both edges is one colour over 8 pixels there: a battle's closing squares, a wipe) continues
++    // into the strips as that colour; any other is left out of them (a text box, a banner at one
++    // edge, a full-screen picture, a patterned panel). A layer counts as a fill from what it
++    // showed this frame so far and the whole frame before.
++    bool edge = false;
++    u16 edgex = 0;
+     if (SideShift != 0 && !(bgcnt & 0x4000))
+-        return;
++    {
++        const u16 x0 = (u16)(CurUnit->BGXPos[bgnum] - SideShift);
++        if (mosaic || !EdgeLayers)
++            return;
++        const int filled = TextFilledAtEdges(line, bgnum, x0);
++        if (filled < 0)
++            NotFill[1][bgnum] = true;
++        if (filled <= 0 || NotFill[0][bgnum] || NotFill[1][bgnum])
++            return;
++        edge = true;
++        edgex = SideShift < 0 ? x0 : (u16)(x0 + 255);
++    }
+ 
+     u32 tilesetaddr, tilemapaddr;
+     u16* pal;
+     u32 extpal, extpalslot;
+ 
+-    u16 xoff = CurUnit->BGXPos[bgnum];
++    u16 xoff = edge ? edgex : CurUnit->BGXPos[bgnum];
+     u16 yoff = CurUnit->BGYPos[bgnum] + line;
+ 
+     if (bgcnt & 0x0040)
+@@ -1149,7 +1179,7 @@
+                     drawPixel(&BGOBJLine[i], curpal[color], 0x01000000<<bgnum);
+             }
+ 
+-            xoff++;
++            if (!edge) xoff++;
+         }
+     }
+     else
+@@ -1202,11 +1232,81 @@
+                     drawPixel(&BGOBJLine[i], curpal[color], 0x01000000<<bgnum);
+             }
+ 
+-            xoff++;
++            if (!edge) xoff++;
+         }
+     }
+ }
+ 
++// GoldLink: a text background's colour at map column xpos of this line (as DrawBG_Text reads
++// it, mosaic aside), or -1 where it's transparent.
++s32 SoftRenderer::TextColourAt(u32 line, u32 bgnum, u16 xpos)
++{
++    u16 bgcnt = CurUnit->BGCnt[bgnum];
++    u16 yoff = CurUnit->BGYPos[bgnum] + line;
++    if (bgcnt & 0x0040)
++        yoff -= CurUnit->BGMosaicY;
++    u32 widexmask = (bgcnt & 0x4000) ? 0x100 : 0;
++    u8* bgvram;
++    u32 bgvrammask;
++    CurUnit->GetBGVRAM(bgvram, bgvrammask);
++    u32 tilesetaddr, tilemapaddr;
++    u16* pal;
++    if (CurUnit->Num)
++    {
++        tilesetaddr = ((bgcnt & 0x003C) << 12);
++        tilemapaddr = ((bgcnt & 0x1F00) << 3);
++        pal = (u16*)&GPU.Palette[0x400];
++    }
++    else
++    {
++        tilesetaddr = ((CurUnit->DispCnt & 0x07000000) >> 8) + ((bgcnt & 0x003C) << 12);
++        tilemapaddr = ((CurUnit->DispCnt & 0x38000000) >> 11) + ((bgcnt & 0x1F00) << 3);
++        pal = (u16*)&GPU.Palette[0];
++    }
++    if (bgcnt & 0x8000)
++    {
++        tilemapaddr += ((yoff & 0x1F8) << 3);
++        if (bgcnt & 0x4000)
++            tilemapaddr += ((yoff & 0x100) << 3);
++    }
++    else
++        tilemapaddr += ((yoff & 0xF8) << 3);
++    u16 tile = *(u16*)&bgvram[(tilemapaddr + ((xpos & 0xF8) >> 2) + ((xpos & widexmask) << 3)) & bgvrammask];
++    u32 tilex = (tile & 0x0400) ? (7 - (xpos & 0x7)) : (xpos & 0x7);
++    u32 tiley = (tile & 0x0800) ? (7 - (yoff & 0x7)) : (yoff & 0x7);
++    if (bgcnt & 0x0080)
++    {
++        u8 color = bgvram[(tilesetaddr + ((tile & 0x03FF) << 6) + (tiley << 3) + tilex) & bgvrammask];
++        if (!color)
++            return -1;
++        if (CurUnit->DispCnt & 0x40000000)
++        {
++            u32 slot = ((bgnum < 2) && (bgcnt & 0x2000)) ? (2 + bgnum) : bgnum;
++            return CurUnit->GetBGExtPal(slot, tile >> 12)[color];
++        }
++        return pal[color];
++    }
++    u8 pair = bgvram[(tilesetaddr + ((tile & 0x03FF) << 5) + (tiley << 2) + (tilex >> 1)) & bgvrammask];
++    u8 color = (tilex & 1) ? (pair >> 4) : (pair & 0x0F);
++    if (!color)
++        return -1;
++    return (pal + ((tile & 0xF000) >> 8))[color];
++}
++
++// GoldLink: this line of a text background (scrolled to x0) at the screen's edges: 1 one
++// colour over its first and last 8 pixels (a fill reaching both edges, a wipe), 0 transparent
++// at an edge, -1 shown at both edges but not as a fill (a picture, a frame, a pattern).
++int SoftRenderer::TextFilledAtEdges(u32 line, u32 bgnum, u16 x0)
++{
++    s32 c = TextColourAt(line, bgnum, x0);
++    if (c < 0 || TextColourAt(line, bgnum, (u16)(x0 + 255)) < 0)
++        return 0;
++    for (int i = 0; i < 8; i++)
++        if (TextColourAt(line, bgnum, (u16)(x0 + i)) != c || TextColourAt(line, bgnum, (u16)(x0 + 255 - i)) != c)
++            return -1;
++    return 1;
++}
++
+ template<bool mosaic, SoftRenderer::DrawPixel drawPixel>
+ void SoftRenderer::DrawBG_Affine(u32 line, u32 bgnum)
+ {
+--- a/src/GPU2D_Soft.h	2026-11-13 10:33:39.577865186 -0500
++++ b/src/GPU2D_Soft.h	2026-11-13 10:45:17.062557748 -0500
+@@ -70,6 +70,15 @@
+     alignas(8) u32 BGOBJLine[256*3];
+     // GoldLink: 0, or the shift (-256 the left strip, +256 the right) of a side pass.
+     int SideShift = 0;
++    // GoldLink: the line's window mask at the screen's left and right edge, which the strips
++    // continue; and whether full-width 2D layers continue into them (over the 3D scene).
++    u8 EdgeWindow[2] {};
++    bool EdgeLayers = false;
++    s32 TextColourAt(u32 line, u32 bgnum, u16 xpos);
++    int TextFilledAtEdges(u32 line, u32 bgnum, u16 x0);
++    // Per background: [0] over the last frame, [1] this frame so far, a line showed it at both
++    // edges but not as a fill.
++    bool NotFill[2][4] {};
+     alignas(8) u32 Side3DLine[256];
+     void DrawWideSides(u32 line, int n3dline, u32* dst);
+     void FinishPixels(u32* px, int count);
