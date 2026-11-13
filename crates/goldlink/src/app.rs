@@ -24,6 +24,20 @@ pub const BAR: f32 = 38.0;
 /// The halves of the screens texture: the top screen, the touch screen.
 const TOP_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.5));
 const BOTTOM_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egui::pos2(1.0, 1.0));
+
+/// The two screens' parts of the screens texture, uploaded `k` times enlarged (`sharp_prescale`):
+/// with smoothed sampling (k > 1) each stops half a texel short of the line between them, so
+/// neither screen's edge blends with the other's.
+fn screen_uvs(k: usize) -> (egui::Rect, egui::Rect) {
+    if k <= 1 {
+        return (TOP_UV, BOTTOM_UV);
+    }
+    let half = 0.5 / (384 * k) as f32;
+    (
+        egui::Rect::from_min_max(TOP_UV.min, egui::pos2(1.0, 0.5 - half)),
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.5 + half), BOTTOM_UV.max),
+    )
+}
 /// How long the HUD holds a touch on the game's button (then lets go).
 const TAP: Duration = Duration::from_millis(100);
 
@@ -104,9 +118,15 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
-    /// The colour the sides take between two scenes: the screen's edges' when they're one flat
-    /// colour (black for a fade, white for a cave's exit flash), otherwise black.
-    edge_fill: [Option<Vec<egui::Color32>>; 2],
+    /// Physical pixels per DS pixel the top screen was last drawn at (the sharp filter's
+    /// pre-enlargement follows it).
+    shown_scale: f32,
+    /// The screens texture's enlargement (`sharp_prescale`).
+    prescale: usize,
+    /// The colour the sides take between two scenes, per screen (top, touch screen) and side:
+    /// the screen's edges' when they're one flat colour (black for a fade, white for a cave's
+    /// exit flash, a bar across), otherwise black.
+    edge_fill: [[Option<Vec<egui::Color32>>; 2]; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
@@ -182,8 +202,10 @@ impl GameApp {
             textbox_away: 0,
             wide: None,
             wide_side: 0,
+            shown_scale: 1.0,
+            prescale: 1,
             steady_shift: None,
-            edge_fill: [None, None],
+            edge_fill: [[None, None], [None, None]],
             mega: None,
             mega_icon: None,
             lighting: None,
@@ -391,15 +413,15 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 self.steady_shift = frame.steady_shift;
-                self.edge_fill = edge_rows(&frame.pixels[..256 * 192]);
+                self.edge_fill = [
+                    edge_rows(&frame.pixels[..256 * 192]),
+                    edge_rows(&frame.pixels[256 * 192..256 * 384]),
+                ];
                 let light = if lit { frame.light.clone() } else { None };
                 Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
         };
-        let options = match self.config.video.filter {
-            Filter::Nearest => egui::TextureOptions::NEAREST,
-            Filter::Linear => egui::TextureOptions::LINEAR,
-        };
+        let (k, options) = sharp_prescale(self.shown_scale, self.config.video.filter);
         let Some((mut pixels, mut wide, side, light)) = shown else {
             if self.texture.is_none() {
                 let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
@@ -410,22 +432,17 @@ impl GameApp {
         if lit {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
-        let image = |px: &[u32], w: usize, h: usize| egui::ColorImage {
-            size: [w, h],
-            pixels: px
-                .iter()
-                .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
-                .collect(),
-        };
+        let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
         if let Some(wide) = &wide {
             let w = 256 + 2 * side;
             let img = image(wide, w, 192);
             match &mut self.wide {
-                Some(t) if t.size() == [w, 192] => t.set(img, options),
+                Some(t) if t.size() == [w * k, 192 * k] => t.set(img, options),
                 _ => self.wide = Some(ctx.load_texture("wide", img, options)),
             }
         }
         let img = image(&pixels, 256, 384);
+        self.prescale = k;
         match &mut self.texture {
             Some(t) => t.set(img, options),
             None => self.texture = Some(ctx.load_texture("screens", img, options)),
@@ -808,6 +825,7 @@ impl GameApp {
         battle: Option<&goldlink_bridge::battle_ui::BattleHud>,
     ) {
         let frame = layout::one_screen(area, &self.config.video);
+        self.shown_scale = frame.height() / 192.0 * ui.ctx().pixels_per_point();
         let Some(t) = self.texture.clone() else {
             return;
         };
@@ -823,35 +841,23 @@ impl GameApp {
             .clone()
             .filter(|_| self.wide_side > 0 && frame.width() > middle.width() + 1.0)
             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu | Scene::Battle));
+        // Without the wider picture (menus, the title, between two scenes), the frame's sides
+        // continue the shown screens' edges as the wider picture's strips do (a flat screen, a
+        // fade, a bar across it), or are black where the edge is a picture: beside the top screen
+        // here, beside both when they're stacked (before the game).
         if frame.width() > middle.width() + 1.0 {
-            // Without the wider picture (menus, the title, between two scenes), each side continues
-            // the screen's edge as the wider picture's strips do (a flat screen, a fade, a bar
-            // across it), or is black where the edge is a picture.
             if wide.is_some() {
                 p.rect_filled(frame, 0.0, hud::BAND);
             } else {
                 p.rect_filled(frame, 0.0, egui::Color32::BLACK);
-                let row_h = frame.height() / 192.0;
-                for (rows, x0, x1) in [
-                    (&self.edge_fill[0], frame.left(), middle.left()),
-                    (&self.edge_fill[1], middle.right(), frame.right()),
-                ] {
-                    let Some(rows) = rows else { continue };
-                    let mut y = 0;
-                    while y < rows.len() {
-                        let mut end = y + 1;
-                        while end < rows.len() && rows[end] == rows[y] {
-                            end += 1;
-                        }
-                        let r = egui::Rect::from_min_max(
-                            egui::pos2(x0, frame.top() + y as f32 * row_h),
-                            egui::pos2(x1, frame.top() + end as f32 * row_h),
-                        );
-                        p.rect_filled(r, 0.0, rows[y]);
-                        y = end;
-                    }
-                }
             }
+        }
+        let fill_sides = |screen: egui::Rect, rows: &[Option<Vec<egui::Color32>>; 2]| {
+            fill_beside(&p, frame, screen, rows);
+        };
+        let stacked = scene == Scene::Unknown && self.one.by_hand != Some(false);
+        if wide.is_none() && !stacked && frame.width() > middle.width() + 1.0 {
+            fill_sides(middle, &self.edge_fill[0]);
         }
         let hud_draws = battle.is_some_and(hud::handles);
         let rows = |to: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, to));
@@ -890,19 +896,23 @@ impl GameApp {
                     hud::draw_text_band(ui, frame, tb);
                 }
             }
-            None if scene == Scene::Unknown && self.one.by_hand != Some(false) => {
+            None if stacked => {
                 // Before the game: the title and Oak's speech, whose choices (the topics, boy or
                 // girl, the name keyboard) are on the touch screen and whose picture runs across
                 // both screens. The two stacked as on the DS, as tall as the frame; clicks on
                 // the lower one are touches.
                 let size = egui::vec2(256.0, 192.0) * (frame.height() / 384.0);
+                self.shown_scale = size.y / 192.0 * ui.ctx().pixels_per_point();
                 let top = egui::Rect::from_min_size(
                     egui::pos2(frame.center().x - size.x / 2.0, frame.top()),
                     size,
                 );
                 let bottom = top.translate(egui::vec2(0.0, size.y));
-                p.image(t.id(), top, TOP_UV, egui::Color32::WHITE);
-                p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
+                fill_sides(top, &self.edge_fill[0]);
+                fill_sides(bottom, &self.edge_fill[1]);
+                let (top_uv, bottom_uv) = screen_uvs(self.prescale);
+                p.image(t.id(), top, top_uv, egui::Color32::WHITE);
+                p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                 self.bottom = bottom;
                 if self.typing.naming.is_some() {
                     // Beside the keyboard, when there's room.
@@ -928,7 +938,8 @@ impl GameApp {
                         p.image(w.id(), r, uv, egui::Color32::WHITE)
                     }
                     None => {
-                        let (r, uv) = slide(middle, TOP_UV, shift, 256.0, true);
+                        let (r, uv) =
+                            slide(middle, screen_uvs(self.prescale).0, shift, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE)
                     }
                 };
@@ -944,7 +955,7 @@ impl GameApp {
             p.rect_filled(frame, 0.0, egui::Color32::from_black_alpha(150));
             let r = egui::Rect::from_center_size(frame.center(), middle.size() * 0.86);
             p.rect_filled(r.expand(6.0), 6.0, egui::Color32::from_black_alpha(120));
-            p.image(t.id(), r, BOTTOM_UV, egui::Color32::WHITE);
+            p.image(t.id(), r, screen_uvs(self.prescale).1, egui::Color32::WHITE);
             p.rect_stroke(
                 r.expand(1.5),
                 3.0,
@@ -1043,15 +1054,17 @@ impl GameApp {
                     self.draw_one_screen(ui, area, scene, battle.as_ref());
                 } else {
                     let (top, bottom) = layout::screens(area, &self.config.video);
+                    self.shown_scale = top.height() / 192.0 * ctx.pixels_per_point();
                     self.bottom = bottom;
                     if let Some(t) = &self.texture {
                         let p = ui.painter();
                         let shift = self
                             .steady_shift
                             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
-                        let (top, uv) = slide(top, TOP_UV, shift, 256.0, true);
+                        let (top_uv, bottom_uv) = screen_uvs(self.prescale);
+                        let (top, uv) = slide(top, top_uv, shift, 256.0, true);
                         p.image(t.id(), top, uv, egui::Color32::WHITE);
-                        p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
+                        p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                     }
                 }
                 let now = Instant::now();
@@ -1136,7 +1149,89 @@ impl Drop for GameApp {
     }
 }
 
-/// The top screen's left and right edges, continued beside it when the wider picture isn't
+/// How the game's pictures are uploaded for the chosen filter at `scale` physical pixels per DS
+/// pixel: (whole-number enlargement, sampling). "Sharp" at a scale that isn't a whole number
+/// (2.5x and up) is sharp bilinear: the picture enlarged by the whole part (at most 4x) with
+/// sharp pixels, then smoothed by what's left, so every DS pixel is the same width on screen with
+/// only its edge blended into the next. Nearest sampling alone makes some pixels a screen pixel
+/// wider than others, and as the steady overworld moves the world those widths move with it:
+/// edges crawl (the user's play test, 2026-11-13). At a whole-number scale, or under 2.5x,
+/// nearest sampling is already even or the blend would show: unchanged.
+fn sharp_prescale(scale: f32, filter: Filter) -> (usize, egui::TextureOptions) {
+    match filter {
+        Filter::Linear => (1, egui::TextureOptions::LINEAR),
+        Filter::Nearest if scale < 2.5 || (scale - scale.round()).abs() < 0.02 => {
+            (1, egui::TextureOptions::NEAREST)
+        }
+        Filter::Nearest => (
+            (scale.floor() as usize).clamp(2, 4),
+            egui::TextureOptions::LINEAR,
+        ),
+    }
+}
+
+/// The game's picture (`w` by `h`, 0x00RRGGBB) as a texture image, each pixel `k` by `k`.
+fn enlarged(px: &[u32], w: usize, h: usize, k: usize) -> egui::ColorImage {
+    let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
+    if k <= 1 {
+        return egui::ColorImage {
+            size: [w, h],
+            pixels: px.iter().map(|&p| colour(p)).collect(),
+        };
+    }
+    let mut pixels = Vec::with_capacity(w * k * h * k);
+    let mut line = Vec::with_capacity(w * k);
+    for row in px.chunks_exact(w).take(h) {
+        line.clear();
+        for &p in row {
+            line.extend(std::iter::repeat_n(colour(p), k));
+        }
+        for _ in 0..k {
+            pixels.extend_from_slice(&line);
+        }
+    }
+    egui::ColorImage {
+        size: [w * k, h * k],
+        pixels,
+    }
+}
+
+/// Fills the frame beside a shown screen (`screen`, inside `frame`), left and right, row by row
+/// with `rows` (`edge_rows`: none leaves that side as it is, black).
+fn fill_beside(
+    p: &egui::Painter,
+    frame: egui::Rect,
+    screen: egui::Rect,
+    rows: &[Option<Vec<egui::Color32>>; 2],
+) {
+    // Each fill runs a point under the screen (drawn over it next), so no seam of the black
+    // behind shows where the two meet at a fraction of a pixel.
+    for (rows, x0, x1) in [
+        (&rows[0], frame.left(), screen.left() + 1.0),
+        (&rows[1], screen.right() - 1.0, frame.right()),
+    ] {
+        let Some(rows) = rows else { continue };
+        if x1 - x0 < 1.5 || rows.is_empty() {
+            continue;
+        }
+        let row_h = screen.height() / rows.len() as f32;
+        let mut y = 0;
+        while y < rows.len() {
+            let mut end = y + 1;
+            while end < rows.len() && rows[end] == rows[y] {
+                end += 1;
+            }
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0, screen.top() + y as f32 * row_h),
+                egui::pos2(x1, screen.top() + end as f32 * row_h),
+            );
+            p.rect_filled(r, 0.0, rows[y]);
+            y = end;
+        }
+    }
+}
+
+/// A screen's left and right edges, continued beside it when the wider picture isn't
 /// shown: per side, each row's colour when every row's 8 edge pixels are one colour (a flat
 /// screen, a fade, a bar across the screen), or none (black) where the edge is a picture.
 fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
@@ -1216,6 +1311,37 @@ mod slide_tests {
         let (r, uv) = slide(dst, wide, Some([0.5, 0.25]), 342.0, false);
         assert_eq!(r, dst);
         assert!((uv.min.x - 0.5 / 342.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn sharp_pixels_stay_even_at_any_scale() {
+        // A whole-number scale, or a small one: nearest sampling, as before.
+        assert_eq!(
+            sharp_prescale(7.0, Filter::Nearest),
+            (1, egui::TextureOptions::NEAREST)
+        );
+        assert_eq!(
+            sharp_prescale(1.6, Filter::Nearest),
+            (1, egui::TextureOptions::NEAREST)
+        );
+        // 7.5x: four times with sharp pixels, the rest smoothed (only the pixels' edges blend).
+        assert_eq!(
+            sharp_prescale(7.5, Filter::Nearest),
+            (4, egui::TextureOptions::LINEAR)
+        );
+        assert_eq!(
+            sharp_prescale(3.72, Filter::Nearest),
+            (3, egui::TextureOptions::LINEAR)
+        );
+        assert_eq!(
+            sharp_prescale(3.72, Filter::Linear),
+            (1, egui::TextureOptions::LINEAR)
+        );
+        let img = enlarged(&[0x00FF_0000, 0x0000_00FF], 2, 1, 3);
+        assert_eq!(img.size, [6, 3]);
+        let red = egui::Color32::from_rgb(255, 0, 0);
+        let blue = egui::Color32::from_rgb(0, 0, 255);
+        assert_eq!(&img.pixels[12..18], &[red, red, red, blue, blue, blue]);
     }
 
     #[test]
