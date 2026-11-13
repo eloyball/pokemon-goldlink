@@ -189,3 +189,42 @@ COOP_OV7 equ 0x0221BE20 // Overlay 7's address (base/overarm9.bin)
     coop_slide_x 10, -80, -104
     coop_slide_x 11, 336, 360
 .close
+
+// A neighbouring area's map blocks (src/coop_ov1/coop_neighbour.c): its code, linked as Overlay
+// 153 at the address of Overlay 1's unused billboard effect (src/coop_ov1/linker.ld), copied
+// there; the two places a map block's model is bound call it instead of GF3dRender_BindModelSet
+// (pret asm/overlay_01_021F4704.s ov01_021F6620, the background load task, and ov01_021F67B4,
+// the load at once); and a building whose model isn't loaded is no longer drawn as model 0
+// (pret 94102e517^ asm/overlay_01_021F3610.s ov01_021F3744, MapPropManager_LoadFromNARC).
+COOP_OV1 equ 0x021E5900 // Overlay 1's address (pret asm/overlay_01_021E5900.s)
+COOP_OV1_FREE equ 0x021FFCA8
+COOP_OV1_BIN equ "build/output_coop_ov1.bin"
+.if filesize(COOP_OV1_BIN) > 0x224
+    .error "coop_wide.s: build/output_coop_ov1.bin outgrew Overlay 1's unused space"
+.endif
+// The unused effect's init starts push {r3-r6, lr}; a rebuild sees the copy.
+.if readu16("base/overlay/overlay_0001.bin", COOP_OV1_FREE - COOP_OV1) != 0xB578 && readu16("base/overlay/overlay_0001.bin", COOP_OV1_FREE - COOP_OV1) != readu16(COOP_OV1_BIN, 0)
+    .error "coop_wide.s: base/overlay/overlay_0001.bin 0x021FFCA8 is not ov01_021FFCA8: the patch is out of date"
+.endif
+.macro coop_ov1_is_bl, address
+    .if (readu16("base/overlay/overlay_0001.bin", address - COOP_OV1) & 0xF800) != 0xF000 || (readu16("base/overlay/overlay_0001.bin", address + 2 - COOP_OV1) & 0xF800) != 0xF800
+        .error "coop_wide.s: base/overlay/overlay_0001.bin has no bl where the patch expects one: it is out of date"
+    .endif
+.endmacro
+coop_ov1_is_bl 0x021F66CA
+coop_ov1_is_bl 0x021F67D2
+// mov r0, #0; str r0, [r4] (or the bl that replaced them).
+.if readu32("base/overlay/overlay_0001.bin", 0x021F37CC - COOP_OV1) != 0x60202000
+    coop_ov1_is_bl 0x021F37CC
+.endif
+.open "base/overlay/overlay_0001.bin", COOP_OV1
+.org COOP_OV1_FREE
+.incbin COOP_OV1_BIN
+.thumb
+.org 0x021F66CA
+    bl 0x021FFCA8 // CoopOv1_BindMapModel
+.org 0x021F67D2
+    bl 0x021FFCA8
+.org 0x021F37CC
+    bl 0x021FFCAA // CoopOv1_HidePlaceholder
+.close

@@ -1148,3 +1148,6 @@ sub_0207294C = 0x0207294C | 1;
 sub_02017068 = 0x02017068 | 1;
 MapObjectManager_RestoreFromSave = 0x0205E648 | 1;
 Save_MapObjects_Get = 0x0203B9D0 | 1;
+/* The wider picture (src/coop_ov1/coop_neighbour.c): binds a model file to a texture set (ccd
+   src/gf_3d_render.c GF3dRender_BindModelSet; pret 2e7767dd0^ sub_0201F64C). */
+GF3dRender_BindModelSet = 0x0201F64C | 1;

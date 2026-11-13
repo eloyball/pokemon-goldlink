@@ -845,25 +845,23 @@ impl Lighting {
     }
 
     /// A neighbouring area's map (the pixels the game drew with polygon ID `id`): the ROM tags it
-    /// because the area's graphics aren't loaded (stand-in textures, missing pieces). It fades,
-    /// over HAZE_FEATHER pixels from where this area's scene ends, into a slightly blurred haze
-    /// of this area's own lit colours (so it follows the time of day).
+    /// because that area's graphics aren't loaded (stand-in textures, missing pieces). From the
+    /// border with this area to the picture's edge it fades, a little blurred and greyed, into
+    /// the dark: nothing at the border, nearly black at the edge (UC11, chosen from previews).
     fn neighbour_haze(&mut self, w: usize, h: usize, x0: usize, scene: &Scene, id: u8) {
-        const HAZE_FEATHER: f32 = 14.0;
-        const HAZE_MAX: f32 = 0.8;
+        const STRENGTH: f32 = 0.95; // at the picture's edge
         const BLUR: usize = 2;
+        const FLAT: f32 = 0.5; // how much of the pixel's own detail gives way to a plain colour
+        const DARK: f32 = 0.12; // the colour's brightness, of this area's average
         let n = w * h;
         let cells = &self.cells;
         let tagged: Vec<bool> = (0..n)
-            .map(|i| {
-                let (x, y) = (i % w, i / w);
-                cells[i].layer != 0 && scene.ids[y * scene.width + x0 + x] == id
-            })
+            .map(|i| cells[i].layer != 0 && scene.ids[(i / w) * scene.width + x0 + i % w] == id)
             .collect();
         if !tagged.iter().any(|&t| t) {
             return;
         }
-        // The haze's colour: this area's lit scene on average, a little lighter and greyer.
+        // The colour it fades to: this area's lit scene on average, greyer and dark.
         let (mut sum, mut count) = ([0.0f32; 3], 0.0f32);
         for i in 0..n {
             if cells[i].layer != 0 && !tagged[i] {
@@ -875,58 +873,55 @@ impl Lighting {
             return;
         }
         let avg = scale(sum, 1.0 / count);
-        let grey = lum(avg);
-        let haze = scale(mix(avg, [grey; 3], 0.45), 1.12);
-        // How far each tagged pixel is from this area's scene (chamfer distance, capped).
+        let haze = scale(mix(avg, [lum(avg); 3], 0.45), DARK);
+        // How far each tagged pixel is from this area's scene (chamfer distance).
         let mut dist: Vec<f32> = tagged
             .iter()
-            .map(|&t| if t { HAZE_FEATHER } else { 0.0 })
+            .map(|&t| if t { f32::MAX / 4.0 } else { 0.0 })
             .collect();
         for y in 0..h {
             for x in 0..w {
                 let i = y * w + x;
-                if !tagged[i] {
-                    continue;
+                if tagged[i] {
+                    let mut d = dist[i];
+                    if x > 0 {
+                        d = d.min(dist[i - 1] + 1.0);
+                    }
+                    if y > 0 {
+                        d = d.min(dist[i - w] + 1.0);
+                        if x > 0 {
+                            d = d.min(dist[i - w - 1] + 1.414);
+                        }
+                        if x + 1 < w {
+                            d = d.min(dist[i - w + 1] + 1.414);
+                        }
+                    }
+                    dist[i] = d;
                 }
-                let mut d = dist[i];
-                if x > 0 {
-                    d = d.min(dist[i - 1] + 1.0);
-                }
-                if y > 0 {
-                    d = d.min(dist[i - w] + 1.0);
-                }
-                if x > 0 && y > 0 {
-                    d = d.min(dist[i - w - 1] + 1.414);
-                }
-                if x + 1 < w && y > 0 {
-                    d = d.min(dist[i - w + 1] + 1.414);
-                }
-                dist[i] = d;
             }
         }
         for y in (0..h).rev() {
             for x in (0..w).rev() {
                 let i = y * w + x;
-                if !tagged[i] {
-                    continue;
+                if tagged[i] {
+                    let mut d = dist[i];
+                    if x + 1 < w {
+                        d = d.min(dist[i + 1] + 1.0);
+                    }
+                    if y + 1 < h {
+                        d = d.min(dist[i + w] + 1.0);
+                        if x + 1 < w {
+                            d = d.min(dist[i + w + 1] + 1.414);
+                        }
+                        if x > 0 {
+                            d = d.min(dist[i + w - 1] + 1.414);
+                        }
+                    }
+                    dist[i] = d;
                 }
-                let mut d = dist[i];
-                if x + 1 < w {
-                    d = d.min(dist[i + 1] + 1.0);
-                }
-                if y + 1 < h {
-                    d = d.min(dist[i + w] + 1.0);
-                }
-                if x + 1 < w && y + 1 < h {
-                    d = d.min(dist[i + w + 1] + 1.414);
-                }
-                if x > 0 && y + 1 < h {
-                    d = d.min(dist[i + w - 1] + 1.414);
-                }
-                dist[i] = d;
             }
         }
-        // A small box blur of the tagged pixels (only tagged neighbours count).
+        // A small blur of the tagged pixels (only tagged neighbours count).
         let out = &self.out;
         let blurred: Vec<V3> = (0..n)
             .map(|i| {
@@ -947,11 +942,17 @@ impl Lighting {
                 scale(s, 1.0 / c)
             })
             .collect();
+        let shade = lum(haze) / lum(avg).max(1e-4);
         for i in 0..n {
             if tagged[i] {
-                let t = (dist[i] / HAZE_FEATHER).clamp(0.0, 1.0);
+                // 0 at the border with this area, 1 at the picture's edge.
+                let (x, y) = (i % w, i / w);
+                let edge = x.min(w - 1 - x).min(y).min(h - 1 - y) as f32;
+                let t = dist[i] / (dist[i] + edge + 1.0);
                 let t = t * t * (3.0 - 2.0 * t);
-                self.out[i] = mix(mix(self.out[i], blurred[i], t), haze, t * HAZE_MAX);
+                let b = blurred[i];
+                let target = mix(scale([lum(b); 3], shade), haze, FLAT);
+                self.out[i] = mix(mix(self.out[i], b, t), target, t * STRENGTH);
             }
         }
     }
