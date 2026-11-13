@@ -34,6 +34,13 @@ enum Step {
     Touch(u16, u16),
     Debug(u8, u8),
     Shot(&'static str),
+    /// Main RAM as it is, saved as `<n>-<name>.ram` (4 MiB from 0x02000000): what a probe would
+    /// read, for scripts to look at the game's state after the run.
+    Dump(&'static str),
+    /// Writes into main RAM what GOLDLINK_DEV_TOUR_POKES lists (lines "<address> <bytes> <value>",
+    /// hex; none without it), once the file is there: a change to the game's state tried before
+    /// it goes into the ROM, computed by a script from the Dump just before.
+    Poke,
     /// Holds the keys for the frames; with a name, records every frame (UC11's lighting) as
     /// `<dir>/rec-<name>/<frame>.bin`: the wide top screen and the 3D scene's buffers (see
     /// `record_frame`).
@@ -376,6 +383,18 @@ const WALK_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=spot: the save's spot as it loads, its picture and main RAM (what's
+/// drawn past the DS's view: which map blocks and materials, dev/docs/unified-client/UC11).
+const SPOT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(240),
+    Step::Dump("spot"),
+    Step::Poke,
+    Step::Wait(4),
+    Step::Shot("spot"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=gate (UC11): from a save standing at a gatehouse's east door, into it,
 /// then left and right inside, every frame recorded.
 const GATE_STEPS: &[Step] = &[
@@ -633,6 +652,7 @@ fn steps() -> &'static [Step] {
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
+        Ok("spot") => SPOT_STEPS,
         Ok("cave") => CAVE_STEPS,
         Ok("sideways") => SIDEWAYS_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
@@ -1114,6 +1134,44 @@ impl FrameHook for TourHook {
                 );
                 eprintln!("tour: {line}");
                 s.log.push(line);
+                true
+            }
+            Step::Dump(name) => {
+                s.taken += 1;
+                let path = self.0.dir.join(format!("{}-{name}.ram", s.taken));
+                let line = match std::fs::write(&path, emu.nds.main_ram()) {
+                    Ok(()) => format!("dump {}", path.display()),
+                    Err(e) => format!("dump {name} failed: {e}"),
+                };
+                eprintln!("tour: {line}");
+                s.log.push(line);
+                true
+            }
+            Step::Poke => 'poke: {
+                if let Ok(file) = std::env::var("GOLDLINK_DEV_TOUR_POKES") {
+                    // Written by a script from the dump before it (the same run: addresses hold);
+                    // waited for up to half a minute.
+                    if !std::path::Path::new(&file).exists() && s.frames < 1800 {
+                        break 'poke false;
+                    }
+                    let text = std::fs::read_to_string(&file).unwrap_or_default();
+                    let ram = emu.nds.main_ram_mut();
+                    let mut n = 0;
+                    for line in text.lines() {
+                        let f: Vec<u32> = line
+                            .split_whitespace()
+                            .filter_map(|w| u32::from_str_radix(w, 16).ok())
+                            .collect();
+                        let [addr, size, value] = f[..] else { continue };
+                        let at = addr.wrapping_sub(0x0200_0000) as usize;
+                        let bytes = value.to_le_bytes();
+                        if size as usize <= 4 && at + size as usize <= ram.len() {
+                            ram[at..at + size as usize].copy_from_slice(&bytes[..size as usize]);
+                            n += 1;
+                        }
+                    }
+                    eprintln!("tour: poked {n} values from {file}");
+                }
                 true
             }
             Step::Raw(name) => {
