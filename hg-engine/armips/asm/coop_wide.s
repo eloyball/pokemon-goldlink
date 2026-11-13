@@ -146,18 +146,29 @@ COOP_CULL_END equ 0x02025E88 // the original's end (its last literal at 0x02025E
 .endif
 .close
 
-// A battle's trainer sliding out (pret asm/overlay_12_battle_controller_opponent.s
-// ov12_0225D138, 5 pixels a frame) is deleted once its centre reaches x <= -104
-// instead of -40: past the widest side strip (64 pixels) with its 80-pixel width.
-// "sub r0, #0x2a" (2 - 42 = -40) becomes "sub r0, #0x6a". The same for every
-// player (the DS's picture never shows those 13 frames), so battles keep one timing.
-.if readu16("base/overlay/overlay_0012.bin", 0x0225D494 - 0x022378C0) != 0x382A && readu16("base/overlay/overlay_0012.bin", 0x0225D494 - 0x022378C0) != 0x386A
-    .error "coop_wide.s: base/overlay/overlay_0012.bin 0x0225D494 is not sub r0, #0x2a (or #0x6a): the patch is out of date"
-.endif
+// A battle's trainers sliding out (pret asm/overlay_12_battle_controller_opponent.s, 5 pixels
+// a frame) are deleted once their centre passes the DS's edge by 40 pixels: x >= 296 on the
+// right (the opponents', "mov r0, #0x4a; lsl r0, r0, #2") or x <= -40 on the left (the
+// player's side, "sub r0, #0x2a" from 2). With the wider picture that is inside the side strip:
+// a trainer vanished while still in view. Every one of the three slide tasks (ov12_0225D138,
+// ov12_0225D644, ov12_0225D890: every battle type) deletes past the widest strip (64 pixels)
+// with the trainer's 80-pixel width instead: x >= 360 ("mov r0, #0x5a"), x <= -104
+// ("sub r0, #0x6a"). The same for every player (the DS's picture never shows those 13
+// frames), so battles keep one timing.
+.macro coop_slide_bound, addr, old, new
+    .if readu16("base/overlay/overlay_0012.bin", addr - 0x022378C0) != old && readu16("base/overlay/overlay_0012.bin", addr - 0x022378C0) != new
+        .error "coop_wide.s: a battle slide-out bound in base/overlay/overlay_0012.bin is not the original: the patch is out of date"
+    .endif
+    .org addr
+    .halfword new
+.endmacro
 .open "base/overlay/overlay_0012.bin", 0x022378C0
-.org 0x0225D494
-.thumb
-    sub r0, #0x6a
+    coop_slide_bound 0x0225D2DC, 0x204A, 0x205A // ov12_0225D138, right: mov r0, #0x4a -> #0x5a
+    coop_slide_bound 0x0225D494, 0x382A, 0x386A // ov12_0225D138, left: sub r0, #0x2a -> #0x6a
+    coop_slide_bound 0x0225D68A, 0x204A, 0x205A // ov12_0225D644, right
+    coop_slide_bound 0x0225D7F8, 0x382A, 0x386A // ov12_0225D644, left
+    coop_slide_bound 0x0225D8CC, 0x204A, 0x205A // ov12_0225D890, right
+    coop_slide_bound 0x0225D8FE, 0x382A, 0x386A // ov12_0225D890, left
 .close
 
 // Where battle slide-ins start (pret asm/overlay_07.s ov07_022377F4, ccd
