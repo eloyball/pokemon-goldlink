@@ -112,7 +112,7 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // 2 under a 2D layer, 0 not), and the projection most of that picture's polygons used (20.12). Returns 0 when the top screen can't show the
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
-int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16]);
+int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t *ids, int32_t proj[16]);
 // Each top-screen line's fades (UC11, patch 0008), 4 bytes a line: the master brightness's mode
 // (0 none, 1 toward white, 2 toward black) and factor (0..16), then the same for the colour
 // effect's brightness on the 3D layer (where the 3D scene shows on top).

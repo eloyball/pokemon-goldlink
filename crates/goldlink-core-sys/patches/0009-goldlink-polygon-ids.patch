@@ -1,0 +1,38 @@
+GoldLink's change to melonDS (UC11): each pixel's polygon ID for the lighting.
+
+- GPU3D_Soft: GetShownAttrLine gives the attribute buffer of the picture on screen (its opaque
+  polygon ID in bits 24-29), kept beside the depth (0004) before the next render replaces it. The
+  ROM tags what it draws of a neighbouring area with its own polygon ID; the lighting hazes it.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D_Soft.cpp	2026-11-13 09:41:14.457163061 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-13 09:41:14.467291124 -0500
+@@ -1765,6 +1765,7 @@
+ 
+     // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
+     memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
++    memcpy(ShownAttr, &AttrBuffer[FirstPixelOffset], sizeof(ShownAttr));
+ 
+     if (RenderThreadRunning.load(std::memory_order_relaxed))
+     {
+--- a/src/GPU3D_Soft.h	2026-11-13 09:41:14.457102668 -0500
++++ b/src/GPU3D_Soft.h	2026-11-13 09:41:14.467123910 -0500
+@@ -48,6 +48,9 @@
+     // line 215, before the frame ends, so DepthBuffer is then a frame ahead of the screen;
+     // RenderFrame keeps the shown one first.
+     const u32* GetShownDepthLine(int line) const { return &ShownDepth[line * ScanlineWidth]; }
++    // GoldLink (UC11): the attributes of the picture on screen (the attribute buffer's layout below:
++    // the opaque polygon ID in bits 24-29), kept with the depth.
++    const u32* GetShownAttrLine(int line) const { return &ShownAttr[line * ScanlineWidth]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+     void EnableRenderThread();
+@@ -479,6 +482,7 @@
+     u32 ColorBuffer[BufferSize * 2];
+     u32 DepthBuffer[BufferSize * 2];
+     u32 ShownDepth[ScanlineWidth * 192] {};
++    u32 ShownAttr[ScanlineWidth * 192] {};
+     u32 AttrBuffer[BufferSize * 2];
+ 
+     // attribute buffer:

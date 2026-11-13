@@ -180,12 +180,19 @@ pub struct LightBuffers {
     pub depth: Vec<u32>,
     /// 1: the 3D scene on top; 2: under a 2D layer (text box, a banner, menus); 0: 2D only.
     pub layer: Vec<u8>,
+    /// Each pixel's opaque polygon ID (0..63): the ROM draws a neighbouring area's map with
+    /// [`NEIGHBOUR_POLYGON_ID`].
+    pub ids: Vec<u8>,
     /// The projection matrix, 20.12, as the DS keeps it (row by row, vectors on the left).
     pub proj: [i32; 16],
     pub w_depth: bool,
     /// Each line's fades (192): see [`Fade`].
     pub fade: Vec<Fade>,
 }
+
+/// The polygon ID the ROM draws a neighbouring area's map blocks with (their graphics aren't
+/// loaded: GoldLink hazes them in the wider picture). HeartGold's own maps use 0.
+pub const NEIGHBOUR_POLYGON_ID: u8 = 62;
 
 /// A line's screen-wide fades as the DS applies them after composing (UC11): the master
 /// brightness (`[mode, factor]`: 0 none, 1 toward white, 2 toward black; factor 0..16), then the
@@ -426,12 +433,14 @@ impl Nds {
         let n = LightBuffers::WIDTH * SCREEN_HEIGHT;
         out.depth.resize(n, 0);
         out.layer.resize(n, 0);
-        // SAFETY: depth and layer hold 384 * 192 each, what the shim writes; proj holds 16.
+        out.ids.resize(n, 0);
+        // SAFETY: depth, layer and ids hold 384 * 192 each, what the shim writes; proj holds 16.
         let kind = unsafe {
             sys::gl_core_light_buffers(
                 self.ptr(),
                 out.depth.as_mut_ptr(),
                 out.layer.as_mut_ptr(),
+                out.ids.as_mut_ptr(),
                 out.proj.as_mut_ptr(),
             )
         };

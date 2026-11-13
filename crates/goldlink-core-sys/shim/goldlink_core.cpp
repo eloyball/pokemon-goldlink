@@ -259,7 +259,7 @@ void gl_core_light_fades(GlCore *core, uint8_t out[192 * 4])
     }
 }
 
-int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16])
+int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t *ids, int32_t proj[16])
 {
     static_assert(melonDS::GPU3D::MaxWideSide == melonDS::GPU2D::SoftRenderer::MaxSide);
     constexpr int side = melonDS::GPU3D::MaxWideSide;
@@ -278,6 +278,10 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t
     {
         // The depth of the picture on screen (the buffer itself is already the next frame's).
         std::memcpy(depth + y * width, soft.GetShownDepthLine(y), width * 4);
+        // Each pixel's opaque polygon ID (the ROM tags a neighbouring area's map with its own).
+        const uint32_t *attr = soft.GetShownAttrLine(y);
+        for (int x = 0; x < width; x++)
+            ids[y * width + x] = (uint8_t)((attr[x] >> 24) & 0x3F);
         uint8_t *row = layer + y * width;
         std::memcpy(row, soft2d.Layer3D[y], width);
         if (!strips)

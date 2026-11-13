@@ -79,6 +79,7 @@ unsafe extern "C" {
         core: *mut GlCore,
         depth: *mut u32,
         layer: *mut u8,
+        ids: *mut u8,
         proj: *mut i32,
     ) -> c_int;
     pub fn gl_core_audio(core: *mut GlCore, out: *mut i16, max_frames: u32) -> u32;
