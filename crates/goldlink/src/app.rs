@@ -106,7 +106,7 @@ pub struct GameApp {
     wide_side: usize,
     /// The colour the sides take between two scenes: the screen's edges' when they're one flat
     /// colour (black for a fade, white for a cave's exit flash), otherwise black.
-    edge_fill: egui::Color32,
+    edge_fill: [Option<Vec<egui::Color32>>; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
@@ -183,7 +183,7 @@ impl GameApp {
             wide: None,
             wide_side: 0,
             steady_shift: None,
-            edge_fill: egui::Color32::BLACK,
+            edge_fill: [None, None],
             mega: None,
             mega_icon: None,
             lighting: None,
@@ -391,7 +391,7 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 self.steady_shift = frame.steady_shift;
-                self.edge_fill = edge_colour(&frame.pixels[..256 * 192]);
+                self.edge_fill = edge_rows(&frame.pixels[..256 * 192]);
                 let light = if lit { frame.light.clone() } else { None };
                 Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
@@ -824,14 +824,34 @@ impl GameApp {
             .filter(|_| self.wide_side > 0 && frame.width() > middle.width() + 1.0)
             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu | Scene::Battle));
         if frame.width() > middle.width() + 1.0 {
-            // Between two scenes (a warp's fade, a battle loading, a cave's exit flash) the
-            // sides take the screen's flat colour, not the band's.
-            let fill = if scene == Scene::Changing {
-                self.edge_fill
+            // Without the wider picture (menus, the title, between two scenes), each side continues
+            // the screen's edge as the wider picture's strips do (a flat screen, a fade, a bar
+            // across it), or is black where the edge is a picture.
+            if wide.is_some() {
+                p.rect_filled(frame, 0.0, hud::BAND);
             } else {
-                hud::BAND
-            };
-            p.rect_filled(frame, 0.0, fill);
+                p.rect_filled(frame, 0.0, egui::Color32::BLACK);
+                let row_h = frame.height() / 192.0;
+                for (rows, x0, x1) in [
+                    (&self.edge_fill[0], frame.left(), middle.left()),
+                    (&self.edge_fill[1], middle.right(), frame.right()),
+                ] {
+                    let Some(rows) = rows else { continue };
+                    let mut y = 0;
+                    while y < rows.len() {
+                        let mut end = y + 1;
+                        while end < rows.len() && rows[end] == rows[y] {
+                            end += 1;
+                        }
+                        let r = egui::Rect::from_min_max(
+                            egui::pos2(x0, frame.top() + y as f32 * row_h),
+                            egui::pos2(x1, frame.top() + end as f32 * row_h),
+                        );
+                        p.rect_filled(r, 0.0, rows[y]);
+                        y = end;
+                    }
+                }
+            }
         }
         let hud_draws = battle.is_some_and(hud::handles);
         let rows = |to: f32| egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, to));
@@ -1116,29 +1136,28 @@ impl Drop for GameApp {
     }
 }
 
-/// The top screen's edges' colour (its first and last 4 columns, 0x00RRGGBB) when it's one flat
-/// colour, else black.
-fn edge_colour(top: &[u32]) -> egui::Color32 {
-    let edge = top
-        .chunks_exact(256)
-        .flat_map(|row| row[..4].iter().chain(&row[252..]))
-        .copied();
-    let mut first = None;
-    for p in edge {
-        let p = p & 0xFF_FFFF;
-        match first {
-            None => first = Some(p),
-            Some(f) => {
-                let close = |s: u32| ((f >> s) & 0xFF).abs_diff((p >> s) & 0xFF) <= 12;
-                if !(close(16) && close(8) && close(0)) {
-                    return egui::Color32::BLACK;
-                }
-            }
-        }
-    }
-    first.map_or(egui::Color32::BLACK, |p| {
-        egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8)
-    })
+/// The top screen's left and right edges, continued beside it when the wider picture isn't
+/// shown: per side, each row's colour when every row's 8 edge pixels are one colour (a flat
+/// screen, a fade, a bar across the screen), or none (black) where the edge is a picture.
+fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
+    let side = |cols: std::ops::Range<usize>| -> Option<Vec<egui::Color32>> {
+        top.chunks_exact(256)
+            .map(|row| {
+                let first = row[cols.start] & 0xFF_FFFF;
+                row[cols.clone()]
+                    .iter()
+                    .all(|&p| p & 0xFF_FFFF == first)
+                    .then(|| {
+                        egui::Color32::from_rgb(
+                            (first >> 16) as u8,
+                            (first >> 8) as u8,
+                            first as u8,
+                        )
+                    })
+            })
+            .collect()
+    };
+    [side(0..8), side(248..256)]
 }
 
 /// The steady overworld (UC11): the top picture `uv` (the DS screen's 192 rows, `cols` columns
@@ -1200,14 +1219,26 @@ mod slide_tests {
     }
 
     #[test]
-    fn sides_take_a_flat_screens_colour() {
-        let white = vec![0x00F8_F8F8u32; 256 * 192];
+    fn sides_continue_the_screens_edges() {
+        let white = egui::Color32::from_rgb(0xF8, 0xF8, 0xF8);
+        // A flat screen: both sides its colour.
+        let flat = vec![0x00F8_F8F8u32; 256 * 192];
         assert_eq!(
-            edge_colour(&white),
-            egui::Color32::from_rgb(0xF8, 0xF8, 0xF8)
+            edge_rows(&flat),
+            [Some(vec![white; 192]), Some(vec![white; 192])]
         );
-        let mut picture = white.clone();
+        // A bar across the top of a black screen: continued row by row.
+        let mut bar = vec![0u32; 256 * 192];
+        bar[..256 * 20].fill(0x00F8_F8F8);
+        let rows = edge_rows(&bar)[0].clone().unwrap();
+        assert_eq!(
+            (rows[0], rows[19], rows[20]),
+            (white, white, egui::Color32::BLACK)
+        );
+        // A picture at the left edge: that side black, the other still continued.
+        let mut picture = flat.clone();
         picture[256 * 100 + 2] = 0x0020_6020;
-        assert_eq!(edge_colour(&picture), egui::Color32::BLACK);
+        assert_eq!(edge_rows(&picture)[0], None);
+        assert_eq!(edge_rows(&picture)[1], Some(vec![white; 192]));
     }
 }
