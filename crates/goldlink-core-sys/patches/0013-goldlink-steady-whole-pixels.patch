@@ -1,0 +1,42 @@
+GoldLink's change to melonDS (UC11): the steady overworld at a pixel-exact scale. The ground's
+scale per world unit is rounded to a quarter pixel (1 across, 0.75 down in HeartGold's field), so
+every step of the camera is a whole number of pixels: no 5-pixel jumps, no sub-pixel slide that
+changes every step (which, at a window scale that isn't a whole number, made columns of pixels
+change width as the world moved).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.cpp	2026-11-13 14:29:49.452651507 -0500
++++ b/src/GPU3D.cpp	2026-11-13 14:30:23.222279200 -0500
+@@ -2563,6 +2563,31 @@
+     }
+     else
+         memcpy(m, p, sizeof(m)); // a room: already orthographic, only snapped
++    // A whole number of pixels for every step: the ground's scale on screen, per world unit
++    // (along world x across the screen, along world z down it), rounded to a quarter pixel when
++    // that's within 6% (HeartGold's field: 1.02 and 0.77, a tile 16 by 12 pixels). The player
++    // and the camera move in whole world units, 4 per 30 Hz picture walking (8 running, 16 on
++    // the bike): with exactly 1 and 0.75 pixels per unit the world moves exactly 4 and 3 pixels a
++    // picture, its phase within a pixel never changes and the window's sub-pixel slide stays
++    // put. Otherwise a 4.09-pixel step took a 5-pixel jump every eleven steps, and the slide
++    // that hid it moved the picture by a fraction each step: at a scale that isn't a whole
++    // number every column of pixels changed width as the world moved (the user's play test,
++    // 2026-11-13: "very rough as I moved sideways"). Only for a camera turned about its x axis
++    // alone (HeartGold's), whose rows put world x on screen x and world z on screen y.
++    {
++        const double w0 = m[15] / 4096.0;
++        if (w0 > 0 && camera[0] > 0 && camera[1] == 0 && camera[2] == 0 && camera[3] == 0
++            && camera[6] == 0 && camera[7] != 0)
++        {
++            const double hx = m[0] / 4096.0 / w0 * (camera[0] / 4096.0) * Viewport[4] / 2.0;
++            const double hz = m[5] / 4096.0 / w0 * std::fabs(camera[7] / 4096.0) * Viewport[5] / 2.0;
++            const double qx = std::round(hx * 4) / 4, qz = std::round(hz * 4) / 4;
++            if (qx > 0 && std::fabs(qx / hx - 1) < 0.06)
++                m[0] = (s32)std::lround(m[0] * qx / hx);
++            if (qz > 0 && std::fabs(qz / hz - 1) < 0.06)
++                m[5] = (s32)std::lround(m[5] * qz / hz);
++        }
++    }
+     // Where the world's origin lands (the camera's translation through that view), shifted to
+     // the middle of its pixel: every world point keeps its phase within a pixel.
+     const double w = m[15] / 4096.0;
