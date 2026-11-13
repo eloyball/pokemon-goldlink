@@ -221,12 +221,21 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 ..outdoor
             },
             Phase::Day => outdoor,
+            // Half way between day and night. The game doesn't light its windows until night, so
+            // the light is the low sun's: golden, stronger against a cooler, dimmer sky than by
+            // day, so sunlit sides stand out; bloom between the day's and the night's; a faint warm
+            // light around the player; lamps the game does light still count as light sources.
             Phase::Evening => Preset {
-                ambient: scale([0.80, 0.80, 0.96], 0.74),
-                key: scale([1.0, 0.88, 0.72], 0.52),
+                ambient: scale([0.70, 0.72, 0.96], 0.62),
+                key: scale([1.0, 0.78, 0.52], 0.78),
                 key_dir: normalize([-0.8, 0.35, 0.48]),
-                bloom: 0.16,
-                bloom_from: 0.5,
+                points: 0.9,
+                glow: 0.25,
+                player_light: scale([1.0, 0.84, 0.62], 0.16),
+                player_height: 40.0,
+                player_range: 110.0,
+                bloom: 0.24,
+                bloom_from: 0.4,
                 ..outdoor
             },
             Phase::Night => Preset {

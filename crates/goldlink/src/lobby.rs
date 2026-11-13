@@ -869,6 +869,10 @@ impl Lobby {
                 .checkbox(&mut v.wide, "Widescreen in the overworld and in battles")
                 .changed();
         }
+        changed |= ui
+            .checkbox(&mut v.lighting, "Lighting")
+            .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+            .changed();
         theme::caption(ui, "Sound");
         let a = &mut config.audio;
         changed |= ui
