@@ -254,9 +254,11 @@ impl LightFrame {
 /// The lighting's view of this frame (in `spare`'s buffers when there is one), when the top
 /// screen can show the 3D scene.
 /// The wider picture's side strips follow the screen into black, row by row (UC9 §4): the game
-/// blacks the screen out in ways the strips can't copy (a battle's wipe, a map's fade), and a
-/// strip left bright beside a black screen shows. A row of the screen that's mostly pure black
-/// darkens its strips: fully once 90% of it is, from 50% on, in between.
+/// blacks the screen out in ways the strips can't copy (a battle's wipe, a map's fade, a black
+/// sliding in from one side), and a strip left bright beside a black screen shows. A row of the
+/// screen that's mostly pure black darkens both strips: fully once 90% of it is, from 50% on, in
+/// between; and a strip goes black where the screen's edge beside it (its first or last 8
+/// pixels) is pure black, so a black sliding in from that side covers it first.
 pub fn darken_sides(wide: &mut [u32], side: usize) {
     let width = 256 + 2 * side;
     if side == 0 || wide.len() < width * 192 {
@@ -269,15 +271,24 @@ pub fn darken_sides(wide: &mut [u32], side: usize) {
             .count() as f32
             / 256.0;
         let k = ((black - 0.5) / 0.4).clamp(0.0, 1.0);
-        if k <= 0.0 {
-            continue;
-        }
-        let keep = 1.0 - k;
+        let edge = |r: &[u32]| r.iter().all(|&p| p & 0xFF_FFFF == 0);
+        let k_left = if edge(&row[side..side + 8]) { 1.0 } else { k };
+        let k_right = if edge(&row[side + 248..side + 256]) {
+            1.0
+        } else {
+            k
+        };
         let (left, rest) = row.split_at_mut(side);
-        for p in left.iter_mut().chain(&mut rest[256..]) {
-            let c = *p;
-            let ch = |s: u32| (((c >> s) & 0xFF) as f32 * keep) as u32;
-            *p = (c & 0xFF00_0000) | (ch(16) << 16) | (ch(8) << 8) | ch(0);
+        for (strip, k) in [(left, k_left), (&mut rest[256..], k_right)] {
+            if k <= 0.0 {
+                continue;
+            }
+            let keep = 1.0 - k;
+            for p in strip.iter_mut() {
+                let c = *p;
+                let ch = |s: u32| (((c >> s) & 0xFF) as f32 * keep) as u32;
+                *p = (c & 0xFF00_0000) | (ch(16) << 16) | (ch(8) << 8) | ch(0);
+            }
         }
     }
 }
@@ -454,11 +465,11 @@ mod tests {
         let side = 4;
         let width = 256 + 2 * side;
         let mut wide = vec![0x00_80_80_80u32; width * 192];
-        // Row 0: the screen all black; row 1: 70% black; row 2: the picture.
+        // Row 0: the screen all black; row 1: 70% black, in the middle; row 2: the picture.
         for x in side..side + 256 {
             wide[x] = 0;
         }
-        for x in side..side + 180 {
+        for x in side + 40..side + 220 {
             wide[width + x] = 0;
         }
         darken_sides(&mut wide, side);
@@ -467,6 +478,15 @@ mod tests {
         let half = wide[width] & 0xFF;
         assert!(half > 0x20 && half < 0x60, "{half:x}");
         assert_eq!(wide[2 * width], 0x00_80_80_80);
+        // Row 3: a black sliding in from the left, 20 pixels in: the left strip is black, the
+        // right one untouched.
+        let r = 3 * width;
+        for x in side..side + 20 {
+            wide[r + x] = 0;
+        }
+        darken_sides(&mut wide, side);
+        assert_eq!(wide[r], 0);
+        assert_eq!(wide[r + width - 1], 0x00_80_80_80);
     }
 
     #[test]

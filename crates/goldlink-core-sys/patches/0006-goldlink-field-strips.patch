@@ -1,8 +1,8 @@
 GoldLink's change to melonDS (UC9 §4, UC11): the overworld's side strips show only its scene.
 
-- GPU3D: WideField, set by GoldLink each frame while the game is in the overworld. Then, past
-  the DS's own view, untextured polygons are skipped: ground the game draws without ever
-  loading its material (a neighbouring map's, as no one could see it), plain white or grey.
+- GPU3D: WideField, set by GoldLink each frame while the game is in the overworld. Past the
+  DS's own view (in any scene), untextured polygons are skipped: things the game draws without
+  ever loading their textures, as no one could see them, plain white or grey.
 - GPU2D_Soft: then the main engine's side strips (with the 3D layer on) are composed without
   BG1-3: there the game's 2D layers are its interface (text boxes, a town's banner), and their
   tiles past the screen's edges were never meant to be seen. The 3D scene and sprites stay.
@@ -23,16 +23,16 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      {
          return WideSide > 0 && Viewport[0] == 0 && Viewport[4] == 256;
 --- a/src/GPU3D.cpp	2026-11-12 22:08:03.649136291 -0500
-+++ b/src/GPU3D.cpp	2026-11-12 22:14:32.968051635 -0500
++++ b/src/GPU3D.cpp	2026-11-12 23:20:12.496251196 -0500
 @@ -2651,6 +2651,25 @@
                  }
  
                  RenderNumPolygons = NumPolygons;
-+                // GoldLink (UC9 §4): in the overworld, past the DS's own view the game can draw
-+                // ground whose material it never loaded (a neighbouring map's, as no one could see
-+                // it): untextured, plain white or grey. Skipped there; the gap is filled with the
-+                // side strips (gl_core_wide_frame).
-+                if (WideField && WideActive())
++                // GoldLink (UC9 §4): past the DS's own view the game can draw things whose
++                // textures it never loaded, as no one could see them (an overworld object, a
++                // battle's sprite): untextured, plain white or grey. Skipped there; in the
++                // overworld the gap is filled with the side strips (gl_core_wide_frame).
++                if (WideActive())
 +                    for (u32 i = 0; i < NumPolygons; i++)
 +                    {
 +                        Polygon* p = RenderPolygonRAM[i];

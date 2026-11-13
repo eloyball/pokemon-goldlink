@@ -221,6 +221,14 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
     // small gap takes the nearest scene pixel in its row, toward the screen (up to 16 pixels
     // away); anything wider is black.
     const bool field = screen == 0 && gpu.GPU3D.WideField;
+    // Only the overworld's own outdoor camera (its perspective, or the steady overworld's flat
+    // view of it) is widened: rooms and special cameras (a cave's entrance, cutscenes) show
+    // geometry past the DS's view that the game never finished or culls, so their sides are
+    // black, the DS's own view.
+    const int32_t *proj = gpu.GPU3D.ShownProjMatrix;
+    const bool outdoor = proj[11] == -0x1000
+        || proj[15] == (int32_t)(melonDS::GPU3D::OrthoW * 4096);
+    const bool blank = field && !outdoor;
     for (int y = 0; y < 192; y++)
     {
         const uint32_t *wide = soft.GetWideLine(y) + (melonDS::GPU3D::MaxWideSide - side);
@@ -234,6 +242,11 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
             if (sx >= 0 && sx < 256)
             {
                 row[x] = fb[y * 256 + sx];
+                continue;
+            }
+            if (blank)
+            {
+                row[x] = 0xFF000000;
                 continue;
             }
             if (field && !scene_at(x))

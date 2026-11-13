@@ -393,6 +393,23 @@ const GATE_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=cave (UC11): from a save standing a tile below a cave's mouth, in
+/// (one tile up) and out again, every frame recorded.
+const CAVE_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Shot("outside"),
+    Step::Walk(Keys::UP, 24, "in"),
+    Step::Wait(240),
+    Step::Until(Scene::Overworld, 1200),
+    Step::Wait(240),
+    Step::Shot("inside"),
+    Step::Walk(Keys::DOWN, 24, "out"),
+    Step::Wait(360),
+    Step::Shot("back"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=battle-intro (UC11's smooth camera): a wild battle's intro, every
 /// frame recorded.
 const BATTLE_INTRO_STEPS: &[Step] = &[
@@ -604,6 +621,7 @@ fn steps() -> &'static [Step] {
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
+        Ok("cave") => CAVE_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],

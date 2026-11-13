@@ -104,6 +104,9 @@ pub struct GameApp {
     /// The wider top screen (UC9 §4) and its side, when the emulation thread makes it.
     wide: Option<egui::TextureHandle>,
     wide_side: usize,
+    /// The colour the sides take between two scenes: the screen's edges' when they're one flat
+    /// colour (black for a fade, white for a cave's exit flash), otherwise black.
+    edge_fill: egui::Color32,
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
@@ -180,6 +183,7 @@ impl GameApp {
             wide: None,
             wide_side: 0,
             steady_shift: None,
+            edge_fill: egui::Color32::BLACK,
             mega: None,
             mega_icon: None,
             lighting: None,
@@ -387,6 +391,7 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 self.steady_shift = frame.steady_shift;
+                self.edge_fill = edge_colour(&frame.pixels[..256 * 192]);
                 let light = if lit { frame.light.clone() } else { None };
                 Some((frame.pixels.clone(), wide, frame.wide_side, light))
             }
@@ -814,10 +819,10 @@ impl GameApp {
             .filter(|_| self.wide_side > 0 && frame.width() > middle.width() + 1.0)
             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu | Scene::Battle));
         if frame.width() > middle.width() + 1.0 {
-            // Between two scenes (a warp's fade, a battle loading) the screen is black: the
-            // sides too, not the band's colour.
+            // Between two scenes (a warp's fade, a battle loading, a cave's exit flash) the
+            // sides take the screen's flat colour, not the band's.
             let fill = if scene == Scene::Changing {
-                egui::Color32::BLACK
+                self.edge_fill
             } else {
                 hud::BAND
             };
@@ -1106,6 +1111,31 @@ impl Drop for GameApp {
     }
 }
 
+/// The top screen's edges' colour (its first and last 4 columns, 0x00RRGGBB) when it's one flat
+/// colour, else black.
+fn edge_colour(top: &[u32]) -> egui::Color32 {
+    let edge = top
+        .chunks_exact(256)
+        .flat_map(|row| row[..4].iter().chain(&row[252..]))
+        .copied();
+    let mut first = None;
+    for p in edge {
+        let p = p & 0xFF_FFFF;
+        match first {
+            None => first = Some(p),
+            Some(f) => {
+                let close = |s: u32| ((f >> s) & 0xFF).abs_diff((p >> s) & 0xFF) <= 12;
+                if !(close(16) && close(8) && close(0)) {
+                    return egui::Color32::BLACK;
+                }
+            }
+        }
+    }
+    first.map_or(egui::Color32::BLACK, |p| {
+        egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8)
+    })
+}
+
 /// The steady overworld (UC11): the top picture `uv` (the DS screen's 192 rows, `cols` columns
 /// across), drawn into `dst`, slid by `shift` DS pixels: melonDS drew the scene that far off so
 /// it moves in whole pixels, and this takes it back at the screen's resolution. What would come
@@ -1151,5 +1181,17 @@ mod slide_tests {
         assert!((r.max.x - 511.0).abs() < 1e-3 && (r.max.y - 383.5).abs() < 1e-3);
         // Nothing to take back.
         assert_eq!(slide(dst, TOP_UV, None, 256.0), (dst, TOP_UV));
+    }
+
+    #[test]
+    fn sides_take_a_flat_screens_colour() {
+        let white = vec![0x00F8_F8F8u32; 256 * 192];
+        assert_eq!(
+            edge_colour(&white),
+            egui::Color32::from_rgb(0xF8, 0xF8, 0xF8)
+        );
+        let mut picture = white.clone();
+        picture[256 * 100 + 2] = 0x0020_6020;
+        assert_eq!(edge_colour(&picture), egui::Color32::BLACK);
     }
 }
