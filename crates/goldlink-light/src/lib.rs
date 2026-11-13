@@ -449,6 +449,22 @@ struct PointLight {
     range: f32,
 }
 
+/// A light source followed from frame to frame, so it fades in when it appears (at the screen's
+/// edge, from behind the player) and out when it goes, instead of popping.
+#[derive(Clone, Copy)]
+struct Tracked {
+    light: PointLight,
+    /// 0..1: how much of it shows.
+    weight: f32,
+}
+
+/// Per frame: how fast a light source fades in (about a fifth of a second) and out (a quarter).
+const FADE_IN: f32 = 1.0 / 12.0;
+const FADE_OUT: f32 = 1.0 / 15.0;
+/// The furthest a light source moves (view space) between two frames and is still the same one:
+/// more than a step on the bicycle.
+const TRACK_REACH: f32 = 32.0;
+
 /// One pixel's colour (linear), position (view space) and what it shows.
 #[derive(Debug, Clone, Copy, Default)]
 struct Cell {
@@ -484,6 +500,12 @@ pub struct Lighting {
     vignette: (usize, usize, f32, Vec<f32>),
     /// Where the player stood last frame (view space), for [`Lighting::focus`].
     focus: Option<V3>,
+    /// The light sources being followed, and when they were last updated (a pause, a battle or
+    /// a menu, starts them afresh).
+    tracked: Vec<Tracked>,
+    tracked_at: Option<std::time::Instant>,
+    /// Per bright patch (its label): how much of its glow shows (its light source's weight).
+    patch_weight: Vec<f32>,
 }
 
 impl Default for Lighting {
@@ -595,6 +617,9 @@ impl Lighting {
             stack: Vec::new(),
             vignette: (0, 0, 0.0, Vec::new()),
             focus: None,
+            tracked: Vec::new(),
+            tracked_at: None,
+            patch_weight: Vec::new(),
         }
     }
 
@@ -724,11 +749,12 @@ impl Lighting {
 
         self.normals(w, h);
         self.occlusion(w, h, p.ao);
-        let mut lights = if p.points > 0.0 {
+        let found = if p.points > 0.0 {
             self.find_lights(w, h, p.points)
         } else {
             Vec::new()
         };
+        let mut lights = self.track_lights(&found);
         let window_lights = !lights.is_empty();
         let focus = self.focus(w, h);
         if let Some(f) = focus
@@ -946,7 +972,7 @@ impl Lighting {
     /// The light sources: pixels far brighter than the scene (lit windows, lamps, signs) that
     /// are warm or very bright (the night's ordinary pale surfaces lean blue). Each patch of
     /// them becomes a point light, placed in 3D just off its surface.
-    fn find_lights(&mut self, w: usize, h: usize, strength: f32) -> Vec<PointLight> {
+    fn find_lights(&mut self, w: usize, h: usize, strength: f32) -> Vec<(u32, PointLight)> {
         let n = w * h;
         let (mut total, mut count) = (0.0f32, 0u32);
         for c in &self.cells[..n] {
@@ -969,6 +995,7 @@ impl Lighting {
         // Patches: 4-connected runs of light pixels.
         self.label[..n].fill(0);
         struct Patch {
+            id: u32,
             size: u32,
             pos: V3,
             nrm: V3,
@@ -981,6 +1008,7 @@ impl Lighting {
             }
             let id = patches.len() as u32 + 1;
             let mut patch = Patch {
+                id,
                 size: 0,
                 pos: [0.0; 3],
                 nrm: [0.0; 3],
@@ -1023,11 +1051,74 @@ impl Lighting {
                 let peak = colour[0].max(colour[1]).max(colour[2]).max(1e-3);
                 let colour = mix(scale(colour, 1.0 / peak), [1.0, 0.85, 0.65], 0.3);
                 let power = strength * (p.size as f32 / 20.0).sqrt().min(1.5);
-                PointLight {
+                let light = PointLight {
                     pos: add(scale(p.pos, k), scale(normalize(p.nrm), 6.0)),
                     colour: scale(colour, power),
                     range: LIGHT_RANGE,
+                };
+                (p.id, light)
+            })
+            .collect()
+    }
+
+    /// Follows the light sources found this frame (`(patch, light)`) from the last ones: each
+    /// fades in over [`FADE_IN`] frames, and one no longer found (covered by the player, past
+    /// the screen's edge) fades out where it was. Gives the lights to shade with, each as strong
+    /// as it shows, and each patch's glow weight.
+    fn track_lights(&mut self, found: &[(u32, PointLight)]) -> Vec<PointLight> {
+        let now = std::time::Instant::now();
+        if self
+            .tracked_at
+            .is_none_or(|t| now.duration_since(t) > std::time::Duration::from_millis(500))
+        {
+            self.tracked.clear();
+        }
+        self.tracked_at = Some(now);
+        let max_id = found.iter().map(|(id, _)| *id).max().unwrap_or(0) as usize;
+        self.patch_weight.clear();
+        self.patch_weight
+            .resize(self.label.len().max(max_id + 1), 1.0);
+        let mut seen = vec![false; self.tracked.len()];
+        let mut next = Vec::with_capacity(found.len() + self.tracked.len());
+        for &(id, light) in found {
+            let near = self
+                .tracked
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !seen[*i])
+                .map(|(i, t)| {
+                    let d = sub(t.light.pos, light.pos);
+                    (i, dot(d, d))
+                })
+                .filter(|&(_, d2)| d2 < TRACK_REACH * TRACK_REACH)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            let weight = match near {
+                Some((i, _)) => {
+                    seen[i] = true;
+                    (self.tracked[i].weight + FADE_IN).min(1.0)
                 }
+                None => FADE_IN,
+            };
+            if let Some(k) = self.patch_weight.get_mut(id as usize) {
+                *k = weight;
+            }
+            next.push(Tracked { light, weight });
+        }
+        for (t, seen) in self.tracked.iter().zip(&seen) {
+            if !seen && t.weight > FADE_OUT {
+                next.push(Tracked {
+                    light: t.light,
+                    weight: t.weight - FADE_OUT,
+                });
+            }
+        }
+        next.truncate(2 * MAX_LIGHTS);
+        self.tracked = next;
+        self.tracked
+            .iter()
+            .map(|t| PointLight {
+                colour: scale(t.light.colour, t.weight),
+                ..t.light
             })
             .collect()
     }
@@ -1049,8 +1140,14 @@ impl Lighting {
         let (y0, y1) = (top.saturating_sub(3 * R), (bottom + 3 * R + 1).min(h));
         let band = (y1 - y0) * w;
         let cells = &self.cells[y0 * w..y1 * w];
-        for (out, c) in self.tmp3[..band].iter_mut().zip(cells) {
-            *out = if c.emissive { c.base } else { [0.0; 3] };
+        let (labels, weights) = (&self.label[y0 * w..y1 * w], &self.patch_weight);
+        for ((out, c), &id) in self.tmp3[..band].iter_mut().zip(cells).zip(labels) {
+            let k = weights.get(id as usize).copied().unwrap_or(1.0);
+            *out = if c.emissive {
+                scale(c.base, k)
+            } else {
+                [0.0; 3]
+            };
         }
         for _ in 0..2 {
             box_blur(
@@ -1117,6 +1214,7 @@ impl Lighting {
         self.half_tmp.resize(hw * hh, [0.0; 3]);
         {
             let (cells, out) = (&self.cells, &self.out);
+            let (labels, weights) = (&self.label, &self.patch_weight);
             par_rows(self.pool.as_ref(), &mut self.half, hw, |y, row| {
                 for (x, o) in row.iter_mut().enumerate() {
                     let mut sum = [0.0f32; 3];
@@ -1127,7 +1225,12 @@ impl Lighting {
                         let k = if cells[i].layer == 0 {
                             0.0
                         } else if cells[i].emissive {
-                            1.0
+                            // A light source blooms as much as it shows (it fades in and out).
+                            labels
+                                .get(i)
+                                .and_then(|&id| weights.get(id as usize))
+                                .copied()
+                                .unwrap_or(1.0)
                         } else {
                             ((l - from) / (1.0 - from).max(0.05)).clamp(0.0, 1.0)
                         };
@@ -1491,13 +1594,26 @@ mod tests {
                 lamp[y * 256 + x] = 0x00FF_C060;
             }
         }
-        let mut lighting = Lighting::new();
-        lighting.overworld(&mut plain, 256, 64, &scene, Place::Outdoor, Phase::Night);
-        lighting.overworld(&mut lamp, 256, 64, &scene, Place::Outdoor, Phase::Night);
+        let lit = |frames: usize, px: &[u32]| {
+            let mut lighting = Lighting::new();
+            let mut out = px.to_vec();
+            for _ in 0..frames {
+                out = px.to_vec();
+                lighting.overworld(&mut out, 256, 64, &scene, Place::Outdoor, Phase::Night);
+            }
+            out
+        };
+        let plain_lit = lit(1, &plain);
         let r = |p: u32| (p >> 16) & 0xFF;
-        // Near the lamp, warmer and brighter than without it; far away, the same.
-        assert!(r(lamp[70 * 256 + 128]) > r(plain[70 * 256 + 128]) + 8);
-        assert_eq!(lamp[140 * 256 + 10], plain[140 * 256 + 10]);
+        // The lamp's first frame: it only starts to show (it fades in, no pop).
+        let first = lit(1, &lamp);
+        assert!(r(first[70 * 256 + 128]) < r(plain_lit[70 * 256 + 128]) + 4);
+        // A fifth of a second on: near the lamp, warmer and brighter than without it; far away,
+        // the same.
+        let shown = lit(14, &lamp);
+        assert!(r(shown[70 * 256 + 128]) > r(plain_lit[70 * 256 + 128]) + 8);
+        assert_eq!(shown[140 * 256 + 10], plain_lit[140 * 256 + 10]);
+        plain.clear();
     }
 
     #[test]
