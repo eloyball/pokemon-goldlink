@@ -180,11 +180,6 @@ void gl_core_set_steady(GlCore *core, int on)
     core->nds->GPU.GPU3D.OrthoWanted = on != 0;
 }
 
-void gl_core_set_field(GlCore *core, int on)
-{
-    core->nds->GPU.GPU3D.WideField = on != 0;
-}
-
 int gl_core_steady_shift(GlCore *core, float *xy)
 {
     melonDS::GPU &gpu = core->nds->GPU;
@@ -216,25 +211,9 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
     for (int u = 0; u < 2; u++)
         if (soft2d.WideOwner[u] == fb && soft2d.WideDrawn[u] >= side)
             unit = u;
-    // In the overworld, side pixels where the 3D scene shows nothing (past the map, ground the
-    // game never loaded and patch 0006 skips) would show the 2D backdrop or the clear colour: a
-    // small gap takes the nearest scene pixel in its row, toward the screen (up to 16 pixels
-    // away); anything wider is black.
-    const bool field = screen == 0 && gpu.GPU3D.WideField;
-    // Only the overworld's own outdoor camera (its perspective, or the steady overworld's flat
-    // view of it) is widened: rooms and special cameras (a cave's entrance, cutscenes) show
-    // geometry past the DS's view that the game never finished or culls, so their sides are
-    // black, the DS's own view.
-    const int32_t *proj = gpu.GPU3D.ShownProjMatrix;
-    const bool outdoor = proj[11] == -0x1000
-        || proj[15] == (int32_t)(melonDS::GPU3D::OrthoW * 4096);
-    const bool blank = field && !outdoor;
     for (int y = 0; y < 192; y++)
     {
         const uint32_t *wide = soft.GetWideLine(y) + (melonDS::GPU3D::MaxWideSide - side);
-        // Where the 3D scene shows in the composed strips (or, without them, in the 3D line).
-        const uint8_t *shows = soft2d.Layer3D[y] + (melonDS::GPU3D::MaxWideSide - side);
-        auto scene_at = [&](int nx) { return unit >= 0 ? shows[nx] != 0 : (wide[nx] >> 24) != 0; };
         uint32_t *row = out + y * width;
         for (int x = 0; x < width; x++)
         {
@@ -242,42 +221,6 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
             if (sx >= 0 && sx < 256)
             {
                 row[x] = fb[y * 256 + sx];
-                continue;
-            }
-            if (blank)
-            {
-                row[x] = 0xFF000000;
-                continue;
-            }
-            if (field && !scene_at(x))
-            {
-                row[x] = 0xFF000000;
-                const int step = sx < 0 ? 1 : -1;
-                for (int k = 1; k <= 16; k++)
-                {
-                    const int nx = x + step * k;
-                    if (nx < 0 || nx >= width)
-                        break;
-                    const int nsx = nx - side;
-                    if (nsx >= 0 && nsx < 256)
-                    {
-                        row[x] = fb[y * 256 + nsx];
-                        break;
-                    }
-                    if (scene_at(nx))
-                    {
-                        const uint32_t *strips = unit >= 0 ? soft2d.WideSides[unit][y] : nullptr;
-                        if (strips)
-                            row[x] = nsx < 0 ? strips[nx] : strips[melonDS::GPU2D::SoftRenderer::MaxSide + (nsx - 256)];
-                        else
-                        {
-                            uint32_t c = wide[nx];
-                            auto ch = [](uint32_t v) { v &= 0x3F; return (v << 2) | (v >> 4); };
-                            row[x] = 0xFF000000 | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
-                        }
-                        break;
-                    }
-                }
                 continue;
             }
             if (unit >= 0)
@@ -297,6 +240,23 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)
         }
     }
     return width;
+}
+
+void gl_core_light_fades(GlCore *core, uint8_t out[192 * 4])
+{
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());
+    for (int y = 0; y < 192; y++)
+    {
+        const uint16_t mb = soft2d.LineMasterBright[y];
+        const int mmode = (mb >> 14) & 3;
+        out[y * 4 + 0] = mmode == 1 ? 1 : mmode == 2 ? 2 : 0;
+        out[y * 4 + 1] = (uint8_t)std::min(mb & 0x1F, 16);
+        const uint16_t bc = soft2d.LineBlendCnt[y];
+        const int emode = (bc >> 6) & 3;
+        const bool bg0 = bc & 1;
+        out[y * 4 + 2] = bg0 && emode == 2 ? 1 : bg0 && emode == 3 ? 2 : 0;
+        out[y * 4 + 3] = (uint8_t)std::min<int>(soft2d.LineEVY[y], 16);
+    }
 }
 
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16])

@@ -78,6 +78,111 @@ pub struct Scene<'a> {
     /// The projection matrix, 20.12, row by row (vectors on the left).
     pub proj: [i32; 16],
     pub width: usize,
+    /// Each line's fades (192, or empty: none).
+    pub fade: &'a [Fade],
+}
+
+/// A line's screen-wide fades as the DS applies them after composing (goldlink-core `Fade`):
+/// the master brightness `[mode, factor]` (0 none, 1 toward white, 2 toward black; factor 0..16),
+/// then the colour effect's brightness on the 3D layer, where the 3D scene shows on top.
+pub type Fade = [u8; 4];
+
+/// The game's fades (a cave's exit flash, a warp's fade) on `px` (`w` x 192, 0x00RRGGBB, column 0
+/// at the layer mask's column `x0`): the lighting must light the scene under them, not the faded
+/// picture, or shapes and shadows show through a white screen. [`Faded::lift`] takes them off,
+/// [`Faded::put_back`] applies them again; a line faded all the way is kept as the game drew it.
+struct Faded {
+    /// Lines faded all the way: their pixels as drawn.
+    whole: Vec<(usize, Vec<u32>)>,
+}
+
+/// `c` through a DS brightness fade (`mode` 1 toward white, 2 toward black), `f` = factor / 16.
+fn fade_channel(c: f32, mode: u8, f: f32) -> f32 {
+    if mode == 1 {
+        c + (255.0 - c) * f
+    } else {
+        c * (1.0 - f)
+    }
+}
+
+fn unfade_channel(c: f32, mode: u8, f: f32) -> f32 {
+    let r = if mode == 1 {
+        (c - 255.0 * f) / (1.0 - f)
+    } else {
+        c / (1.0 - f)
+    };
+    r.clamp(0.0, 255.0)
+}
+
+fn map_rgb(p: u32, g: impl Fn(f32) -> f32) -> u32 {
+    let ch = |s: u32| (g(((p >> s) & 0xFF) as f32).round().clamp(0.0, 255.0) as u32) << s;
+    (p & 0xFF00_0000) | ch(16) | ch(8) | ch(0)
+}
+
+impl Faded {
+    fn lift(
+        px: &mut [u32],
+        w: usize,
+        x0: usize,
+        fade: &[Fade],
+        layer: Option<(&[u8], usize)>,
+    ) -> Self {
+        let mut whole = Vec::new();
+        for (y, f) in fade.iter().enumerate().take(HEIGHT) {
+            let (mm, mf, em, ef) = (f[0], f[1], f[2], f[3]);
+            if (mm == 0 || mf == 0) && (em == 0 || ef == 0) {
+                continue;
+            }
+            let Some(row) = px.get_mut(y * w..(y + 1) * w) else {
+                break;
+            };
+            if (mm != 0 && mf >= 16) || (em != 0 && ef >= 16) {
+                whole.push((y, row.to_vec()));
+                continue;
+            }
+            for (x, p) in row.iter_mut().enumerate() {
+                if mm != 0 && mf > 0 {
+                    *p = map_rgb(*p, |c| unfade_channel(c, mm, f32::from(mf) / 16.0));
+                }
+                let on_top = layer.is_none_or(|(l, lw)| l.get(y * lw + x0 + x) == Some(&1));
+                if em != 0 && ef > 0 && on_top {
+                    *p = map_rgb(*p, |c| unfade_channel(c, em, f32::from(ef) / 16.0));
+                }
+            }
+        }
+        Faded { whole }
+    }
+
+    fn put_back(
+        self,
+        px: &mut [u32],
+        w: usize,
+        x0: usize,
+        fade: &[Fade],
+        layer: Option<(&[u8], usize)>,
+    ) {
+        for (y, f) in fade.iter().enumerate().take(HEIGHT) {
+            let (mm, mf, em, ef) = (f[0], f[1], f[2], f[3]);
+            if (mm == 0 || mf == 0) && (em == 0 || ef == 0) {
+                continue;
+            }
+            let Some(row) = px.get_mut(y * w..(y + 1) * w) else {
+                break;
+            };
+            for (x, p) in row.iter_mut().enumerate() {
+                let on_top = layer.is_none_or(|(l, lw)| l.get(y * lw + x0 + x) == Some(&1));
+                if em != 0 && ef > 0 && on_top {
+                    *p = map_rgb(*p, |c| fade_channel(c, em, f32::from(ef) / 16.0));
+                }
+                if mm != 0 && mf > 0 {
+                    *p = map_rgb(*p, |c| fade_channel(c, mm, f32::from(mf) / 16.0));
+                }
+            }
+        }
+        for (y, row) in self.whole {
+            px[y * w..(y + 1) * w].copy_from_slice(&row);
+        }
+    }
 }
 
 type V3 = [f32; 3];
@@ -528,6 +633,30 @@ impl Lighting {
     /// The overworld: lights `px` (`w` x 192, 0x00RRGGBB), whose column 0 is the scene's
     /// column `x0`. Pixels the scene marks as 2D only are left as they are.
     pub fn overworld(
+        &mut self,
+        px: &mut [u32],
+        w: usize,
+        x0: usize,
+        scene: &Scene,
+        place: Place,
+        phase: Phase,
+    ) {
+        // The game's fades come off first and go back on last (the scene is lit, not the fade).
+        let layer = Some((scene.layer, scene.width));
+        let faded = Faded::lift(px, w, x0, scene.fade, layer);
+        self.overworld_scene(px, w, x0, scene, place, phase);
+        faded.put_back(px, w, x0, scene.fade, layer);
+    }
+
+    /// Battles and menus with the game's fades known (`fade`, 192 lines): the small grade on the
+    /// picture under them, the fades applied again after.
+    pub fn grade_faded(&mut self, px: &mut [u32], w: usize, phase: Phase, fade: &[Fade]) {
+        let faded = Faded::lift(px, w, 0, fade, None);
+        self.grade(px, w, HEIGHT, phase);
+        faded.put_back(px, w, 0, fade, None);
+    }
+
+    fn overworld_scene(
         &mut self,
         px: &mut [u32],
         w: usize,
@@ -1328,6 +1457,7 @@ mod tests {
             depth: &depth,
             layer: &layer,
             proj: PROJ,
+            fade: &[],
             width,
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
@@ -1350,6 +1480,7 @@ mod tests {
             depth: &depth,
             layer: &layer,
             proj: PROJ,
+            fade: &[],
             width,
         };
         let dark = 0x0050_5060u32;
@@ -1374,5 +1505,31 @@ mod tests {
         let mut px = vec![0u32; 256 * 192];
         Lighting::new().grade(&mut px, 256, 192, Phase::Night);
         assert!(px.iter().all(|&p| p == 0));
+    }
+
+    #[test]
+    fn the_games_fades_stay_on_top_of_the_lighting() {
+        let mut lighting = Lighting::new();
+        // Line 0 faded all the way to white, line 1 half way, the rest plain.
+        let mut fade = vec![[0u8; 4]; 192];
+        fade[0] = [1, 16, 0, 0];
+        fade[1] = [1, 8, 0, 0];
+        let scene = 0x0040_6080u32;
+        let half = map_rgb(scene, |c| fade_channel(c, 1, 0.5));
+        let mut px = vec![scene; 256 * 192];
+        px[..256].fill(0x00FF_FFFF);
+        px[256..512].fill(half);
+        lighting.grade_faded(&mut px, 256, Phase::Night, &fade);
+        // The white line is the game's, untouched by the grade.
+        assert!(px[..256].iter().all(|&p| p == 0x00FF_FFFF));
+        // The half-faded line: the grade's change to the scene, then the fade again; the plain
+        // line shows the grade alone.
+        let graded = px[2 * 256 + 128];
+        let expect = map_rgb(graded, |c| fade_channel(c, 1, 0.5));
+        let got = px[256 + 128];
+        for s in [16u32, 8, 0] {
+            let (a, b) = ((got >> s) & 0xFF, (expect >> s) & 0xFF);
+            assert!(a.abs_diff(b) <= 2, "{got:06x} {expect:06x}");
+        }
     }
 }

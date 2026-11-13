@@ -183,7 +183,14 @@ pub struct LightBuffers {
     /// The projection matrix, 20.12, as the DS keeps it (row by row, vectors on the left).
     pub proj: [i32; 16],
     pub w_depth: bool,
+    /// Each line's fades (192): see [`Fade`].
+    pub fade: Vec<Fade>,
 }
+
+/// A line's screen-wide fades as the DS applies them after composing (UC11): the master
+/// brightness (`[mode, factor]`: 0 none, 1 toward white, 2 toward black; factor 0..16), then the
+/// colour effect's brightness on the 3D layer (where the 3D scene shows on top).
+pub type Fade = [u8; 4];
 
 impl LightBuffers {
     pub const WIDTH: usize = SCREEN_WIDTH + 2 * Nds::MAX_WIDE_SIDE;
@@ -387,13 +394,6 @@ impl Nds {
         unsafe { sys::gl_core_set_steady(self.ptr(), c_int::from(on)) }
     }
 
-    /// Whether the game is in the overworld: the wider picture's side strips then leave the
-    /// game's 2D layers (its interface there) out.
-    pub fn set_field(&mut self, on: bool) {
-        // SAFETY: a plain setter on the live core.
-        unsafe { sys::gl_core_set_field(self.ptr(), c_int::from(on)) }
-    }
-
     /// When the picture on screen was drawn steady and nothing 2D is drawn over the scene: the
     /// shift (pixels, x then y) it was drawn with, to be taken back at the screen's resolution.
     pub fn steady_shift(&self) -> Option<[f32; 2]> {
@@ -436,6 +436,9 @@ impl Nds {
             )
         };
         out.w_depth = kind == 2;
+        out.fade.resize(SCREEN_HEIGHT, [0; 4]);
+        // SAFETY: fade holds 192 four-byte lines, what the shim writes.
+        unsafe { sys::gl_core_light_fades(self.ptr(), out.fade.as_mut_ptr().cast()) };
         kind != 0
     }
 

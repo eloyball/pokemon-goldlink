@@ -1,0 +1,41 @@
+GoldLink's change to melonDS (UC11): each top-screen line's fades, for the lighting.
+
+GPU2D_Soft records, per main-engine line, the master brightness and the colour-effect registers
+(BLDCNT, EVY) the line was drawn with. The game fades the screen to white or black with them (a
+cave's exit flash, a warp's fade); the lighting lights the scene under the fade and applies the
+fade again, instead of lighting the faded picture (shapes and shadows showing through a white
+screen).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU2D_Soft.h	2026-11-12 23:53:00.555741739 -0500
++++ b/src/GPU2D_Soft.h	2026-11-12 23:53:00.565896485 -0500
+@@ -46,6 +46,12 @@
+     u32* WideOwner[2] {};
+     // GoldLink (UC11): per main-engine line, where the 3D layer shows: 1 on top, 2 under a
+     // 2D layer (opaque or blended), 0 not at all. Column = screen x + MaxSide (the wide sides included).
++    // GoldLink (UC11): per main-engine line, the screen-wide fades the engine applies after
++    // composing (master brightness; the colour effect's brightness on the 3D layer), so the
++    // lighting can light the scene under a fade and put the fade back.
++    u16 LineMasterBright[192] {};
++    u16 LineBlendCnt[192] {};
++    u8 LineEVY[192] {};
+     u8 Layer3D[192][256 + 2 * MaxSide] {};
+     // The strips' width when drawn.
+     int WideDrawn[2] {};
+--- a/src/GPU2D_Soft.cpp	2026-11-12 23:53:00.555687617 -0500
++++ b/src/GPU2D_Soft.cpp	2026-11-12 23:53:00.565810112 -0500
+@@ -116,6 +116,13 @@
+     // GoldLink (UC11): this line's 3D mask starts empty; DrawScanline_BGOBJ fills it.
+     if (CurUnit->Num == 0 && line < 192)
+         memset(Layer3D[line], 0, sizeof(Layer3D[line]));
++    // GoldLink (UC11): this line's fades, as the engine will apply them, for the lighting.
++    if (CurUnit->Num == 0 && line < 192)
++    {
++        LineMasterBright[line] = CurUnit->MasterBrightness;
++        LineBlendCnt[line] = CurUnit->BlendCnt;
++        LineEVY[line] = CurUnit->EVY;
++    }
+ 
+     if (CurUnit->Num == 0)
+     {

@@ -192,7 +192,6 @@ impl Emulator {
         self.nds.set_input(input.keys, input.touch);
         // Every frame, so a power cycle (which resets melonDS) can't leave it off or on.
         self.nds.set_steady(self.steady && self.in_field);
-        self.nds.set_field(self.in_field);
         self.nds.run_frame();
         self.frame += 1;
         self.after_frame();

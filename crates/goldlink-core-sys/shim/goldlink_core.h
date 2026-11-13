@@ -100,8 +100,6 @@ void gl_core_set_wide(GlCore *core, int side);
 // The steady overworld (UC11, patch 0005): field scenes drawn with an orthographic camera locked
 // to the pixels while `on`. GoldLink turns it on in the overworld only.
 void gl_core_set_steady(GlCore *core, int on);
-// Whether the game is in the overworld (UC11, patch 0006): its side strips leave its 2D layers out.
-void gl_core_set_field(GlCore *core, int on);
 // Whether the picture on screen was drawn so (0: no; 1: yes; 2: yes, with 2D drawn over the
 // scene, such as a text box, which mustn't move with it), and the shift (pixels, x then y) it was
 // drawn with, which the window takes back at the screen's resolution.
@@ -115,6 +113,10 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, int32_t proj[16]);
+// Each top-screen line's fades (UC11, patch 0008), 4 bytes a line: the master brightness's mode
+// (0 none, 1 toward white, 2 toward black) and factor (0..16), then the same for the colour
+// effect's brightness on the 3D layer (where the 3D scene shows on top).
+void gl_core_light_fades(GlCore *core, uint8_t out[192 * 4]);
 
 // Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx) whose main-engine sprite
 // pieces (by their centre) are drawn moved by dx, from the next frame on: the one-screen layout

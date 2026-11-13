@@ -455,11 +455,14 @@ impl GameApp {
                     layer: &l.buffers.layer,
                     proj: l.buffers.proj,
                     width: goldlink_core::LightBuffers::WIDTH,
+                    fade: &l.buffers.fade,
                 },
                 Place::of_map(l.map),
             )
         });
         let middle = goldlink_core::Nds::MAX_WIDE_SIDE;
+        // The game's fades on the top screen, when the 3D scene is there (a battle's flash).
+        let fade: &[goldlink_light::Fade] = light.map_or(&[], |l| &l.buffers.fade);
         let (top, bottom) = pixels.split_at_mut(256 * 192);
         match wide {
             Some(wide) => {
@@ -468,14 +471,14 @@ impl GameApp {
                     Some((s, place)) => {
                         lighting.overworld(wide, w, middle - side, s, *place, phase)
                     }
-                    None => lighting.grade(wide, w, 192, phase),
+                    None => lighting.grade_faded(wide, w, phase, fade),
                 }
                 // The DS screen alone shows where the wider picture doesn't (menus, the title).
-                lighting.grade(top, 256, 192, phase);
+                lighting.grade_faded(top, 256, phase, fade);
             }
             None => match &scene {
                 Some((s, place)) => lighting.overworld(top, 256, middle, s, *place, phase),
-                None => lighting.grade(top, 256, 192, phase),
+                None => lighting.grade_faded(top, 256, phase, fade),
             },
         }
         lighting.grade(bottom, 256, 192, phase);
@@ -899,11 +902,11 @@ impl GameApp {
                 match &wide {
                     Some(w) => {
                         let cols = (256 + 2 * self.wide_side) as f32;
-                        let (r, uv) = slide(frame, rows(1.0), shift, cols);
+                        let (r, uv) = slide(frame, rows(1.0), shift, cols, false);
                         p.image(w.id(), r, uv, egui::Color32::WHITE)
                     }
                     None => {
-                        let (r, uv) = slide(middle, TOP_UV, shift, 256.0);
+                        let (r, uv) = slide(middle, TOP_UV, shift, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE)
                     }
                 };
@@ -1024,7 +1027,7 @@ impl GameApp {
                         let shift = self
                             .steady_shift
                             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
-                        let (top, uv) = slide(top, TOP_UV, shift, 256.0);
+                        let (top, uv) = slide(top, TOP_UV, shift, 256.0, true);
                         p.image(t.id(), top, uv, egui::Color32::WHITE);
                         p.image(t.id(), bottom, BOTTOM_UV, egui::Color32::WHITE);
                     }
@@ -1138,18 +1141,24 @@ fn edge_colour(top: &[u32]) -> egui::Color32 {
 
 /// The steady overworld (UC11): the top picture `uv` (the DS screen's 192 rows, `cols` columns
 /// across), drawn into `dst`, slid by `shift` DS pixels: melonDS drew the scene that far off so
-/// it moves in whole pixels, and this takes it back at the screen's resolution. What would come
-/// from outside the picture is left out (a sliver under a pixel wide at the edges).
+/// it moves in whole pixels, and this takes it back at the screen's resolution. The picture keeps
+/// filling `dst`: past its edges the texture repeats its edge pixel (a sliver under a pixel), so
+/// nothing behind it shows. With `shared`, the texture holds more than this picture (the two
+/// screens stacked): there the sliver is left out instead of read from the other screen.
 fn slide(
     dst: egui::Rect,
     uv: egui::Rect,
     shift: Option<[f32; 2]>,
     cols: f32,
+    shared: bool,
 ) -> (egui::Rect, egui::Rect) {
     let Some([sx, sy]) = shift else {
         return (dst, uv);
     };
     let moved = uv.translate(egui::vec2(sx / cols * uv.width(), sy / 192.0 * uv.height()));
+    if !shared {
+        return (dst, moved);
+    }
     let kept = moved.intersect(uv);
     if !kept.is_positive() {
         return (dst, uv);
@@ -1171,7 +1180,7 @@ mod slide_tests {
     fn slide_takes_the_shift_back_and_crops_the_edge() {
         let dst = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(512.0, 384.0));
         // Drawn 0.5 px right and 0.25 px down: shown from 0.5 px further right and 0.25 down.
-        let (r, uv) = slide(dst, TOP_UV, Some([0.5, 0.25]), 256.0);
+        let (r, uv) = slide(dst, TOP_UV, Some([0.5, 0.25]), 256.0, true);
         assert!((uv.min.x - 0.5 / 256.0).abs() < 1e-6);
         assert!((uv.min.y - 0.25 / 384.0).abs() < 1e-6);
         assert!((uv.max.x - 1.0).abs() < 1e-6 && (uv.max.y - 0.5).abs() < 1e-6);
@@ -1180,7 +1189,12 @@ mod slide_tests {
         assert!((r.min.x - 0.0).abs() < 1e-3 && (r.min.y - 0.0).abs() < 1e-3);
         assert!((r.max.x - 511.0).abs() < 1e-3 && (r.max.y - 383.5).abs() < 1e-3);
         // Nothing to take back.
-        assert_eq!(slide(dst, TOP_UV, None, 256.0), (dst, TOP_UV));
+        assert_eq!(slide(dst, TOP_UV, None, 256.0, true), (dst, TOP_UV));
+        // Its own texture: the picture still fills the frame, nothing behind it shows.
+        let wide = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let (r, uv) = slide(dst, wide, Some([0.5, 0.25]), 342.0, false);
+        assert_eq!(r, dst);
+        assert!((uv.min.x - 0.5 / 342.0).abs() < 1e-6);
     }
 
     #[test]
