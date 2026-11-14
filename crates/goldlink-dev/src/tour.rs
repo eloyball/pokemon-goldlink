@@ -493,6 +493,14 @@ const DOWN_REC_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=down12: down for 12 seconds, nothing recorded (timing).
+const DOWN12_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::DOWN, 720, ""),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -684,6 +692,8 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&b.layer);
+    // Then each pixel's polygon ID (the ROM tags a neighbouring area's untextured blocks 62).
+    out.extend_from_slice(&b.ids);
     std::fs::write(path, out)?;
     // The battle HUD's view of the frame (UC9's band), beside it.
     let ui = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());
@@ -721,6 +731,7 @@ fn steps() -> &'static [Step] {
         Ok("right5") => RIGHT5_STEPS,
         Ok("left-rec") => LEFT_REC_STEPS,
         Ok("down-rec") => DOWN_REC_STEPS,
+        Ok("down12") => DOWN12_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
