@@ -560,6 +560,34 @@ const ROUTE40_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=stand (UC11's steady overworld): the save's spot, standing, every frame
+/// recorded for a second.
+const STAND_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::NONE, 60, "stand"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=step-down (UC11's steady overworld): one step down from the save's spot,
+/// then standing, every frame recorded.
+const STEP_DOWN_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 10, "step"),
+    Step::Walk(Keys::NONE, 60, "after"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=down-past (UC11's steady overworld): down for two seconds from the save's
+/// spot (past what's in front of the player), every frame recorded.
+const DOWN_PAST_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 120, "down"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -799,6 +827,9 @@ fn steps() -> &'static [Step] {
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
         Ok("mom") => MOM_STEPS,
+        Ok("stand") => STAND_STEPS,
+        Ok("step-down") => STEP_DOWN_STEPS,
+        Ok("down-past") => DOWN_PAST_STEPS,
         Ok("motion") => MOTION_STEPS,
         Ok("route40") => ROUTE40_STEPS,
         Ok("lyra") => LYRA_STEPS,
