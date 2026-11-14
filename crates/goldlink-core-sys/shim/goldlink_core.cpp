@@ -289,19 +289,19 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
         {
             if (out[y * width + x] != 0 || soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
                 continue;
-            bool near = false;
-            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !near; yy++)
+            bool close_by = false;
+            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !close_by; yy++)
             {
                 const uint32_t *d = soft.GetShownDepthLine(yy) + from;
                 for (int xx = std::max(0, x - 2); xx <= std::min(width - 1, x + 2); xx++)
                     if (out[yy * width + xx] == 3
                         && std::abs((int)(depth[x] & 0xFFFFFF) - (int)(d[xx] & 0xFFFFFF)) < 0x8000)
                     {
-                        near = true;
+                        close_by = true;
                         break;
                     }
             }
-            if (near)
+            if (close_by)
             {
                 out[y * width + x] = 4;
                 n++;
