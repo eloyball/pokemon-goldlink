@@ -1,0 +1,66 @@
+GoldLink's change to melonDS (UC11): the steady overworld draws its polygons whole. The 64-pixel
+guard band (patch 0017) still cut big polygons (the ground, roads, roofs) where they showed, and a
+cut polygon's texture mapping changed a little at each step (pebbles changing, tree columns a
+pixel apart). The band is 512 pixels, the rasterizer's edge stepper keeps 64 bits (an edge from
+far above the screen), and the pixel snap puts the world's points 3/256 of a pixel past the
+middle, so corners at the usual fractions of a pixel are never on a pixel's border.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-13 20:46:08.372415070 -0500
++++ b/src/GPU3D.h	2026-11-13 21:52:24.902380300 -0500
+@@ -437,8 +437,9 @@
+     void MidEndShown() noexcept;
+ 
+     // GoldLink (UC11): the steady overworld's guard band (pixels past the picture's edges where
+-    // polygons are clipped; GuardClip in GPU3D.cpp).
+-    static constexpr s32 GuardBand = 64;
++    // polygons are clipped; GuardClip in GPU3D.cpp): wide enough that the ground, a road or a
++    // roof is never cut where it shows.
++    static constexpr s32 GuardBand = 512;
+     int GuardClip(Vertex* vertices, int nverts, int clipstart) noexcept;
+ 
+     // GoldLink (UC11): the field's camera (the position matrix loaded right after a field
+--- a/src/GPU3D.cpp	2026-11-13 20:46:08.372328447 -0500
++++ b/src/GPU3D.cpp	2026-11-13 21:52:24.902622626 -0500
+@@ -1163,7 +1163,7 @@
+     bool guard = OrthoWanted && Viewport[4] == 256 && Viewport[5] == 192 && Viewport[0] == 0;
+     for (int i = 0; guard && i < nverts; i++)
+         for (int k = 0; k < 4; k++)
+-            guard &= std::abs((s64)clippedvertices[i].Position[k]) < (1 << 23);
++            guard &= std::abs((s64)clippedvertices[i].Position[k]) < (1 << 21);
+     if (guard)
+         nverts = GuardClip(clippedvertices, nverts, clipstart);
+     else
+@@ -2741,7 +2741,10 @@
+     const double cy = ((camera[10] / 4096.0) * (m[5] / 4096.0) + m[13] / 4096.0) / w;
+     const double x = Viewport[0] + (cx + 1) * Viewport[4] / 2.0;
+     const double y = Viewport[3] + (1 - cy) * Viewport[5] / 2.0;
+-    const double ox = std::floor(x) + 0.5 - x, oy = std::floor(y) + 0.5 - y;
++    // A hair past the middle (3/256 of a pixel): corners at the usual fractions of a pixel are
++    // never exactly on a pixel's border, where the arithmetic's last bit decides the pixel.
++    constexpr double Phase = 0.5 + 3.0 / 256;
++    const double ox = std::floor(x - Phase + 0.5) + Phase - x, oy = std::floor(y - Phase + 0.5) + Phase - y;
+     m[12] += (s32)std::lround(w * ox * 2.0 / Viewport[4] * 4096);
+     m[13] += (s32)std::lround(-w * oy * 2.0 / Viewport[5] * 4096);
+     memcpy(ProjMatrix, m, sizeof(m));
+--- a/src/GPU3D_Soft.h	2026-11-13 20:46:08.363164057 -0500
++++ b/src/GPU3D_Soft.h	2026-11-13 21:52:24.897849230 -0500
+@@ -317,7 +317,7 @@
+                 else                     dx = 0;
+             }
+ 
+-            dx += (y - y0) * Increment;
++            dx += (s64)(y - y0) * Increment;
+ 
+             s32 x = XVal();
+ 
+@@ -427,7 +427,7 @@
+     private:
+         s32 x0, xmin, xmax;
+         s32 xlen, ylen;
+-        s32 dx;
++        s64 dx; // GoldLink (UC11): 64 bits, for edges starting far above the screen
+         s32 y;
+ 
+         s32 xcov_incr;
