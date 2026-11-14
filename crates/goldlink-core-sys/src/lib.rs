@@ -68,7 +68,13 @@ unsafe extern "C" {
     pub fn gl_core_set_steady(core: *mut GlCore, on: c_int);
     pub fn gl_core_steady_shift(core: *mut GlCore, xy: *mut f32) -> c_int;
     pub fn gl_core_fixed_2d(core: *mut GlCore, side: c_int, out: *mut u8) -> c_int;
-    pub fn gl_core_attached(core: *mut GlCore, side: c_int, out: *mut u8, xy: *mut f32) -> c_int;
+    pub fn gl_core_attached(
+        core: *mut GlCore,
+        side: c_int,
+        out: *mut u8,
+        trans: *mut u32,
+        xy: *mut f32,
+    ) -> c_int;
     pub fn gl_core_set_sprite_move(core: *mut GlCore, rects: *const i32, count: c_int);
     pub fn gl_core_wide_frame(
         core: *mut GlCore,

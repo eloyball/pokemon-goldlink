@@ -451,31 +451,17 @@ impl GameApp {
                 Some(wide) => (wide, full),
                 None => (&mut pixels[..256 * 192], 256),
             };
-            // A mask as wide as this picture (the masks come as wide as the wider picture).
-            let fit = |m: &[u8]| -> Vec<u8> {
-                let cols = m.len() / 192;
-                if m.is_empty() || cols < w {
-                    vec![0; w * 192]
-                } else {
-                    let from = (cols - w) / 2;
-                    m.chunks_exact(cols)
-                        .flat_map(|r| r[from..from + w].iter().copied())
-                        .collect()
-                }
-            };
-            let fixed_mask = fit(&fixed);
-            if let Some((shift, mask)) = &attached {
-                let mask = fit(mask);
-                let img = split_layer(top, &mask, &fixed_mask, w, k);
+            let fixed_mask = fit(&fixed, w);
+            if let Some(a) = &attached {
+                let (mask, trans) = (fit(&a.mask, w), fit(&a.trans, w));
+                let img = split_layer(top, &mask, &fixed_mask, w, k, Some(&trans));
                 self.attached
-                    .set(ctx, "attached", img, options, w != 256, Some(*shift));
-                if !fixed.is_empty() {
-                    let img = split_layer(top, &fixed_mask, &mask, w, k);
-                    self.fixed.set(ctx, "fixed", img, options, w != 256, None);
-                }
-            } else {
+                    .set(ctx, "attached", img, options, w != 256, Some(a.shift));
+            }
+            if !fixed.is_empty() {
                 let none = vec![0; w * 192];
-                let img = split_layer(top, &fixed_mask, &none, w, k);
+                let other = attached.as_ref().map_or(none, |a| fit(&a.mask, w));
+                let img = split_layer(top, &fixed_mask, &other, w, k, None);
                 self.fixed.set(ctx, "fixed", img, options, w != 256, None);
             }
         }
@@ -980,19 +966,16 @@ impl GameApp {
                         let cols = (256 + 2 * self.wide_side) as f32;
                         let (r, uv) = slide(frame, rows(1.0), shift, cols, false);
                         p.image(w.id(), r, uv, egui::Color32::WHITE);
-                        if shift.is_some() {
-                            self.attached.draw(&p, frame, true, cols);
-                            self.fixed.draw(&p, frame, true, cols);
-                        }
+                        self.attached.draw(&p, frame, true, cols, shift.is_some());
+                        self.fixed.draw(&p, frame, true, cols, shift.is_some());
                     }
                     None => {
                         let (r, uv) =
                             slide(middle, screen_uvs(self.prescale).0, shift, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE);
-                        if shift.is_some() {
-                            self.attached.draw(&p, middle, false, 256.0);
-                            self.fixed.draw(&p, middle, false, 256.0);
-                        }
+                        self.attached
+                            .draw(&p, middle, false, 256.0, shift.is_some());
+                        self.fixed.draw(&p, middle, false, 256.0, shift.is_some());
                     }
                 };
             }
@@ -1116,10 +1099,8 @@ impl GameApp {
                         let (top_uv, bottom_uv) = screen_uvs(self.prescale);
                         let (slid, uv) = slide(top, top_uv, shift, 256.0, true);
                         p.image(t.id(), slid, uv, egui::Color32::WHITE);
-                        if shift.is_some() {
-                            self.attached.draw(p, top, false, 256.0);
-                            self.fixed.draw(p, top, false, 256.0);
-                        }
+                        self.attached.draw(p, top, false, 256.0, shift.is_some());
+                        self.fixed.draw(p, top, false, 256.0, shift.is_some());
                         p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                     }
                 }
@@ -1226,6 +1207,19 @@ fn sharp_prescale(scale: f32, filter: Filter) -> (usize, egui::TextureOptions) {
     }
 }
 
+/// A mask (or the like) as wide as a picture `w` across (they come as wide as the wider picture,
+/// 192 rows): its middle, or nothing when it's narrower.
+fn fit<T: Copy + Default>(m: &[T], w: usize) -> Vec<T> {
+    let cols = m.len() / 192;
+    if m.is_empty() || cols < w {
+        return vec![T::default(); w * 192];
+    }
+    let from = (cols - w) / 2;
+    m.chunks_exact(cols)
+        .flat_map(|r| r[from..from + w].iter().copied())
+        .collect()
+}
+
 /// One of the steady overworld's layers over the slid picture (UC11): its texture, whether this
 /// frame has it, whether it's the wider picture's (else the DS screen's), and its own shift.
 #[derive(Default)]
@@ -1255,9 +1249,10 @@ impl Layer {
         self.shift = shift;
     }
 
-    /// Over the picture drawn into `dst` (`cols` DS pixels across), slid back by its own shift,
-    /// when this frame has it for that picture.
-    fn draw(&self, p: &egui::Painter, dst: egui::Rect, wide: bool, cols: f32) {
+    /// Over the picture drawn into `dst` (`cols` DS pixels across), when this frame has it for
+    /// that picture: slid back by its own shift when the picture is slid (`slid`), else as drawn
+    /// (the attached layer holds the shadow, which the picture doesn't: it's always drawn).
+    fn draw(&self, p: &egui::Painter, dst: egui::Rect, wide: bool, cols: f32, slid: bool) {
         let Some(t) = self
             .texture
             .as_ref()
@@ -1266,39 +1261,75 @@ impl Layer {
             return;
         };
         let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        let (r, uv) = slide(dst, full, self.shift, cols, false);
+        let (r, uv) = slide(dst, full, self.shift.filter(|_| slid), cols, false);
         p.image(t.id(), r, uv, egui::Color32::WHITE);
     }
 }
 
-/// A layer of the steady overworld's picture (UC11): `mask`'s pixels of `top` (`w` across, 192
-/// rows), each `k` times as large, opaque, the rest transparent, drawn over the slid picture
-/// (with its own shift, or none). In `top` (the picture that's slid), each of them beside the
-/// scene (neither this layer nor `other`) takes that scene pixel's colour: the shifts' difference
-/// (about half a pixel at most) shows the scene there, not the layer's edge a second time.
-fn split_layer(top: &mut [u32], mask: &[u8], other: &[u8], w: usize, k: usize) -> egui::ColorImage {
+/// A layer of the steady overworld's picture (UC11), `w` across, 192 rows, each pixel `k` times as
+/// large, drawn over the slid picture (with its own shift, or none): where `mask` is 1, `top`'s
+/// pixel, opaque; where it's 2, `trans`'s (0xAARRGGBB: a shadow the picture doesn't have); the
+/// rest transparent. In `top` (the picture that's slid) the 1s all take the colour of the nearest
+/// scene pixel (neither this layer's 1s nor `other`), filled in from the edge: where the shifts
+/// differ (about half a pixel at most) the scene shows there, never this layer's pixels a second
+/// time at another shift.
+fn split_layer(
+    top: &mut [u32],
+    mask: &[u8],
+    other: &[u8],
+    w: usize,
+    k: usize,
+    trans: Option<&[u32]>,
+) -> egui::ColorImage {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     let h = 192;
     let mut layer = vec![egui::Color32::TRANSPARENT; w * h];
     for (i, px) in layer.iter_mut().enumerate() {
-        if mask[i] != 0 {
-            *px = colour(top[i]);
+        match (mask[i], trans) {
+            (1, _) => *px = colour(top[i]),
+            (2, Some(t)) => {
+                let c = t[i];
+                *px = egui::Color32::from_rgba_unmultiplied(
+                    (c >> 16) as u8,
+                    (c >> 8) as u8,
+                    c as u8,
+                    (c >> 24) as u8,
+                );
+            }
+            _ => {}
         }
     }
-    let scene = |x: usize, y: usize| mask[y * w + x] == 0 && other[y * w + x] == 0;
+    // Breadth first from the scene's pixels beside the layer.
+    let mut done: Vec<bool> = (0..w * h).map(|i| mask[i] != 1).collect();
+    let mut queue = std::collections::VecDeque::new();
     for y in 0..h {
         for x in 0..w {
-            if mask[y * w + x] == 0 {
+            let i = y * w + x;
+            if mask[i] == 1 || other[i] != 0 {
                 continue;
             }
-            let near = [
-                (x > 0).then(|| (x - 1, y)),
-                (x + 1 < w).then(|| (x + 1, y)),
-                (y > 0).then(|| (x, y - 1)),
-                (y + 1 < h).then(|| (x, y + 1)),
-            ];
-            if let Some((nx, ny)) = near.into_iter().flatten().find(|&(nx, ny)| scene(nx, ny)) {
-                top[y * w + x] = top[ny * w + nx];
+            let beside = (x > 0 && mask[i - 1] == 1)
+                || (x + 1 < w && mask[i + 1] == 1)
+                || (y > 0 && mask[i - w] == 1)
+                || (y + 1 < h && mask[i + w] == 1);
+            if beside {
+                queue.push_back(i);
+            }
+        }
+    }
+    while let Some(i) = queue.pop_front() {
+        let (x, y) = (i % w, i / w);
+        let near = [
+            (x > 0).then(|| i - 1),
+            (x + 1 < w).then(|| i + 1),
+            (y > 0).then(|| i - w),
+            (y + 1 < h).then(|| i + w),
+        ];
+        for n in near.into_iter().flatten() {
+            if !done[n] {
+                done[n] = true;
+                top[n] = top[i];
+                queue.push_back(n);
             }
         }
     }

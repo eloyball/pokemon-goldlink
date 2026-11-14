@@ -172,6 +172,18 @@ pub fn set_log_sink(sink: Option<LogSink>) {
     unsafe { sys::gl_set_log_callback(if sink.is_some() { Some(forward) } else { None }) };
 }
 
+/// The steady overworld's attached layer for a frame (`Nds::attached`).
+#[derive(Debug, Clone)]
+pub struct Attached {
+    /// The shift (DS pixels, x then y) it was drawn with.
+    pub shift: [f32; 2],
+    /// Per pixel: 1 an attached object's opaque pixel (the picture's), 2 its translucent one (its
+    /// shadow, which the picture doesn't have: `trans`), else 0.
+    pub mask: Vec<u8>,
+    /// The translucent pixels' colour and alpha, 0xAARRGGBB.
+    pub trans: Vec<u32>,
+}
+
 /// The top screen's 3D depth and where the 3D layer shows, for the lighting (UC11). Each is
 /// [`LightBuffers::WIDTH`] x 192, the screen's x = 0 at column [`Nds::MAX_WIDE_SIDE`].
 #[derive(Debug, Clone, Default)]
@@ -410,19 +422,25 @@ impl Nds {
         (on == 1).then_some(xy)
     }
 
-    /// The steady overworld's attached layer (patch 0022): the top screen's pixels (as
-    /// [`Nds::fixed_2d`]'s) drawn by what the camera follows (the player, their shadow, a mount),
-    /// and the shift (pixels, x then y) they were drawn with, to be taken back for them alone.
-    /// None when there's none this frame.
-    pub fn attached(&self, side: usize) -> Option<([f32; 2], Vec<u8>)> {
+    /// The steady overworld's attached layer (patch 0022): what the camera follows (the player,
+    /// their shadow, a mount) on the top screen (as wide as [`Nds::fixed_2d`]'s), slid back by
+    /// its own shift alone. None when there's none this frame.
+    pub fn attached(&self, side: usize) -> Option<Attached> {
         let side = side.min(Self::MAX_WIDE_SIDE);
-        let mut out = vec![0u8; (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT];
-        let mut xy = [0f32; 2];
-        // SAFETY: out holds (256 + 2 * side) * 192 bytes and xy two floats, what the shim writes.
-        let n = unsafe {
-            sys::gl_core_attached(self.ptr(), side as c_int, out.as_mut_ptr(), xy.as_mut_ptr())
+        let n = (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT;
+        let (mut mask, mut trans, mut shift) = (vec![0u8; n], vec![0u32; n], [0f32; 2]);
+        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each and shift two floats, what the
+        // shim writes.
+        let found = unsafe {
+            sys::gl_core_attached(
+                self.ptr(),
+                side as c_int,
+                mask.as_mut_ptr(),
+                trans.as_mut_ptr(),
+                shift.as_mut_ptr(),
+            )
         };
-        (n > 0).then_some((xy, out))
+        (found > 0).then_some(Attached { shift, mask, trans })
     }
 
     /// The top screen's pixels (`256 + 2 * side` across, 192 rows; `side` 0 for the DS's screen)

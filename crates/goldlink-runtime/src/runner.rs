@@ -63,9 +63,9 @@ pub struct Frame {
     /// With a steady shift: the top picture's pixels (as wide as `wide`, or the screen's 256)
     /// where 2D shows over the scene (`Nds::fixed_2d`), which aren't slid. Empty when none.
     pub fixed: Vec<u8>,
-    /// With a steady shift: what the camera follows (`Nds::attached`), its own shift and its
-    /// pixels (as `fixed`), slid back by that shift alone.
-    pub attached: Option<([f32; 2], Vec<u8>)>,
+    /// With a steady shift: what the camera follows (`Nds::attached`), slid back by its own
+    /// shift alone.
+    pub attached: Option<goldlink_core::Attached>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).

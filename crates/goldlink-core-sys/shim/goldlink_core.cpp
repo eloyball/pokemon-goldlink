@@ -216,7 +216,7 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out)
     return n;
 }
 
-int gl_core_attached(GlCore *core, int side, uint8_t *out, float *xy)
+int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy)
 {
     side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
     const int width = 256 + 2 * side;
@@ -232,16 +232,30 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, float *xy)
     static_assert(max == melonDS::GPU3D::MaxWideSide, "the 2D and 3D wide columns line up");
     const int from = max - side;
     int n = 0;
+    auto ch = [](uint32_t v) { v &= 0x3F; return (v << 2) | (v >> 4); };
     for (int y = 0; y < 192; y++)
     {
         const uint32_t *attr = soft.GetShownAttrLine(y) + from;
+        const uint32_t *shadow = soft.GetShownAttachTransLine(y) + from;
         uint8_t *row = out + y * width;
+        uint32_t *trow = trans + y * width;
         for (int x = 0; x < width; x++)
         {
-            // The 3D scene on top (not under 2D), drawn by an attached object (bits 30, 31).
-            const bool on = (attr[x] & 0xC0000000u) != 0 && soft2d.Layer3D[y][from + x] == 1
-                && !soft2d.Fixed2D[y][from + x];
-            n += row[x] = on;
+            row[x] = 0;
+            trow[x] = 0;
+            // The 3D scene on top (not under 2D).
+            if (soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
+                continue;
+            if (attr[x] & 0x40000000u)
+                row[x] = 1; // an attached object's opaque pixel
+            else if (shadow[x] != 0)
+            {
+                // Its translucent pixel, kept aside by the renderer: 0xAARRGGBB.
+                const uint32_t c = shadow[x], a = ((c >> 24) & 0x1F) * 255 / 31;
+                row[x] = 2;
+                trow[x] = (a << 24) | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+            }
+            n += row[x] != 0;
         }
     }
     return n;
