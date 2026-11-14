@@ -10,15 +10,11 @@
 // side strips do. Here, once a block is bound, if any texture is missing:
 // - each missing texture takes the bound one in the same block with the longest common name
 //   ("roadkk_ri1" gets "roadkk_ro"), or, with no relative (4 letters in common), its
-//   materials aren't drawn;
-// - every material is drawn with polygon ID COOP_NEIGHBOUR_POLYGON_ID, which the client's
-//   lighting fades toward the picture's edge (goldlink-core NEIGHBOUR_POLYGON_ID).
+//   materials aren't drawn.
 // The area's own blocks find all their textures: they're left exactly as they were.
 //
 // NitroSystem's model layout (ccd lib/include/nnsys/g3d/binres/res_struct.h, g3d_internal.h,
 // lib/NitroSystem/src/g3d_mdl_bind.c), read byte by byte.
-
-#define COOP_NEIGHBOUR_POLYGON_ID 62
 
 #define RES_BIND_BOUND           1          // G3dResBindEntry.flag
 #define MAT_POLYGON_ATTR         0x0C       // G3dResMatData
@@ -29,7 +25,6 @@
 #define MAT_SCALE_T              0x28
 #define TEX_IMAGE_PARAM_KEEP     0xC00F0000 // bits a texture binding doesn't set
 #define POLYGON_ATTR_SHOW_FACES  0x000000C0 // back and front faces shown
-#define POLYGON_ATTR_ID          0x3F000000
 #define RES_NAME_SIZE            16
 
 // pret 2e7767dd0^ sub_0201F64C (ccd src/gf_3d_render.c): binds a model file's models to a
@@ -99,12 +94,7 @@ BOOL LONG_CALL Coop_BindMapModel(void *header, const void *texture)
     u8 *textures = mat + Read16(mat);      // G3dResMat.ofsDictTexToMatList
     u32 count = textures[1], i, j, k;
 
-    for (i = 0; i < count; i++)
-        if (!(DictData(textures, i)[3] & RES_BIND_BOUND))
-            break;
-    if (i == count)
-        return result;
-
+    // (A block with every texture bound, the area's own, goes through untouched.)
     for (i = 0; i < count; i++)
     {
         u8 *bind = DictData(textures, i); // G3dResBindEntry: ofsMatIdxList, numMat, flag
@@ -148,13 +138,5 @@ BOOL LONG_CALL Coop_BindMapModel(void *header, const void *texture)
             bind[3] |= RES_BIND_BOUND;
     }
 
-    count = (mat + 4)[1];
-    for (k = 0; k < count; k++)
-    {
-        u8 *m = MatData(mat, k);
-        Write32(m + MAT_POLYGON_ATTR, (Read32(m + MAT_POLYGON_ATTR) & ~POLYGON_ATTR_ID)
-            | (COOP_NEIGHBOUR_POLYGON_ID << 24));
-        Write32(m + MAT_POLYGON_ATTR_MASK, Read32(m + MAT_POLYGON_ATTR_MASK) | POLYGON_ATTR_ID);
-    }
     return result;
 }

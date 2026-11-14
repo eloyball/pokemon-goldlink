@@ -809,6 +809,11 @@ Field_SaveGameNormal = 0x021F43E8 | 1;
    spins from a VBlank-interrupt task, so it turns during a blocking save. */
 WaitingIcon_New = 0x0200F0AC | 1;
 WaitingIcon_Delete = 0x0200F450 | 1;
+/* HidePerson's walk-off (src/coop_ov1/coop_walk_off.c): what ScrCmd_ApplyMovement and
+   ScrCmd_WaitMovement use. Source: pret 152fe95ec asm/scrcmd.s labels
+   "ScrCmd_WaitMovement: ; 0x02041C98", "_ScheduleObjectEventMovement: ; 0x02041CC4". */
+ScrCmd_WaitMovement = 0x02041C98 | 1;
+_ScheduleObjectEventMovement = 0x02041CC4 | 1;
 /* Movement scripts (what ScrCmd_ApplyMovement uses).
    Source: pret asm/unk_02062108.s labels. */
 EventObjectMovementMan_Create = 0x02062214 | 1;

@@ -35,3 +35,10 @@ SECTIONS {
 
 ASSERT(CoopOv1_BindMapModel == 0x021FFCA8, "armips/asm/coop_wide.s branches to 0x021FFCA8")
 ASSERT(CoopOv1_HidePlaceholder == 0x021FFCAA, "armips/asm/coop_wide.s branches to 0x021FFCAA")
+ASSERT((WalkOff_VarGet | 1) == VarGet, "asm/coop_ov1/entry.s: WalkOff_VarGet is not rom.ld's VarGet")
+ASSERT((WalkOff_GetMapObjectByID | 1) == GetMapObjectByID, "asm/coop_ov1/entry.s: WalkOff_GetMapObjectByID is not rom.ld's GetMapObjectByID")
+ASSERT((WalkOff_DeleteMapObject | 1) == DeleteMapObject, "asm/coop_ov1/entry.s: WalkOff_DeleteMapObject is not rom.ld's DeleteMapObject")
+ASSERT((WalkOff_FieldSysGetAttrAddr | 1) == FieldSysGetAttrAddr, "asm/coop_ov1/entry.s: WalkOff_FieldSysGetAttrAddr is not rom.ld's FieldSysGetAttrAddr")
+ASSERT((WalkOff_EventObjectMovementMan_Create | 1) == EventObjectMovementMan_Create, "asm/coop_ov1/entry.s: WalkOff_EventObjectMovementMan_Create is not rom.ld's EventObjectMovementMan_Create")
+ASSERT((WalkOff__ScheduleObjectEventMovement | 1) == _ScheduleObjectEventMovement, "asm/coop_ov1/entry.s: WalkOff__ScheduleObjectEventMovement is not rom.ld's _ScheduleObjectEventMovement")
+ASSERT((WalkOff_ScrCmd_WaitMovement | 1) == ScrCmd_WaitMovement, "asm/coop_ov1/entry.s: WalkOff_ScrCmd_WaitMovement is not rom.ld's ScrCmd_WaitMovement")

@@ -239,3 +239,10 @@ coop_ov1_is_bl 0x021F67D2
 .org 0x021F37CC
     bl 0x021FFCAA // CoopOv1_HidePlaceholder
 .close
+
+// HidePerson's entry in the script command table (routinepointers; src/coop_ov1/coop_walk_off.c):
+// vanilla's ScrCmd_HidePerson (0x02042001), or once repointed, code in Overlay 1's unused space.
+COOP_HIDE_PERSON_ENTRY equ 0x020FAE94
+.if readu32("base/arm9.bin", COOP_HIDE_PERSON_ENTRY - 0x02000000) != 0x02042001 && (readu32("base/arm9.bin", COOP_HIDE_PERSON_ENTRY - 0x02000000) < COOP_OV1_FREE || readu32("base/arm9.bin", COOP_HIDE_PERSON_ENTRY - 0x02000000) >= COOP_OV1_FREE + 0x224)
+    .error "coop_wide.s: base/arm9.bin's script command 101 is neither ScrCmd_HidePerson nor ours: routinepointers is out of date"
+.endif
