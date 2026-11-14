@@ -67,6 +67,50 @@ pub enum GameAction {
     Leave,
 }
 
+/// The running shoes' tap from the start menu pop-up: B closes the menu, then (back in the
+/// overworld) the game's own button on the field's touch screen is tapped.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ShoesTap {
+    Closing,
+    Waiting,
+    Tapping,
+}
+
+/// Where HeartGold draws its running shoes button on the field's touch screen (DS pixels: the
+/// button's dark outline from x 184 to the screen's edge, y 89 to 130), and where a tap toggles
+/// running (pret overlay 28's hitbox: x 178-252, y 86-134).
+const SHOES_BUTTON: (usize, usize, usize, usize) = (184, 89, 256, 131);
+const SHOES_TAP_AT: (u16, u16) = (215, 110);
+
+/// The game's running shoes button from the touch screen's pixels (`bottom`, 256 x 192,
+/// 0x00RRGGBB), when the game draws it (its dark outline at the top, the bottom and the left; the
+/// game hides it while cycling or in a script).
+fn shoes_icon(bottom: &[u32]) -> Option<egui::ColorImage> {
+    let (x0, y0, x1, y1) = SHOES_BUTTON;
+    let dark = |x: usize, y: usize| {
+        let p = bottom[y * 256 + x];
+        ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255) < 260
+    };
+    let outlined = (x0 + 6..x1)
+        .step_by(9)
+        .all(|x| dark(x, y0) && dark(x, y1 - 2))
+        && (y0 + 4..y1 - 4).step_by(6).all(|y| dark(x0, y));
+    if !outlined || dark(x0 + 8, y0 + 6) {
+        return None;
+    }
+    let pixels = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let p = bottom[y * 256 + x];
+            egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8)
+        })
+        .collect();
+    Some(egui::ColorImage {
+        size: [x1 - x0, y1 - y0],
+        pixels,
+    })
+}
+
 /// The one-screen layout's state (UC9 §3).
 #[derive(Debug, Default)]
 struct OneScreen {
@@ -126,7 +170,7 @@ pub struct GameApp {
     /// The colour the sides take between two scenes, per screen (top, touch screen) and side:
     /// the screen's edges' when they're one flat colour (black for a fade, white for a cave's
     /// exit flash, a bar across), otherwise black.
-    edge_fill: [[Option<Vec<egui::Color32>>; 2]; 2],
+    edge_fill: [[Option<EdgeFill>; 2]; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
     /// The running shoes (`Frame::running_shoes`): None until the player has them.
@@ -143,6 +187,11 @@ pub struct GameApp {
     /// its Mega symbol cut from there.
     mega: Option<bool>,
     mega_icon: Option<egui::TextureHandle>,
+    /// The game's running shoes button as it last drew it on the field's touch screen.
+    shoes_icon: Option<egui::TextureHandle>,
+    /// The start menu pop-up's shoes button was clicked: the menu closing, then the game's own
+    /// button tapped once back in the overworld (`feed_input`).
+    shoes_tap: Option<(ShoesTap, Instant)>,
     /// The lighting's buffers and worker threads (UC11), from the first lit frame.
     lighting: Option<goldlink_light::Lighting>,
 
@@ -222,6 +271,8 @@ impl GameApp {
             edge_fill: [[None, None], [None, None]],
             mega: None,
             mega_icon: None,
+            shoes_icon: None,
+            shoes_tap: None,
             lighting: None,
 
             settings_open: false,
@@ -373,6 +424,27 @@ impl GameApp {
                 self.one.tap = None;
             }
         }
+        // The start menu pop-up's shoes button: B closes the menu; back in the overworld, the
+        // game's own button is tapped (the game toggles running, with its animation).
+        if let Some((step, since)) = self.shoes_tap {
+            let t = since.elapsed();
+            match step {
+                ShoesTap::Closing if t < Duration::from_millis(150) => {
+                    keys |= goldlink_core::Keys::B
+                }
+                ShoesTap::Closing => self.shoes_tap = Some((ShoesTap::Waiting, Instant::now())),
+                ShoesTap::Waiting
+                    if self.one.scene == Some(Scene::Overworld)
+                        && t > Duration::from_millis(300) =>
+                {
+                    self.shoes_tap = Some((ShoesTap::Tapping, Instant::now()))
+                }
+                ShoesTap::Waiting if t > Duration::from_secs(3) => self.shoes_tap = None,
+                ShoesTap::Waiting => {}
+                ShoesTap::Tapping if t < TAP => touch = Some(SHOES_TAP_AT),
+                ShoesTap::Tapping => self.shoes_tap = None,
+            }
+        }
         *lock(&runner.shared.input) = Input { keys, touch };
     }
 
@@ -388,6 +460,17 @@ impl GameApp {
                 // What the HUD reads, from the game's own pixels.
                 if self.config.video.layout == Layout::OneScreen {
                     self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
+                    if frame.running_shoes.is_some()
+                        && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
+                    {
+                        let nearest = egui::TextureOptions::NEAREST;
+                        match &mut self.shoes_icon {
+                            Some(t) => t.set(img, nearest),
+                            None => {
+                                self.shoes_icon = Some(ctx.load_texture("shoes-icon", img, nearest))
+                            }
+                        }
+                    }
                     if self.mega.is_some() {
                         let img = hud::mega_icon(&frame.pixels[256 * 192..]);
                         match &mut self.mega_icon {
@@ -823,31 +906,56 @@ impl GameApp {
     }
 
     /// The running shoes' button in the start menu's pop-up (the touch screen `r`), where the
-    /// game's own sits on the field's touch screen (pret overlay 28's hitbox: x 178-252, y 86-134):
-    /// the game hides its own while the menu is open, and the one-screen layout shows the touch
-    /// screen only then, so it couldn't be reached. A panel of its own: the click isn't a touch.
+    /// game's own sits on the field's touch screen and as the game last drew it there (orange:
+    /// running; grey: walking): the game hides its own while the menu is open, and the one-screen
+    /// layout shows the touch screen only then, so it couldn't be reached. A click closes the menu
+    /// and taps the game's button (`ShoesTap`). A panel of its own: the click isn't a touch.
     fn running_toggle(&mut self, ctx: &egui::Context, r: egui::Rect, on: bool) {
-        let at = |x: f32, y: f32| r.min + egui::vec2(x / 256.0 * r.width(), y / 192.0 * r.height());
-        let area = egui::Rect::from_min_max(at(178.0, 86.0), at(252.0, 134.0));
+        let at = |x: usize, y: usize| {
+            r.min + egui::vec2(x as f32 / 256.0 * r.width(), y as f32 / 192.0 * r.height())
+        };
+        let (x0, y0, x1, y1) = SHOES_BUTTON;
+        let area = egui::Rect::from_min_max(at(x0, y0), at(x1, y1));
+        let icon = self.shoes_icon.as_ref().map(|t| t.id());
         let mut clicked = false;
         egui::Area::new(egui::Id::new("running-shoes"))
             .order(egui::Order::Foreground)
             .fixed_pos(area.min)
             .show(ctx, |ui| {
-                let (label, kind) = if on {
-                    ("Running: on", Kind::Primary)
+                let hint = if on {
+                    "Running (click to walk instead)"
                 } else {
-                    ("Running: off", Kind::Neutral)
+                    "Walking (click to run instead)"
                 };
-                clicked = theme::button(ui, label, kind, area.size(), true)
-                    .on_hover_text("Every step a run (as if B were held); off: run while holding B")
-                    .clicked();
+                let resp = match icon {
+                    Some(id) => {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(area.size(), egui::Sense::click());
+                        let full =
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                        ui.painter().image(id, rect, full, egui::Color32::WHITE);
+                        if resp.hovered() {
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                egui::Color32::from_white_alpha(28),
+                            );
+                        }
+                        resp
+                    }
+                    // Before the game has drawn its own (the menu opened right away).
+                    None => theme::button(
+                        ui,
+                        if on { "Running: on" } else { "Running: off" },
+                        if on { Kind::Primary } else { Kind::Neutral },
+                        area.size(),
+                        true,
+                    ),
+                };
+                clicked = resp.on_hover_text(hint).clicked();
             });
-        if clicked {
-            if let Some(runner) = &self.runner {
-                runner.send(Command::RunningShoes(!on));
-            }
-            self.running_shoes = Some(!on);
+        if clicked && self.shoes_tap.is_none() {
+            self.shoes_tap = Some((ShoesTap::Closing, Instant::now()));
         }
     }
 
@@ -927,7 +1035,7 @@ impl GameApp {
                 p.rect_filled(frame, 0.0, egui::Color32::BLACK);
             }
         }
-        let fill_sides = |screen: egui::Rect, rows: &[Option<Vec<egui::Color32>>; 2]| {
+        let fill_sides = |screen: egui::Rect, rows: &[Option<EdgeFill>; 2]| {
             fill_beside(&p, frame, screen, rows);
         };
         let stacked = scene == Scene::Unknown && self.one.by_hand != Some(false);
@@ -1688,21 +1796,33 @@ fn enlarged(px: &[u32], w: usize, h: usize, k: usize) -> egui::ColorImage {
     }
 }
 
+/// A side of a screen continued beside it (`edge_rows`): each row's colour, and the pixels that
+/// close something reaching the screen's edge (its outline mirrored), from the edge outward.
+#[derive(Debug, Clone, PartialEq)]
+struct EdgeFill {
+    rows: Vec<egui::Color32>,
+    caps: Vec<Vec<egui::Color32>>,
+}
+
 /// Fills the frame beside a shown screen (`screen`, inside `frame`), left and right, row by row
-/// with `rows` (`edge_rows`: none leaves that side as it is, black).
+/// with `rows` (`edge_rows`: none leaves that side as it is, black), then the caps beside the edge.
 fn fill_beside(
     p: &egui::Painter,
     frame: egui::Rect,
     screen: egui::Rect,
-    rows: &[Option<Vec<egui::Color32>>; 2],
+    rows: &[Option<EdgeFill>; 2],
 ) {
     // Each fill runs a point under the screen (drawn over it next), so no seam of the black
     // behind shows where the two meet at a fraction of a pixel.
-    for (rows, x0, x1) in [
+    for (side, (fill, x0, x1)) in [
         (&rows[0], frame.left(), screen.left() + 1.0),
         (&rows[1], screen.right() - 1.0, frame.right()),
-    ] {
-        let Some(rows) = rows else { continue };
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let Some(fill) = fill else { continue };
+        let rows = &fill.rows;
         if x1 - x0 < 1.5 || rows.is_empty() {
             continue;
         }
@@ -1720,49 +1840,145 @@ fn fill_beside(
             p.rect_filled(r, 0.0, rows[y]);
             y = end;
         }
+        // The caps on whole screen pixels (a fraction blurs a one-pixel outline).
+        let px = screen.width() / 256.0;
+        let ppp = p.ctx().pixels_per_point();
+        let snap = |v: f32| (v * ppp).round() / ppp;
+        // Column by column, each run of rows of one colour as one rectangle (no seams between
+        // rows).
+        let width = fill.caps.iter().map(Vec::len).max().unwrap_or(0);
+        for i in 0..width {
+            let (a, b) = if side == 0 {
+                (
+                    screen.left() - (i + 1) as f32 * px,
+                    screen.left() - i as f32 * px,
+                )
+            } else {
+                (
+                    screen.right() + i as f32 * px,
+                    screen.right() + (i + 1) as f32 * px,
+                )
+            };
+            let at = |y: usize| fill.caps[y].get(i).copied();
+            let mut y = 0;
+            while y < fill.caps.len() {
+                let Some(c) = at(y) else {
+                    y += 1;
+                    continue;
+                };
+                let end = (y..fill.caps.len())
+                    .find(|&e| at(e) != Some(c))
+                    .unwrap_or(fill.caps.len());
+                let r = egui::Rect::from_min_max(
+                    egui::pos2(snap(a), snap(screen.top() + y as f32 * row_h)),
+                    egui::pos2(snap(b), snap(screen.top() + end as f32 * row_h)),
+                );
+                p.rect_filled(r, 0.0, c);
+                y = end;
+            }
+        }
     }
 }
 
 /// A screen's left and right edges, continued beside it when the wider picture isn't
 /// shown: per side, each row's colour when its 8 edge pixels are one colour (a flat screen, a
 /// fade, a bar across the screen), the nearest such row's where they aren't (a text box reaching
-/// the edge), or none (black) when most rows' aren't (the edge is a picture).
-fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
-    let side = |cols: std::ops::Range<usize>| -> Option<Vec<egui::Color32>> {
-        let rows: Vec<Option<egui::Color32>> = top
-            .chunks_exact(256)
-            .map(|row| {
-                let first = row[cols.start] & 0xFF_FFFF;
-                row[cols.clone()]
-                    .iter()
-                    .all(|&p| p & 0xFF_FFFF == first)
-                    .then(|| {
-                        egui::Color32::from_rgb(
-                            (first >> 16) as u8,
-                            (first >> 8) as u8,
-                            first as u8,
-                        )
-                    })
+/// the edge), or none (black) when most rows' aren't (the edge is a picture). Something drawn
+/// over the background up to the edge (rows of another colour, the background showing again
+/// further in: Oak's speech's "Touch" button) isn't stretched across the side: its rows take the
+/// background's colour and it is closed at the edge with its own outline, mirrored.
+fn edge_rows(top: &[u32]) -> [Option<EdgeFill>; 2] {
+    let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
+    let at = |x: usize, y: usize| top[y * 256 + x] & 0xFF_FFFF;
+    let side = |left: bool| -> Option<EdgeFill> {
+        let cols = if left { 0..8 } else { 248..256 };
+        let mut rows: Vec<Option<u32>> = (0..192)
+            .map(|y| {
+                let first = at(cols.start, y);
+                cols.clone().all(|x| at(x, y) == first).then_some(first)
             })
             .collect();
-        // A row whose edge has no one colour (a text box reaching the screen's edge, Oak's
-        // speech: the whole side came out black) takes the nearest row's that has one.
-        let near = |i: usize| {
-            (1..rows.len()).find_map(|d| {
-                let up = i.checked_sub(d).and_then(|j| rows[j]);
-                up.or_else(|| rows.get(i + d).copied().flatten())
-            })
-        };
         if rows.iter().filter(|r| r.is_some()).count() * 2 < rows.len() {
             return None; // a picture
         }
-        Some(
-            (0..rows.len())
-                .map(|i| rows[i].or_else(|| near(i)).unwrap_or_default())
-                .collect(),
-        )
+        // A row whose edge has no one colour (a text box reaching the screen's edge, Oak's
+        // speech: the whole side came out black) takes the nearest row's that has one.
+        let known = rows.clone();
+        for (i, r) in rows.iter_mut().enumerate() {
+            if r.is_none() {
+                *r = (1..192).find_map(|d| {
+                    let up = i.checked_sub(d).and_then(|j| known[j]);
+                    up.or_else(|| known.get(i + d).copied().flatten())
+                });
+            }
+        }
+        let mut rows: Vec<u32> = rows.into_iter().map(Option::unwrap_or_default).collect();
+        let mut caps = vec![Vec::new(); 192];
+        // The background: the side's commonest colour.
+        let mut count = std::collections::HashMap::new();
+        for &c in &rows {
+            *count.entry(c).or_insert(0) += 1;
+        }
+        let bg = count.into_iter().max_by_key(|&(_, n)| n).map(|(c, _)| c)?;
+        // Inward from the edge, the first column of the background on row y.
+        let inner = |y: usize| -> Option<usize> {
+            (1..200).find(|&d| at(if left { d } else { 255 - d }, y) == bg)
+        };
+        let mut y = 0;
+        while y < 192 {
+            if rows[y] == bg {
+                y += 1;
+                continue;
+            }
+            let end = (y..192).find(|&e| rows[e] == bg).unwrap_or(192);
+            let found: Vec<Option<usize>> = (y..end).map(inner).collect();
+            if found.iter().filter(|f| f.is_some()).count() * 2 > found.len() {
+                // Closed with its own frame: its border inward from the top edge (and from the
+                // bottom edge) at the screen's edge column, up to its inside, becomes the end's
+                // columns outward from the screen's edge; rows inside the top or bottom border
+                // take that border's colour across the end (the corners).
+                let ex = if left { 0 } else { 255 };
+                let h = end - y;
+                let profile = |from: usize, step: isize| -> Vec<u32> {
+                    let inside = at(ex, (from as isize + step * (h as isize / 4)) as usize);
+                    (0..h.min(6))
+                        .map(|i| at(ex, (from as isize + step * i as isize) as usize))
+                        .take_while(|&c| c != inside)
+                        .collect()
+                };
+                let (top_frame, bottom_frame) = (profile(y, 1), profile(end - 1, -1));
+                let k = top_frame.len().max(bottom_frame.len());
+                for row in y..end {
+                    rows[row] = bg;
+                    let (t, b) = (row - y, end - 1 - row);
+                    let (frame, d) = if t <= b {
+                        (&top_frame, t)
+                    } else {
+                        (&bottom_frame, b)
+                    };
+                    caps[row] = (0..k)
+                        .map(|j| {
+                            let q = k - 1 - j; // 0: the outermost column
+                            let c = if d < q && d < frame.len() {
+                                frame[d]
+                            } else if q < frame.len() {
+                                frame[q]
+                            } else {
+                                at(ex, row)
+                            };
+                            colour(c)
+                        })
+                        .collect();
+                }
+            }
+            y = end;
+        }
+        Some(EdgeFill {
+            rows: rows.into_iter().map(colour).collect(),
+            caps,
+        })
     };
-    [side(0..8), side(248..256)]
+    [side(true), side(false)]
 }
 
 /// The steady overworld (UC11): `shift` (DS pixels) adjusted by under half a screen pixel so that
@@ -1879,22 +2095,44 @@ mod slide_tests {
         let white = egui::Color32::from_rgb(0xF8, 0xF8, 0xF8);
         // A flat screen: both sides its colour.
         let flat = vec![0x00F8_F8F8u32; 256 * 192];
-        assert_eq!(
-            edge_rows(&flat),
-            [Some(vec![white; 192]), Some(vec![white; 192])]
-        );
+        let rows = |f: &Option<EdgeFill>| f.as_ref().map(|f| f.rows.clone());
+        assert_eq!(rows(&edge_rows(&flat)[0]), Some(vec![white; 192]));
+        assert_eq!(rows(&edge_rows(&flat)[1]), Some(vec![white; 192]));
         // A bar across the top of a black screen: continued row by row.
         let mut bar = vec![0u32; 256 * 192];
         bar[..256 * 20].fill(0x00F8_F8F8);
-        let rows = edge_rows(&bar)[0].clone().unwrap();
+        let bars = rows(&edge_rows(&bar)[0]).unwrap();
         assert_eq!(
-            (rows[0], rows[19], rows[20]),
+            (bars[0], bars[19], bars[20]),
             (white, white, egui::Color32::BLACK)
         );
-        // A picture at the left edge: that side black, the other still continued.
+        // A text box reaching the left edge (Oak's speech): its rows take the nearest row's colour.
+        let mut text = flat.clone();
+        for y in 160..180 {
+            text[256 * y + 2] = 0x0020_6020;
+        }
+        assert_eq!(rows(&edge_rows(&text)[0]), Some(vec![white; 192]));
+        // A picture at the left edge (most rows): that side black, the other still continued.
         let mut picture = flat.clone();
-        picture[256 * 100 + 2] = 0x0020_6020;
+        for y in 0..150 {
+            picture[256 * y + 2] = 0x0020_6020;
+        }
         assert_eq!(edge_rows(&picture)[0], None);
-        assert_eq!(edge_rows(&picture)[1], Some(vec![white; 192]));
+        assert_eq!(rows(&edge_rows(&picture)[1]), Some(vec![white; 192]));
+        // A button reaching the right edge over the background, outlined: the side continues the
+        // background and the button is closed with its outline.
+        let mut button = flat.clone();
+        for y in 170..186 {
+            for x in 200..256 {
+                let edge = y == 170 || y == 185 || x == 200;
+                button[256 * y + x] = if edge { 0x0030_3030 } else { 0x00E0_4060 };
+            }
+        }
+        let right = edge_rows(&button)[1].clone().unwrap();
+        assert_eq!(right.rows, vec![white; 192]);
+        assert_eq!(
+            right.caps[178],
+            vec![egui::Color32::from_rgb(0x30, 0x30, 0x30)]
+        );
     }
 }

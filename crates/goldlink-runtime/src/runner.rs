@@ -42,8 +42,6 @@ pub enum Command {
     Lighting(bool),
     /// The steady overworld (UC11).
     Steady(bool),
-    /// Running locked on or off (the field touch screen's shoes button).
-    RunningShoes(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -357,7 +355,6 @@ fn run(
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
                 Command::Steady(on) => emu.set_steady(on),
-                Command::RunningShoes(on) => emu.set_running_shoes(on),
                 Command::Call(f) => f(&mut emu),
             }
         }

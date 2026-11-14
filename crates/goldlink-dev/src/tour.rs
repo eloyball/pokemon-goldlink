@@ -607,6 +607,21 @@ const GHOST_STEPS: [&[Step]; 2] = [
     ],
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=shoes-tap (the running shoes): the field touch screen's shoes button
+/// tapped, before and after (two screens shown).
+const SHOES_TAP_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Shot("before"),
+    Step::Touch(215, 110),
+    Step::Wait(60),
+    Step::Shot("after"),
+    Step::Touch(215, 110),
+    Step::Wait(60),
+    Step::Shot("again"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=run-lock (the running shoes' button): the start menu's pop-up, then
 /// running locked on and a walk up, every frame recorded.
 const RUN_LOCK_STEPS: &[Step] = &[
@@ -902,6 +917,7 @@ fn steps() -> &'static [Step] {
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,
         Ok("run-lock") => RUN_LOCK_STEPS,
+        Ok("shoes-tap") => SHOES_TAP_STEPS,
         Ok("ghost-a") => GHOST_STEPS[0],
         Ok("ghost-b") => GHOST_STEPS[1],
         Ok("down-past") => DOWN_PAST_STEPS,
