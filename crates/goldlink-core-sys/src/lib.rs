@@ -37,6 +37,33 @@ pub struct GlCoreConfig {
 pub const GL_SCREEN_WIDTH: usize = 256;
 pub const GL_SCREEN_HEIGHT: usize = 192;
 
+/// `goldlink_core.h`'s `GlPictures`: where `gl_core_copy_pictures` copies the two pictures.
+#[repr(C)]
+pub struct GlPictures {
+    pub world_top: *mut u32,
+    pub world_top_depth: *mut u32,
+    pub world_top_attr: *mut u32,
+    pub world_bottom: *mut u32,
+    pub world_bottom_depth: *mut u32,
+    pub world_opaque: *mut u32,
+    pub att_top: *mut u32,
+    pub att_top_depth: *mut u32,
+    pub att_trans_depth: *mut u32,
+    pub att_attr: *mut u32,
+    pub att_bottom: *mut u32,
+    pub att_k: *mut f32,
+    pub att_b: *mut f32,
+    pub late_early: *mut u32,
+    pub late_depth: *mut u32,
+    pub late_k: *mut f32,
+    pub late_b: *mut f32,
+    pub stride: c_int,
+    pub disp_cnt: u32,
+    pub edge_table: [u16; 8],
+    pub left: c_int,
+    pub right: c_int,
+}
+
 unsafe extern "C" {
     pub fn gl_set_log_callback(cb: GlLogCallback);
     pub fn gl_core_new(cfg: *const GlCoreConfig) -> *mut GlCore;
@@ -71,12 +98,23 @@ unsafe extern "C" {
     pub fn gl_core_attached(
         core: *mut GlCore,
         side: c_int,
-        out: *mut u8,
-        trans: *mut u32,
-        edge: *mut u32,
+        att: *mut u32,
+        plain: *mut u8,
         xy: *mut f32,
         at: *mut f64,
     ) -> c_int;
+    pub fn gl_pictures_size() -> c_int;
+    pub fn gl_core_copy_pictures(core: *mut GlCore, o: *mut GlPictures) -> c_int;
+    pub fn gl_composite(
+        o: *const GlPictures,
+        side: c_int,
+        n: c_int,
+        world: *const i32,
+        att: *const i32,
+        dx: f32,
+        dy: f32,
+        out: *mut u32,
+    );
     pub fn gl_core_steady_origin(core: *mut GlCore, xy: *mut f64);
     pub fn gl_core_set_sprite_move(core: *mut GlCore, rects: *const i32, count: c_int);
     pub fn gl_core_wide_frame(

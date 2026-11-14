@@ -107,20 +107,40 @@ int gl_core_steady_shift(GlCore *core, float *xy);
 // blended with it (patch 0021): 1 there, else 0, into `out` ((256 + 2 * side) x 192, the wider
 // picture's columns, `side` 0 for the DS's screen); how many. They aren't slid with the scene.
 int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
-// The top screen's pixels drawn by what the steady camera follows (the player, their shadow,
-// a mount: patch 0022), on top, into `out` (as gl_core_fixed_2d's): 1 opaque (the picture's
-// pixel; in `trans` the world under it, 0xFFRRGGBB: patch 0023), 2 translucent (a shadow, not
-// blended into the picture: its colour and alpha in `trans`, 0xAARRGGBB), 3 the world in front of
-// one (the picture's pixel; in `trans` the attached object's behind it: patch 0024), 4 the
-// world's pixels within two of an attached object's (1, 3; its shadow's, 2) nearer than it, else
-// 0. At a 3 that's an edge of the world (an outline), `edge` holds it apart, twice as long as
-// `out`: its colour and coverage (0xAARRGGBB), then the world under the attached object
-// (0xFFRRGGBB), which the picture's pixel is the edge blended with; else 0. And the shift
-// (pixels, x then y) they were drawn with, which the window takes back for them, and where their
-// reference truly is (`at`: the screen's columns and rows); how many (0: none this frame, the
+// The steady overworld's attached picture as shown (patch 0026: what the steady camera follows,
+// the player, their shadow, a mount, a follower, drawn apart from the world), `256 + 2 * side` x
+// 192 (the picture's columns): into att, 0xAARRGGBB (alpha 0 where it has nothing); into plain, 1
+// where the top screen shows the 3D as drawn (on top, no 2D over it, no screen-wide fade). Its
+// shift (pixels, x then y: it is drawn on the world's pixels; the window takes this back for it,
+// the world's own steady shift for the world) into xy, where its reference truly is (the
+// screen's columns and rows) into at. The number of its opaque pixels (0: none this frame, the
 // rest then unwritten).
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint32_t *edge, float *xy,
-                     double *at);
+int gl_core_attached(GlCore *core, int side, uint32_t *att, uint8_t *plain, float *xy, double *at);
+// The steady overworld's two pictures as shown (patch 0026), copied for the window to put together
+// at the screen's resolution on its own thread: every array holds gl_pictures_size() elements
+// (the renderer's wide lines, `stride` apart; att_b and late_b three a pixel), as the renderer's
+// SoftRenderer::Pictures.
+typedef struct GlPictures
+{
+    uint32_t *world_top, *world_top_depth, *world_top_attr, *world_bottom, *world_bottom_depth, *world_opaque;
+    uint32_t *att_top, *att_top_depth, *att_trans_depth, *att_attr, *att_bottom;
+    float *att_k, *att_b;
+    uint32_t *late_early, *late_depth;
+    float *late_k, *late_b;
+    int stride;
+    uint32_t disp_cnt;
+    uint16_t edge_table[8];
+    int left, right;
+} GlPictures;
+int gl_pictures_size(void);
+// 1 when copied (the steady overworld's attached picture shows this frame).
+int gl_core_copy_pictures(GlCore *core, GlPictures *o);
+// The two pictures put together (the renderer's Composite) at n places: the world's pixel
+// (`world`, x then y, the picture's columns for `side`), the attached picture's (`att`), the
+// world's point less the attached picture's at the same place on screen (dx, dy); 0xRRGGBB into
+// out, before the lighting.
+void gl_composite(const GlPictures *o, int side, int n, const int32_t *world, const int32_t *att, float dx, float dy,
+                  uint32_t *out);
 // Where the steady world's origin truly is in the picture on screen (the screen's columns and rows,
 // patch 0023), for the window to land it on a whole pixel of its own.
 void gl_core_steady_origin(GlCore *core, double *xy);

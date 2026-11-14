@@ -569,6 +569,42 @@ const STAND_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=ghost-a / ghost-b (UC12, dev/run_visual_pair.sh-like pair): both warp to
+/// New Bark Town; B steps two tiles down and stands (their follower behind them); A then walks down
+/// through B's follower and B and back up past them, every frame recorded.
+const GHOST_STEPS: [&[Step]; 2] = [
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_WARP as u8, 0),
+        Step::Wait(240),
+        Step::Mark("warped"),
+        Step::Peer("placed", 6000),
+        Step::Wait(120),
+        Step::Walk(Keys::DOWN, 96, "down"),
+        Step::Walk(Keys::NONE, 60, "stand"),
+        Step::Walk(Keys::UP, 96, "up"),
+        Step::Walk(Keys::NONE, 60, "after"),
+        Step::Close,
+    ],
+    &[
+        Step::Until(Scene::Overworld, 60 * 120),
+        Step::Wait(60),
+        Step::Mark("ready"),
+        Step::Peer("ready", 9000),
+        Step::Debug(C::COOP_DEBUG_WARP as u8, 0),
+        Step::Wait(240),
+        Step::Peer("warped", 6000),
+        Step::Walk(Keys::DOWN, 34, ""),
+        Step::Wait(60),
+        Step::Mark("placed"),
+        Step::Wait(60 * 20),
+        Step::Close,
+    ],
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=step-down (UC11's steady overworld): one step down from the save's spot,
 /// then standing, every frame recorded.
 const STEP_DOWN_STEPS: &[Step] = &[
@@ -781,12 +817,23 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
     out.extend_from_slice(&b.layer);
     // Then each pixel's polygon ID (the ROM tags a neighbouring area's untextured blocks 62).
     out.extend_from_slice(&b.ids);
-    // Then the steady overworld's attached layer (Nds::attached): its shift (two f32, NaN with
-    // none) and its pixels (as wide as the picture).
+    // Then the steady overworld's attached picture (Nds::attached): its shift (two f32, NaN with
+    // none) and its pixels (as wide as the picture: 1 opaque, 2 translucent, else 0).
     let (shift, mask) = emu
         .nds
         .attached(side)
-        .map_or(([f32::NAN; 2], vec![0; wide.len()]), |a| (a.shift, a.mask));
+        .map_or(([f32::NAN; 2], vec![0; wide.len()]), |a| {
+            let mask = a
+                .att
+                .iter()
+                .map(|&c| match c >> 24 {
+                    0 => 0,
+                    255 => 1,
+                    _ => 2,
+                })
+                .collect();
+            (a.shift, mask)
+        });
     for v in shift {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -829,6 +876,8 @@ fn steps() -> &'static [Step] {
         Ok("mom") => MOM_STEPS,
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,
+        Ok("ghost-a") => GHOST_STEPS[0],
+        Ok("ghost-b") => GHOST_STEPS[1],
         Ok("down-past") => DOWN_PAST_STEPS,
         Ok("motion") => MOTION_STEPS,
         Ok("route40") => ROUTE40_STEPS,

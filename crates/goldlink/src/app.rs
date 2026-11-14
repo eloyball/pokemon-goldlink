@@ -134,10 +134,8 @@ pub struct GameApp {
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
     /// shadow), slid back by its own shift, and the 2D drawn over the scene (a text box, a
     /// banner), where it is.
-    attached: Layer,
-    /// What's in front of the player (a windmill's pole, a roof's corner, a person), drawn over
-    /// the player's layer again with the world's shift.
-    front: Layer,
+    /// The steady overworld's two pictures put together round the player (UC12).
+    attached: AttachedView,
     fixed: Layer,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
     /// its Mega symbol cut from there.
@@ -216,8 +214,7 @@ impl GameApp {
             prescale: 1,
             steady_shift: None,
             steady_origin: [0.0; 2],
-            attached: Layer::default(),
-            front: Layer::default(),
+            attached: AttachedView::default(),
             fixed: Layer::default(),
             edge_fill: [[None, None], [None, None]],
             mega: None,
@@ -445,8 +442,8 @@ impl GameApp {
             }
             return;
         };
-        // The top picture before the lighting, with an attached layer: the world under the player
-        // is lit as the player's own pixels are (split_layer).
+        // The top picture before the lighting, with the attached picture: the two pictures put
+        // together are lit as the top picture is (each DS pixel's gain).
         let unlit: Option<Vec<u32>> = attached
             .as_ref()
             .filter(|_| lit && self.steady_shift.is_some())
@@ -458,10 +455,10 @@ impl GameApp {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
         let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
-        // The steady overworld's layers (UC11), taken out of the top picture: what the camera
-        // follows, slid back by its own shift, and the 2D over the scene, not slid.
-        self.attached.shown = false;
-        self.front.shown = false;
+        // The steady overworld's layers (UC11, UC12): the player and the world put together at
+        // the screen's resolution round the player, slid with the picture, and the 2D over the
+        // scene, not slid.
+        self.attached.data = None;
         self.fixed.shown = false;
         if self.steady_shift.is_some() && (!fixed.is_empty() || attached.is_some()) {
             let full = 256 + 2 * side;
@@ -470,35 +467,13 @@ impl GameApp {
                 None => (&mut pixels[..256 * 192], 256),
             };
             let fixed_mask = fit(&fixed, w);
-            if let Some(a) = &attached {
-                let (mask, mut trans) = (fit(&a.mask, w), fit(&a.trans, w));
-                let gain = light_gain(top, unlit.as_deref(), &mask, w);
-                // The player's pixels behind the world (3), lit as their own are.
-                let own = player_gain(top, unlit.as_deref(), &mask);
-                for i in (0..mask.len()).filter(|&i| mask[i] == 3) {
-                    trans[i] = scaled(trans[i], own);
-                }
-                // The world's edges over the player (an outline: the renderer kept them apart),
-                // blended over whatever they cover on screen; the picture there is the world under
-                // the player.
-                let half = a.edge.len() / 2;
-                let (edge, edge_under) = (fit(&a.edge[..half], w), fit(&a.edge[half..], w));
-                let edge = lit_edges(top, &mask, &edge, &edge_under);
-                if mask.iter().any(|&m| m >= 3) {
-                    let img = front_layer(top, &mask, &edge, w, k);
-                    let world = self.steady_shift;
-                    self.front.set(ctx, "front", img, options, w != 256, world);
-                    self.front.origin = self.steady_origin;
-                }
-                let img = split_layer(top, &mask, &fixed_mask, w, k, Some(&trans), Some(gain));
+            if let (Some(a), Some(world)) = (attached, self.steady_shift) {
                 self.attached
-                    .set(ctx, "attached", img, options, w != 256, Some(a.shift));
-                self.attached.origin = a.origin;
+                    .prepare(a, top, unlit.as_deref(), w, world, self.steady_origin);
             }
             if !fixed.is_empty() {
                 let none = vec![0; w * 192];
-                let other = attached.as_ref().map_or(none, |a| fit(&a.mask, w));
-                let img = split_layer(top, &fixed_mask, &other, w, k, None, None);
+                let img = split_layer(top, &fixed_mask, &none, w, k);
                 self.fixed.set(ctx, "fixed", img, options, w != 256, None);
             }
         }
@@ -1007,10 +982,9 @@ impl GameApp {
                         let locked = shift.map(|s| pixel_lock(s, origin, frame, cols, side, ppp));
                         let (r, uv) = slide(frame, rows(1.0), locked, cols, false);
                         p.image(w.id(), r, uv, egui::Color32::WHITE);
+                        let slid = shift.is_some();
                         self.attached
-                            .draw(&p, frame, true, cols, shift.is_some(), side);
-                        self.front
-                            .draw(&p, frame, true, cols, shift.is_some(), side);
+                            .draw(ui.ctx(), &p, frame, true, cols, slid, side);
                         self.fixed
                             .draw(&p, frame, true, cols, shift.is_some(), side);
                     }
@@ -1019,10 +993,9 @@ impl GameApp {
                         let (r, uv) =
                             slide(middle, screen_uvs(self.prescale).0, locked, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE);
+                        let slid = shift.is_some();
                         self.attached
-                            .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
-                        self.front
-                            .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
+                            .draw(ui.ctx(), &p, middle, false, 256.0, slid, 0.0);
                         self.fixed
                             .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
                     }
@@ -1151,9 +1124,8 @@ impl GameApp {
                         let locked = shift.map(|s| pixel_lock(s, origin, top, 256.0, 0.0, ppp));
                         let (slid, uv) = slide(top, top_uv, locked, 256.0, true);
                         p.image(t.id(), slid, uv, egui::Color32::WHITE);
-                        self.attached
-                            .draw(p, top, false, 256.0, shift.is_some(), 0.0);
-                        self.front.draw(p, top, false, 256.0, shift.is_some(), 0.0);
+                        let slid = shift.is_some();
+                        self.attached.draw(ctx, p, top, false, 256.0, slid, 0.0);
                         self.fixed.draw(p, top, false, 256.0, shift.is_some(), 0.0);
                         p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                     }
@@ -1276,6 +1248,8 @@ struct Layer {
     shift: Option<[f32; 2]>,
     /// Where what it's slid for truly is (DS screen columns and rows): see `pixel_lock`.
     origin: [f64; 2],
+    /// Where in the picture it goes (DS pixels: left, top, right, bottom), when not all of it.
+    rect: Option<[f32; 4]>,
 }
 
 impl Layer {
@@ -1324,119 +1298,249 @@ impl Layer {
             .filter(|_| slid)
             .map(|s| pixel_lock(s, self.origin, dst, cols, side, ppp));
         let (r, uv) = slide(dst, full, shift, cols, false);
-        p.image(t.id(), r, uv, egui::Color32::WHITE);
+        match self.rect {
+            // The picture's point (DS pixels) as the whole picture shows it.
+            Some([x0, y0, x1, y1]) => {
+                let at = |x: f32, y: f32| {
+                    egui::pos2(
+                        r.min.x + (x / cols - uv.min.x) / uv.width() * r.width(),
+                        r.min.y + (y / 192.0 - uv.min.y) / uv.height() * r.height(),
+                    )
+                };
+                let to = egui::Rect::from_min_max(at(x0, y0), at(x1, y1));
+                p.image(t.id(), to, full, egui::Color32::WHITE);
+            }
+            None => {
+                p.image(t.id(), r, uv, egui::Color32::WHITE);
+            }
+        }
     }
 }
 
-/// The lighting's gain per channel on the ground around the player (the scene's pixels within
-/// two of their opaque ones, `mask` 1: lit `top` over `unlit`), for the world under them (the
-/// player's own pixels have their own light: the ground under them came out another shade, ghost
-/// pixels at the sprite's edge); none (1) without the lighting. `w` across.
-fn light_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8], w: usize) -> [f32; 3] {
-    let Some(unlit) = unlit else {
-        return [1.0; 3];
-    };
-    let h = mask.len() / w.max(1);
-    let near = |x: usize, y: usize| {
-        (y.saturating_sub(2)..(y + 3).min(h))
-            .any(|yy| (x.saturating_sub(2)..(x + 3).min(w)).any(|xx| mask[yy * w + xx] == 1))
-    };
-    let (mut lit_sum, mut raw_sum) = ([0f32; 3], [0f32; 3]);
-    for y in 0..h {
-        for x in 0..w {
-            let i = y * w + x;
-            if mask[i] != 0 || !near(x, y) {
+/// The steady overworld's two pictures (UC12, `Nds::attached`) put together round the player at
+/// the screen's own pixels: the world where the picture shows it, the attached picture (the
+/// player, their shadow, a mount, a follower) where it truly is (each landed on the screen's
+/// pixels as the picture is: `pixel_lock`), a fraction of a pixel off the world's pixels while it
+/// moves and none at rest. As the DS puts them together in one picture: the nearer shows; the
+/// attached picture's outline where the world beside it is farther; a world's edge over it
+/// blended with it. Lit as the top picture (each DS pixel's gain), transparent where the top
+/// screen doesn't show the 3D as drawn (2D, fades: the picture's own pixels show there).
+#[derive(Default)]
+struct AttachedView {
+    data: Option<AttachedData>,
+    texture: Option<egui::TextureHandle>,
+    /// What the texture was made for: the frame's data, the place, the pixels per point.
+    made: Option<(usize, [f32; 4], f32)>,
+    frames: usize,
+}
+
+struct AttachedData {
+    a: goldlink_core::Attached,
+    /// The lighting's gain per DS pixel (`w` x 192; empty: none).
+    gain: Vec<[f32; 3]>,
+    w: usize,
+    world: [f32; 2],
+    world_origin: [f64; 2],
+    /// Where the attached picture has something (DS pixels: left, top, right, bottom).
+    bbox: [usize; 4],
+}
+
+impl AttachedView {
+    fn prepare(
+        &mut self,
+        a: goldlink_core::Attached,
+        top: &[u32],
+        unlit: Option<&[u32]>,
+        w: usize,
+        world: [f32; 2],
+        world_origin: [f64; 2],
+    ) {
+        let cols = a.plain.len() / 192;
+        if cols < w {
+            return;
+        }
+        let off = (cols - w) / 2;
+        let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
+        for y in 0..192 {
+            for x in 0..w {
+                if a.att[y * cols + x + off] >> 24 != 0 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+                }
+            }
+        }
+        if x0 == usize::MAX {
+            return;
+        }
+        let ch = |p: u32, sh: u32| ((p >> sh) & 255) as f32;
+        let gain = match unlit {
+            Some(u) => (0..w * 192)
+                .map(|k| [16, 8, 0].map(|sh| (ch(top[k], sh) + 1.0) / (ch(u[k], sh) + 1.0)))
+                .collect(),
+            None => Vec::new(),
+        };
+        self.frames += 1;
+        self.data = Some(AttachedData {
+            a,
+            gain,
+            w,
+            world,
+            world_origin,
+            bbox: [x0, y0, x1, y1],
+        });
+    }
+
+    /// Over the picture drawn into `dst` (`cols` DS pixels across, the screen's column 0 at
+    /// `side`), slid (`slid`) as the picture is: unslid the picture already shows the two as the
+    /// DS puts them together.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &mut self,
+        ctx: &egui::Context,
+        p: &egui::Painter,
+        dst: egui::Rect,
+        wide: bool,
+        cols: f32,
+        slid: bool,
+        side: f64,
+    ) {
+        let Some(d) = self.data.as_ref().filter(|d| slid && (d.w != 256) == wide) else {
+            return;
+        };
+        let ppp = ctx.pixels_per_point();
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        let wl = pixel_lock(d.world, d.world_origin, dst, cols, side, ppp);
+        // At rest (the same shift as the world's) on the world's pixels exactly: both land on the
+        // screen's pixels each by its own reference, and at a scale that isn't whole they came out
+        // a fraction of a screen pixel apart (a line of the sprite a row late). Moving, by its own:
+        // it stays put on screen while the world slides (by the world's it shook by a screen pixel).
+        let al = if d.a.shift == d.world {
+            wl
+        } else {
+            pixel_lock(d.a.shift, d.a.origin, dst, cols, side, ppp)
+        };
+        let (_, uw) = slide(dst, full, Some(wl), cols, false);
+        let (_, ua) = slide(dst, full, Some(al), cols, false);
+        // The attached picture's point less the world's at the same place on screen.
+        let off = [(uw.min.x - ua.min.x) * cols, (uw.min.y - ua.min.y) * 192.0];
+        let m = 2.0 + off[0].abs().max(off[1].abs()).ceil();
+        let [bx0, by0, bx1, by1] = d.bbox.map(|v| v as f32);
+        let (rx0, ry0) = ((bx0 - m).max(0.0), (by0 - m).max(0.0));
+        let (rx1, ry1) = ((bx1 + m).min(d.w as f32), (by1 + m).min(192.0));
+        // The picture's point (DS pixels) on screen (points), and back.
+        let sx = |x: f32| dst.min.x + (x / cols - uw.min.x) / uw.width() * dst.width();
+        let sy = |y: f32| dst.min.y + (y / 192.0 - uw.min.y) / uw.height() * dst.height();
+        let wx = |s: f32| (uw.min.x + (s - dst.min.x) / dst.width() * uw.width()) * cols;
+        let wy = |s: f32| (uw.min.y + (s - dst.min.y) / dst.height() * uw.height()) * 192.0;
+        let (px0, py0) = (
+            (sx(rx0) * ppp).floor() as i64,
+            (sy(ry0) * ppp).floor() as i64,
+        );
+        let (px1, py1) = ((sx(rx1) * ppp).ceil() as i64, (sy(ry1) * ppp).ceil() as i64);
+        if px1 <= px0 || py1 <= py0 {
+            return;
+        }
+        let (pw, ph) = ((px1 - px0) as usize, (py1 - py0) as usize);
+        let key = (self.frames, [px0 as f32, py0 as f32, off[0], off[1]], ppp);
+        if self.made != Some(key) || self.texture.is_none() {
+            let img = d.image(
+                pw,
+                ph,
+                |i| wx((px0 as f32 + i as f32 + 0.5) / ppp),
+                |j| wy((py0 as f32 + j as f32 + 0.5) / ppp),
+                off,
+            );
+            match &mut self.texture {
+                Some(t) if t.size() == img.size => t.set(img, egui::TextureOptions::NEAREST),
+                _ => {
+                    self.texture =
+                        Some(ctx.load_texture("attached", img, egui::TextureOptions::NEAREST))
+                }
+            }
+            self.made = Some(key);
+        }
+        if let Some(t) = &self.texture {
+            let to = egui::Rect::from_min_max(
+                egui::pos2(px0 as f32 / ppp, py0 as f32 / ppp),
+                egui::pos2(px1 as f32 / ppp, py1 as f32 / ppp),
+            );
+            p.image(t.id(), to, full, egui::Color32::WHITE);
+        }
+    }
+}
+
+impl AttachedData {
+    /// `pw` x `ph` screen pixels, the world's point (DS pixels) of each column and row's centre
+    /// `xs(i)`, `ys(j)`; the attached picture's is that less `off`. The two put together by the
+    /// renderer's own `Composite` (patch 0026), as the DS would draw them in one picture.
+    fn image(
+        &self,
+        pw: usize,
+        ph: usize,
+        xs: impl Fn(usize) -> f32,
+        ys: impl Fn(usize) -> f32,
+        off: [f32; 2],
+    ) -> egui::ColorImage {
+        let a = &self.a;
+        let w = self.w;
+        let cols = a.plain.len() / 192;
+        let o = (cols - w) / 2;
+        let cx: Vec<f32> = (0..pw).map(&xs).collect();
+        // Each pair of DS pixels (the world's, the attached picture's) once: a DS pixel spans
+        // several screen pixels, all with the same few pairs.
+        let mut pairs: std::collections::HashMap<[i32; 4], usize> =
+            std::collections::HashMap::new();
+        let (mut world, mut att, mut at) = (Vec::new(), Vec::new(), Vec::new());
+        for jy in 0..ph {
+            let yf = ys(jy);
+            if yf < 0.0 || yf >= 192.0 {
                 continue;
             }
-            for (c, sh) in [16, 8, 0].into_iter().enumerate() {
-                lit_sum[c] += ((top[i] >> sh) & 255) as f32;
-                raw_sum[c] += ((unlit[i] >> sh) & 255) as f32;
+            for (ix, &xf) in cx.iter().enumerate() {
+                if xf < 0.0 || xf as usize >= w {
+                    continue;
+                }
+                let (wx, wy) = (xf as usize, yf as usize);
+                if a.plain[wy * cols + wx + o] == 0 {
+                    continue;
+                }
+                let key = [
+                    (wx + o) as i32,
+                    wy as i32,
+                    (xf - off[0]).floor() as i32 + o as i32,
+                    (yf - off[1]).floor() as i32,
+                ];
+                let next = pairs.len();
+                let n = *pairs.entry(key).or_insert(next);
+                if n == next {
+                    world.extend([key[0], key[1]]);
+                    att.extend([key[2], key[3]]);
+                }
+                at.push((jy * pw + ix, wy * w + wx, n));
             }
         }
-    }
-    let mut gain = [1f32; 3];
-    for c in 0..3 {
-        if raw_sum[c] > 255.0 {
-            gain[c] = lit_sum[c] / raw_sum[c];
+        let mut colours = Vec::new();
+        a.pictures
+            .composite(a.side, &world, &att, off, &mut colours);
+        let mut out = vec![egui::Color32::TRANSPARENT; pw * ph];
+        for &(pix, k, n) in &at {
+            let c = colours[n];
+            let c = match self.gain.get(k) {
+                Some(g) => scaled(c, *g),
+                None => c,
+            };
+            out[pix] = egui::Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8);
+        }
+        egui::ColorImage {
+            size: [pw, ph],
+            pixels: out,
         }
     }
-    gain
 }
 
 /// `c` (0x..RRGGBB) times a gain per channel.
 fn scaled(c: u32, gain: [f32; 3]) -> u32 {
     let ch = |sh: u32, g: f32| ((((c >> sh) & 255) as f32 * g).min(255.0) as u32) << sh;
     ch(16, gain[0]) | ch(8, gain[1]) | ch(0, gain[2])
-}
-
-/// The lighting's gain per channel on the player's own opaque pixels (`mask` 1: lit `top` over
-/// `unlit`), for their pixels behind the world; none (1) without the lighting.
-fn player_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8]) -> [f32; 3] {
-    let Some(unlit) = unlit else {
-        return [1.0; 3];
-    };
-    let (mut lit_sum, mut raw_sum) = ([0f32; 3], [0f32; 3]);
-    for i in (0..mask.len()).filter(|&i| mask[i] == 1) {
-        for (c, sh) in [16, 8, 0].into_iter().enumerate() {
-            lit_sum[c] += ((top[i] >> sh) & 255) as f32;
-            raw_sum[c] += ((unlit[i] >> sh) & 255) as f32;
-        }
-    }
-    let mut gain = [1f32; 3];
-    for c in 0..3 {
-        if raw_sum[c] > 255.0 {
-            gain[c] = lit_sum[c] / raw_sum[c];
-        }
-    }
-    gain
-}
-
-/// What's in front of the player (`mask` 3 and 4: the world over their pixels, and the same
-/// surface just past it), `top`'s pixels opaque, the rest transparent, `w` across, each `k`
-/// times as large: drawn over the player's layer with the world's shift, so it covers them
-/// exactly where the rest of it is (the two slide apart by a fraction: slivers of the player
-/// showed past its edges, the user's play test).
-/// `edge` (0xAARRGGBB, its own colour and coverage: `lit_edges`) where it has one: over the
-/// player's layer it blends with them where they are on screen, not where the DS drew them.
-fn front_layer(top: &[u32], mask: &[u8], edge: &[u32], w: usize, k: usize) -> egui::ColorImage {
-    let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
-    let layer = (0..w * 192)
-        .map(|i| match (mask[i], edge[i] >> 24) {
-            (3, a) if a > 0 => {
-                let e = edge[i];
-                egui::Color32::from_rgba_unmultiplied(
-                    (e >> 16) as u8,
-                    (e >> 8) as u8,
-                    e as u8,
-                    a as u8,
-                )
-            }
-            (3 | 4, _) => colour(top[i]),
-            _ => egui::Color32::TRANSPARENT,
-        })
-        .collect();
-    enlarged_layer(layer, w, 192, k)
-}
-
-/// The world's edges over the player (`mask` 3 with an `edge`, 0xAARRGGBB: colour and coverage),
-/// as shown: the picture's pixel there (`top`) is the edge blended with the world under the player
-/// (`under`), then lit (and whatever else the screen did to it); each channel's ratio of the two
-/// lights the edge and the world under alike. `top` there becomes the world under the player; the
-/// edges (alpha their coverage) are returned, else 0.
-fn lit_edges(top: &mut [u32], mask: &[u8], edge: &[u32], under: &[u32]) -> Vec<u32> {
-    let mut out = vec![0u32; edge.len()];
-    for i in (0..edge.len()).filter(|&i| mask[i] == 3 && edge[i] >> 24 != 0) {
-        let (e, u, c) = (edge[i], under[i], (edge[i] >> 24) as f32 / 255.0);
-        let mut gain = [1f32; 3];
-        for (g, sh) in gain.iter_mut().zip([16, 8, 0]) {
-            let ch = |p: u32| ((p >> sh) & 255) as f32;
-            let blended = ch(e) * c + ch(u) * (1.0 - c);
-            *g = (ch(top[i]) + 1.0) / (blended + 1.0);
-        }
-        top[i] = scaled(u, gain);
-        out[i] = (e & 0xFF00_0000) | scaled(e, gain);
-    }
-    out
 }
 
 /// A layer of the steady overworld's picture (UC11), `w` across, 192 rows, each pixel `k` times as
@@ -1447,39 +1551,14 @@ fn lit_edges(top: &mut [u32], mask: &[u8], edge: &[u32], under: &[u32]) -> Vec<u
 /// nearest scene pixel (neither this layer's 1s nor `other`), filled in from the edge: where the
 /// shifts differ (about half a pixel at most) the world shows there, never this layer's pixels a
 /// second time at another shift.
-fn split_layer(
-    top: &mut [u32],
-    mask: &[u8],
-    other: &[u8],
-    w: usize,
-    k: usize,
-    trans: Option<&[u32]>,
-    under: Option<[f32; 3]>,
-) -> egui::ColorImage {
+fn split_layer(top: &mut [u32], mask: &[u8], other: &[u8], w: usize, k: usize) -> egui::ColorImage {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     let h = 192;
     let mut layer = vec![egui::Color32::TRANSPARENT; w * h];
     for (i, px) in layer.iter_mut().enumerate() {
-        match (mask[i], trans) {
-            (1, _) => *px = colour(top[i]),
-            (3, Some(t)) => *px = colour(t[i]),
-            (2, Some(t)) => {
-                let c = t[i];
-                *px = egui::Color32::from_rgba_unmultiplied(
-                    (c >> 16) as u8,
-                    (c >> 8) as u8,
-                    c as u8,
-                    (c >> 24) as u8,
-                );
-            }
-            _ => {}
+        if mask[i] == 1 {
+            *px = colour(top[i]);
         }
-    }
-    if let (Some(gain), Some(t)) = (under, trans) {
-        for i in (0..w * h).filter(|&i| mask[i] == 1) {
-            top[i] = scaled(t[i], gain);
-        }
-        return enlarged_layer(layer, w, h, k);
     }
     // Breadth first from the scene's pixels beside the layer.
     let mut done: Vec<bool> = (0..w * h).map(|i| mask[i] != 1).collect();

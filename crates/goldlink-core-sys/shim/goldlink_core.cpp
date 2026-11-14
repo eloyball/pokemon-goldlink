@@ -222,8 +222,7 @@ void gl_core_steady_origin(GlCore *core, double *xy)
     xy[1] = core->nds->GPU.GPU3D.ShownOrthoOrigin[1];
 }
 
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint32_t *edge, float *xy,
-                     double *at)
+int gl_core_attached(GlCore *core, int side, uint32_t *att, uint8_t *plain, float *xy, double *at)
 {
     side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
     const int width = 256 + 2 * side;
@@ -241,104 +240,99 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint
     static_assert(max == melonDS::GPU3D::MaxWideSide, "the 2D and 3D wide columns line up");
     const int from = max - side;
     int n = 0;
-    auto ch = [](uint32_t v) { v &= 0x3F; return (v << 2) | (v >> 4); };
     for (int y = 0; y < 192; y++)
     {
-        const uint32_t *attr = soft.GetShownAttrLine(y) + from;
-        const uint32_t *shadow = soft.GetShownAttachTransLine(y) + from;
-        const uint32_t *under = soft.GetShownUnderLine(y) + from;
-        const uint32_t *behind = soft.GetShownBehindLine(y) + from;
-        const uint32_t *front = soft.GetShownFrontEdgeLine(y) + from;
-        uint8_t *row = out + y * width;
-        uint32_t *trow = trans + y * width;
-        uint32_t *erow = edge + y * width, *urow = edge + (192 + y) * width;
+        const uint32_t *a = soft.GetShownAttachedLine(y) + from;
+        // No screen-wide fade on this line (master brightness; the colour effect's brightness
+        // with the 3D layer as its target): the 3D as drawn is what shows.
+        const uint16_t mb = soft2d.LineMasterBright[y], bc = soft2d.LineBlendCnt[y];
+        const bool master = ((mb >> 14) & 3) != 0 && ((mb >> 14) & 3) != 3 && (mb & 0x1F) != 0;
+        const bool bright = ((bc >> 6) & 3) >= 2 && (bc & 1) && soft2d.LineEVY[y] != 0;
         for (int x = 0; x < width; x++)
         {
-            row[x] = 0;
-            trow[x] = 0;
-            erow[x] = 0;
-            urow[x] = 0;
-            // The 3D scene on top (not under 2D).
-            if (soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
-                continue;
-            if (attr[x] & 0x40000000u)
-            {
-                // An attached object's opaque pixel, and the world under it.
-                const uint32_t c = under[x];
-                row[x] = 1;
-                trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
-            }
-            else if (behind[x] != 0)
-            {
-                // Something of the world in front of an attached object: its pixel behind it.
-                const uint32_t c = behind[x];
-                row[x] = 3;
-                trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
-                if (const uint32_t e = front[x])
-                {
-                    // An edge: its coverage (0..31) as alpha, and the world under them.
-                    const uint32_t a = (((e >> 24) & 0x1F) + 1) * 255 / 32, u = under[x];
-                    erow[x] = (a << 24) | (ch(e) << 16) | (ch(e >> 8) << 8) | ch(e >> 16);
-                    urow[x] = 0xFF000000u | (ch(u) << 16) | (ch(u >> 8) << 8) | ch(u >> 16);
-                }
-            }
-            else if (shadow[x] != 0)
-            {
-                // Its translucent pixel, kept aside by the renderer: 0xAARRGGBB.
-                const uint32_t c = shadow[x], a = ((c >> 24) & 0x1F) * 255 / 31;
-                row[x] = 2;
-                trow[x] = (a << 24) | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
-            }
-            n += row[x] != 0;
-        }
-    }
-    // What's in front of them near them (4): the scene's pixels within two of an attached
-    // object's (shown, 1, or behind, 3) that are nearer than it, as the DS's own depth test would
-    // find had the object stood there (the layers slide apart by up to a pixel); and of its
-    // shadow (2), nearer than the ground under it by more than the ground's own slope over a few
-    // rows (a pole's foot by the shadow, not the ground beside it). The window draws
-    // 3 and 4 over the player again with the world's shift: at the screen's resolution, whatever
-    // is in front of the player covers them where it truly is.
-    std::vector<uint32_t> own(width * 192, 0); // the attached object's depth, else 0 (none nearer)
-    for (int y = 0; y < 192; y++)
-    {
-        const uint32_t *depth = soft.GetShownDepthLine(y) + from;
-        const uint32_t *bdepth = soft.GetShownBehindDepthLine(y) + from;
-        for (int x = 0; x < width; x++)
-        {
-            const uint8_t m = out[y * width + x];
-            if (m == 1)
-                own[y * width + x] = depth[x] & 0xFFFFFF;
-            else if (m == 3)
-                own[y * width + x] = bdepth[x] & 0xFFFFFF;
-            else if (m == 2)
-                own[y * width + x] = (depth[x] & 0xFFFFFF) - std::min<uint32_t>(depth[x] & 0xFFFFFF, 0x10000);
-        }
-    }
-    for (int y = 0; y < 192; y++)
-    {
-        const uint32_t *depth = soft.GetShownDepthLine(y) + from;
-        for (int x = 0; x < width; x++)
-        {
-            if (out[y * width + x] != 0 || soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
-                continue;
-            const uint32_t d = depth[x] & 0xFFFFFF;
-            bool in_front = false;
-            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !in_front; yy++)
-                for (int xx = std::max(0, x - 2); xx <= std::min(width - 1, x + 2); xx++)
-                    if (d < own[yy * width + xx])
-                    {
-                        in_front = true;
-                        break;
-                    }
-            if (in_front)
-            {
-                out[y * width + x] = 4;
-                n++;
-            }
+            const int i = y * width + x;
+            att[i] = a[x];
+            plain[i] = !master && !bright && soft2d.Layer3D[y][from + x] == 1 && !soft2d.Fixed2D[y][from + x];
+            n += (a[x] >> 24) == 0xFF;
         }
     }
     return n;
+}
+
+int gl_pictures_size(void)
+{
+    return melonDS::SoftRenderer::ShownPictureSize;
+}
+
+int gl_core_copy_pictures(GlCore *core, GlPictures *o)
+{
+    const auto &gpu3d = core->nds->GPU.GPU3D;
+    if (!gpu3d.ShownOrtho || !gpu3d.ShownAttach)
+        return 0;
+    auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
+    const auto &p = soft.GetShownPictures();
+    const size_t n = melonDS::SoftRenderer::ShownPictureSize;
+    auto copy = [n](uint32_t *to, const uint32_t *from) { std::memcpy(to, from, n * 4); };
+    copy(o->world_top, p.WorldTop);
+    copy(o->world_top_depth, p.WorldTopDepth);
+    copy(o->world_top_attr, p.WorldTopAttr);
+    copy(o->world_bottom, p.WorldBottom);
+    copy(o->world_bottom_depth, p.WorldBottomDepth);
+    copy(o->world_opaque, p.WorldOpaque);
+    copy(o->att_top, p.AttTop);
+    copy(o->att_top_depth, p.AttTopDepth);
+    copy(o->att_trans_depth, p.AttTransDepth);
+    copy(o->att_attr, p.AttAttr);
+    copy(o->att_bottom, p.AttBottom);
+    std::memcpy(o->att_k, p.AttK, n * 4);
+    std::memcpy(o->att_b, p.AttB, n * 12);
+    copy(o->late_early, p.LateEarly);
+    copy(o->late_depth, p.LateDepth);
+    std::memcpy(o->late_k, p.LateK, n * 4);
+    std::memcpy(o->late_b, p.LateB, n * 12);
+    o->stride = p.Stride;
+    o->disp_cnt = p.DispCnt;
+    std::memcpy(o->edge_table, p.EdgeTable, sizeof(o->edge_table));
+    o->left = p.Left;
+    o->right = p.Right;
+    return 1;
+}
+
+void gl_composite(const GlPictures *o, int side, int n, const int32_t *world, const int32_t *att, float dx, float dy,
+                  uint32_t *out)
+{
+    side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
+    melonDS::SoftRenderer::Pictures p {};
+    p.WorldTop = o->world_top;
+    p.WorldTopDepth = o->world_top_depth;
+    p.WorldTopAttr = o->world_top_attr;
+    p.WorldBottom = o->world_bottom;
+    p.WorldBottomDepth = o->world_bottom_depth;
+    p.WorldOpaque = o->world_opaque;
+    p.AttTop = o->att_top;
+    p.AttTopDepth = o->att_top_depth;
+    p.AttTransDepth = o->att_trans_depth;
+    p.AttAttr = o->att_attr;
+    p.AttBottom = o->att_bottom;
+    p.AttK = o->att_k;
+    p.AttB = o->att_b;
+    p.LateEarly = o->late_early;
+    p.LateDepth = o->late_depth;
+    p.LateK = o->late_k;
+    p.LateB = o->late_b;
+    p.Stride = o->stride;
+    p.DispCnt = o->disp_cnt;
+    std::memcpy(p.EdgeTable, o->edge_table, sizeof(p.EdgeTable));
+    p.Left = o->left;
+    p.Right = o->right;
+    const int from = melonDS::GPU3D::MaxWideSide - side;
+    auto ch = [](uint32_t v) { v &= 0x3F; return (v << 2) | (v >> 4); };
+    for (int i = 0; i < n; i++)
+    {
+        const uint32_t c = melonDS::SoftRenderer::Composite(p, world[2 * i] + from, world[2 * i + 1], att[2 * i] + from,
+                                                           att[2 * i + 1], dx, dy);
+        out[i] = (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+    }
 }
 
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)

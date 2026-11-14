@@ -1,0 +1,734 @@
+GoldLink's change to melonDS (UC12): the steady overworld's attached objects (the player, their
+shadow, a mount, a follower: GPU3D marks their polygons, patch 0022) in a picture of their own,
+put together with the world's by one function, as the DS would draw the two in one picture.
+
+UC11 drew them on the world's picture at their own targets and the window slid them apart from
+it by a fraction of a pixel; everything the DS works out between them and the world (depth,
+outlines, edges blended with what's behind, shadows) was then baked into one picture, and taking
+it apart left gaps, ghosts and outlines (the user's play tests, 2026-11-14).
+
+- GPU3D_Soft: two pictures, each with its own colour, depth, attributes, shadow stencil and
+  translucent pixels: the world's (Main*) and the attached objects' (Att*, nothing in it). Drawn
+  line by line together. With attached objects drawn, neither picture's final pass marks edges or
+  blends them (anti-aliasing): Composite does, on the two put together.
+- Each attached pixel keeps what it does to what's behind it, k * behind + b (AttK, AttB): opaque,
+  nothing, or its shadow, an anti-aliased edge in between, with the DS's own blending as if the
+  world were behind it (with nothing behind it in this picture the DS writes it unblended). Two of
+  its own translucent pixels keep the stronger, and over the world's own translucent pixels it
+  takes the darker of the two (WorldOpaque: the world before them): overlapping shadows read as
+  one, the user's choice. Its translucent pixels keep their own depth (AttTransDepth). No fog in
+  the attached picture (its empty pixels would fog).
+- The world's translucent polygons the game draws after the attached objects' go over them (the
+  DS blends in drawing order): per pixel the world before them and what they do (LateEarly,
+  LateK, LateB) with the nearest one's depth.
+- Composite(pictures, the world's pixel, the attached picture's, the offset between them): the
+  nearer on top, its edge marked where a neighbour (in its own picture's pixels; whichever
+  picture is on top there) has another polygon ID and is farther, its edge blended with what's
+  behind it there (anti-aliasing). Combo: the two put together at the DS's pixels (the attached
+  picture is drawn on the world's): what the 2D engine shows (GetLine, GetWideLine). The
+  pictures as shown (GetShownPictures, GetShownAttachedLine) for the window, which calls
+  Composite at the screen's resolution with the attached picture where it truly is.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D_Soft.h	2026-11-14 15:45:47.957974374 -0500
++++ b/src/GPU3D_Soft.h	2026-11-14 16:49:27.617003805 -0500
+@@ -43,7 +43,7 @@
+     // GoldLink: the whole wide line (RenderWidth pixels; the screen starts MaxWideSide in).
+     u32* GetWideLine(int line);
+     // GoldLink (UC11): the wide line's depth (24-bit Z or W, as the polygon chose), same layout.
+-    const u32* GetWideDepthLine(int line) const { return &DepthBuffer[(line * ScanlineWidth) + FirstPixelOffset]; }
++    const u32* GetWideDepthLine(int line) const { return &MainDepth[(line * ScanlineWidth) + FirstPixelOffset]; }
+     // GoldLink (UC11): the depth of the picture on screen. The next frame's 3D is rendered at
+     // line 215, before the frame ends, so DepthBuffer is then a frame ahead of the screen;
+     // RenderFrame keeps the shown one first.
+@@ -51,6 +51,35 @@
+     // GoldLink (UC11): the attributes of the picture on screen (the attribute buffer's layout below:
+     // the opaque polygon ID in bits 24-29), kept with the depth.
+     const u32* GetShownAttrLine(int line) const { return &ShownAttr[line * ScanlineWidth]; }
++    // GoldLink (UC12): the two pictures (see MainColor), what Composite reads: the colour
++    // buffer's formats, at pixel (x, y) of the wide picture [y * Stride + x] (x 0..RenderWidth-1,
++    // y 0..191), the top pixel and the one behind it (anti-aliasing blends the two).
++    struct Pictures
++    {
++        const u32 *WorldTop, *WorldTopDepth, *WorldTopAttr, *WorldBottom, *WorldBottomDepth;
++        const u32 *WorldOpaque; // under the world's translucent pixels (attr bit 22): before them
++        const u32 *AttTop, *AttTopDepth, *AttTransDepth, *AttAttr, *AttBottom;
++        const float *AttK, *AttB; // k * behind + b: AttB three a pixel
++        const u32 *LateEarly, *LateDepth;
++        const float *LateK, *LateB;
++        int Stride;
++        u32 DispCnt;
++        u16 EdgeTable[8];
++        int Left, Right; // the picture's columns
++    };
++    // The two pictures as shown (the frame on screen's).
++    const Pictures& GetShownPictures() const { return Shown; }
++    // The colour at a place of the two put together (6 bits a channel, ColorBuffer's format, alpha
++    // 31): the world's pixel (wx, wy); the attached picture's (ax, ay), none when outside it;
++    // (dx, dy) the world's point less the attached picture's at the same place on screen. As
++    // the DS draws the two in one picture: the nearer on top, its edge marked where a neighbour
++    // (whichever picture's is on top there) has another polygon ID and is farther, its edge
++    // blended with what's behind it (anti-aliasing), the world's translucent pixels drawn after
++    // the attached objects over them.
++    static u32 Composite(const Pictures& p, int wx, int wy, int ax, int ay, float dx, float dy);
++    static constexpr int ShownPictureSize = (256 + 2 * GPU3D::MaxWideSide + 2) * 192; // each shown array
++    // The attached picture as shown, 0xAARRGGBB with 8 bits each (alpha 0: nothing there).
++    const u32* GetShownAttachedLine(int line) const { return &ShownAtt[line * ScanlineWidth]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+     void EnableRenderThread();
+@@ -449,6 +478,7 @@
+     };
+ 
+     RendererPolygon PolygonList[2048];
++    RendererPolygon AttPolygonList[2048]; // GoldLink (UC12): the attached objects'
+     void TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s, s16 t, u16* color, u8* alpha) const;
+     u32 RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8 vg, u8 vb, s16 s, s16 t) const;
+     void PlotTranslucentPixel(const GPU3D& gpu3d, u32 pixeladdr, u32 color, u32 z, u32 polyattr, u32 shadow);
+@@ -457,9 +487,9 @@
+     void SetupPolygon(RendererPolygon* rp, Polygon* polygon) const;
+     void RenderShadowMaskScanline(const GPU3D& gpu3d, RendererPolygon* rp, s32 y);
+     void RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s32 y);
+-    void RenderScanline(const GPU& gpu, s32 y, int npolys);
++    void RenderScanline(const GPU& gpu, s32 y, RendererPolygon* list, int npolys);
+     u32 CalculateFogDensity(const GPU3D& gpu3d, u32 pixeladdr) const;
+-    void ScanlineFinalPass(const GPU3D& gpu3d, s32 y);
++    void ScanlineFinalPass(const GPU3D& gpu3d, s32 y, bool attached);
+     void ClearBuffers(const GPU& gpu);
+     void RenderPolygons(const GPU& gpu, bool threaded, Polygon** polygons, int npolys);
+ 
+@@ -479,11 +509,65 @@
+     static constexpr int BufferSize = ScanlineWidth * NumScanlines;
+     static constexpr int FirstPixelOffset = ScanlineWidth + 1;
+ 
+-    u32 ColorBuffer[BufferSize * 2];
+-    u32 DepthBuffer[BufferSize * 2];
++    // GoldLink (UC12): two pictures. The world's (Main*) and, in the steady overworld, the
++    // attached objects' (Att*: the player, their shadow, a mount, a follower: GPU3D marks their
++    // polygons, Polygon::Attached), each with its own depth, attributes, shadow stencil and final
++    // pass, never mixed: the window puts them together at the screen's resolution, the attached
++    // picture where it truly is (a fraction of a pixel off the world's while it moves). One
++    // picture had them mixed by the DS (depth, outlines, edges blended with what's behind,
++    // shadows) at whole pixels, and once the player's layer slid apart from the world nothing
++    // could take them apart cleanly (the user's play tests, 2026-11-14). ColorBuffer,
++    // DepthBuffer, AttrBuffer and StencilBuffer point at the picture being drawn. Combo is the
++    // two put together at the DS's pixels, as the DS would (the attached picture is drawn on the
++    // world's pixels): what the 2D engine shows.
++    u32 MainColor[BufferSize * 2], MainDepth[BufferSize * 2], MainAttr[BufferSize * 2];
++    u32 AttColor[BufferSize * 2], AttDepth[BufferSize * 2], AttAttr[BufferSize * 2];
++    u32* ColorBuffer = MainColor;
++    u32* DepthBuffer = MainDepth;
++    u32* AttrBuffer = MainAttr;
++    // GoldLink (UC12): the nearest translucent pixel's depth in the attached picture (the DS
++    // keeps none unless the polygon asks), and the fragment's depth being plotted.
++    u32 AttTransDepth[BufferSize] {};
++    u32 FragmentZ = 0;
++    // What the attached picture does to what's behind it, per pixel: k * behind + b (b in the
++    // colour buffer's 6-bit units, a channel each). Opaque: k 0; nothing: k 1, b 0; its shadow,
++    // a stack of them, an anti-aliased edge: in between, as the DS blends them with the world
++    // (with nothing behind them in this picture the DS wrote them unblended).
++    float AttK[BufferSize] {};
++    float AttB[BufferSize * 3] {};
++    void AttOpaque(u32 p, u32 color) noexcept;
++    // GoldLink (UC12): the world's translucent polygons the game draws after the attached
++    // objects' go over them (the DS blends in drawing order: the follower's shadow over the
++    // player's). Per pixel, the world before those (LateEarly), what they do to what's behind
++    // them (LateK, LateB, as AttK, AttB) and the nearest one's depth; LateK 1: none.
++    u32 LateEarly[BufferSize] {};
++    // GoldLink (UC12): the world's pixel before its first translucent pixel over it.
++    u32 WorldOpaque[BufferSize] {};
++    float LateK[BufferSize] {};
++    float LateB[BufferSize * 3] {};
++    u32 LateDepth[BufferSize] {};
++    u8 WorldLate[2048] {};
++    bool CurLate = false;
++    u32 Combo[ScanlineWidth * 192] {};
++    bool AnyAttached = false;
+     u32 ShownDepth[ScanlineWidth * 192] {};
+     u32 ShownAttr[ScanlineWidth * 192] {};
+-    u32 AttrBuffer[BufferSize * 2];
++    static constexpr int ShownSize = ScanlineWidth * 192;
++    u32 ShownWorldTop[ShownSize] {}, ShownWorldBottom[ShownSize] {}, ShownWorldBottomDepth[ShownSize] {};
++    u32 ShownWorldOpaque[ShownSize] {};
++    u32 ShownAttTop[ShownSize] {}, ShownAttTopDepth[ShownSize] {}, ShownAttTransDepth[ShownSize] {};
++    u32 ShownAttAttr[ShownSize] {}, ShownAttBottom[ShownSize] {};
++    float ShownAttK[ShownSize] {}, ShownAttB[ShownSize * 3] {};
++    u32 ShownLateEarly[ShownSize] {}, ShownLateDepth[ShownSize] {};
++    float ShownLateK[ShownSize] {}, ShownLateB[ShownSize * 3] {};
++    u32 ShownAtt[ShownSize] {};
++    Pictures Shown {};
++    Pictures Live(const GPU3D& gpu3d) const noexcept;
++    Pictures Rendered {}; // the last render's parameters (DispCnt, EdgeTable, Left, Right)
++    void UseWorld() noexcept;
++    void UseAttached() noexcept;
++    void ClearPicture(const GPU& gpu);
++    void ComboLine(const GPU3D& gpu3d, s32 y);
+ 
+     // attribute buffer:
+     // bit0-3: edge flags (left/right/top/bottom)
+@@ -494,8 +578,10 @@
+     // bit22: translucent flag
+     // bit24-29: polygon ID for opaque pixels
+ 
+-    u8 StencilBuffer[RenderWidth*2];
++    u8 MainStencil[RenderWidth*2], AttStencil[RenderWidth*2];
++    u8* StencilBuffer = MainStencil;
+     bool PrevIsShadowMask;
++    bool MainPrevShadowMask = false, AttPrevShadowMask = false; // GoldLink (UC12)
+ 
+     bool Enabled;
+ 
+--- a/src/GPU3D_Soft.cpp	2026-11-14 15:45:47.959695221 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 16:54:19.754860776 -0500
+@@ -19,6 +19,7 @@
+ #include "GPU3D_Soft.h"
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <stdio.h>
+ #include <string.h>
+ #include "NDS.h"
+@@ -589,6 +590,24 @@
+     if (!(dstattr & (1<<15)))
+         attr &= ~(1<<15);
+ 
++    const u32 src = color; // GoldLink (UC12)
++    if (ColorBuffer == MainColor && pixeladdr < BufferSize && !(dstattr & (1 << 22)))
++        WorldOpaque[pixeladdr] = ColorBuffer[pixeladdr];
++    if (CurLate && ColorBuffer == MainColor && pixeladdr < BufferSize)
++    {
++        // A world's translucent pixel drawn after the attached objects (see LateEarly).
++        if (LateK[pixeladdr] >= 1.0f && LateB[pixeladdr * 3] == 0 && LateB[pixeladdr * 3 + 1] == 0
++            && LateB[pixeladdr * 3 + 2] == 0)
++            LateEarly[pixeladdr] = ColorBuffer[pixeladdr];
++        const u32 a = (src >> 24) & 0x1F;
++        const bool blend = gpu3d.RenderDispCnt & (1 << 3);
++        const float k = blend ? (31 - a) / 32.0f : 0.0f, w = blend ? (a + 1) / 32.0f : 1.0f;
++        LateK[pixeladdr] *= k;
++        for (int c = 0; c < 3; c++)
++            LateB[pixeladdr * 3 + c] = LateB[pixeladdr * 3 + c] * k + ((src >> (8 * c)) & 0x3F) * w;
++        if (FragmentZ < LateDepth[pixeladdr])
++            LateDepth[pixeladdr] = FragmentZ;
++    }
+     color = AlphaBlend(gpu3d, color, ColorBuffer[pixeladdr], color>>24);
+ 
+     if (z != -1)
+@@ -596,6 +615,43 @@
+ 
+     ColorBuffer[pixeladdr] = color;
+     AttrBuffer[pixeladdr] = attr;
++    // GoldLink (UC12): in the attached picture, a translucent pixel's own depth, though the DS
++    // keeps none (its shadow): the window compares it with the world's.
++    if (ColorBuffer == AttColor && pixeladdr < BufferSize)
++    {
++        if (FragmentZ < AttTransDepth[pixeladdr])
++            AttTransDepth[pixeladdr] = FragmentZ;
++        // Over whatever is behind it, as AlphaBlend over the world: (src * (a + 1) + behind *
++        // (31 - a)) / 32 with blending on, else src.
++        const u32 a = (src >> 24) & 0x1F;
++        const bool blend = gpu3d.RenderDispCnt & (1 << 3);
++        const float k = blend ? (31 - a) / 32.0f : 0.0f, w = blend ? (a + 1) / 32.0f : 1.0f;
++        const float was = AttK[pixeladdr];
++        if (was > 0.0f && was < 1.0f)
++        {
++            // Over another translucent pixel of its own (two shadows): the stronger of the two,
++            // not one over the other (the user's choice: overlapping shadows read as one).
++            if (k < was)
++            {
++                AttK[pixeladdr] = k;
++                for (int c = 0; c < 3; c++)
++                    AttB[pixeladdr * 3 + c] = ((src >> (8 * c)) & 0x3F) * w;
++            }
++        }
++        else
++        {
++            AttK[pixeladdr] *= k;
++            for (int c = 0; c < 3; c++)
++                AttB[pixeladdr * 3 + c] = AttB[pixeladdr * 3 + c] * k + ((src >> (8 * c)) & 0x3F) * w;
++        }
++    }
++}
++
++void SoftRenderer::AttOpaque(u32 p, u32 color) noexcept
++{
++    AttK[p] = 0;
++    for (int c = 0; c < 3; c++)
++        AttB[p * 3 + c] = (color >> (8 * c)) & 0x3F;
+ }
+ 
+ void SoftRenderer::SetupPolygonLeftEdge(SoftRenderer::RendererPolygon* rp, s32 y) const
+@@ -1189,9 +1245,12 @@
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
++            if (ColorBuffer == AttColor && pixeladdr < BufferSize) // GoldLink (UC12)
++                AttOpaque(pixeladdr, color);
+         }
+         else
+         {
++            FragmentZ = z; // GoldLink (UC12)
+             if (!(polygon->Attr & (1<<11))) z = -1;
+             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);
+ 
+@@ -1278,9 +1337,12 @@
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
++            if (ColorBuffer == AttColor && pixeladdr < BufferSize) // GoldLink (UC12)
++                AttOpaque(pixeladdr, color);
+         }
+         else
+         {
++            FragmentZ = z; // GoldLink (UC12)
+             if (!(polygon->Attr & (1<<11))) z = -1;
+             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);
+ 
+@@ -1377,9 +1439,12 @@
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
++            if (ColorBuffer == AttColor && pixeladdr < BufferSize) // GoldLink (UC12)
++                AttOpaque(pixeladdr, color);
+         }
+         else
+         {
++            FragmentZ = z; // GoldLink (UC12)
+             if (!(polygon->Attr & (1<<11))) z = -1;
+             PlotTranslucentPixel(gpu.GPU3D, pixeladdr, color, z, polyattr, polygon->IsShadow);
+ 
+@@ -1393,12 +1458,13 @@
+     rp->XR = rp->SlopeR.Step();
+ }
+ 
+-void SoftRenderer::RenderScanline(const GPU& gpu, s32 y, int npolys)
++void SoftRenderer::RenderScanline(const GPU& gpu, s32 y, RendererPolygon* list, int npolys)
+ {
+     for (int i = 0; i < npolys; i++)
+     {
+-        RendererPolygon* rp = &PolygonList[i];
++        RendererPolygon* rp = &list[i];
+         Polygon* polygon = rp->PolyData;
++        CurLate = list == PolygonList && WorldLate[i]; // GoldLink (UC12)
+ 
+         if (y >= polygon->YTop && (y < polygon->YBottom || (y == polygon->YTop && polygon->YBottom == polygon->YTop)))
+         {
+@@ -1449,13 +1515,18 @@
+     return density;
+ }
+ 
+-void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y)
++void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y, bool attached)
+ {
+     // to consider:
+     // clearing all polygon fog flags if the master flag isn't set?
+     // merging all final pass loops into one?
+ 
+-    if (gpu3d.RenderDispCnt & (1<<5))
++    // GoldLink (UC12): with attached objects drawn, the two pictures' edge marking and
++    // anti-aliasing are done on the two put together (Composite): an edge compares with the
++    // neighbour and blends with what's behind it there, whichever picture that is.
++    const bool together = AnyAttached;
++
++    if ((gpu3d.RenderDispCnt & (1<<5)) && !together)
+     {
+         // edge marking
+         // only applied to topmost pixels
+@@ -1498,7 +1569,9 @@
+         }
+     }
+ 
+-    if (gpu3d.RenderDispCnt & (1<<7))
++    // GoldLink (UC12): the attached picture has no fog of its own (the world's pixels behind it
++    // are fogged by their own depth; with nothing behind them here, its empty pixels would fog).
++    if ((gpu3d.RenderDispCnt & (1<<7)) && !attached)
+     {
+         // fog
+ 
+@@ -1576,7 +1649,7 @@
+         }
+     }
+ 
+-    if (gpu3d.RenderDispCnt & (1<<4))
++    if ((gpu3d.RenderDispCnt & (1<<4)) && !together)
+     {
+         // anti-aliasing
+ 
+@@ -1629,8 +1702,229 @@
+     }
+ }
+ 
++// GoldLink (UC12): both pictures; the attached one has nothing in it (alpha 0), with the
++// world's clear depth and polygon ID (its edges compare with them as with the clear).
+ void SoftRenderer::ClearBuffers(const GPU& gpu)
+ {
++    UseAttached();
++    ClearPicture(gpu);
++    memset(AttColor, 0, sizeof(AttColor));
++    memset(AttTransDepth, 0xFF, sizeof(AttTransDepth));
++    std::fill(std::begin(AttK), std::end(AttK), 1.0f);
++    memset(AttB, 0, sizeof(AttB));
++    UseWorld();
++    ClearPicture(gpu);
++    std::fill(std::begin(LateK), std::end(LateK), 1.0f);
++    memset(LateB, 0, sizeof(LateB));
++    memset(LateDepth, 0xFF, sizeof(LateDepth));
++}
++
++void SoftRenderer::UseWorld() noexcept
++{
++    if (ColorBuffer == AttColor)
++        AttPrevShadowMask = PrevIsShadowMask;
++    ColorBuffer = MainColor;
++    DepthBuffer = MainDepth;
++    AttrBuffer = MainAttr;
++    StencilBuffer = MainStencil;
++    PrevIsShadowMask = MainPrevShadowMask;
++}
++
++void SoftRenderer::UseAttached() noexcept
++{
++    if (ColorBuffer == MainColor)
++        MainPrevShadowMask = PrevIsShadowMask;
++    ColorBuffer = AttColor;
++    DepthBuffer = AttDepth;
++    AttrBuffer = AttAttr;
++    StencilBuffer = AttStencil;
++    PrevIsShadowMask = AttPrevShadowMask;
++}
++
++// GoldLink (UC12): the live pictures, at the render's parameters.
++SoftRenderer::Pictures SoftRenderer::Live(const GPU3D& gpu3d) const noexcept
++{
++    Pictures p {};
++    const u32 f = FirstPixelOffset;
++    p.WorldTop = &MainColor[f];
++    p.WorldTopDepth = &MainDepth[f];
++    p.WorldTopAttr = &MainAttr[f];
++    p.WorldBottom = &MainColor[f + BufferSize];
++    p.WorldBottomDepth = &MainDepth[f + BufferSize];
++    p.WorldOpaque = &WorldOpaque[f];
++    p.AttTop = &AttColor[f];
++    p.AttTopDepth = &AttDepth[f];
++    p.AttTransDepth = &AttTransDepth[f];
++    p.AttAttr = &AttAttr[f];
++    p.AttBottom = &AttColor[f + BufferSize];
++    p.AttK = &AttK[f];
++    p.AttB = &AttB[f * 3];
++    p.LateEarly = &LateEarly[f];
++    p.LateDepth = &LateDepth[f];
++    p.LateK = &LateK[f];
++    p.LateB = &LateB[f * 3];
++    p.Stride = ScanlineWidth;
++    p.DispCnt = gpu3d.RenderDispCnt;
++    memcpy(p.EdgeTable, gpu3d.RenderEdgeTable, sizeof(p.EdgeTable));
++    const int side = gpu3d.WideActive() ? gpu3d.WideSide : 0;
++    p.Left = GPU3D::MaxWideSide - side;
++    p.Right = GPU3D::MaxWideSide + 256 + side;
++    return p;
++}
++
++u32 SoftRenderer::Composite(const Pictures& p, int wx, int wy, int ax, int ay, float dx, float dy)
++{
++    const int S = p.Stride;
++    auto mix = [](u32 top, u32 bottom, u32 a) -> u32 { // a: 0..32 of top
++        u32 r = ((top & 0x3F) * a + (bottom & 0x3F) * (32 - a)) >> 5;
++        u32 g = (((top >> 8) & 0x3F) * a + ((bottom >> 8) & 0x3F) * (32 - a)) >> 5;
++        u32 b = (((top >> 16) & 0x3F) * a + ((bottom >> 16) & 0x3F) * (32 - a)) >> 5;
++        return r | (g << 8) | (b << 16);
++    };
++    // k * c + b, a channel each (what a stack of translucent pixels does to what's behind it).
++    auto apply = [](const float* k, const float* b, int i, u32 c) -> u32 {
++        u32 o = 0;
++        for (int ch = 0; ch < 3; ch++)
++        {
++            const float v = k[i] * ((c >> (8 * ch)) & 0x3F) + b[i * 3 + ch];
++            o |= (u32)std::clamp((int)(v + 0.5f), 0, 63) << (8 * ch);
++        }
++        return o | (c & 0xFF000000u);
++    };
++    auto inAtt = [](int x, int y) { return x >= 0 && y >= 0 && x < RenderWidth && y < 192; };
++    const bool attIn = inAtt(ax, ay);
++    const int wi = wy * S + wx, ai = attIn ? ay * S + ax : 0;
++    const u32 wd = p.WorldTopDepth[wi] & 0xFFFFFF;
++    const float k = attIn ? p.AttK[ai] : 1.0f;
++    const bool opaque = attIn && k == 0.0f;
++    const u32 ad = opaque ? (p.AttTopDepth[ai] & 0xFFFFFF) : 0xFFFFFFFFu;
++    const u32 at = attIn && k < 1.0f ? std::min(ad, p.AttTransDepth[ai] & 0xFFFFFFu) : 0xFFFFFFFFu;
++    const bool late = p.LateK[wi] < 1.0f || p.LateB[wi * 3] || p.LateB[wi * 3 + 1] || p.LateB[wi * 3 + 2];
++    // The opaque pixel on top at the world's point (x, y), the attached picture's (qx, qy).
++    auto opaqueAt = [&](int x, int y, int qx, int qy, u32& id, u32& depth) {
++        id = (p.WorldTopAttr[y * S + x] >> 24) & 0x3F;
++        depth = p.WorldTopDepth[y * S + x] & 0xFFFFFF;
++        if (inAtt(qx, qy) && p.AttK[qy * S + qx] == 0.0f && (p.AttTopDepth[qy * S + qx] & 0xFFFFFF) < depth)
++        {
++            id = (p.AttAttr[qy * S + qx] >> 24) & 0x3F;
++            depth = p.AttTopDepth[qy * S + qx] & 0xFFFFFF;
++        }
++    };
++    // The DS's final pass on the top pixel (its colour, attributes and depth; the pixel behind
++    // it), its neighbours in its own picture's pixels.
++    auto finalPass = [&](u32 colour, u32 attr, u32 depth, u32 bottom, bool fromAtt) -> u32 {
++        if ((p.DispCnt & (1 << 5)) && (attr & 0xF))
++        {
++            const u32 id = (attr >> 24) & 0x3F;
++            static const int ox[4] = {-1, 1, 0, 0}, oy[4] = {0, 0, -1, 1};
++            bool marked = false;
++            for (int d = 0; d < 4 && !marked; d++)
++            {
++                int nx, ny, qx, qy;
++                if (fromAtt)
++                {
++                    qx = ax + ox[d];
++                    qy = ay + oy[d];
++                    nx = (int)std::floor(qx + 0.5f + dx);
++                    ny = (int)std::floor(qy + 0.5f + dy);
++                }
++                else
++                {
++                    nx = wx + ox[d];
++                    ny = wy + oy[d];
++                    qx = (int)std::floor(nx + 0.5f - dx);
++                    qy = (int)std::floor(ny + 0.5f - dy);
++                }
++                if (nx < p.Left || nx >= p.Right || ny < 0 || ny > 191)
++                    continue;
++                u32 nid, nd;
++                opaqueAt(nx, ny, qx, qy, nid, nd);
++                marked = nid != id && depth < nd;
++            }
++            if (marked)
++            {
++                const u16 e = p.EdgeTable[id >> 3];
++                u32 r = (e << 1) & 0x3E; if (r) r++;
++                u32 g = (e >> 4) & 0x3E; if (g) g++;
++                u32 b = (e >> 9) & 0x3E; if (b) b++;
++                colour = r | (g << 8) | (b << 16) | (colour & 0xFF000000u);
++                attr = (attr & 0xFFFFE0FF) | 0x00001000;
++            }
++        }
++        if ((p.DispCnt & (1 << 4)) && (attr & 0xF))
++        {
++            const u32 coverage = (attr >> 8) & 0x1F;
++            if (coverage == 0)
++                colour = bottom;
++            else if (coverage != 0x1F)
++            {
++                const u32 topA = (colour >> 24) & 0x1F, botA = (bottom >> 24) & 0x1F;
++                const u32 a = ((topA * (coverage + 1)) + (botA * (31 - coverage))) >> 5;
++                colour = (botA ? mix(colour, bottom, coverage + 1) : (colour & 0x3F3F3F)) | (a << 24);
++            }
++        }
++        return colour;
++    };
++    u32 out;
++    if (opaque && ad < wd)
++    {
++        // The attached picture's opaque pixel on top; behind it its own pixel or the world's (as
++        // it was when the attached objects were drawn).
++        const u32 bottom = (p.AttBottom[ai] >> 24) ? p.AttBottom[ai] : late ? p.LateEarly[wi] : p.WorldTop[wi];
++        out = finalPass(p.AttTop[ai], p.AttAttr[ai], ad, bottom, true);
++        if (late && (p.LateDepth[wi] & 0xFFFFFF) < ad)
++            out = apply(p.LateK, p.LateB, wi, out);
++        out = (out & 0x3F3F3F) | (0x1Fu << 24);
++    }
++    else
++    {
++        // The world's pixel on top; the attached picture's translucent pixels may be in front of
++        // it, or the attached picture between it and the pixel behind it.
++        const bool front = attIn && k < 1.0f && at < wd;
++        const bool lateOver = front && late && (p.LateDepth[wi] & 0xFFFFFF) < at;
++        const u32 top = lateOver ? p.LateEarly[wi] : p.WorldTop[wi];
++        u32 bottom = p.WorldBottom[wi];
++        if (attIn && k < 1.0f && at > wd && at < (p.WorldBottomDepth[wi] & 0xFFFFFF))
++            bottom = opaque ? p.AttTop[ai] : apply(p.AttK, p.AttB, ai, bottom);
++        out = finalPass(top, p.WorldTopAttr[wi], wd, bottom, false);
++        if (front && (p.WorldTopAttr[wi] & (1 << 22)))
++        {
++            // Over the world's own translucent pixels (another shadow): the darker of the
++            // attached picture's over the world before them and the world's, a channel each: the
++            // two shadows read as one, not one over the other (the user's choice).
++            const u32 under = apply(p.AttK, p.AttB, ai, finalPass(p.WorldOpaque[wi], p.WorldTopAttr[wi], wd, bottom, false));
++            u32 o = out & 0xFF000000u;
++            for (int ch = 0; ch < 3; ch++)
++                o |= std::min((under >> (8 * ch)) & 0x3F, (out >> (8 * ch)) & 0x3F) << (8 * ch);
++            out = o;
++        }
++        else if (front)
++        {
++            out = apply(p.AttK, p.AttB, ai, out);
++            if (lateOver)
++                out = apply(p.LateK, p.LateB, wi, out);
++        }
++    }
++    return out;
++}
++
++// GoldLink (UC12): line y of the two pictures put together at the DS's pixels (the attached one
++// is drawn on the world's), what the 2D engine shows.
++void SoftRenderer::ComboLine(const GPU3D& gpu3d, s32 y)
++{
++    u32* out = &Combo[y * ScanlineWidth];
++    const u32 row = FirstPixelOffset + y * ScanlineWidth;
++    if (!AnyAttached)
++    {
++        memcpy(out, &MainColor[row], RenderWidth * 4);
++        return;
++    }
++    for (int x = 0; x < RenderWidth; x++)
++        out[x] = Composite(Rendered, x, y, x, y, 0, 0);
++}
++
++void SoftRenderer::ClearPicture(const GPU& gpu)
++{
+     u32 clearz = ((gpu.GPU3D.RenderClearAttr2 & 0x7FFF) * 0x200) + 0x1FF;
+     u32 polyid = gpu.GPU3D.RenderClearAttr1 & 0x3F000000; // this sets the opaque polygonID
+ 
+@@ -1723,26 +2017,55 @@
+ 
+ void SoftRenderer::RenderPolygons(const GPU& gpu, bool threaded, Polygon** polygons, int npolys)
+ {
+-    int j = 0;
++    // GoldLink (UC12): the attached objects' polygons in a picture of their own.
++    int j = 0, ja = 0;
+     for (int i = 0; i < npolys; i++)
+     {
+         if (polygons[i]->Degenerate) continue;
+-        SetupPolygon(&PolygonList[j++], polygons[i]);
++        if (polygons[i]->Attached)
++            SetupPolygon(&AttPolygonList[ja++], polygons[i]);
++        else
++        {
++            WorldLate[j] = ja > 0 && polygons[i]->Translucent;
++            SetupPolygon(&PolygonList[j++], polygons[i]);
++        }
+     }
++    AnyAttached = ja > 0;
++    Rendered = Live(gpu.GPU3D);
++    auto line = [&](s32 y) {
++        UseWorld();
++        RenderScanline(gpu, y, PolygonList, j);
++        if (ja)
++        {
++            UseAttached();
++            RenderScanline(gpu, y, AttPolygonList, ja);
++        }
++    };
++    auto finish = [&](s32 y) {
++        UseWorld();
++        ScanlineFinalPass(gpu.GPU3D, y, false);
++        if (ja)
++        {
++            UseAttached();
++            ScanlineFinalPass(gpu.GPU3D, y, true);
++            UseWorld();
++        }
++        ComboLine(gpu.GPU3D, y);
++    };
+ 
+-    RenderScanline(gpu, 0, j);
++    line(0);
+ 
+     for (s32 y = 1; y < 192; y++)
+     {
+-        RenderScanline(gpu, y, j);
+-        ScanlineFinalPass(gpu.GPU3D, y-1);
++        line(y);
++        finish(y-1);
+ 
+         if (threaded)
+             // Notify the main thread that we're done with a scanline.
+             Platform::Semaphore_Post(Sema_ScanlineCount);
+     }
+ 
+-    ScanlineFinalPass(gpu.GPU3D, 191);
++    finish(191);
+ 
+     if (threaded)
+         // If this renderer is threaded, notify the main thread that we're done with the frame.
+@@ -1766,8 +2089,68 @@
+     FrameIdentical = !(textureChanged || texPalChanged) && gpu.GPU3D.RenderFrameIdentical;
+ 
+     // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
+-    memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
+-    memcpy(ShownAttr, &AttrBuffer[FirstPixelOffset], sizeof(ShownAttr));
++    memcpy(ShownDepth, &MainDepth[FirstPixelOffset], sizeof(ShownDepth));
++    // GoldLink (UC12): the two pictures as shown (Composite reads them).
++    {
++        const u32 f = FirstPixelOffset;
++        memcpy(ShownWorldTop, &MainColor[f], sizeof(ShownWorldTop));
++        memcpy(ShownWorldBottom, &MainColor[f + BufferSize], sizeof(ShownWorldBottom));
++        memcpy(ShownWorldBottomDepth, &MainDepth[f + BufferSize], sizeof(ShownWorldBottomDepth));
++        memcpy(ShownWorldOpaque, &WorldOpaque[f], sizeof(ShownWorldOpaque));
++        memcpy(ShownLateEarly, &LateEarly[f], sizeof(ShownLateEarly));
++        memcpy(ShownLateDepth, &LateDepth[f], sizeof(ShownLateDepth));
++        memcpy(ShownLateK, &LateK[f], sizeof(ShownLateK));
++        memcpy(ShownLateB, &LateB[f * 3], sizeof(ShownLateB));
++        if (AnyAttached)
++        {
++            memcpy(ShownAttTop, &AttColor[f], sizeof(ShownAttTop));
++            memcpy(ShownAttTopDepth, &AttDepth[f], sizeof(ShownAttTopDepth));
++            memcpy(ShownAttTransDepth, &AttTransDepth[f], sizeof(ShownAttTransDepth));
++            memcpy(ShownAttAttr, &AttAttr[f], sizeof(ShownAttAttr));
++            memcpy(ShownAttBottom, &AttColor[f + BufferSize], sizeof(ShownAttBottom));
++            memcpy(ShownAttK, &AttK[f], sizeof(ShownAttK));
++            memcpy(ShownAttB, &AttB[f * 3], sizeof(ShownAttB));
++        }
++        else
++            std::fill(std::begin(ShownAttK), std::end(ShownAttK), 1.0f);
++        for (int i = 0; i < ShownSize; i++)
++        {
++            const float al = 1 - ShownAttK[i];
++            if (al <= 0.0f)
++            {
++                ShownAtt[i] = 0;
++                continue;
++            }
++            u32 v = (u32)std::clamp((int)(al * 255 + 0.5f), 1, 255) << 24;
++            for (int ch = 0; ch < 3; ch++)
++                v |= (u32)std::clamp((int)(ShownAttB[i * 3 + ch] / al * 255 / 63 + 0.5f), 0, 255) << (8 * (2 - ch));
++            ShownAtt[i] = v;
++        }
++        Pictures& p = Shown;
++        p.WorldTop = ShownWorldTop;
++        p.WorldTopDepth = ShownDepth;
++        p.WorldTopAttr = ShownAttr;
++        p.WorldBottom = ShownWorldBottom;
++        p.WorldBottomDepth = ShownWorldBottomDepth;
++        p.WorldOpaque = ShownWorldOpaque;
++        p.AttTop = ShownAttTop;
++        p.AttTopDepth = ShownAttTopDepth;
++        p.AttTransDepth = ShownAttTransDepth;
++        p.AttAttr = ShownAttAttr;
++        p.AttBottom = ShownAttBottom;
++        p.AttK = ShownAttK;
++        p.AttB = ShownAttB;
++        p.LateEarly = ShownLateEarly;
++        p.LateDepth = ShownLateDepth;
++        p.LateK = ShownLateK;
++        p.LateB = ShownLateB;
++        p.Stride = ScanlineWidth;
++        p.DispCnt = Rendered.DispCnt;
++        memcpy(p.EdgeTable, Rendered.EdgeTable, sizeof(p.EdgeTable));
++        p.Left = Rendered.Left;
++        p.Right = Rendered.Right;
++    }
++    memcpy(ShownAttr, &MainAttr[FirstPixelOffset], sizeof(ShownAttr));
+ 
+     if (RenderThreadRunning.load(std::memory_order_relaxed))
+     {
+@@ -1831,12 +2214,12 @@
+             Platform::Semaphore_Wait(Sema_ScanlineCount);
+     }
+ 
+-    return &ColorBuffer[(line * ScanlineWidth) + FirstPixelOffset + GPU3D::MaxWideSide];
++    return &Combo[(line * ScanlineWidth) + GPU3D::MaxWideSide]; // GoldLink (UC12)
+ }
+ 
+ u32* SoftRenderer::GetWideLine(int line)
+ {
+-    return &ColorBuffer[(line * ScanlineWidth) + FirstPixelOffset];
++    return &Combo[line * ScanlineWidth]; // GoldLink (UC12)
+ }
+ 
+ }

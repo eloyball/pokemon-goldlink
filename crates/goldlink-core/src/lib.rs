@@ -172,26 +172,116 @@ pub fn set_log_sink(sink: Option<LogSink>) {
     unsafe { sys::gl_set_log_callback(if sink.is_some() { Some(forward) } else { None }) };
 }
 
-/// The steady overworld's attached layer for a frame (`Nds::attached`).
-#[derive(Debug, Clone)]
+/// The steady overworld's attached picture for a frame (`Nds::attached`, UC12): what the camera
+/// follows (the player, their shadow, a mount, a follower), drawn apart from the world, and the
+/// two pictures for the window to put together at the screen's resolution with the attached
+/// one where it truly is (`Pictures::composite`). `att` and `plain` are `256 + 2 * side` x 192.
+#[derive(Debug, Clone, Default)]
 pub struct Attached {
-    /// The shift (DS pixels, x then y) it was drawn with.
+    /// The shift (DS pixels, x then y) the attached picture was drawn with (on the world's
+    /// pixels); the world's is the frame's steady shift.
     pub shift: [f32; 2],
     /// Where its reference truly is (the DS screen's columns and rows).
     pub origin: [f64; 2],
-    /// Per pixel: 1 an attached object's opaque pixel (the picture's), 2 its translucent one (its
-    /// shadow, which the picture doesn't have: `trans`), 3 the world in front of one (the
-    /// picture's; the attached object's behind it in `trans`), 4 the world's pixels near them that
-    /// are nearer than they are, else 0.
-    pub mask: Vec<u8>,
-    /// The translucent pixels' colour and alpha, 0xAARRGGBB; at the opaque ones, the world under
-    /// them (0xFFRRGGBB), as it would be without the attached objects; at 3, the attached
-    /// object's pixel behind the world (0xFFRRGGBB).
-    pub trans: Vec<u32>,
-    /// At a 3 that's an edge of the world (an outline; else 0): the edge's colour and coverage
-    /// (0xAARRGGBB), and in the second half, the world under the attached object (0xFFRRGGBB).
-    /// The picture's pixel is the edge blended with that world, not with the attached object.
-    pub edge: Vec<u32>,
+    /// The attached picture: 0xAARRGGBB, alpha 0 where it has nothing.
+    pub att: Vec<u32>,
+    /// 1 where the top screen shows the 3D as drawn (on top, no 2D, no screen-wide fade).
+    pub plain: Vec<u8>,
+    /// The two pictures as the renderer keeps them.
+    pub pictures: Pictures,
+    pub side: usize,
+}
+
+/// The two pictures of the steady overworld as the renderer keeps them (`goldlink_core.h`'s
+/// `GlPictures`), for `Pictures::composite`.
+#[derive(Debug, Clone, Default)]
+pub struct Pictures {
+    u32s: [Vec<u32>; 13],
+    f32s: [Vec<f32>; 4],
+    stride: i32,
+    disp_cnt: u32,
+    edge_table: [u16; 8],
+    left: i32,
+    right: i32,
+}
+
+impl Pictures {
+    /// The arrays sized for the renderer's (`gl_pictures_size`).
+    fn sized(&mut self) {
+        // SAFETY: a size query.
+        let n = unsafe { sys::gl_pictures_size() } as usize;
+        for v in &mut self.u32s {
+            v.resize(n, 0);
+        }
+        for (i, v) in self.f32s.iter_mut().enumerate() {
+            v.resize(if i % 2 == 1 { n * 3 } else { n }, 0.0);
+        }
+    }
+
+    /// The C view of the arrays (written through only by `gl_core_copy_pictures`, with `&mut
+    /// self`).
+    fn view(&self) -> sys::GlPictures {
+        let u = |i: usize| self.u32s[i].as_ptr().cast_mut();
+        let f = |i: usize| self.f32s[i].as_ptr().cast_mut();
+        sys::GlPictures {
+            world_top: u(0),
+            world_top_depth: u(1),
+            world_top_attr: u(2),
+            world_bottom: u(3),
+            world_bottom_depth: u(4),
+            world_opaque: u(5),
+            att_top: u(6),
+            att_top_depth: u(7),
+            att_trans_depth: u(8),
+            att_attr: u(9),
+            att_bottom: u(10),
+            att_k: f(0),
+            att_b: f(1),
+            late_early: u(11),
+            late_depth: u(12),
+            late_k: f(2),
+            late_b: f(3),
+            stride: self.stride,
+            disp_cnt: self.disp_cnt,
+            edge_table: self.edge_table,
+            left: self.left,
+            right: self.right,
+        }
+    }
+
+    /// The two put together (the renderer's `Composite`) at each place: the world's pixel
+    /// (`world`, x then y, the picture's columns for `side`), the attached picture's (`att`; out
+    /// of the picture: none), `d` the world's point less the attached picture's at the same place
+    /// on screen; 0xRRGGBB into `out`, before the lighting.
+    pub fn composite(
+        &self,
+        side: usize,
+        world: &[i32],
+        att: &[i32],
+        d: [f32; 2],
+        out: &mut Vec<u32>,
+    ) {
+        let n = world.len().min(att.len()) / 2;
+        out.resize(n, 0);
+        if self.u32s[0].is_empty() || n == 0 {
+            return;
+        }
+        let view = self.view();
+        // SAFETY: every array holds gl_pictures_size() elements (att_b, late_b three times
+        // that), only read; world and att hold 2n, out n.
+        unsafe {
+            sys::gl_composite(
+                &view,
+                side as c_int,
+                n as c_int,
+                world.as_ptr(),
+                att.as_ptr(),
+                d[0],
+                d[1],
+                out.as_mut_ptr(),
+            )
+        };
+    }
 }
 
 /// The top screen's 3D depth and where the 3D layer shows, for the lighting (UC11). Each is
@@ -447,28 +537,38 @@ impl Nds {
     pub fn attached(&self, side: usize) -> Option<Attached> {
         let side = side.min(Self::MAX_WIDE_SIDE);
         let n = (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT;
-        let (mut mask, mut trans, mut shift) = (vec![0u8; n], vec![0u32; n], [0f32; 2]);
-        let (mut edge, mut origin) = (vec![0u32; 2 * n], [0f64; 2]);
-        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each, edge twice that, shift and
-        // origin two each, what the shim writes.
+        let mut a = Attached {
+            att: vec![0; n],
+            plain: vec![0; n],
+            side,
+            ..Default::default()
+        };
+        // SAFETY: att and plain hold (256 + 2 * side) * 192 elements, what the shim writes; shift
+        // and origin two each.
         let found = unsafe {
             sys::gl_core_attached(
                 self.ptr(),
                 side as c_int,
-                mask.as_mut_ptr(),
-                trans.as_mut_ptr(),
-                edge.as_mut_ptr(),
-                shift.as_mut_ptr(),
-                origin.as_mut_ptr(),
+                a.att.as_mut_ptr(),
+                a.plain.as_mut_ptr(),
+                a.shift.as_mut_ptr(),
+                a.origin.as_mut_ptr(),
             )
         };
-        (found > 0).then_some(Attached {
-            shift,
-            origin,
-            mask,
-            trans,
-            edge,
-        })
+        if found == 0 {
+            return None;
+        }
+        a.pictures.sized();
+        let mut view = a.pictures.view();
+        // SAFETY: the arrays were just sized to gl_pictures_size() (att_b, late_b three times
+        // that); a.pictures is borrowed by nothing else.
+        let copied = unsafe { sys::gl_core_copy_pictures(self.ptr(), &mut view) };
+        a.pictures.stride = view.stride;
+        a.pictures.disp_cnt = view.disp_cnt;
+        a.pictures.edge_table = view.edge_table;
+        a.pictures.left = view.left;
+        a.pictures.right = view.right;
+        (copied != 0).then_some(a)
     }
 
     /// The top screen's pixels (`256 + 2 * side` across, 192 rows; `side` 0 for the DS's screen)

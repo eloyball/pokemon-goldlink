@@ -1,0 +1,97 @@
+GoldLink's change to melonDS (UC12): the attached objects drawn at the phase within a pixel the
+player has at rest.
+
+Patch 0022 drew them with the reference at a fixed phase within a pixel, so at rest the player's
+picture was up to half a pixel off the world's (the user's play test: the player's pixels not
+lined up with the world's even standing still). The phase is now the one the reference has at a
+scene whose camera stands where the last scene's did (at rest): there the player is drawn where
+the DS draws them, on the world's pixels, and the window shows the two pictures (patch 0026) with
+no offset; moving, every picture of them has the same pixels, slid by their fraction. And each
+attached object at its true offset from the reference (not whole pixels: the player was drawn half
+a pixel off the DS's place when the reference was their follower or shadow), kept while it changes
+by no more than the arithmetic's noise.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-14 15:54:11.541405061 -0500
++++ b/src/GPU3D.h	2026-11-14 15:54:11.553169900 -0500
+@@ -472,6 +472,11 @@
+     std::vector<AttachedObject> AttachedKeys;
+     static constexpr double AttachNear = 2;
+     double AttachedRef[2] {};       // the reference one's (the one with the most vertices)
++    // GoldLink (UC12): the reference's phase within a pixel at rest (learned at a scene whose
++    // camera stands where the last one's did), and the last scene's world origin.
++    double AttachRest[2] {};
++    bool AttachRestKnown = false;
++    double AttachLastOrigin[2] {-1e9, -1e9};
+     bool AttachedValid = false;
+     bool AttachUsed = false;        // the scene being built drew one
+     double AttachBase[2] {};        // the scene being built's: the reference's place, snapped
+--- a/src/GPU3D.cpp	2026-11-14 15:54:11.543320556 -0500
++++ b/src/GPU3D.cpp	2026-11-14 16:18:28.327222330 -0500
+@@ -2782,16 +2782,31 @@
+     OrthoShift[1] = (float)oy;
+     OrthoOrigin[0] = x;
+     OrthoOrigin[1] = y;
+-    // The attached objects' place (MidClassify): the reference one at the same phase.
++    // The attached objects' place (MidClassify): the reference one at the phase within a pixel
++    // it has at rest (GoldLink, UC12), learned at a scene whose camera stands where the last
++    // scene's did. At rest it is then drawn where it truly is, on the world's pixels as the DS
++    // draws it (the window shows the two pictures with no offset between them); moving, every
++    // picture of it has the same pixels, slid by the window by its fraction of a pixel. A fixed
++    // phase put it up to half a pixel off the world's pixels at rest (the user's play test).
++    const bool first = !OrthoScene, still = first && std::fabs(x - AttachLastOrigin[0]) < 1e-4
++        && std::fabs(y - AttachLastOrigin[1]) < 1e-4;
++    if (first)
++    {
++        AttachLastOrigin[0] = x;
++        AttachLastOrigin[1] = y;
++    }
+     if (AttachedValid)
+     {
+         const double o[2] = {ox, oy};
+         for (int i = 0; i < 2; i++)
+         {
+             const double v = AttachedRef[i] + o[i];
+-            AttachBase[i] = std::floor(v - Phase + 0.5) + Phase;
++            if (still || !AttachRestKnown)
++                AttachRest[i] = v - std::floor(v);
++            AttachBase[i] = std::floor(v - AttachRest[i] + 0.5) + AttachRest[i];
+             AttachSlide[i] = (float)(AttachBase[i] - AttachedRef[i]);
+         }
++        AttachRestKnown = true;
+         // MidObject's columns are the wider picture's: the screen's, for ShownAttachTrue.
+         AttachTrue[0] = AttachedRef[0] - (WideActive() ? WideSide : 0);
+         AttachTrue[1] = AttachedRef[1];
+@@ -3819,21 +3834,23 @@
+             }
+         }
+     }
+-    // Each one's offset from the reference in whole pixels, so every one of them is drawn at the
+-    // same phase within a pixel (a sixteenth of a pixel still flipped texels as a surf mount
+-    // bobbed); kept from the last swap until it's 3/4 of a pixel off (a shadow half a pixel from
+-    // the player would otherwise flip between two).
++    // Each one's offset from the reference as it truly is (GoldLink, UC12): at rest every one of
++    // them is then drawn where the DS draws it (whole pixels put the player half a pixel off the
++    // DS's place when the reference was their follower or shadow, the user's play test), and
++    // moving each keeps its own phase within a pixel. Kept from the last swap while it changed by
++    // no more than the arithmetic's noise (a thousandth of a pixel flipped single texels of the
++    // sprite from frame to frame, the user's play test, Leroy's hair).
+     for (AttachedObject& a : found)
+     {
+         const double rx = a.X - ref[0], ry = a.Y - ref[1];
+-        a.RelX = std::round(rx);
+-        a.RelY = std::round(ry);
++        a.RelX = rx;
++        a.RelY = ry;
+         for (const AttachedObject& old : AttachedKeys)
+             if (old.Key == a.Key && std::fabs(old.X - a.X) < AttachNear && std::fabs(old.Y - a.Y) < AttachNear)
+             {
+-                if (std::fabs(rx - old.RelX) < 0.75)
++                if (std::fabs(rx - old.RelX) < 1.0 / 64)
+                     a.RelX = old.RelX;
+-                if (std::fabs(ry - old.RelY) < 0.75)
++                if (std::fabs(ry - old.RelY) < 1.0 / 64)
+                     a.RelY = old.RelY;
+                 break;
+             }
