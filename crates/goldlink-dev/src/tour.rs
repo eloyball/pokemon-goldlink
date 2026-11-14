@@ -484,6 +484,15 @@ const LEFT_REC_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=down-rec (UC11's steady overworld): down for 12 seconds, every frame
+/// recorded (out of a gatehouse from the user's save).
+const DOWN_REC_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::DOWN, 720, "down"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -711,6 +720,7 @@ fn steps() -> &'static [Step] {
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
         Ok("left-rec") => LEFT_REC_STEPS,
+        Ok("down-rec") => DOWN_REC_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
