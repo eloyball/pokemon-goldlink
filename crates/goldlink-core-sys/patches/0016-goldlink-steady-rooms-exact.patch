@@ -1,0 +1,29 @@
+GoldLink's change to melonDS (UC11): the steady overworld's rooms drawn exactly. A room's own
+orthographic matrix is tiny in 20.12 (HeartGold's: 32 and 43 for a pixel per world unit), so
+every vertex and the pixel snap rounded to 1/32 of a pixel, differently at each step of the
+camera: edges on a pixel's border (plant boxes, counters) flipped a pixel every few steps, and
+the 0.77 down could not be rounded to an exact 0.75. Scaled by OrthoW like the overworld's
+(the same picture and depth), it rounds to 1/2048 of a pixel.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.cpp	2026-11-13 20:04:54.853275463 -0500
++++ b/src/GPU3D.cpp	2026-11-13 20:41:17.508640718 -0500
+@@ -2621,7 +2621,16 @@
+         m[15] = (s32)std::lround(K * 4096);
+     }
+     else
+-        memcpy(m, p, sizeof(m)); // a room: already orthographic, only snapped
++    {
++        // A room: already orthographic, only snapped. Its matrix is tiny in 20.12 (HeartGold's
++        // rooms: 32 and 43 for a pixel per unit), so each vertex and the snap round to 1/32 of a
++        // pixel, a little differently at every step of the camera: an edge on a pixel's border
++        // (a plant box's, a counter's) flipped to the next pixel every few steps. Scaled by
++        // OrthoW (w = OrthoW: the same picture and depth, x/w and z/w unchanged), as the
++        // overworld's, it rounds to 1/2048 of a pixel and the scale below can be made exact.
++        for (int i = 0; i < 16; i++)
++            m[i] = (s32)std::clamp<s64>((s64)p[i] * (s64)OrthoW, INT32_MIN, INT32_MAX);
++    }
+     // A whole number of pixels for every step: the ground's scale on screen, per world unit
+     // (along world x across the screen, along world z down it), rounded to a quarter pixel when
+     // that's within 6% (HeartGold's field: 1.02 and 0.77, a tile 16 by 12 pixels). The player
