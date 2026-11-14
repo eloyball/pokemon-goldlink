@@ -84,6 +84,13 @@ GlCore *gl_core_new(const GlCoreConfig *cfg)
     args.JIT = std::nullopt;
     args.GDB = std::nullopt;
     core->nds = std::make_unique<melonDS::NDS>(std::move(args), core.get());
+    // The 3D scene renders on a thread of its own (melonDS's threaded software renderer): it
+    // starts at line 215 and is waited for by line 144 of the next frame, both inside RunFrame,
+    // so whatever the shim reads between frames (the wide picture's sides, the lighting's
+    // buffers) is a finished render. The emulation thread is left the game and the pictures in
+    // between, well inside a frame even in the busiest maps.
+    static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer())
+        .SetThreaded(true, core->nds->GPU);
     return core.release();
 }
 
