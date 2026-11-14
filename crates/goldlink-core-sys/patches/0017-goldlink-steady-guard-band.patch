@@ -8,8 +8,8 @@ at its first line); box tests keep the exact frustum, so the game culls as it al
 
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
---- a/src/GPU3D.h	2026-11-13 20:41:17.499656565 -0500
-+++ b/src/GPU3D.h	2026-11-13 20:46:08.372415070 -0500
+--- a/src/GPU3D.h	2026-11-13 22:33:10.148536571 -0500
++++ b/src/GPU3D.h	2026-11-13 22:33:10.154116545 -0500
 @@ -436,6 +436,11 @@
      bool MidPrepare() noexcept;
      void MidEndShown() noexcept;
@@ -19,11 +19,11 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +    static constexpr s32 GuardBand = 64;
 +    int GuardClip(Vertex* vertices, int nverts, int clipstart) noexcept;
 +
-     // GoldLink (UC11): the field's camera (the position matrix loaded right after a field
-     // projection: world to view, 20.12, 4 rows of 3), for the scene being built, flushed,
-     // rendered and on screen; and how far the picture on screen has the world shifted (pixels,
---- a/src/GPU3D.cpp	2026-11-13 20:41:17.508640718 -0500
-+++ b/src/GPU3D.cpp	2026-11-13 20:46:08.372328447 -0500
+     u32 FlushRequest = 0;
+     u32 FlushAttributes = 0;
+     u32 ScrolledLine[256]; // not part of the hardware state, don't serialize
+--- a/src/GPU3D.cpp	2026-11-13 22:33:10.148070625 -0500
++++ b/src/GPU3D.cpp	2026-11-13 22:33:10.153524732 -0500
 @@ -973,6 +973,50 @@
      return nverts;
  }
@@ -142,8 +142,8 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      if (poly->Translucent) poly->SortKey |= 0x10000;
  
      poly->WBuffer = (FlushAttributes & 0x2);
---- a/src/GPU3D_Soft.cpp	2026-11-13 20:41:17.499584339 -0500
-+++ b/src/GPU3D_Soft.cpp	2026-11-13 20:46:08.372481375 -0500
+--- a/src/GPU3D_Soft.cpp	2026-11-13 22:33:10.114159491 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-13 22:33:10.153761948 -0500
 @@ -700,8 +700,10 @@
      }
      else

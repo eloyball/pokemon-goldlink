@@ -298,15 +298,6 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t
     return gpu.GPU3D.ShownWBuffer ? 2 : 1;
 }
 
-int gl_core_shown_camera(GlCore *core, int32_t camera[12], int32_t shift[2])
-{
-    const auto &gpu3d = core->nds->GPU.GPU3D;
-    std::memcpy(camera, gpu3d.ShownCamera, 12 * 4);
-    shift[0] = gpu3d.ShownWorldShift[0];
-    shift[1] = gpu3d.ShownWorldShift[1];
-    return gpu3d.ShownCameraSeen ? 1 : 0;
-}
-
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
 {
     auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());

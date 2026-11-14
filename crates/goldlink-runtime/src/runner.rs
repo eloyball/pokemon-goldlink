@@ -71,10 +71,6 @@ pub struct LightFrame {
     pub map: u16,
     /// The DS clock's hour (the game's time of day).
     pub hour: u32,
-    /// The overworld's map matrix: each cell's map header, row by row (`zones` module), and its
-    /// width (0: not read).
-    pub zones: Vec<u16>,
-    pub zones_width: usize,
 }
 
 /// Interleaved stereo i16 samples waiting for the sound card.
@@ -265,8 +261,6 @@ fn light_frame(emu: &Emulator, spare: Option<LightFrame>) -> Option<LightFrame> 
         activity: 0,
         map: 0,
         hour: 12,
-        zones: Vec::new(),
-        zones_width: 0,
     });
     if !emu.nds.light_buffers(&mut f.buffers) {
         return None;
@@ -279,11 +273,6 @@ fn light_frame(emu: &Emulator, spare: Option<LightFrame>) -> Option<LightFrame> 
     });
     f.activity = activity;
     f.map = map;
-    f.zones_width = if f.overworld() {
-        crate::zones::read(emu.nds.main_ram(), &mut f.zones).unwrap_or(0)
-    } else {
-        0
-    };
     f.hour = chrono::Timelike::hour(&emu.clock());
     Some(f)
 }

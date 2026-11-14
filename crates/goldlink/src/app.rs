@@ -473,17 +473,6 @@ impl GameApp {
                     proj: l.buffers.proj,
                     width: goldlink_core::LightBuffers::WIDTH,
                     fade: &l.buffers.fade,
-                    zones: l
-                        .buffers
-                        .camera
-                        .filter(|_| l.zones_width > 0)
-                        .map(|camera| goldlink_light::Zones {
-                            camera,
-                            shift: l.buffers.world_shift,
-                            cells: &l.zones,
-                            width: l.zones_width,
-                            here: l.map,
-                        }),
                 },
                 Place::of_map(l.map),
             )

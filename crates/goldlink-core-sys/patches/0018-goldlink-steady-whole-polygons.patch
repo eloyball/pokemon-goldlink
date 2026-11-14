@@ -7,8 +7,8 @@ middle, so corners at the usual fractions of a pixel are never on a pixel's bord
 
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
---- a/src/GPU3D.h	2026-11-13 20:46:08.372415070 -0500
-+++ b/src/GPU3D.h	2026-11-13 21:52:24.902380300 -0500
+--- a/src/GPU3D.h	2026-11-13 22:33:10.154116545 -0500
++++ b/src/GPU3D.h	2026-11-13 22:33:24.146124927 -0500
 @@ -437,8 +437,9 @@
      void MidEndShown() noexcept;
  
@@ -20,9 +20,9 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +    static constexpr s32 GuardBand = 512;
      int GuardClip(Vertex* vertices, int nverts, int clipstart) noexcept;
  
-     // GoldLink (UC11): the field's camera (the position matrix loaded right after a field
---- a/src/GPU3D.cpp	2026-11-13 20:46:08.372328447 -0500
-+++ b/src/GPU3D.cpp	2026-11-13 21:52:24.902622626 -0500
+     u32 FlushRequest = 0;
+--- a/src/GPU3D.cpp	2026-11-13 22:33:10.153524732 -0500
++++ b/src/GPU3D.cpp	2026-11-13 22:33:24.146348708 -0500
 @@ -1163,7 +1163,7 @@
      bool guard = OrthoWanted && Viewport[4] == 256 && Viewport[5] == 192 && Viewport[0] == 0;
      for (int i = 0; guard && i < nverts; i++)
@@ -32,7 +32,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      if (guard)
          nverts = GuardClip(clippedvertices, nverts, clipstart);
      else
-@@ -2741,7 +2741,10 @@
+@@ -2730,7 +2730,10 @@
      const double cy = ((camera[10] / 4096.0) * (m[5] / 4096.0) + m[13] / 4096.0) / w;
      const double x = Viewport[0] + (cx + 1) * Viewport[4] / 2.0;
      const double y = Viewport[3] + (1 - cy) * Viewport[5] / 2.0;
@@ -44,8 +44,8 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      m[12] += (s32)std::lround(w * ox * 2.0 / Viewport[4] * 4096);
      m[13] += (s32)std::lround(-w * oy * 2.0 / Viewport[5] * 4096);
      memcpy(ProjMatrix, m, sizeof(m));
---- a/src/GPU3D_Soft.h	2026-11-13 20:46:08.363164057 -0500
-+++ b/src/GPU3D_Soft.h	2026-11-13 21:52:24.897849230 -0500
+--- a/src/GPU3D_Soft.h	2026-11-13 22:33:10.114190960 -0500
++++ b/src/GPU3D_Soft.h	2026-11-13 22:33:24.146595382 -0500
 @@ -317,7 +317,7 @@
                  else                     dx = 0;
              }
