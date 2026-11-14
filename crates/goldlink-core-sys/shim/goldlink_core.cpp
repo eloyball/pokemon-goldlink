@@ -5,8 +5,7 @@
 //
 // ABI note: melonDS's classes change layout with JIT_ENABLED, OGLRENDERER_ENABLED and
 // GDBSTUB_ENABLED. This file is a target of the same CMake build as the core (CMakeLists.txt next
-// to it), so both sides agree; the JIT and the GDB stub are off (the #error below), the OpenGL
-// renderer on Linux (UC12, hires_gl.cpp).
+// to it), all three off, so both sides agree; the #error below fails the build otherwise.
 
 #include "goldlink_core.h"
 
@@ -24,10 +23,8 @@
 #include "GPU3D_Soft.h"
 #include "GPU2D_Soft.h"
 
-#include "hires_gl.h"
-
-#if defined(JIT_ENABLED) || defined(GDBSTUB_ENABLED)
-#error "goldlink-core-sys builds melonDS without the JIT and the GDB stub"
+#if defined(JIT_ENABLED) || defined(OGLRENDERER_ENABLED) || defined(GDBSTUB_ENABLED)
+#error "goldlink-core-sys builds melonDS without the JIT, the OpenGL renderer and the GDB stub"
 #endif
 
 struct GlCore
@@ -507,56 +504,3 @@ int gl_core_loadstate(GlCore *core, const uint8_t *data, uint32_t len)
 }
 
 } // extern "C"
-
-int gl_core_set_hires(GlCore *core, int scale)
-{
-    return hires_set(*core->nds, scale);
-}
-
-int gl_core_hires_frame(GlCore *core, int side, uint32_t *out, int cap, int *w, int *h, int *scale)
-{
-    (void)core;
-    // The whole wider buffer (256 + 2 * MaxWideSide columns at the scale), cropped to the picture
-    // shown (256 + 2 * side).
-    int fw = 0, fh = 0, k = 0;
-    if (!hires_frame(nullptr, 0, &fw, &fh, &k))
-        return 0;
-    std::vector<uint32_t> full((size_t)fw * fh);
-    if (!hires_frame(full.data(), (int)full.size(), &fw, &fh, &k))
-        return 0;
-    side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
-    const int cols = (256 + 2 * side) * k, from = (melonDS::GPU3D::MaxWideSide - side) * k;
-    *w = cols;
-    *h = fh;
-    *scale = k;
-    if (!out || cap < cols * fh)
-        return 1;
-    for (int y = 0; y < fh; y++)
-        memcpy(out + (size_t)y * cols, full.data() + (size_t)y * fw + from, (size_t)cols * 4);
-    return 1;
-}
-
-int gl_core_hires_mask(GlCore *core, int side, uint8_t *out)
-{
-    side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
-    const int width = 256 + 2 * side;
-    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());
-    constexpr int max = melonDS::GPU2D::SoftRenderer::MaxSide;
-    const int from = max - std::min(side, max);
-    int n = 0;
-    for (int y = 0; y < 192; y++)
-    {
-        uint8_t *row = out + y * width;
-        std::memset(row, 0, width);
-        // No screen-wide fade on this line (master brightness; the colour effect's brightness
-        // with the 3D layer as its target): the 3D picture as drawn is what shows.
-        const uint16_t mb = soft2d.LineMasterBright[y], bc = soft2d.LineBlendCnt[y];
-        const bool master = ((mb >> 14) & 3) != 0 && ((mb >> 14) & 3) != 3 && (mb & 0x1F) != 0;
-        const bool bright = ((bc >> 6) & 3) >= 2 && (bc & 1) && soft2d.LineEVY[y] != 0;
-        if (master || bright)
-            continue;
-        for (int x = 0; x < width && from + x < 256 + 2 * max; x++)
-            n += row[x] = soft2d.Layer3D[y][from + x] == 1 && !soft2d.Fixed2D[y][from + x];
-    }
-    return n;
-}

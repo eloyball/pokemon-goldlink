@@ -68,8 +68,7 @@ fn main() {
     } else if target.contains("apple") {
         println!("cargo:rustc-link-lib=dylib=c++");
     } else {
-        // EGL: the OpenGL renderer's offscreen context (UC12, shim/hires_gl.cpp).
-        for lib in ["stdc++", "m", "rt", "pthread", "EGL"] {
+        for lib in ["stdc++", "m", "rt", "pthread"] {
             println!("cargo:rustc-link-lib=dylib={lib}");
         }
     }

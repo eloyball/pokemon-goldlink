@@ -194,20 +194,6 @@ pub struct Attached {
     pub edge: Vec<u32>,
 }
 
-/// The 3D at screen resolution (UC12): one frame's picture.
-#[derive(Debug, Clone, Default)]
-pub struct Hires {
-    /// `width` x `height`, 0xAARRGGBB, the top row first: the picture's columns (`256 + 2 *
-    /// side`) and rows (192), each `scale` times.
-    pub pixels: Vec<u32>,
-    pub width: usize,
-    pub height: usize,
-    pub scale: usize,
-    /// `256 + 2 * side` x 192: 1 where the top screen shows this picture as drawn (the 3D on
-    /// top, no 2D over it, no screen-wide fade on its line).
-    pub mask: Vec<u8>,
-}
-
 /// The top screen's 3D depth and where the 3D layer shows, for the lighting (UC11). Each is
 /// [`LightBuffers::WIDTH`] x 192, the screen's x = 0 at column [`Nds::MAX_WIDE_SIDE`].
 #[derive(Debug, Clone, Default)]
@@ -482,60 +468,6 @@ impl Nds {
             mask,
             trans,
             edge,
-        })
-    }
-
-    /// Draws the 3D at `scale` times the DS's resolution too (UC12; 0: off), with melonDS's
-    /// OpenGL renderer on a context of its own (made on this thread at the next frame). False
-    /// when it can't (Linux only so far; no GPU).
-    pub fn set_hires(&mut self, scale: usize) -> bool {
-        // SAFETY: the core is live.
-        unsafe { sys::gl_core_set_hires(self.ptr(), scale as c_int) != 0 }
-    }
-
-    /// The 3D picture the last frame shows at that scale (UC12), the picture's columns for
-    /// `side`; into `buf`'s storage. None when off or not yet drawn.
-    pub fn hires_frame(&self, side: usize, mut buf: Vec<u32>) -> Option<Hires> {
-        let side = side.min(Self::MAX_WIDE_SIDE);
-        let (mut w, mut h, mut k) = (0 as c_int, 0 as c_int, 0 as c_int);
-        // SAFETY: a null out with cap 0 asks for the size only.
-        let found = unsafe {
-            sys::gl_core_hires_frame(
-                self.ptr(),
-                side as c_int,
-                std::ptr::null_mut(),
-                0,
-                &mut w,
-                &mut h,
-                &mut k,
-            )
-        };
-        if found == 0 || w <= 0 || h <= 0 {
-            return None;
-        }
-        let n = (w * h) as usize;
-        buf.resize(n, 0);
-        // SAFETY: buf holds w * h pixels, what the shim writes.
-        let found = unsafe {
-            sys::gl_core_hires_frame(
-                self.ptr(),
-                side as c_int,
-                buf.as_mut_ptr(),
-                n as c_int,
-                &mut w,
-                &mut h,
-                &mut k,
-            )
-        };
-        let mut mask = vec![0u8; (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT];
-        // SAFETY: mask holds (256 + 2 * side) * 192 bytes, what the shim writes.
-        unsafe { sys::gl_core_hires_mask(self.ptr(), side as c_int, mask.as_mut_ptr()) };
-        (found != 0).then_some(Hires {
-            pixels: buf,
-            width: w as usize,
-            height: h as usize,
-            scale: k as usize,
-            mask,
         })
     }
 

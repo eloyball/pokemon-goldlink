@@ -78,17 +78,6 @@ unsafe extern "C" {
         at: *mut f64,
     ) -> c_int;
     pub fn gl_core_steady_origin(core: *mut GlCore, xy: *mut f64);
-    pub fn gl_core_set_hires(core: *mut GlCore, scale: c_int) -> c_int;
-    pub fn gl_core_hires_mask(core: *mut GlCore, side: c_int, out: *mut u8) -> c_int;
-    pub fn gl_core_hires_frame(
-        core: *mut GlCore,
-        side: c_int,
-        out: *mut u32,
-        cap: c_int,
-        w: *mut c_int,
-        h: *mut c_int,
-        scale: *mut c_int,
-    ) -> c_int;
     pub fn gl_core_set_sprite_move(core: *mut GlCore, rects: *const i32, count: c_int);
     pub fn gl_core_wide_frame(
         core: *mut GlCore,
