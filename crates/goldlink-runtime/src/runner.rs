@@ -211,8 +211,11 @@ impl Pacer {
         if due > now {
             std::thread::sleep(due - now);
             self.next = Some(due);
-        } else if now - due > period * 4 {
-            // Far behind (a stall, a breakpoint): don't race to catch up.
+        } else if now - due > period / 2 {
+            // More than half a frame behind (a slow frame, a backup's savestate, a stall): don't
+            // race to catch up. Two frames run back to back reach the window within one of its
+            // refreshes and one of them is never shown, a skip in the picture; dropping the
+            // time lost only shows the late frame a little later.
             self.next = Some(now);
         } else {
             self.next = Some(due);
