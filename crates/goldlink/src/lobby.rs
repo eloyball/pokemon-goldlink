@@ -874,9 +874,9 @@ impl Lobby {
             .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
             .changed();
         changed |= ui
-            .checkbox(&mut v.steady, "Steady overworld")
+            .checkbox(&mut v.steady, "Smooth camera")
             .on_hover_text(
-                "A flat camera that keeps the town's pixels still as you move; off: the game's own perspective, which shimmers",
+                "The camera glides smoothly as you move, the town's pixels kept still; off: the game's own camera, which shimmers",
             )
             .changed();
         theme::caption(ui, "Sound");

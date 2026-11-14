@@ -41,6 +41,8 @@ enum Step {
     /// hex; none without it), once the file is there: a change to the game's state tried before
     /// it goes into the ROM, computed by a script from the Dump just before.
     Poke,
+    /// Locks running on or off, as the start menu pop-up's button does.
+    Running(bool),
     /// Holds the keys for the frames; with a name, records every frame (UC11's lighting) as
     /// `<dir>/rec-<name>/<frame>.bin`: the wide top screen and the 3D scene's buffers (see
     /// `record_frame`).
@@ -605,6 +607,29 @@ const GHOST_STEPS: [&[Step]; 2] = [
     ],
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=run-lock (the running shoes' button): the start menu's pop-up, then
+/// running locked on and a walk up, every frame recorded.
+const RUN_LOCK_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Press(Keys::X),
+    Step::Until(Scene::StartMenu, 120),
+    Step::Wait(40),
+    Step::Running(false),
+    Step::Wait(10),
+    Step::Shot("menu-off"),
+    Step::Running(true),
+    Step::Wait(10),
+    Step::Shot("menu-on"),
+    Step::Press(Keys::B),
+    Step::Until(Scene::Overworld, 300),
+    Step::Wait(30),
+    Step::Walk(Keys::UP, 60, "run"),
+    Step::Running(false),
+    Step::Walk(Keys::DOWN, 60, "walk"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=step-down (UC11's steady overworld): one step down from the save's spot,
 /// then standing, every frame recorded.
 const STEP_DOWN_STEPS: &[Step] = &[
@@ -876,6 +901,7 @@ fn steps() -> &'static [Step] {
         Ok("mom") => MOM_STEPS,
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,
+        Ok("run-lock") => RUN_LOCK_STEPS,
         Ok("ghost-a") => GHOST_STEPS[0],
         Ok("ghost-b") => GHOST_STEPS[1],
         Ok("down-past") => DOWN_PAST_STEPS,
@@ -1375,6 +1401,11 @@ impl FrameHook for TourHook {
                 };
                 eprintln!("tour: {line}");
                 s.log.push(line);
+                true
+            }
+            Step::Running(on) => {
+                emu.set_running_shoes(on);
+                eprintln!("tour: running {on}: now {:?}", emu.running_shoes());
                 true
             }
             Step::Poke => 'poke: {

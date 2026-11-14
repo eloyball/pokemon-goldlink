@@ -42,6 +42,8 @@ pub enum Command {
     Lighting(bool),
     /// The steady overworld (UC11).
     Steady(bool),
+    /// Running locked on or off (the field touch screen's shoes button).
+    RunningShoes(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
     Call(Box<dyn FnOnce(&mut Emulator) + Send>),
 }
@@ -69,6 +71,8 @@ pub struct Frame {
     /// With a steady shift: what the camera follows (`Nds::attached`), slid back by its own
     /// shift alone.
     pub attached: Option<goldlink_core::Attached>,
+    /// The running shoes: `None` until the player has them, then whether running is locked on.
+    pub running_shoes: Option<bool>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -162,6 +166,7 @@ impl Runner {
                 steady_origin: [0.0; 2],
                 fixed: Vec::new(),
                 attached: None,
+                running_shoes: None,
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -352,6 +357,7 @@ fn run(
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
                 Command::Steady(on) => emu.set_steady(on),
+                Command::RunningShoes(on) => emu.set_running_shoes(on),
                 Command::Call(f) => f(&mut emu),
             }
         }
@@ -386,6 +392,7 @@ fn run(
                 Vec::new()
             };
             f.attached = f.steady_shift.and_then(|_| emu.nds.attached(side));
+            f.running_shoes = emu.running_shoes();
             f.seq = emu.frame_count();
             light = std::mem::replace(&mut f.light, light_now);
         }

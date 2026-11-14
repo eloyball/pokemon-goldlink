@@ -115,6 +115,22 @@ impl Emulator {
         self.steady = on;
     }
 
+    /// HeartGold's running shoes: `None` until the player has them, then whether running is
+    /// locked on (the field touch screen's shoes button: every step a run, as if B were held).
+    pub fn running_shoes(&self) -> Option<bool> {
+        let at = running_shoes_at(self.nds.main_ram())?;
+        let ram = self.nds.main_ram();
+        (u16::from_le_bytes([ram[at], ram[at + 1]]) == 1)
+            .then(|| ram[at + 2] != 0 || ram[at + 3] != 0)
+    }
+
+    /// Locks running on or off, as the shoes button does (the game reads it every frame).
+    pub fn set_running_shoes(&mut self, on: bool) {
+        if let Some(at) = running_shoes_at(self.nds.main_ram()) {
+            self.nds.main_ram_mut()[at + 2..at + 4].copy_from_slice(&u16::from(on).to_le_bytes());
+        }
+    }
+
     /// Whether the game is in the overworld (walking or its start menu), from the bridge.
     pub fn set_in_field(&mut self, field: bool) {
         self.in_field = field;
@@ -287,4 +303,36 @@ pub fn screen_hash(emu: &Emulator) -> u64 {
         }
     }
     h
+}
+
+/// Where the player's `PlayerSaveData` (pret include/player_avatar.h: `hasRunningShoes`, then
+/// `runningShoesLock`, u16 each) is in main RAM (an offset from 0x02000000): the save (the pointer
+/// `sSaveDataPtr`, hg-engine rom.ld), its local field data (save array 5, pret
+/// constants/save_arrays.h: its header in hg-engine's `SaveData.arrayHeaders`, 0x2F014, checked by
+/// its id and size), the player 0x6C into it (pret src/save_local_field_data.c: five 20-byte
+/// `Location`s, three u16 and a u8, 4-aligned). None when anything doesn't check out.
+fn running_shoes_at(ram: &[u8]) -> Option<usize> {
+    const BASE: u32 = 0x0200_0000;
+    const SAVE_DATA_PTR: u32 = 0x021D_2228;
+    const DYNAMIC_REGION: u32 = 0x10;
+    const ARRAY_HEADERS: u32 = 0x2_F014;
+    const LOCAL_FIELD_DATA: u32 = 5;
+    // 0x80 bytes, as the save keeps it: 0x84 (with its footer).
+    const LOCAL_FIELD_DATA_SIZE: u32 = 0x84;
+    const PLAYER: u32 = 0x6C;
+    let word = |a: u32| -> Option<u32> {
+        let o = a.checked_sub(BASE)? as usize;
+        Some(u32::from_le_bytes(ram.get(o..o + 4)?.try_into().ok()?))
+    };
+    let save = word(SAVE_DATA_PTR)?;
+    let header = save.checked_add(ARRAY_HEADERS + LOCAL_FIELD_DATA * 16)?;
+    if word(header)? != LOCAL_FIELD_DATA || word(header + 4)? != LOCAL_FIELD_DATA_SIZE {
+        return None;
+    }
+    let at = save
+        .checked_add(DYNAMIC_REGION)?
+        .checked_add(word(header + 8)?)?
+        .checked_add(PLAYER)?;
+    let o = at.checked_sub(BASE)? as usize;
+    (o + 4 <= ram.len()).then_some(o)
 }

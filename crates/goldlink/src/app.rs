@@ -129,6 +129,8 @@ pub struct GameApp {
     edge_fill: [[Option<Vec<egui::Color32>>; 2]; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
+    /// The running shoes (`Frame::running_shoes`): None until the player has them.
+    running_shoes: Option<bool>,
     /// And where the world's origin truly is in it (DS screen columns and rows): see `pixel_lock`.
     steady_origin: [f64; 2],
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
@@ -213,6 +215,7 @@ impl GameApp {
             shown_scale: 1.0,
             prescale: 1,
             steady_shift: None,
+            running_shoes: None,
             steady_origin: [0.0; 2],
             attached: AttachedView::default(),
             fixed: Layer::default(),
@@ -424,6 +427,7 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 self.steady_shift = frame.steady_shift;
+                self.running_shoes = frame.running_shoes;
                 self.steady_origin = frame.steady_origin;
                 self.edge_fill = [
                     edge_rows(&frame.pixels[..256 * 192]),
@@ -601,8 +605,8 @@ impl GameApp {
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
                     .changed();
                 changed |= ui
-                    .checkbox(&mut v.steady, "Steady overworld")
-                    .on_hover_text("A flat camera that keeps the town's pixels still as you move; off: the game's own perspective, which shimmers")
+                    .checkbox(&mut v.steady, "Smooth camera")
+                    .on_hover_text("The camera glides smoothly as you move, the town's pixels kept still; off: the game's own camera, which shimmers")
                     .changed();
                 if self.release_ui && ui.checkbox(&mut v.fullscreen, "Fullscreen (F11)").changed() {
                     changed = true;
@@ -818,6 +822,35 @@ impl GameApp {
         action
     }
 
+    /// The running shoes' button in the start menu's pop-up (the touch screen `r`), where the
+    /// game's own sits on the field's touch screen (pret overlay 28's hitbox: x 178-252, y 86-134):
+    /// the game hides its own while the menu is open, and the one-screen layout shows the touch
+    /// screen only then, so it couldn't be reached. A panel of its own: the click isn't a touch.
+    fn running_toggle(&mut self, ctx: &egui::Context, r: egui::Rect, on: bool) {
+        let at = |x: f32, y: f32| r.min + egui::vec2(x / 256.0 * r.width(), y / 192.0 * r.height());
+        let area = egui::Rect::from_min_max(at(178.0, 86.0), at(252.0, 134.0));
+        let mut clicked = false;
+        egui::Area::new(egui::Id::new("running-shoes"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(area.min)
+            .show(ctx, |ui| {
+                let (label, kind) = if on {
+                    ("Running: on", Kind::Primary)
+                } else {
+                    ("Running: off", Kind::Neutral)
+                };
+                clicked = theme::button(ui, label, kind, area.size(), true)
+                    .on_hover_text("Every step a run (as if B were held); off: run while holding B")
+                    .clicked();
+            });
+        if clicked {
+            if let Some(runner) = &self.runner {
+                runner.send(Command::RunningShoes(!on));
+            }
+            self.running_shoes = Some(!on);
+        }
+    }
+
     /// The technical lines (F3), in a panel that can be dragged anywhere (UC8 §2.1).
     fn details(&mut self, ctx: &egui::Context) {
         let Some(b) = &self.bridge else { return };
@@ -1020,6 +1053,11 @@ impl GameApp {
                 egui::StrokeKind::Outside,
             );
             self.bottom = r;
+            if scene == Scene::StartMenu
+                && let Some(on) = self.running_shoes
+            {
+                self.running_toggle(ui.ctx(), r, on);
+            }
             if self.typing.naming.is_some() {
                 // Under the keyboard, in the frame's margin.
                 let room = egui::Rect::from_min_max(
@@ -1686,11 +1724,13 @@ fn fill_beside(
 }
 
 /// A screen's left and right edges, continued beside it when the wider picture isn't
-/// shown: per side, each row's colour when every row's 8 edge pixels are one colour (a flat
-/// screen, a fade, a bar across the screen), or none (black) where the edge is a picture.
+/// shown: per side, each row's colour when its 8 edge pixels are one colour (a flat screen, a
+/// fade, a bar across the screen), the nearest such row's where they aren't (a text box reaching
+/// the edge), or none (black) when most rows' aren't (the edge is a picture).
 fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
     let side = |cols: std::ops::Range<usize>| -> Option<Vec<egui::Color32>> {
-        top.chunks_exact(256)
+        let rows: Vec<Option<egui::Color32>> = top
+            .chunks_exact(256)
             .map(|row| {
                 let first = row[cols.start] & 0xFF_FFFF;
                 row[cols.clone()]
@@ -1704,7 +1744,23 @@ fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
                         )
                     })
             })
-            .collect()
+            .collect();
+        // A row whose edge has no one colour (a text box reaching the screen's edge, Oak's
+        // speech: the whole side came out black) takes the nearest row's that has one.
+        let near = |i: usize| {
+            (1..rows.len()).find_map(|d| {
+                let up = i.checked_sub(d).and_then(|j| rows[j]);
+                up.or_else(|| rows.get(i + d).copied().flatten())
+            })
+        };
+        if rows.iter().filter(|r| r.is_some()).count() * 2 < rows.len() {
+            return None; // a picture
+        }
+        Some(
+            (0..rows.len())
+                .map(|i| rows[i].or_else(|| near(i)).unwrap_or_default())
+                .collect(),
+        )
     };
     [side(0..8), side(248..256)]
 }
