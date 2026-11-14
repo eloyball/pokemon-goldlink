@@ -3,17 +3,22 @@ behind the world.
 
 - GPU3D_Soft: where something of the world is in front of an attached object (the player behind
   a windmill's blade, a roof's corner, a person), the attached object's own opaque pixel behind it
-  (BehindColor, BehindDepth, the nearest; ShownBehind with the depth): drawn behind it, or covered
+  (BehindColor, BehindDepth, the nearest; ShownBehind, ShownBehindDepth): drawn behind it, or covered
   by it later. The player's layer and the world slide by different fractions; the window drew the
   player cut where the world covered it, and what was in front at the world's shift: a gap or an
   overlap all round it (an outline, the user's play test). With these the window draws the
   player whole and what's in front over them.
+- Where the world's pixel over an attached object is an edge (an outline, a polygon's side, which
+  antialiasing blends with what's under it), its own colour and coverage (FrontEdge,
+  ShownFrontEdge), and the picture's pixel blended with the world under the attached object instead
+  of with the attached object's pixel: the player's colours were in the roof's outline, a ghost of
+  them once the layers slid apart. The window blends the edge over what it covers on screen.
 
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
 --- a/src/GPU3D_Soft.h	2026-11-14 13:36:52.133096177 -0500
-+++ b/src/GPU3D_Soft.h	2026-11-14 13:36:52.143793706 -0500
-@@ -62,6 +62,12 @@
++++ b/src/GPU3D_Soft.h	2026-11-14 14:19:33.215637758 -0500
+@@ -62,6 +62,21 @@
      // and in front of that (UnderDepth). The window shows it where the world slides out from
      // under the player's layer (half a pixel at most), instead of a guess.
      const u32* GetShownUnderLine(int line) const { return &ShownUnder[line * ScanlineWidth]; }
@@ -23,21 +28,33 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +    // shift (the two slide apart by a fraction: an outline round anything in front of the player,
 +    // the user's play test).
 +    const u32* GetShownBehindLine(int line) const { return &ShownBehind[line * ScanlineWidth]; }
++    // Its depth (DepthBuffer's format).
++    const u32* GetShownBehindDepthLine(int line) const { return &ShownBehindDepth[line * ScanlineWidth]; }
++    // Where the world's pixel over an attached object is an edge (an outline, a polygon's side),
++    // that edge's own colour (ColorBuffer's format) with its coverage (0..31) in bits 24-28, bit
++    // 31 set; else 0. The picture has it blended with the world under the attached object (it
++    // was blended with the attached object's pixel: the player's colours in the roof's outline,
++    // where they no longer are once their layer slides apart, the user's play test); the window
++    // blends it over whatever it covers on screen.
++    const u32* GetShownFrontEdgeLine(int line) const { return &ShownFrontEdge[line * ScanlineWidth]; }
  
      void SetupRenderThread(GPU& gpu);
      void EnableRenderThread();
-@@ -499,6 +505,9 @@
+@@ -499,6 +514,12 @@
      u32 UnderColor[BufferSize] {};
      u32 UnderDepth[BufferSize] {};
      u32 ShownUnder[ScanlineWidth * 192] {};
 +    u32 BehindColor[BufferSize] {};
 +    u32 BehindDepth[BufferSize] {};
 +    u32 ShownBehind[ScanlineWidth * 192] {};
++    u32 ShownBehindDepth[ScanlineWidth * 192] {};
++    u32 FrontEdge[BufferSize] {};
++    u32 ShownFrontEdge[ScanlineWidth * 192] {};
      u32 AttrBuffer[BufferSize * 2];
  
      // attribute buffer:
 --- a/src/GPU3D_Soft.cpp	2026-11-14 13:36:52.133061271 -0500
-+++ b/src/GPU3D_Soft.cpp	2026-11-14 13:36:52.144241699 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 14:19:33.216175027 -0500
 @@ -1160,11 +1160,15 @@
          // if depth test against the topmost pixel fails, test
          // against the pixel underneath
@@ -179,20 +196,50 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
              DepthBuffer[pixeladdr] = z;
              ColorBuffer[pixeladdr] = color;
              AttrBuffer[pixeladdr] = attr;
-@@ -1749,6 +1812,8 @@
+@@ -1708,9 +1771,16 @@
+             u32 coverage = (attr >> 8) & 0x1F;
+             if (coverage == 0x1F) continue;
+ 
++            // GoldLink (UC11): the world's edge over an attached object: kept apart, and blended
++            // with the world under the attached object instead (GetShownFrontEdgeLine).
++            const bool overAttached = !(attr & (1u << 30)) && (AttrBuffer[pixeladdr+BufferSize] & (1u << 30));
++            if (overAttached)
++                FrontEdge[pixeladdr] = 0x80000000u | (coverage << 24) | (ColorBuffer[pixeladdr] & 0x3F3F3F);
++            const u32 bottom = overAttached ? UnderColor[pixeladdr] : ColorBuffer[pixeladdr+BufferSize];
++
+             if (coverage == 0)
+             {
+-                ColorBuffer[pixeladdr] = ColorBuffer[pixeladdr+BufferSize];
++                ColorBuffer[pixeladdr] = bottom;
+                 continue;
+             }
+ 
+@@ -1720,7 +1790,7 @@
+             u32 topB = (topcolor >> 16) & 0x3F;
+             u32 topA = (topcolor >> 24) & 0x1F;
+ 
+-            u32 botcolor = ColorBuffer[pixeladdr+BufferSize];
++            u32 botcolor = bottom;
+             u32 botR = botcolor & 0x3F;
+             u32 botG = (botcolor >> 8) & 0x3F;
+             u32 botB = (botcolor >> 16) & 0x3F;
+@@ -1749,6 +1819,9 @@
      u32 clearz = ((gpu.GPU3D.RenderClearAttr2 & 0x7FFF) * 0x200) + 0x1FF;
      u32 polyid = gpu.GPU3D.RenderClearAttr1 & 0x3F000000; // this sets the opaque polygonID
      memset(AttachTrans, 0, sizeof(AttachTrans)); // GoldLink (UC11)
 +    memset(BehindColor, 0, sizeof(BehindColor));
 +    memset(BehindDepth, 0xFF, sizeof(BehindDepth));
++    memset(FrontEdge, 0, sizeof(FrontEdge));
  
      // fill screen borders for edge marking
  
-@@ -1885,6 +1950,7 @@
+@@ -1885,6 +1958,9 @@
      memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
      memcpy(ShownAttachTrans, &AttachTrans[FirstPixelOffset], sizeof(ShownAttachTrans)); // GoldLink (UC11)
      memcpy(ShownUnder, &UnderColor[FirstPixelOffset], sizeof(ShownUnder));
 +    memcpy(ShownBehind, &BehindColor[FirstPixelOffset], sizeof(ShownBehind));
++    memcpy(ShownBehindDepth, &BehindDepth[FirstPixelOffset], sizeof(ShownBehindDepth));
++    memcpy(ShownFrontEdge, &FrontEdge[FirstPixelOffset], sizeof(ShownFrontEdge));
      memcpy(ShownAttr, &AttrBuffer[FirstPixelOffset], sizeof(ShownAttr));
  
      if (RenderThreadRunning.load(std::memory_order_relaxed))

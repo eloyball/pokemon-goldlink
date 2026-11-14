@@ -111,11 +111,16 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
 // a mount: patch 0022), on top, into `out` (as gl_core_fixed_2d's): 1 opaque (the picture's
 // pixel; in `trans` the world under it, 0xFFRRGGBB: patch 0023), 2 translucent (a shadow, not
 // blended into the picture: its colour and alpha in `trans`, 0xAARRGGBB), 3 the world in front of
-// one (the picture's pixel; in `trans` the attached object's behind it: patch 0024), 4 the same
-// surface within two pixels of a 3 (the picture's), else 0; and the shift (pixels, x then y) they were drawn with, which the window
-// takes back for them, and where their reference truly is (`at`: the screen's columns and rows);
-// how many (0: none this frame, the rest then unwritten).
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy, double *at);
+// one (the picture's pixel; in `trans` the attached object's behind it: patch 0024), 4 the
+// world's pixels within two of an attached object's (1, 3; its shadow's, 2) nearer than it, else
+// 0. At a 3 that's an edge of the world (an outline), `edge` holds it apart, twice as long as
+// `out`: its colour and coverage (0xAARRGGBB), then the world under the attached object
+// (0xFFRRGGBB), which the picture's pixel is the edge blended with; else 0. And the shift
+// (pixels, x then y) they were drawn with, which the window takes back for them, and where their
+// reference truly is (`at`: the screen's columns and rows); how many (0: none this frame, the
+// rest then unwritten).
+int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint32_t *edge, float *xy,
+                     double *at);
 // Where the steady world's origin truly is in the picture on screen (the screen's columns and rows,
 // patch 0023), for the window to land it on a whole pixel of its own.
 void gl_core_steady_origin(GlCore *core, double *xy);

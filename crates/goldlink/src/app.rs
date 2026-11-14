@@ -138,10 +138,6 @@ pub struct GameApp {
     /// What's in front of the player (a windmill's pole, a roof's corner, a person), drawn over
     /// the player's layer again with the world's shift.
     front: Layer,
-    /// The player's layer's offset from the world's (its shift less the world's) last frame, and
-    /// how much of it is used (0..1, see `Layer::follow`).
-    attach_delta: Option<[f32; 2]>,
-    attach_mix: f32,
     fixed: Layer,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
     /// its Mega symbol cut from there.
@@ -222,8 +218,6 @@ impl GameApp {
             steady_origin: [0.0; 2],
             attached: Layer::default(),
             front: Layer::default(),
-            attach_delta: None,
-            attach_mix: 0.0,
             fixed: Layer::default(),
             edge_fill: [[None, None], [None, None]],
             mega: None,
@@ -484,8 +478,14 @@ impl GameApp {
                 for i in (0..mask.len()).filter(|&i| mask[i] == 3) {
                     trans[i] = scaled(trans[i], own);
                 }
+                // The world's edges over the player (an outline: the renderer kept them apart),
+                // blended over whatever they cover on screen; the picture there is the world under
+                // the player.
+                let half = a.edge.len() / 2;
+                let (edge, edge_under) = (fit(&a.edge[..half], w), fit(&a.edge[half..], w));
+                let edge = lit_edges(top, &mask, &edge, &edge_under);
                 if mask.iter().any(|&m| m >= 3) {
-                    let img = front_layer(top, &mask, w, k);
+                    let img = front_layer(top, &mask, &edge, w, k);
                     let world = self.steady_shift;
                     self.front.set(ctx, "front", img, options, w != 256, world);
                     self.front.origin = self.steady_origin;
@@ -494,28 +494,6 @@ impl GameApp {
                 self.attached
                     .set(ctx, "attached", img, options, w != 256, Some(a.shift));
                 self.attached.origin = a.origin;
-                // Off the world's pixels, where something stands in front of the player its edge
-                // and theirs meet at a fraction of a pixel: slivers of the sprite (the user's play
-                // test). The player only needs their own fraction while their offset from the
-                // world changes (moving up or down) and nothing is in front of them; otherwise
-                // they ease onto the world's pixels (then a fraction of a pixel off where they
-                // truly are, as the DS draws them).
-                if let Some(world) = self.steady_shift {
-                    let delta = [a.shift[0] - world[0], a.shift[1] - world[1]];
-                    let changing = self.attach_delta.is_some_and(|d| {
-                        (d[0] - delta[0]).abs() > 0.01 || (d[1] - delta[1]).abs() > 0.01
-                    });
-                    let covered = mask.iter().any(|&m| m >= 3);
-                    self.attach_delta = Some(delta);
-                    self.attach_mix = if covered {
-                        0.0 // at once: not a frame of slivers
-                    } else if changing {
-                        (self.attach_mix + 0.25).min(1.0)
-                    } else {
-                        (self.attach_mix - 0.08).max(0.0)
-                    };
-                    self.attached.follow = Some((world, self.steady_origin, self.attach_mix));
-                }
             }
             if !fixed.is_empty() {
                 let none = vec![0; w * 192];
@@ -1298,9 +1276,6 @@ struct Layer {
     shift: Option<[f32; 2]>,
     /// Where what it's slid for truly is (DS screen columns and rows): see `pixel_lock`.
     origin: [f64; 2],
-    /// The player's layer: the world's shift and origin, and how much of its own offset from
-    /// them to use (1: its own shift; 0: the world's, on the world's pixels).
-    follow: Option<([f32; 2], [f64; 2], f32)>,
 }
 
 impl Layer {
@@ -1344,19 +1319,10 @@ impl Layer {
         };
         let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         let ppp = p.ctx().pixels_per_point();
-        let shift = self.shift.filter(|_| slid).map(|s| {
-            let own = pixel_lock(s, self.origin, dst, cols, side, ppp);
-            match self.follow {
-                Some((world, origin, mix)) => {
-                    let world = pixel_lock(world, origin, dst, cols, side, ppp);
-                    [
-                        world[0] + (own[0] - world[0]) * mix,
-                        world[1] + (own[1] - world[1]) * mix,
-                    ]
-                }
-                None => own,
-            }
-        });
+        let shift = self
+            .shift
+            .filter(|_| slid)
+            .map(|s| pixel_lock(s, self.origin, dst, cols, side, ppp));
         let (r, uv) = slide(dst, full, shift, cols, false);
         p.image(t.id(), r, uv, egui::Color32::WHITE);
     }
@@ -1430,18 +1396,47 @@ fn player_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8]) -> [f32; 3] {
 /// times as large: drawn over the player's layer with the world's shift, so it covers them
 /// exactly where the rest of it is (the two slide apart by a fraction: slivers of the player
 /// showed past its edges, the user's play test).
-fn front_layer(top: &[u32], mask: &[u8], w: usize, k: usize) -> egui::ColorImage {
+/// `edge` (0xAARRGGBB, its own colour and coverage: `lit_edges`) where it has one: over the
+/// player's layer it blends with them where they are on screen, not where the DS drew them.
+fn front_layer(top: &[u32], mask: &[u8], edge: &[u32], w: usize, k: usize) -> egui::ColorImage {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     let layer = (0..w * 192)
-        .map(|i| {
-            if mask[i] >= 3 {
-                colour(top[i])
-            } else {
-                egui::Color32::TRANSPARENT
+        .map(|i| match (mask[i], edge[i] >> 24) {
+            (3, a) if a > 0 => {
+                let e = edge[i];
+                egui::Color32::from_rgba_unmultiplied(
+                    (e >> 16) as u8,
+                    (e >> 8) as u8,
+                    e as u8,
+                    a as u8,
+                )
             }
+            (3 | 4, _) => colour(top[i]),
+            _ => egui::Color32::TRANSPARENT,
         })
         .collect();
     enlarged_layer(layer, w, 192, k)
+}
+
+/// The world's edges over the player (`mask` 3 with an `edge`, 0xAARRGGBB: colour and coverage),
+/// as shown: the picture's pixel there (`top`) is the edge blended with the world under the player
+/// (`under`), then lit (and whatever else the screen did to it); each channel's ratio of the two
+/// lights the edge and the world under alike. `top` there becomes the world under the player; the
+/// edges (alpha their coverage) are returned, else 0.
+fn lit_edges(top: &mut [u32], mask: &[u8], edge: &[u32], under: &[u32]) -> Vec<u32> {
+    let mut out = vec![0u32; edge.len()];
+    for i in (0..edge.len()).filter(|&i| mask[i] == 3 && edge[i] >> 24 != 0) {
+        let (e, u, c) = (edge[i], under[i], (edge[i] >> 24) as f32 / 255.0);
+        let mut gain = [1f32; 3];
+        for (g, sh) in gain.iter_mut().zip([16, 8, 0]) {
+            let ch = |p: u32| ((p >> sh) & 255) as f32;
+            let blended = ch(e) * c + ch(u) * (1.0 - c);
+            *g = (ch(top[i]) + 1.0) / (blended + 1.0);
+        }
+        top[i] = scaled(u, gain);
+        out[i] = (e & 0xFF00_0000) | scaled(e, gain);
+    }
+    out
 }
 
 /// A layer of the steady overworld's picture (UC11), `w` across, 192 rows, each pixel `k` times as

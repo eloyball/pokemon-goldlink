@@ -181,13 +181,17 @@ pub struct Attached {
     pub origin: [f64; 2],
     /// Per pixel: 1 an attached object's opaque pixel (the picture's), 2 its translucent one (its
     /// shadow, which the picture doesn't have: `trans`), 3 the world in front of one (the
-    /// picture's; the attached object's behind it in `trans`), 4 the same surface just past a 3,
-    /// else 0.
+    /// picture's; the attached object's behind it in `trans`), 4 the world's pixels near them that
+    /// are nearer than they are, else 0.
     pub mask: Vec<u8>,
     /// The translucent pixels' colour and alpha, 0xAARRGGBB; at the opaque ones, the world under
     /// them (0xFFRRGGBB), as it would be without the attached objects; at 3, the attached
     /// object's pixel behind the world (0xFFRRGGBB).
     pub trans: Vec<u32>,
+    /// At a 3 that's an edge of the world (an outline; else 0): the edge's colour and coverage
+    /// (0xAARRGGBB), and in the second half, the world under the attached object (0xFFRRGGBB).
+    /// The picture's pixel is the edge blended with that world, not with the attached object.
+    pub edge: Vec<u32>,
 }
 
 /// The top screen's 3D depth and where the 3D layer shows, for the lighting (UC11). Each is
@@ -444,15 +448,16 @@ impl Nds {
         let side = side.min(Self::MAX_WIDE_SIDE);
         let n = (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT;
         let (mut mask, mut trans, mut shift) = (vec![0u8; n], vec![0u32; n], [0f32; 2]);
-        let mut origin = [0f64; 2];
-        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each, shift and origin two each,
-        // what the shim writes.
+        let (mut edge, mut origin) = (vec![0u32; 2 * n], [0f64; 2]);
+        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each, edge twice that, shift and
+        // origin two each, what the shim writes.
         let found = unsafe {
             sys::gl_core_attached(
                 self.ptr(),
                 side as c_int,
                 mask.as_mut_ptr(),
                 trans.as_mut_ptr(),
+                edge.as_mut_ptr(),
                 shift.as_mut_ptr(),
                 origin.as_mut_ptr(),
             )
@@ -462,6 +467,7 @@ impl Nds {
             origin,
             mask,
             trans,
+            edge,
         })
     }
 

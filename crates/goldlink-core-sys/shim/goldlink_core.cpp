@@ -222,7 +222,8 @@ void gl_core_steady_origin(GlCore *core, double *xy)
     xy[1] = core->nds->GPU.GPU3D.ShownOrthoOrigin[1];
 }
 
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy, double *at)
+int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint32_t *edge, float *xy,
+                     double *at)
 {
     side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
     const int width = 256 + 2 * side;
@@ -247,12 +248,16 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
         const uint32_t *shadow = soft.GetShownAttachTransLine(y) + from;
         const uint32_t *under = soft.GetShownUnderLine(y) + from;
         const uint32_t *behind = soft.GetShownBehindLine(y) + from;
+        const uint32_t *front = soft.GetShownFrontEdgeLine(y) + from;
         uint8_t *row = out + y * width;
         uint32_t *trow = trans + y * width;
+        uint32_t *erow = edge + y * width, *urow = edge + (192 + y) * width;
         for (int x = 0; x < width; x++)
         {
             row[x] = 0;
             trow[x] = 0;
+            erow[x] = 0;
+            urow[x] = 0;
             // The 3D scene on top (not under 2D).
             if (soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
                 continue;
@@ -269,6 +274,13 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
                 const uint32_t c = behind[x];
                 row[x] = 3;
                 trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+                if (const uint32_t e = front[x])
+                {
+                    // An edge: its coverage (0..31) as alpha, and the world under them.
+                    const uint32_t a = (((e >> 24) & 0x1F) + 1) * 255 / 32, u = under[x];
+                    erow[x] = (a << 24) | (ch(e) << 16) | (ch(e >> 8) << 8) | ch(e >> 16);
+                    urow[x] = 0xFF000000u | (ch(u) << 16) | (ch(u >> 8) << 8) | ch(u >> 16);
+                }
             }
             else if (shadow[x] != 0)
             {
@@ -280,8 +292,29 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
             n += row[x] != 0;
         }
     }
-    // What's in front, a little past where it covers them (4): the scene's pixels within two of
-    // a 3 at that pixel's depth (the same surface), for the window to draw over the player too.
+    // What's in front of them near them (4): the scene's pixels within two of an attached
+    // object's (shown, 1, or behind, 3) that are nearer than it, as the DS's own depth test would
+    // find had the object stood there (the layers slide apart by up to a pixel); and of its
+    // shadow (2), nearer than the ground under it by more than the ground's own slope over a few
+    // rows (a pole's foot by the shadow, not the ground beside it). The window draws
+    // 3 and 4 over the player again with the world's shift: at the screen's resolution, whatever
+    // is in front of the player covers them where it truly is.
+    std::vector<uint32_t> own(width * 192, 0); // the attached object's depth, else 0 (none nearer)
+    for (int y = 0; y < 192; y++)
+    {
+        const uint32_t *depth = soft.GetShownDepthLine(y) + from;
+        const uint32_t *bdepth = soft.GetShownBehindDepthLine(y) + from;
+        for (int x = 0; x < width; x++)
+        {
+            const uint8_t m = out[y * width + x];
+            if (m == 1)
+                own[y * width + x] = depth[x] & 0xFFFFFF;
+            else if (m == 3)
+                own[y * width + x] = bdepth[x] & 0xFFFFFF;
+            else if (m == 2)
+                own[y * width + x] = (depth[x] & 0xFFFFFF) - std::min<uint32_t>(depth[x] & 0xFFFFFF, 0x10000);
+        }
+    }
     for (int y = 0; y < 192; y++)
     {
         const uint32_t *depth = soft.GetShownDepthLine(y) + from;
@@ -289,19 +322,16 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
         {
             if (out[y * width + x] != 0 || soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
                 continue;
-            bool close_by = false;
-            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !close_by; yy++)
-            {
-                const uint32_t *d = soft.GetShownDepthLine(yy) + from;
+            const uint32_t d = depth[x] & 0xFFFFFF;
+            bool in_front = false;
+            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !in_front; yy++)
                 for (int xx = std::max(0, x - 2); xx <= std::min(width - 1, x + 2); xx++)
-                    if (out[yy * width + xx] == 3
-                        && std::abs((int)(depth[x] & 0xFFFFFF) - (int)(d[xx] & 0xFFFFFF)) < 0x8000)
+                    if (d < own[yy * width + xx])
                     {
-                        close_by = true;
+                        in_front = true;
                         break;
                     }
-            }
-            if (close_by)
+            if (in_front)
             {
                 out[y * width + x] = 4;
                 n++;

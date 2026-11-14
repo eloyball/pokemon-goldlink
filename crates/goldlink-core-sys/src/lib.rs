@@ -73,6 +73,7 @@ unsafe extern "C" {
         side: c_int,
         out: *mut u8,
         trans: *mut u32,
+        edge: *mut u32,
         xy: *mut f32,
         at: *mut f64,
     ) -> c_int;
