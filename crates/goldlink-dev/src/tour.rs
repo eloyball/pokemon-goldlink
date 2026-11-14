@@ -467,6 +467,22 @@ const FAR_LEFT_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=up5 (UC11's steady overworld): up for five seconds.
+const UP5_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::UP, 300, "up"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
+const RIGHT5_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 300, "right"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=battle-intro (UC11's smooth camera): a wild battle's intro, every
 /// frame recorded.
 const BATTLE_INTRO_STEPS: &[Step] = &[
@@ -683,6 +699,8 @@ fn steps() -> &'static [Step] {
         Ok("cave") => CAVE_STEPS,
         Ok("sideways") => SIDEWAYS_STEPS,
         Ok("far-left") => FAR_LEFT_STEPS,
+        Ok("up5") => UP5_STEPS,
+        Ok("right5") => RIGHT5_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
