@@ -121,6 +121,16 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
 // rest then unwritten).
 int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, uint32_t *edge, float *xy,
                      double *at);
+// UC12: the 3D at screen resolution, `scale` times the DS's (0: off): melonDS's OpenGL renderer
+// on an offscreen context on the emulating thread (Linux). 0 when it can't (it then stays off).
+int gl_core_set_hires(GlCore *core, int scale);
+// The 3D picture the last frame shows at that scale, `256 + 2 * side` columns times the scale
+// across, 192 times it down (0xAARRGGBB, the top row first): its size and scale into w, h and
+// scale, the pixels into out when `cap` holds them. 0 when there's none.
+int gl_core_hires_frame(GlCore *core, int side, uint32_t *out, int cap, int *w, int *h, int *scale);
+// 1 where the top screen shows that 3D picture as drawn (`256 + 2 * side` x 192): the 3D on top,
+// no 2D over it, no screen-wide fade on its line; else 0. How many.
+int gl_core_hires_mask(GlCore *core, int side, uint8_t *out);
 // Where the steady world's origin truly is in the picture on screen (the screen's columns and rows,
 // patch 0023), for the window to land it on a whole pixel of its own.
 void gl_core_steady_origin(GlCore *core, double *xy);

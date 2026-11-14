@@ -69,6 +69,8 @@ pub struct Frame {
     /// With a steady shift: what the camera follows (`Nds::attached`), slid back by its own
     /// shift alone.
     pub attached: Option<goldlink_core::Attached>,
+    /// The 3D at screen resolution (UC12), when on.
+    pub hires: Option<goldlink_core::Hires>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -162,6 +164,7 @@ impl Runner {
                 steady_origin: [0.0; 2],
                 fixed: Vec::new(),
                 attached: None,
+                hires: None,
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -308,6 +311,13 @@ fn run(
     let mut lighting = false;
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
     let mut light: Option<LightFrame> = None;
+    // The 3D at screen resolution (UC12, exp/hires-renderer): 8 times the DS's unless
+    // GOLDLINK_HIRES says otherwise (0: off).
+    let hires = std::env::var("GOLDLINK_HIRES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+    emu.nds.set_hires(hires);
     loop {
         // Commands (blocking while paused).
         loop {
@@ -386,6 +396,8 @@ fn run(
                 Vec::new()
             };
             f.attached = f.steady_shift.and_then(|_| emu.nds.attached(side));
+            let buf = f.hires.take().map(|h| h.pixels).unwrap_or_default();
+            f.hires = emu.nds.hires_frame(side, buf);
             f.seq = emu.frame_count();
             light = std::mem::replace(&mut f.light, light_now);
         }

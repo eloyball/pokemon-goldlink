@@ -135,6 +135,9 @@ pub struct GameApp {
     /// shadow), slid back by its own shift, and the 2D drawn over the scene (a text box, a
     /// banner), where it is.
     attached: Layer,
+    /// The 3D at screen resolution (UC12): over the picture where it shows the 3D as drawn, slid
+    /// with it.
+    hires: Layer,
     /// What's in front of the player (a windmill's pole, a roof's corner, a person), drawn over
     /// the player's layer again with the world's shift.
     front: Layer,
@@ -217,6 +220,7 @@ impl GameApp {
             steady_shift: None,
             steady_origin: [0.0; 2],
             attached: Layer::default(),
+            hires: Layer::default(),
             front: Layer::default(),
             fixed: Layer::default(),
             edge_fill: [[None, None], [None, None]],
@@ -433,12 +437,16 @@ impl GameApp {
                     edge_rows(&frame.pixels[256 * 192..256 * 384]),
                 ];
                 let light = if lit { frame.light.clone() } else { None };
-                let layers = (frame.fixed.clone(), frame.attached.clone());
+                let layers = (
+                    frame.fixed.clone(),
+                    frame.attached.clone(),
+                    frame.hires.clone(),
+                );
                 Some((frame.pixels.clone(), wide, frame.wide_side, light, layers))
             }
         };
         let (k, options) = sharp_prescale(self.shown_scale, self.config.video.filter);
-        let Some((mut pixels, mut wide, side, light, (fixed, attached))) = shown else {
+        let Some((mut pixels, mut wide, side, light, (fixed, attached, hires))) = shown else {
             if self.texture.is_none() {
                 let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
                 self.texture = Some(ctx.load_texture("screens", img, options));
@@ -454,8 +462,28 @@ impl GameApp {
                 Some(w) => w.clone(),
                 None => pixels[..256 * 192].to_vec(),
             });
+        // The top picture before the lighting, with the 3D at screen resolution: its pixels are lit
+        // as the picture's (each DS pixel's gain).
+        let unlit_hires: Option<Vec<u32>> = hires.as_ref().filter(|_| lit).map(|_| match &wide {
+            Some(w) => w.clone(),
+            None => pixels[..256 * 192].to_vec(),
+        });
         if lit {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
+        }
+        self.hires.shown = false;
+        if let Some(h) = &hires {
+            let (top, w): (&[u32], usize) = match wide.as_deref() {
+                Some(wide) => (wide, 256 + 2 * side),
+                None => (&pixels[..256 * 192], 256),
+            };
+            if h.width == w * h.scale && h.mask.len() == w * 192 {
+                let img = hires_layer(h, top, unlit_hires.as_deref(), w);
+                let nearest = egui::TextureOptions::NEAREST;
+                self.hires
+                    .set(ctx, "hires", img, nearest, w != 256, self.steady_shift);
+                self.hires.origin = self.steady_origin;
+            }
         }
         let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
         // The steady overworld's layers (UC11), taken out of the top picture: what the camera
@@ -1007,6 +1035,8 @@ impl GameApp {
                         let locked = shift.map(|s| pixel_lock(s, origin, frame, cols, side, ppp));
                         let (r, uv) = slide(frame, rows(1.0), locked, cols, false);
                         p.image(w.id(), r, uv, egui::Color32::WHITE);
+                        self.hires
+                            .draw(&p, frame, true, cols, shift.is_some(), side);
                         self.attached
                             .draw(&p, frame, true, cols, shift.is_some(), side);
                         self.front
@@ -1019,6 +1049,8 @@ impl GameApp {
                         let (r, uv) =
                             slide(middle, screen_uvs(self.prescale).0, locked, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE);
+                        self.hires
+                            .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
                         self.attached
                             .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
                         self.front
@@ -1151,6 +1183,7 @@ impl GameApp {
                         let locked = shift.map(|s| pixel_lock(s, origin, top, 256.0, 0.0, ppp));
                         let (slid, uv) = slide(top, top_uv, locked, 256.0, true);
                         p.image(t.id(), slid, uv, egui::Color32::WHITE);
+                        self.hires.draw(p, top, false, 256.0, shift.is_some(), 0.0);
                         self.attached
                             .draw(p, top, false, 256.0, shift.is_some(), 0.0);
                         self.front.draw(p, top, false, 256.0, shift.is_some(), 0.0);
@@ -1361,6 +1394,48 @@ fn light_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8], w: usize) -> [f32
         }
     }
     gain
+}
+
+/// The 3D at screen resolution (UC12) as an image: `h`'s pixels where its mask says the top
+/// picture shows the 3D as drawn, the rest transparent (the DS picture under it shows: 2D, fades).
+/// With the lighting (`unlit`: the picture before it, `top` after), each pixel takes its DS
+/// pixel's gain.
+fn hires_layer(
+    h: &goldlink_core::Hires,
+    top: &[u32],
+    unlit: Option<&[u32]>,
+    w: usize,
+) -> egui::ColorImage {
+    let k = h.scale;
+    let gain = |i: usize| -> [f32; 3] {
+        let Some(u) = unlit else {
+            return [1.0; 3];
+        };
+        let ch = |p: u32, sh: u32| ((p >> sh) & 255) as f32;
+        [16, 8, 0].map(|sh| (ch(top[i], sh) + 1.0) / (ch(u[i], sh) + 1.0))
+    };
+    let mut gains = vec![[1f32; 3]; w * 192];
+    if unlit.is_some() {
+        for (i, g) in gains.iter_mut().enumerate() {
+            *g = gain(i);
+        }
+    }
+    let mut out = vec![egui::Color32::TRANSPARENT; h.width * h.height];
+    for (y, row) in out.chunks_exact_mut(h.width).enumerate() {
+        let src = &h.pixels[y * h.width..(y + 1) * h.width];
+        let dy = (y / k) * w;
+        for (x, px) in row.iter_mut().enumerate() {
+            let i = dy + x / k;
+            if h.mask[i] == 1 {
+                let c = scaled(src[x], gains[i]);
+                *px = egui::Color32::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8);
+            }
+        }
+    }
+    egui::ColorImage {
+        size: [h.width, h.height],
+        pixels: out,
+    }
 }
 
 /// `c` (0x..RRGGBB) times a gain per channel.
