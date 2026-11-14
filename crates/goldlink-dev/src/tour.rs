@@ -456,6 +456,17 @@ const SIDEWAYS_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=far-left (UC11's neighbouring-area haze): from the save, left for 25
+/// seconds (through gatehouses into the next areas); with GOLDLINK_DEV_TOUR_FILM, every frame.
+const FAR_LEFT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Shot("start"),
+    Step::Walk(Keys::LEFT, 1500, ""),
+    Step::Shot("end"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=battle-intro (UC11's smooth camera): a wild battle's intro, every
 /// frame recorded.
 const BATTLE_INTRO_STEPS: &[Step] = &[
@@ -671,6 +682,7 @@ fn steps() -> &'static [Step] {
         Ok("spot") => SPOT_STEPS,
         Ok("cave") => CAVE_STEPS,
         Ok("sideways") => SIDEWAYS_STEPS,
+        Ok("far-left") => FAR_LEFT_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
