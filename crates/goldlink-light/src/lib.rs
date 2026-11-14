@@ -103,9 +103,9 @@ pub struct Zones<'a> {
 
 /// A map matrix cell's size, in world units (32 tiles of 16).
 const MATRIX_CELL: f32 = 512.0;
-/// How far past the player's area, on the ground (world units: 10 tiles), the fog takes to reach
+/// How far past the player's area, on the ground (world units: 6 tiles), the fog takes to reach
 /// its darkest.
-const FOG_RANGE: f32 = 160.0;
+const FOG_RANGE: f32 = 96.0;
 /// Frames the haze takes to move from one map area's neighbours to another's (the player
 /// crossing into the next area).
 const ZONE_FADE_FRAMES: f32 = 24.0;
