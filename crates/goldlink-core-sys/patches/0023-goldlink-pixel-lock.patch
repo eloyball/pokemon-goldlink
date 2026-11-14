@@ -1,5 +1,5 @@
 GoldLink's change to melonDS (UC11): the steady overworld tells the window where the world and the
-attached layer truly are, and draws buildings' outlines whole.
+attached layer truly are, and keeps the world under the attached layer.
 
 - GPU3D: ShownOrthoOrigin (where the world's origin truly is in the picture on screen: the scene's
   OrthoOrigin, the in-between's halfway) and ShownAttachTrue (where the attached layer's reference
@@ -8,9 +8,6 @@ attached layer truly are, and draws buildings' outlines whole.
   more depends on where the picture lands within a screen pixel, so as the world moved (walking
   up, a quarter of a game pixel a frame) fine texture flickered (the user's play test, houses and
   the ground under the shadow). With these the window lands each on a whole screen pixel.
-- GPU3D_Soft: edge marking in the steady overworld (RenderOrtho) keeps the outline pixel's full
-  coverage: anti-aliasing blended it half with the pixel under it (as the DS does), and the user
-  wanted the buildings' outlines solid.
 - GPU3D_Soft: under an attached object's opaque pixels, the world as it would be without it
   (UnderColor, UnderDepth; ShownUnder with the depth): what was there when it was drawn, then any
   pixel drawn behind it but in front of that, and translucent pixels blended over it. The player's
@@ -125,7 +122,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
  
      // attribute buffer:
 --- a/src/GPU3D_Soft.cpp	2026-11-14 12:07:05.940520854 -0500
-+++ b/src/GPU3D_Soft.cpp	2026-11-14 12:28:28.130621002 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 12:31:46.964188911 -0500
 @@ -592,6 +592,11 @@
      if (!(dstattr & (1<<15)))
          attr &= ~(1<<15);
@@ -318,19 +315,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
          else
          {
-@@ -1515,7 +1598,10 @@
-                 ColorBuffer[pixeladdr] = edgeR | (edgeG << 8) | (edgeB << 16) | (ColorBuffer[pixeladdr] & 0xFF000000);
- 
-                 // break antialiasing coverage (checkme)
--                AttrBuffer[pixeladdr] = (AttrBuffer[pixeladdr] & 0xFFFFE0FF) | 0x00001000;
-+                // GoldLink (UC11): in the steady overworld the outline is drawn whole (full
-+                // coverage) instead of blended half with what's under it (the user: buildings'
-+                // outlines looked see-through).
-+                AttrBuffer[pixeladdr] = (AttrBuffer[pixeladdr] & 0xFFFFE0FF) | (gpu3d.RenderOrtho ? 0x00001F00 : 0x00001000);
-             }
-         }
-     }
-@@ -1791,6 +1877,7 @@
+@@ -1791,6 +1874,7 @@
      // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
      memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
      memcpy(ShownAttachTrans, &AttachTrans[FirstPixelOffset], sizeof(ShownAttachTrans)); // GoldLink (UC11)
