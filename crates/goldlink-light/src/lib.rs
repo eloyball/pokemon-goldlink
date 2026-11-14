@@ -956,129 +956,36 @@ impl Lighting {
             .collect()
     }
 
-    /// Neighbouring areas (the `tagged` pixels) in the wider picture's sides: out of reach, and
-    /// some with their graphics missing (stand-in textures, missing pieces). Past the DS's own
-    /// view they fade, a little blurred and greyed, into the dark: nothing at the view's edge or
-    /// at the border with this area, nearly black at the picture's edge (UC11, chosen from
-    /// previews).
+    /// Neighbouring areas (the `tagged` pixels) in the wider picture's sides: a plain gradient
+    /// over them, from nothing at the DS's own view's edge to nearly black at the picture's edge,
+    /// the same on both sides wherever the other area starts (UC11; the user, 2026-11-13: "just a
+    /// gradient from transparent to almost black"). What the game shows is never darkened.
     fn neighbour_haze(&mut self, w: usize, h: usize, tagged: &[bool]) {
-        const STRENGTH: f32 = 0.95; // at the picture's edge
-        const BLUR: usize = 2;
-        const FLAT: f32 = 0.5; // how much of the pixel's own detail gives way to a plain colour
-        const DARK: f32 = 0.12; // the colour's brightness, of this area's average
-        const BORDER_SOFT: f32 = 6.0; // pixels from the border with this area to most of the haze
-        let n = w * h;
-        let cells = &self.cells;
-        if !tagged.iter().any(|&t| t) {
-            return;
-        }
-        // The colour it fades to: this area's lit scene on average, greyer and dark.
-        let (mut sum, mut count) = ([0.0f32; 3], 0.0f32);
-        for i in 0..n {
-            if cells[i].layer != 0 && !tagged[i] {
-                sum = add(sum, self.out[i]);
-                count += 1.0;
-            }
-        }
-        if count == 0.0 {
-            return;
-        }
-        let avg = scale(sum, 1.0 / count);
-        let haze = scale(mix(avg, [lum(avg); 3], 0.45), DARK);
-        // How far each tagged pixel is from this area's scene (chamfer distance).
-        let mut dist: Vec<f32> = tagged
-            .iter()
-            .map(|&t| if t { f32::MAX / 4.0 } else { 0.0 })
-            .collect();
-        for y in 0..h {
-            for x in 0..w {
-                let i = y * w + x;
-                if tagged[i] {
-                    let mut d = dist[i];
-                    if x > 0 {
-                        d = d.min(dist[i - 1] + 1.0);
-                    }
-                    if y > 0 {
-                        d = d.min(dist[i - w] + 1.0);
-                        if x > 0 {
-                            d = d.min(dist[i - w - 1] + 1.414);
-                        }
-                        if x + 1 < w {
-                            d = d.min(dist[i - w + 1] + 1.414);
-                        }
-                    }
-                    dist[i] = d;
-                }
-            }
-        }
-        for y in (0..h).rev() {
-            for x in (0..w).rev() {
-                let i = y * w + x;
-                if tagged[i] {
-                    let mut d = dist[i];
-                    if x + 1 < w {
-                        d = d.min(dist[i + 1] + 1.0);
-                    }
-                    if y + 1 < h {
-                        d = d.min(dist[i + w] + 1.0);
-                        if x + 1 < w {
-                            d = d.min(dist[i + w + 1] + 1.414);
-                        }
-                        if x > 0 {
-                            d = d.min(dist[i + w - 1] + 1.414);
-                        }
-                    }
-                    dist[i] = d;
-                }
-            }
-        }
-        // A small blur of the tagged pixels (only tagged neighbours count).
-        let out = &self.out;
-        let blurred: Vec<V3> = (0..n)
-            .map(|i| {
-                if !tagged[i] {
-                    return out[i];
-                }
-                let (x, y) = (i % w, i / w);
-                let (mut s, mut c) = ([0.0f32; 3], 0.0f32);
-                for yy in y.saturating_sub(BLUR)..(y + BLUR + 1).min(h) {
-                    for xx in x.saturating_sub(BLUR)..(x + BLUR + 1).min(w) {
-                        let j = yy * w + xx;
-                        if tagged[j] {
-                            s = add(s, out[j]);
-                            c += 1.0;
-                        }
-                    }
-                }
-                scale(s, 1.0 / c)
-            })
-            .collect();
-        let shade = lum(haze) / lum(avg).max(1e-4);
-        // Only past the DS's own view (the wider picture's sides): what the game shows is never
-        // hazed. From nothing at the view's edge (and at the border with this area) to the most
-        // at the picture's edge.
+        const STRENGTH: f32 = 0.94; // at the picture's edge
         let view = (
             w.saturating_sub(256) / 2,
             (w.saturating_sub(256) / 2 + 256).min(w),
         );
         let side = view.0 as f32;
-        for i in 0..n {
+        if side <= 0.0 {
+            return;
+        }
+        let cells = &self.cells;
+        for (i, out) in self.out[..w * h].iter_mut().enumerate() {
+            if !tagged[i] || cells[i].layer == 0 {
+                continue;
+            }
             let x = i % w;
             let beyond = if x < view.0 {
                 view.0 - x
             } else if x >= view.1 {
                 x + 1 - view.1
             } else {
-                0
+                continue;
             };
-            if tagged[i] && beyond > 0 && side > 0.0 {
-                let r = (beyond as f32 / side).min(1.0);
-                let t = r * dist[i] / (dist[i] + BORDER_SOFT);
-                let t = t * t * (3.0 - 2.0 * t);
-                let b = blurred[i];
-                let target = mix(scale([lum(b); 3], shade), haze, FLAT);
-                self.out[i] = mix(mix(self.out[i], b, t), target, t * STRENGTH);
-            }
+            // Even in brightness as seen (the scene is in linear light here).
+            let r = (beyond as f32 / side).min(1.0);
+            *out = scale(*out, (1.0 - r * STRENGTH).powf(2.2));
         }
     }
 
