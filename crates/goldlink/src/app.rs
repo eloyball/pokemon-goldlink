@@ -41,25 +41,6 @@ fn screen_uvs(k: usize) -> (egui::Rect, egui::Rect) {
 /// How long the HUD holds a touch on the game's button (then lets go).
 const TAP: Duration = Duration::from_millis(100);
 
-/// The naming screen's hint: the computer's keyboard types the name.
-fn typing_hint(p: &egui::Painter, room: egui::Rect, align: egui::Align2) {
-    let font = egui::FontId::proportional((room.height() * 0.45).clamp(11.0, 16.0));
-    // One line when it fits, else one line each (no separator left hanging at a line's end).
-    let line = "Type on your keyboard   ·   Enter: OK   ·   Backspace: delete";
-    let mut galley = p.layout_no_wrap(line.to_owned(), font.clone(), theme::TEXT);
-    if galley.size().x > room.width() {
-        let lines = "Type on your keyboard\nEnter: OK\nBackspace: delete";
-        galley = p.layout(lines.to_owned(), font, theme::TEXT, room.width());
-    }
-    let at = align.align_size_within_rect(galley.size(), room).min;
-    p.rect_filled(
-        egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(10.0, 4.0)),
-        4.0,
-        egui::Color32::from_black_alpha(170),
-    );
-    p.galley(at, galley, theme::TEXT);
-}
-
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameAction {
@@ -1097,16 +1078,6 @@ impl GameApp {
                 p.image(t.id(), top, top_uv, egui::Color32::WHITE);
                 p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                 self.bottom = bottom;
-                if self.typing.naming.is_some() {
-                    // Beside the keyboard, when there's room.
-                    let room = egui::Rect::from_min_max(
-                        egui::pos2(bottom.right() + 16.0, bottom.top()),
-                        egui::pos2(frame.right() - 16.0, bottom.bottom()),
-                    );
-                    if room.width() >= 140.0 {
-                        typing_hint(&p, room, egui::Align2::LEFT_CENTER);
-                    }
-                }
                 return;
             }
             _ => {
@@ -1165,14 +1136,6 @@ impl GameApp {
                 && let Some(on) = self.running_shoes
             {
                 self.running_toggle(ui.ctx(), r, on);
-            }
-            if self.typing.naming.is_some() {
-                // Under the keyboard, in the frame's margin.
-                let room = egui::Rect::from_min_max(
-                    egui::pos2(frame.left(), r.bottom() + 6.0),
-                    egui::pos2(frame.right(), frame.bottom()),
-                );
-                typing_hint(&p, room, egui::Align2::CENTER_CENTER);
             }
         }
     }
@@ -1881,7 +1844,7 @@ fn fill_beside(
 }
 
 /// A screen's left and right edges, continued beside it when the wider picture isn't
-/// shown: per side, each row's colour when its 8 edge pixels are one colour (a flat screen, a
+/// shown: per side, each row's colour when its 4 edge pixels are one colour (a flat screen, a
 /// fade, a bar across the screen), the nearest such row's where they aren't (a text box reaching
 /// the edge), or none (black) when most rows' aren't (the edge is a picture). Something drawn
 /// over the background up to the edge (rows of another colour, the background showing again
@@ -1891,7 +1854,9 @@ fn edge_rows(top: &[u32]) -> [Option<EdgeFill>; 2] {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     let at = |x: usize, y: usize| top[y * 256 + x] & 0xFF_FFFF;
     let side = |left: bool| -> Option<EdgeFill> {
-        let cols = if left { 0..8 } else { 248..256 };
+        // The outermost 4 columns (the name keyboard's panel comes within 8 of the right edge:
+        // that side stayed black while the left one continued the background).
+        let cols = if left { 0..4 } else { 252..256 };
         let mut rows: Vec<Option<u32>> = (0..192)
             .map(|y| {
                 let first = at(cols.start, y);
