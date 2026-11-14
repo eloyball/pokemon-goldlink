@@ -1,0 +1,33 @@
+GoldLink's change to melonDS (UC11): the steady overworld's guard band keeps only polygons that
+cross the picture's edge. A polygon wholly past one edge is dropped, as clipping to the picture
+would: kept, the band's polygons overflowed the DS's vertex RAM in the Ruins of Alph (the overflow
+flag set) and whatever came last, the player first, wasn't drawn.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.cpp	2026-11-13 22:33:24.151831679 -0500
++++ b/src/GPU3D.cpp	2026-11-13 22:33:24.156839487 -0500
+@@ -1164,6 +1164,23 @@
+     for (int i = 0; guard && i < nverts; i++)
+         for (int k = 0; k < 4; k++)
+             guard &= std::abs((s64)clippedvertices[i].Position[k]) < (1 << 21);
++    // A polygon wholly past one of the picture's edges is drawn nowhere: dropped, as clipping to
++    // the picture would (kept, the band's polygons overflowed the DS's vertex RAM in the Ruins of
++    // Alph, and whatever came last, the player first, wasn't drawn).
++    for (int comp = 0; guard && comp < 2; comp++)
++    {
++        bool above = true, below = true;
++        for (int i = 0; i < nverts; i++)
++        {
++            above &= clippedvertices[i].Position[comp] > clippedvertices[i].Position[3];
++            below &= clippedvertices[i].Position[comp] < -clippedvertices[i].Position[3];
++        }
++        if (above || below)
++        {
++            LastStripPolygon = NULL;
++            return;
++        }
++    }
+     if (guard)
+         nverts = GuardClip(clippedvertices, nverts, clipstart);
+     else
