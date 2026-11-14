@@ -501,6 +501,28 @@ const DOWN12_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=mom (UC11's steady overworld): from the user's SAVE02 save, right to
+/// the mother and A: a text box over the steady scene, every frame recorded.
+const MOM_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 40, "right"),
+    Step::Press(Keys::A),
+    Step::Walk(Keys::NONE, 200, "talk"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=lyra (UC11's wider picture): from the user's SAVE02 save, down out of
+/// the house into the New Bark Town scene, A every 40 frames for its text (GOLDLINK_DEV_TOUR_FILM).
+const LYRA_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::DOWN, 90, ""),
+    Step::Walk(Keys::NONE, 240, ""),
+    Step::Mash(60 * 40),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -729,6 +751,8 @@ fn steps() -> &'static [Step] {
         Ok("far-left") => FAR_LEFT_STEPS,
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
+        Ok("mom") => MOM_STEPS,
+        Ok("lyra") => LYRA_STEPS,
         Ok("left-rec") => LEFT_REC_STEPS,
         Ok("down-rec") => DOWN_REC_STEPS,
         Ok("down12") => DOWN12_STEPS,
