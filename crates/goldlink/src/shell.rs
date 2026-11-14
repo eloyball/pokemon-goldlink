@@ -18,8 +18,10 @@ use crate::lobby::{self, Action, Lobby};
 use crate::theme::{self, Art, Kind};
 use crate::{CART_SAVE, MAILBOX_OFFSET, avatar_files};
 
-const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(980.0, 600.0);
-const LAUNCHER_MIN: egui::Vec2 = egui::vec2(860.0, 540.0);
+const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(1040.0, 680.0);
+/// Tall enough for the whole Play list (Continue at its top) above the avatar, and wide enough
+/// for the avatar's name on one line.
+const LAUNCHER_MIN: egui::Vec2 = egui::vec2(1000.0, 640.0);
 /// A restored backup must be loaded by then, and saved by the ROM after that.
 const RESTORE_LOAD: Duration = Duration::from_secs(20);
 const RESTORE_SAVE: Duration = Duration::from_secs(90);
