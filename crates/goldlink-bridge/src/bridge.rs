@@ -264,6 +264,8 @@ pub struct Bridge {
     pub wide_side: u8,
     backups: Backups,
     next_backup: Option<Instant>,
+    /// A backup being written (on a thread of its own), its result to come.
+    backup_writing: Option<std::sync::mpsc::Receiver<Result<PathBuf, String>>>,
     pending_restore: Option<PathBuf>,
     worlds: WorldList,
 
@@ -342,6 +344,7 @@ impl Bridge {
             wide_side: 0,
             backups: Backups::new(dir.join("coop_backups")),
             next_backup: None,
+            backup_writing: None,
             pending_restore: None,
             worlds: WorldList::new(dir, &saves),
             message: text::DEFAULT_MESSAGE.into(),
@@ -1238,6 +1241,18 @@ impl Bridge {
     /// Every few minutes in a world, only while the player stands in the overworld with nothing
     /// running (the C# `TryTakeBackup`).
     fn try_take_backup(&mut self, m: &mut dyn Machine, mb: usize, actions: &mut Actions) {
+        // The last backup's write, once it's done.
+        if let Some(rx) = &self.backup_writing {
+            match rx.try_recv() {
+                Ok(Ok(p)) => actions.backup_taken = Some(p),
+                Ok(Err(e)) => actions.backup_failed = Some(e),
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    actions.backup_failed = Some("the backup's writer stopped".into())
+                }
+            }
+            self.backup_writing = None;
+        }
         let Some(key) = self.slot_key.clone() else {
             return;
         };
@@ -1257,11 +1272,12 @@ impl Bridge {
             return; // try again next frame
         }
         self.next_backup = Some(now + backups::INTERVAL);
+        // The savestate between frames (the machine must hold still for it); the file written
+        // on a thread of its own.
         match m.savestate() {
-            Some(state) => match self.backups.write(&key, &state) {
-                Ok(p) => actions.backup_taken = Some(p),
-                Err(e) => actions.backup_failed = Some(e),
-            },
+            Some(state) => {
+                self.backup_writing = Some(self.backups.write_in_background(&key, state))
+            }
             None => actions.backup_failed = Some("the emulator couldn't make a savestate".into()),
         }
     }

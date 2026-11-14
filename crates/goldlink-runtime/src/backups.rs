@@ -38,6 +38,22 @@ impl Backups {
         self.root.join(key)
     }
 
+    /// Writes a backup for the world on a thread of its own (a savestate is ~20 MB: written on
+    /// the emulation thread it held a frame up, and the picture skipped); the result arrives on
+    /// the receiver.
+    pub fn write_in_background(
+        &self,
+        key: &str,
+        state: Vec<u8>,
+    ) -> std::sync::mpsc::Receiver<Result<PathBuf, String>> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (backups, key) = (Self::new(self.root.clone()), key.to_owned());
+        std::thread::spawn(move || {
+            let _ = tx.send(backups.write(&key, &state));
+        });
+        rx
+    }
+
     /// Writes a backup for the world and prunes the old ones.
     pub fn write(&self, key: &str, state: &[u8]) -> Result<PathBuf, String> {
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
