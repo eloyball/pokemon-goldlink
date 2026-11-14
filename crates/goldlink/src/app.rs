@@ -473,8 +473,6 @@ impl GameApp {
                     proj: l.buffers.proj,
                     width: goldlink_core::LightBuffers::WIDTH,
                     fade: &l.buffers.fade,
-                    ids: &l.buffers.ids,
-                    haze_id: Some(goldlink_core::NEIGHBOUR_POLYGON_ID),
                     zones: l
                         .buffers
                         .camera

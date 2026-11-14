@@ -14,10 +14,10 @@
 //!    and in caves a warm light high above the player lights the room around them (corners
 //!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
-//!    become point lights placed in 3D, casting warm pools on the ground, and glow a little;
-//!    then a soft bloom from what's brightest;
-//! 5. a slight blur of what's far behind the player;
-//! 6. the time of day's colour grade and a vignette.
+//!    become point lights placed in 3D, casting warm pools on the ground;
+//! 5. neighbouring map areas fade into the dark with their distance from the player's area;
+//! 6. the time of day's colour grade and a vignette. No blur anywhere: blurs look out of place
+//!    on the game's pixels (the user, 2026-11-13).
 //!
 //! Pixels where the 3D scene doesn't show (a text box, menus) are left exactly as they are.
 //! Battles and menus get [`Lighting::grade`] only: a small grade, no lighting.
@@ -80,10 +80,6 @@ pub struct Scene<'a> {
     pub width: usize,
     /// Each line's fades (192, or empty: none).
     pub fade: &'a [Fade],
-    /// Each pixel's polygon ID (as `depth`; empty: unknown), and the ID the game draws a
-    /// neighbouring area's map with: its graphics aren't loaded, so it's hazed.
-    pub ids: &'a [u8],
-    pub haze_id: Option<u8>,
     /// Which map area each pixel is in: whatever isn't in the player's is hazed too.
     pub zones: Option<Zones<'a>>,
 }
@@ -107,6 +103,9 @@ pub struct Zones<'a> {
 
 /// A map matrix cell's size, in world units (32 tiles of 16).
 const MATRIX_CELL: f32 = 512.0;
+/// How far past the player's area, on the ground (world units: 10 tiles), the fog takes to reach
+/// its darkest.
+const FOG_RANGE: f32 = 160.0;
 /// Frames the haze takes to move from one map area's neighbours to another's (the player
 /// crossing into the next area).
 const ZONE_FADE_FRAMES: f32 = 24.0;
@@ -264,19 +263,12 @@ struct Preset {
     ao: f32,
     /// Point lights from bright pixels (0: none).
     points: f32,
-    /// The light sources' own small glow.
-    glow: f32,
     /// A light above the player (colour times strength; zero: none), how high above them and
     /// its reach: the room's light indoors (high and wide, so the room is lit around them
     /// rather than a pool at their feet), a lantern's in caves, a faint one at night.
     player_light: V3,
     player_height: f32,
     player_range: f32,
-    /// Bloom: what's brighter than `bloom_from` (linear luminance) spreads a soft halo.
-    bloom: f32,
-    bloom_from: f32,
-    /// The most the far blur (what lies well behind the player) mixes in.
-    far_blur: f32,
     grade: Grade,
 }
 
@@ -338,13 +330,9 @@ fn preset(place: Place, phase: Phase) -> Preset {
         key_dir: sun,
         ao: 1.3,
         points: 0.0,
-        glow: 0.0,
         player_light: [0.0; 3],
         player_height: 0.0,
         player_range: 1.0,
-        bloom: 0.10,
-        bloom_from: 0.65,
-        far_blur: 0.45,
         grade: phase_grade(phase),
     };
     match place {
@@ -364,12 +352,9 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 key: scale([1.0, 0.78, 0.52], 0.78),
                 key_dir: normalize([-0.8, 0.35, 0.48]),
                 points: 0.8,
-                glow: 0.16,
                 player_light: scale([1.0, 0.84, 0.62], 0.16),
                 player_height: 40.0,
                 player_range: 110.0,
-                bloom: 0.18,
-                bloom_from: 0.4,
                 ..outdoor
             },
             Phase::Night => Preset {
@@ -378,12 +363,9 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 key_dir: normalize([0.3, 0.8, 0.5]),
                 ao: 1.3,
                 points: 1.3,
-                glow: 0.3,
                 player_light: scale([1.0, 0.86, 0.66], 0.30),
                 player_height: 40.0,
                 player_range: 110.0,
-                bloom: 0.26,
-                bloom_from: 0.22,
                 ..outdoor
             },
         },
@@ -400,13 +382,9 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 key_dir: normalize([-0.2, 0.8, 0.55]),
                 ao: 1.9,
                 points: 0.0,
-                glow: 0.0,
                 player_light: scale([1.0, 0.82, 0.58], 0.85),
                 player_height: 70.0,
                 player_range: 210.0,
-                bloom: 0.2,
-                bloom_from: 0.6,
-                far_blur: 0.0,
                 grade: Grade {
                     tint: [1.05, 1.0, 0.93],
                     shadow: [0.94, 0.94, 1.08],
@@ -423,13 +401,9 @@ fn preset(place: Place, phase: Phase) -> Preset {
             key_dir: normalize([0.0, 0.85, 0.5]),
             ao: 1.5,
             points: 0.0,
-            glow: 0.0,
             player_light: scale([1.0, 0.84, 0.62], 0.75),
             player_height: 60.0,
             player_range: 190.0,
-            bloom: 0.22,
-            bloom_from: 0.45,
-            far_blur: 0.0,
             grade: Grade {
                 tint: [0.97, 0.98, 1.04],
                 shadow: [0.92, 0.95, 1.10],
@@ -518,9 +492,6 @@ pub struct Lighting {
     nrm: Vec<V3>,
     tmp3: Vec<V3>,
     out: Vec<V3>,
-    /// Half-size buffers for the bloom.
-    half: Vec<V3>,
-    half_tmp: Vec<V3>,
     ao: Vec<f32>,
     tmp1: Vec<f32>,
     label: Vec<u32>,
@@ -533,8 +504,6 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
-    /// Per bright patch (its label): how much of its glow shows (its light source's weight).
-    patch_weight: Vec<f32>,
     /// The map area the haze is around, and the one it's leaving with how far it has gone (0
     /// to 1).
     zone_here: Option<u16>,
@@ -642,8 +611,6 @@ impl Lighting {
             nrm: Vec::new(),
             tmp3: Vec::new(),
             out: Vec::new(),
-            half: Vec::new(),
-            half_tmp: Vec::new(),
             ao: Vec::new(),
             tmp1: Vec::new(),
             label: Vec::new(),
@@ -652,7 +619,6 @@ impl Lighting {
             focus: None,
             tracked: Vec::new(),
             tracked_at: None,
-            patch_weight: Vec::new(),
             zone_here: None,
             zone_leaving: None,
         }
@@ -790,7 +756,6 @@ impl Lighting {
             Vec::new()
         };
         let mut lights = self.track_lights(&found);
-        let window_lights = !lights.is_empty();
         let focus = self.focus(w, h);
         if let Some(f) = focus
             && lum(p.player_light) > 0.0
@@ -839,45 +804,29 @@ impl Lighting {
             });
         }
 
-        // 4. A little glow around the light sources, and a soft bloom from what's brightest.
-        if p.glow > 0.0 && window_lights {
-            self.glow(w, h, p.glow);
-        }
-        if p.bloom > 0.0 {
-            self.bloom(w, h, p.bloom, p.bloom_from);
-        }
-        // 5. A slight blur of what lies far behind the player.
-        if p.far_blur > 0.0
-            && let Some(f) = focus
-        {
-            self.far_blur(w, h, -f[2], p.far_blur);
-        }
-        // 6. Neighbouring areas, hazed: out of reach (and with missing graphics softened away),
-        // whichever side of the screen they're on. Crossing into another area, the haze moves
-        // over to its neighbours in a moment.
+        // 6. Neighbouring areas fade into the dark with their distance on the ground from the
+        // player's area, whichever way they lie. Crossing into another area, the fog moves over
+        // to its neighbours in a moment.
         let here = scene.zones.map(|z| z.here);
         if here != self.zone_here {
             self.zone_leaving = self.zone_here.zip(here).map(|(was, _)| (was, 0.0));
             self.zone_here = here;
         }
-        let tagged = self.neighbour_mask(w, h, x0, scene, &rows, here);
-        match self.zone_leaving {
-            Some((was, t)) if t < 1.0 => {
-                let before = self.out.clone();
-                let leaving = self.neighbour_mask(w, h, x0, scene, &rows, Some(was));
-                self.neighbour_haze(w, h, &leaving);
-                let old = std::mem::replace(&mut self.out, before);
-                self.neighbour_haze(w, h, &tagged);
-                let k = t * t * (3.0 - 2.0 * t);
-                for (o, b) in self.out.iter_mut().zip(&old) {
-                    *o = mix(*b, *o, k);
+        if let Some(here) = here {
+            let mut fog = self.neighbour_fog(w, x0, scene, &rows, here);
+            if let Some((was, t)) = self.zone_leaving {
+                if t < 1.0 {
+                    let old = self.neighbour_fog(w, x0, scene, &rows, was);
+                    let k = t * t * (3.0 - 2.0 * t);
+                    for (f, o) in fog.iter_mut().zip(&old) {
+                        *f = o + (*f - o) * k;
+                    }
+                    self.zone_leaving = Some((was, t + 1.0 / ZONE_FADE_FRAMES));
+                } else {
+                    self.zone_leaving = None;
                 }
-                self.zone_leaving = Some((was, t + 1.0 / ZONE_FADE_FRAMES));
             }
-            _ => {
-                self.zone_leaving = None;
-                self.neighbour_haze(w, h, &tagged);
-            }
+            self.neighbour_haze(&fog);
         }
         // 7. The grade and the vignette; 2D-only pixels as they were.
         {
@@ -896,96 +845,82 @@ impl Lighting {
         }
     }
 
-    /// The pixels of the 3D scene outside the map area `here`: in the world (from their depth),
-    /// in a cell of the map matrix that belongs to another area (or none); and those the ROM
-    /// drew with the neighbouring-area polygon ID (an area whose graphics aren't loaded).
-    fn neighbour_mask(
+    /// How far into the fog each pixel of the 3D scene is (0 to 1), for the player in map area
+    /// `here`: its point in the world (from its depth, the projection and the camera), how far
+    /// that is on the ground from the nearest matrix cell of `here` (0 inside), eased over
+    /// [`FOG_RANGE`]. Tied to the ground: it moves with the world, in every direction.
+    fn neighbour_fog(
         &self,
         w: usize,
-        h: usize,
         x0: usize,
         scene: &Scene,
         rows: &[[f32; 4]; 4],
-        here: Option<u16>,
-    ) -> Vec<bool> {
-        let n = w * h;
-        let cells = &self.cells;
-        let ids = (scene.ids.len() >= scene.width * h).then_some(scene.ids);
-        let to_world = scene
+        here: u16,
+    ) -> Vec<f32> {
+        let mut fog = vec![0.0f32; self.cells.len()];
+        let Some((z, m)) = scene
             .zones
-            .and_then(|z| world_from_view(&z.camera).map(|m| (z, m)));
-        (0..n)
+            .and_then(|z| world_from_view(&z.camera).map(|m| (z, m)))
+        else {
+            return fog;
+        };
+        // The player's area: its cells, as squares on the ground.
+        let height = z.cells.len().checked_div(z.width).unwrap_or(0);
+        let mine: Vec<[f32; 4]> = (0..z.width * height)
+            .filter(|&i| z.cells[i] == here)
             .map(|i| {
-                if cells[i].layer == 0 {
-                    return false;
+                let (cx, cz) = ((i % z.width) as f32, (i / z.width) as f32);
+                [
+                    cx * MATRIX_CELL,
+                    cz * MATRIX_CELL,
+                    (cx + 1.0) * MATRIX_CELL,
+                    (cz + 1.0) * MATRIX_CELL,
+                ]
+            })
+            .collect();
+        if mine.is_empty() {
+            return fog;
+        }
+        let cells = &self.cells;
+        par_rows(self.pool.as_ref(), &mut fog, w, |y, row| {
+            for (x, f) in row.iter_mut().enumerate() {
+                if cells[y * w + x].layer == 0 {
+                    continue;
                 }
-                let (x, y) = (i % w, i / w);
                 let col = x0 + x;
-                if let (Some(ids), Some(id)) = (ids, scene.haze_id)
-                    && ids[y * scene.width + col] == id
-                {
-                    return true;
-                }
-                let (Some((z, m)), Some(here)) = (to_world, here) else {
-                    return false;
-                };
                 // Where this pixel's point is in the scene drawn (a picture in between has the
                 // world shifted), then in the world.
                 let xn = (col as f32 + 0.5 - z.shift[0] as f32 - scene.width as f32 / 2.0) / 128.0;
                 let yn = 1.0 - (y as f32 + 0.5 - z.shift[1] as f32) / (HEIGHT as f32 / 2.0);
                 let zn = scene.depth[y * scene.width + col] as f32 / 8_388_607.5 - 1.0;
                 let Some(view) = unproject(rows, xn, yn, zn) else {
-                    return false;
+                    continue;
                 };
-                let world = apply_affine(&m, view);
-                let (cx, cz) = (
-                    (world[0] / MATRIX_CELL).floor(),
-                    (world[2] / MATRIX_CELL).floor(),
-                );
-                // Outside the matrix: no area.
-                let height = z.cells.len().checked_div(z.width).unwrap_or(0);
-                let inside =
-                    cx >= 0.0 && cz >= 0.0 && (cx as usize) < z.width && (cz as usize) < height;
-                let area = if inside {
-                    z.cells[cz as usize * z.width + cx as usize]
-                } else {
-                    0
-                };
-                area != here
-            })
-            .collect()
+                let p = apply_affine(&m, view);
+                let d2 = mine
+                    .iter()
+                    .map(|r| {
+                        let dx = (r[0] - p[0]).max(p[0] - r[2]).max(0.0);
+                        let dz = (r[1] - p[2]).max(p[2] - r[3]).max(0.0);
+                        dx * dx + dz * dz
+                    })
+                    .fold(f32::MAX, f32::min);
+                let t = (d2.sqrt() / FOG_RANGE).min(1.0);
+                *f = t * t * (3.0 - 2.0 * t);
+            }
+        });
+        fog
     }
 
-    /// Neighbouring areas (the `tagged` pixels) in the wider picture's sides: a plain gradient
-    /// over them, from nothing at the DS's own view's edge to nearly black at the picture's edge,
-    /// the same on both sides wherever the other area starts (UC11; the user, 2026-11-13: "just a
-    /// gradient from transparent to almost black"). What the game shows is never darkened.
-    fn neighbour_haze(&mut self, w: usize, h: usize, tagged: &[bool]) {
-        const STRENGTH: f32 = 0.94; // at the picture's edge
-        let view = (
-            w.saturating_sub(256) / 2,
-            (w.saturating_sub(256) / 2 + 256).min(w),
-        );
-        let side = view.0 as f32;
-        if side <= 0.0 {
-            return;
-        }
-        let cells = &self.cells;
-        for (i, out) in self.out[..w * h].iter_mut().enumerate() {
-            if !tagged[i] || cells[i].layer == 0 {
-                continue;
+    /// The fog over neighbouring areas: each pixel darkened by its fog (0 to 1), evenly in
+    /// brightness as seen (the scene is in linear light here), to nearly black (UC11; the user,
+    /// 2026-11-13: "just a gradient from transparent to almost black").
+    fn neighbour_haze(&mut self, fog: &[f32]) {
+        const STRENGTH: f32 = 0.94;
+        for (out, &f) in self.out.iter_mut().zip(fog) {
+            if f > 0.0 {
+                *out = scale(*out, (1.0 - f * STRENGTH).powf(2.2));
             }
-            let x = i % w;
-            let beyond = if x < view.0 {
-                view.0 - x
-            } else if x >= view.1 {
-                x + 1 - view.1
-            } else {
-                continue;
-            };
-            // Even in brightness as seen (the scene is in linear light here).
-            let r = (beyond as f32 / side).min(1.0);
-            *out = scale(*out, (1.0 - r * STRENGTH).powf(2.2));
         }
     }
 
@@ -1219,7 +1154,7 @@ impl Lighting {
     /// Follows the light sources found this frame (`(patch, light)`) from the last ones: each
     /// fades in over [`FADE_IN`] frames, and one no longer found (covered by the player, past
     /// the screen's edge) fades out where it was. Gives the lights to shade with, each as strong
-    /// as it shows, and each patch's glow weight.
+    /// as it shows.
     fn track_lights(&mut self, found: &[(u32, PointLight)]) -> Vec<PointLight> {
         let now = std::time::Instant::now();
         if self
@@ -1229,13 +1164,9 @@ impl Lighting {
             self.tracked.clear();
         }
         self.tracked_at = Some(now);
-        let max_id = found.iter().map(|(id, _)| *id).max().unwrap_or(0) as usize;
-        self.patch_weight.clear();
-        self.patch_weight
-            .resize(self.label.len().max(max_id + 1), 1.0);
         let mut seen = vec![false; self.tracked.len()];
         let mut next = Vec::with_capacity(found.len() + self.tracked.len());
-        for &(id, light) in found {
+        for &(_, light) in found {
             let near = self
                 .tracked
                 .iter()
@@ -1254,9 +1185,6 @@ impl Lighting {
                 }
                 None => FADE_IN,
             };
-            if let Some(k) = self.patch_weight.get_mut(id as usize) {
-                *k = weight;
-            }
             next.push(Tracked { light, weight });
         }
         for (t, seen) in self.tracked.iter().zip(&seen) {
@@ -1276,47 +1204,6 @@ impl Lighting {
                 ..t.light
             })
             .collect()
-    }
-
-    /// The light sources' own colour, spread two or three pixels and added: a small glow (only
-    /// the rows around them are worked on).
-    fn glow(&mut self, w: usize, h: usize, strength: f32) {
-        const R: usize = 2;
-        let rows = |c: &[Cell]| c.chunks(w).position(|r| r.iter().any(|c| c.emissive));
-        let Some(top) = rows(&self.cells[..w * h]) else {
-            return;
-        };
-        let bottom = h
-            - 1
-            - self.cells[..w * h]
-                .rchunks(w)
-                .position(|r| r.iter().any(|c| c.emissive))
-                .unwrap_or(0);
-        let (y0, y1) = (top.saturating_sub(3 * R), (bottom + 3 * R + 1).min(h));
-        let band = (y1 - y0) * w;
-        let cells = &self.cells[y0 * w..y1 * w];
-        let (labels, weights) = (&self.label[y0 * w..y1 * w], &self.patch_weight);
-        for ((out, c), &id) in self.tmp3[..band].iter_mut().zip(cells).zip(labels) {
-            let k = weights.get(id as usize).copied().unwrap_or(1.0);
-            *out = if c.emissive {
-                scale(c.base, k)
-            } else {
-                [0.0; 3]
-            };
-        }
-        for _ in 0..2 {
-            box_blur(
-                self.pool.as_ref(),
-                &mut self.tmp3[..band],
-                &mut self.nrm[..band],
-                w,
-                y1 - y0,
-                R,
-            );
-        }
-        for (out, g) in self.out[y0 * w..y1 * w].iter_mut().zip(&self.tmp3[..band]) {
-            *out = add(*out, scale(*g, strength * 1.5));
-        }
     }
 
     /// Where the player stands: the ground at the screen's middle (the camera follows them),
@@ -1357,167 +1244,6 @@ impl Lighting {
         };
         self.focus
     }
-
-    /// Bloom: what's brighter than `from` (linear luminance), and the light sources, at half
-    /// size, spread over about eight pixels and added back, on the 3D scene.
-    fn bloom(&mut self, w: usize, h: usize, strength: f32, from: f32) {
-        let (hw, hh) = (w / 2, h / 2);
-        if hw == 0 || hh == 0 {
-            return;
-        }
-        self.half.resize(hw * hh, [0.0; 3]);
-        self.half_tmp.resize(hw * hh, [0.0; 3]);
-        {
-            let (cells, out) = (&self.cells, &self.out);
-            let (labels, weights) = (&self.label, &self.patch_weight);
-            par_rows(self.pool.as_ref(), &mut self.half, hw, |y, row| {
-                for (x, o) in row.iter_mut().enumerate() {
-                    let mut sum = [0.0f32; 3];
-                    for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                        let i = (2 * y + dy) * w + 2 * x + dx;
-                        let c = out[i];
-                        let l = lum(c);
-                        let k = if cells[i].layer == 0 {
-                            0.0
-                        } else if cells[i].emissive {
-                            // A light source blooms as much as it shows (it fades in and out).
-                            labels
-                                .get(i)
-                                .and_then(|&id| weights.get(id as usize))
-                                .copied()
-                                .unwrap_or(1.0)
-                        } else {
-                            ((l - from) / (1.0 - from).max(0.05)).clamp(0.0, 1.0)
-                        };
-                        sum = add(sum, scale(c, k));
-                    }
-                    *o = scale(sum, 0.25);
-                }
-            });
-        }
-        for _ in 0..2 {
-            box_blur(
-                self.pool.as_ref(),
-                &mut self.half,
-                &mut self.half_tmp,
-                hw,
-                hh,
-                3,
-            );
-        }
-        let (cells, half) = (&self.cells, &self.half);
-        par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
-            // What's (nearly) black takes none: a room's dark surround doesn't glow.
-            let fy = ((y as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (hh - 1) as f32);
-            let (y0, ty) = (fy as usize, fy.fract());
-            let y1 = (y0 + 1).min(hh - 1);
-            for (x, o) in row.iter_mut().enumerate() {
-                if cells[y * w + x].layer == 0 {
-                    continue;
-                }
-                let fx = ((x as f32 + 0.5) / 2.0 - 0.5).clamp(0.0, (hw - 1) as f32);
-                let (x0, tx) = (fx as usize, fx.fract());
-                let x1 = (x0 + 1).min(hw - 1);
-                let top = mix(half[y0 * hw + x0], half[y0 * hw + x1], tx);
-                let bottom = mix(half[y1 * hw + x0], half[y1 * hw + x1], tx);
-                let takes = (lum(cells[y * w + x].base) / 0.04).min(1.0);
-                *o = add(*o, scale(mix(top, bottom, ty), strength * takes));
-            }
-        });
-    }
-
-    /// A slight blur, mixed in up to `far` for what lies well behind the player (past
-    /// `focus_z`). Only the 3D scene blurs, only with itself (text boxes don't bleed in).
-    fn far_blur(&mut self, w: usize, h: usize, focus_z: f32, far: f32) {
-        const R: isize = 2;
-        let smooth = |a: f32, b: f32, v: f32| {
-            let t = ((v - a) / (b - a)).clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)
-        };
-        // Across, then down: the 3D neighbours' sum and count.
-        {
-            let (cells, out) = (&self.cells, &self.out);
-            par_rows(self.pool.as_ref(), &mut self.tmp3, w, |y, row| {
-                for (x, o) in row.iter_mut().enumerate() {
-                    let mut s = [0.0f32; 3];
-                    for xx in (x as isize - R).max(0)..=(x as isize + R).min(w as isize - 1) {
-                        let j = y * w + xx as usize;
-                        if cells[j].layer != 0 {
-                            s = add(s, out[j]);
-                        }
-                    }
-                    *o = s;
-                }
-            });
-            par_rows(self.pool.as_ref(), &mut self.tmp1, w, |y, row| {
-                for (x, o) in row.iter_mut().enumerate() {
-                    let mut n = 0.0;
-                    for xx in (x as isize - R).max(0)..=(x as isize + R).min(w as isize - 1) {
-                        if cells[y * w + xx as usize].layer != 0 {
-                            n += 1.0;
-                        }
-                    }
-                    *o = n;
-                }
-            });
-        }
-        let (cells, across, count) = (&self.cells, &self.tmp3, &self.tmp1);
-        par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
-            for (x, o) in row.iter_mut().enumerate() {
-                let c = cells[y * w + x];
-                if c.layer == 0 {
-                    continue;
-                }
-                let t = far * smooth(30.0, 250.0, -c.pos[2] - focus_z);
-                if t <= 0.01 {
-                    continue;
-                }
-                let (mut s, mut n) = ([0.0f32; 3], 0.0);
-                for yy in (y as isize - R).max(0)..=(y as isize + R).min(h as isize - 1) {
-                    let j = yy as usize * w + x;
-                    s = add(s, across[j]);
-                    n += count[j];
-                }
-                if n > 0.0 {
-                    *o = mix(*o, scale(s, 1.0 / n), t);
-                }
-            }
-        });
-    }
-}
-
-/// A separable box blur of radius `r`, in place (`tmp` is scratch).
-fn box_blur(
-    pool: Option<&rayon::ThreadPool>,
-    buf: &mut [V3],
-    tmp: &mut [V3],
-    w: usize,
-    h: usize,
-    r: usize,
-) {
-    let k = 1.0 / (2 * r + 1) as f32;
-    {
-        let src = &*buf;
-        par_rows(pool, &mut tmp[..w * h], w, |y, row| {
-            for (x, out) in row.iter_mut().enumerate() {
-                let mut s = [0.0f32; 3];
-                for xx in x as isize - r as isize..=x as isize + r as isize {
-                    s = add(s, src[y * w + xx.clamp(0, w as isize - 1) as usize]);
-                }
-                *out = scale(s, k);
-            }
-        });
-    }
-    let src = &*tmp;
-    par_rows(pool, &mut buf[..w * h], w, |y, row| {
-        for (x, out) in row.iter_mut().enumerate() {
-            let mut s = [0.0f32; 3];
-            for yy in y as isize - r as isize..=y as isize + r as isize {
-                s = add(s, src[yy.clamp(0, h as isize - 1) as usize * w + x]);
-            }
-            *out = scale(s, k);
-        }
-    });
 }
 
 fn vignette(x: usize, y: usize, w: usize, h: usize, strength: f32) -> f32 {
@@ -1775,7 +1501,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbouring_areas_are_hazed_only_past_the_ds_view() {
+    fn neighbouring_areas_fade_with_their_distance_on_the_ground() {
         let width = 384;
         let (depth, layer) = floor(width);
         // World = view moved: x by 512 (the screen's right half is the matrix's second column),
@@ -1802,8 +1528,6 @@ mod tests {
                 proj: PROJ,
                 fade: &[],
                 width,
-                ids: &[],
-                haze_id: None,
                 zones,
             };
             let mut px = vec![0x0080_8080u32; width * HEIGHT];
@@ -1811,22 +1535,22 @@ mod tests {
             px
         };
         let plain = lit(None);
-        let hazed = lit(Some(Zones {
+        let fogged = lit(Some(Zones {
             camera,
             shift: [0, 0],
             cells: &cells,
             width: 2,
             here: 7,
         }));
-        let changed = |x: usize| (0..150).any(|y| plain[y * width + x] != hazed[y * width + x]);
-        // The DS's own view (columns 64..320) and the player's area: as they were.
-        assert!((0..320).all(|x| !changed(x)));
-        // The other area past the view: hazed, the most at the picture's edge.
-        assert!(changed(383));
-        let y = 100 * width;
         let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
-        assert!(lum(hazed[y + 380]) < lum(plain[y + 380]));
-        assert!(lum(hazed[y + 380]) < lum(hazed[y + 330]));
+        let y = 100 * width;
+        // The player's area (view x < 0: the left half): as it was.
+        assert!((0..150).all(|r| (0..180).all(|x| plain[r * width + x] == fogged[r * width + x])));
+        // The other area: darker the further it lies, from nothing at the border.
+        let (near, mid, far) = (fogged[y + 196], fogged[y + 260], fogged[y + 383]);
+        assert!(lum(near) + 6 >= lum(plain[y + 196]));
+        assert!(lum(mid) < lum(plain[y + 260]));
+        assert!(lum(far) < lum(mid));
     }
 
     #[test]
@@ -1839,8 +1563,6 @@ mod tests {
             proj: PROJ,
             fade: &[],
             width,
-            ids: &[],
-            haze_id: None,
             zones: None,
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
@@ -1865,8 +1587,6 @@ mod tests {
             proj: PROJ,
             fade: &[],
             width,
-            ids: &[],
-            haze_id: None,
             zones: None,
         };
         let dark = 0x0050_5060u32;
