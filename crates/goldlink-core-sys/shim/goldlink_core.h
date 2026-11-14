@@ -109,10 +109,14 @@ int gl_core_steady_shift(GlCore *core, float *xy);
 int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
 // The top screen's pixels drawn by what the steady camera follows (the player, their shadow,
 // a mount: patch 0022), on top, into `out` (as gl_core_fixed_2d's): 1 opaque (the picture's
-// pixel), 2 translucent (a shadow, not blended into the picture: its colour and alpha in `trans`,
-// 0xAARRGGBB), else 0; and the shift (pixels, x then y) they were drawn with, which the window
-// takes back for them; how many (0: none this frame, `out`, `trans` and `xy` then unwritten).
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy);
+// pixel; in `trans` the world under it, 0xFFRRGGBB: patch 0023), 2 translucent (a shadow, not
+// blended into the picture: its colour and alpha in `trans`, 0xAARRGGBB), else 0; and the shift (pixels, x then y) they were drawn with, which the window
+// takes back for them, and where their reference truly is (`at`: the screen's columns and rows);
+// how many (0: none this frame, the rest then unwritten).
+int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy, double *at);
+// Where the steady world's origin truly is in the picture on screen (the screen's columns and rows,
+// patch 0023), for the window to land it on a whole pixel of its own.
+void gl_core_steady_origin(GlCore *core, double *xy);
 // The screen `256 + 2*side` wide into `out` (192 rows): the centre is the screen as shown, the
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);

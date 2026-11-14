@@ -1,0 +1,340 @@
+GoldLink's change to melonDS (UC11): the steady overworld tells the window where the world and the
+attached layer truly are, and draws buildings' outlines whole.
+
+- GPU3D: ShownOrthoOrigin (where the world's origin truly is in the picture on screen: the scene's
+  OrthoOrigin, the in-between's halfway) and ShownAttachTrue (where the attached layer's reference
+  truly is), in the screen's columns and rows. The window slides the picture by a shift at the
+  screen's resolution; at a scale that isn't whole (7.5) which game pixel gets one screen pixel
+  more depends on where the picture lands within a screen pixel, so as the world moved (walking
+  up, a quarter of a game pixel a frame) fine texture flickered (the user's play test, houses and
+  the ground under the shadow). With these the window lands each on a whole screen pixel.
+- GPU3D_Soft: edge marking in the steady overworld (RenderOrtho) keeps the outline pixel's full
+  coverage: anti-aliasing blended it half with the pixel under it (as the DS does), and the user
+  wanted the buildings' outlines solid.
+- GPU3D_Soft: under an attached object's opaque pixels, the world as it would be without it
+  (UnderColor, UnderDepth; ShownUnder with the depth): what was there when it was drawn, then any
+  pixel drawn behind it but in front of that, and translucent pixels blended over it. The player's
+  layer and the world slide by different fractions; the window showed a guess where the world
+  slid out from under the sprite's edge (a sliver of ground in the shadow, the user's play test).
+- GPU3D_Soft: patch 0022's clearing of a shadow pixel under an opaque one is kept to the top
+  layer's pixels: an anti-aliased edge's lower pixel (past BufferSize) cleared past AttachTrans's
+  end, into the copy kept for the picture on screen, wiping pixels of the shadow (holes that moved,
+  the user's play test: the shadow flashed the ground's colour).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-14 12:07:05.940492461 -0500
++++ b/src/GPU3D.h	2026-11-14 12:28:28.130695653 -0500
+@@ -442,6 +442,11 @@
+     std::vector<s32> MidShift;   // the shadow's: each object's shift, 1/MidUnit pixels, x then y
+     static constexpr s32 MidUnit = 256;
+     float MidOrthoShift[2] {};   // the steady overworld's shift for the picture in between
++    // GoldLink (UC11): where the world's origin truly is (pixels, the screen's columns and rows) in
++    // the picture on screen (the in-between's: halfway), for the window to put it on a whole pixel
++    // of its own at any scale (with a sub-pixel slide at a scale that isn't whole, which game pixel
++    // gets one screen pixel more otherwise changed as the world moved: fine texture flickered).
++    double MidOrthoOrigin[2] {}, ShownOrthoOrigin[2] {};
+     struct MidAttached { bool Attached; s32 TX, TY; };
+     std::vector<MidAttached> MidAttachedList; // the shadow's: the replayed objects' as drawn live
+ 
+@@ -471,8 +476,10 @@
+     bool AttachUsed = false;        // the scene being built drew one
+     double AttachBase[2] {};        // the scene being built's: the reference's place, snapped
+     float AttachSlide[2] {};        // and the layer's shift (that place less where it truly is)
++    double AttachTrue[2] {};        // and where it truly is (the screen's columns and rows)
+     bool FlushedAttach = false, RenderAttach = false, ShownAttach = false;
+     float FlushedAttachSlide[2] {}, RenderAttachSlide[2] {}, ShownAttachSlide[2] {};
++    double FlushedAttachTrue[2] {}, RenderAttachTrue[2] {}, ShownAttachTrue[2] {};
+     void MidClassify() noexcept;
+     std::unique_ptr<GPU3D> MidShadow;
+     std::array<Polygon*,2048> MidList {}, MidSavedList {};
+--- a/src/GPU3D.cpp	2026-11-14 12:07:05.940411689 -0500
++++ b/src/GPU3D.cpp	2026-11-14 12:28:28.131429132 -0500
+@@ -2781,6 +2781,9 @@
+             AttachBase[i] = std::floor(v - Phase + 0.5) + Phase;
+             AttachSlide[i] = (float)(AttachBase[i] - AttachedRef[i]);
+         }
++        // MidObject's columns are the wider picture's: the screen's, for ShownAttachTrue.
++        AttachTrue[0] = AttachedRef[0] - (WideActive() ? WideSide : 0);
++        AttachTrue[1] = AttachedRef[1];
+     }
+     OrthoScene = true;
+     OrthoSceneFromPersp |= OrthoFromPersp;
+@@ -2812,6 +2815,7 @@
+     OrthoFlushed = OrthoScene;
+     FlushedAttach = OrthoScene && AttachUsed;
+     memcpy(FlushedAttachSlide, AttachSlide, sizeof(FlushedAttachSlide));
++    memcpy(FlushedAttachTrue, AttachTrue, sizeof(FlushedAttachTrue));
+     AttachUsed = false;
+     memcpy(OrthoFlushedShift, OrthoShift, sizeof(OrthoFlushedShift));
+     memcpy(OrthoFlushedOrigin, OrthoOrigin, sizeof(OrthoFlushedOrigin));
+@@ -2850,6 +2854,8 @@
+             ShownOrtho = RenderOrtho;
+             ShownAttach = RenderAttach;
+             memcpy(ShownAttachSlide, RenderAttachSlide, sizeof(ShownAttachSlide));
++            memcpy(ShownAttachTrue, RenderAttachTrue, sizeof(ShownAttachTrue));
++            memcpy(ShownOrthoOrigin, MidShown ? MidOrthoOrigin : RenderOrthoOrigin, sizeof(ShownOrthoOrigin));
+             memcpy(ShownOrthoShift, MidShown ? MidOrthoShift : RenderOrthoShift, sizeof(ShownOrthoShift));
+             // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
+             // and drawn this time (unless a new scene replaces it now).
+@@ -2870,6 +2876,7 @@
+                 RenderOrtho = OrthoFlushed;
+                 RenderAttach = FlushedAttach;
+                 memcpy(RenderAttachSlide, FlushedAttachSlide, sizeof(RenderAttachSlide));
++                memcpy(RenderAttachTrue, FlushedAttachTrue, sizeof(RenderAttachTrue));
+                 memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
+                 memcpy(RenderOrthoOrigin, OrthoFlushedOrigin, sizeof(RenderOrthoOrigin));
+ 
+@@ -3650,9 +3657,14 @@
+         my = RenderOrthoShift[1] + hy + ty / 2;
+         MidOrthoShift[0] = (float)mx;
+         MidOrthoShift[1] = (float)my;
++        MidOrthoOrigin[0] = RenderOrthoOrigin[0] - tx / 2;
++        MidOrthoOrigin[1] = RenderOrthoOrigin[1] - ty / 2;
+     }
+     else
++    {
+         memcpy(MidOrthoShift, RenderOrthoShift, sizeof(MidOrthoShift));
++        memcpy(MidOrthoOrigin, RenderOrthoOrigin, sizeof(MidOrthoOrigin));
++    }
+     // An object that moved by (dx, dy) on screen: halfway back (in the steady overworld, by its
+     // true motion, d minus the change of shift, against the picture's shift s, o the new scene's).
+     auto own = [&](float d, double s, double o, double dO) -> s32 {
+--- a/src/GPU3D_Soft.h	2026-11-14 12:07:05.940557954 -0500
++++ b/src/GPU3D_Soft.h	2026-11-14 12:17:14.952824294 -0500
+@@ -57,6 +57,11 @@
+     // picture: the window lays it over the world with the attached layer's own shift, so the
+     // ground under the shadow moves with the world. Kept with the depth for the picture on screen.
+     const u32* GetShownAttachTransLine(int line) const { return &ShownAttachTrans[line * ScanlineWidth]; }
++    // GoldLink (UC11): under an attached object's opaque pixel, the world as it would be without
++    // it (ColorBuffer's format): what was there when it was drawn, then anything drawn behind it
++    // and in front of that (UnderDepth). The window shows it where the world slides out from
++    // under the player's layer (half a pixel at most), instead of a guess.
++    const u32* GetShownUnderLine(int line) const { return &ShownUnder[line * ScanlineWidth]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+     void EnableRenderThread();
+@@ -491,6 +496,9 @@
+     u32 ShownAttr[ScanlineWidth * 192] {};
+     u32 AttachTrans[BufferSize] {};
+     u32 ShownAttachTrans[ScanlineWidth * 192] {};
++    u32 UnderColor[BufferSize] {};
++    u32 UnderDepth[BufferSize] {};
++    u32 ShownUnder[ScanlineWidth * 192] {};
+     u32 AttrBuffer[BufferSize * 2];
+ 
+     // attribute buffer:
+--- a/src/GPU3D_Soft.cpp	2026-11-14 12:07:05.940520854 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 12:28:28.130621002 -0500
+@@ -592,6 +592,11 @@
+     if (!(dstattr & (1<<15)))
+         attr &= ~(1<<15);
+ 
++    // GoldLink (UC11): the world's translucent pixel over an attached object's: over the world
++    // under it too (GetShownUnderLine).
++    if (!attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize)
++        UnderColor[pixeladdr] = AlphaBlend(gpu3d, color, UnderColor[pixeladdr], color>>24);
++
+     // GoldLink (UC11): an attached object's translucent pixel is kept aside, not blended
+     // (GetShownAttachTransLine).
+     if (attached && pixeladdr < BufferSize)
+@@ -1154,14 +1159,21 @@
+ 
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
++        bool under = false; // GoldLink (UC11): for the world under an attached object
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
++            if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(UnderDepth[pixeladdr], z, 0))
++                under = true; // behind the attached object, in front of what's under it
++            else
++            {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+ 
+             pixeladdr += BufferSize;
+             dstattr = AttrBuffer[pixeladdr];
+             if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+                 continue;
++            }
+         }
+ 
+         u32 vr = interpX.Interpolate(rl, rr);
+@@ -1177,6 +1189,18 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (under) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                UnderColor[pixeladdr] = color;
++                UnderDepth[pixeladdr] = z;
++            }
++            else
++                UnderColor[pixeladdr] = AlphaBlend(gpu.GPU3D, color, UnderColor[pixeladdr], alpha);
++            continue;
++        }
++
+         if (alpha == 31)
+         {
+             u32 attr = polyattr | edge;
+@@ -1204,10 +1228,17 @@
+                 }
+             }
+ 
++            // GoldLink (UC11): an attached object's pixel over the world: the world is kept.
++            if (polygon->Attached && pixeladdr < BufferSize && !(AttrBuffer[pixeladdr] & (1u << 30)))
++            {
++                UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
++                UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+-            AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
++            if (pixeladdr < BufferSize) // (the edge's lower pixel is past the one-layer buffers)
++                AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
+         }
+         else
+         {
+@@ -1251,14 +1282,21 @@
+ 
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
++        bool under = false; // GoldLink (UC11): for the world under an attached object
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
++            if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(UnderDepth[pixeladdr], z, 0))
++                under = true; // behind the attached object, in front of what's under it
++            else
++            {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+ 
+             pixeladdr += BufferSize;
+             dstattr = AttrBuffer[pixeladdr];
+             if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+                 continue;
++            }
+         }
+ 
+         u32 vr = interpX.Interpolate(rl, rr);
+@@ -1274,6 +1312,18 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (under) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                UnderColor[pixeladdr] = color;
++                UnderDepth[pixeladdr] = z;
++            }
++            else
++                UnderColor[pixeladdr] = AlphaBlend(gpu.GPU3D, color, UnderColor[pixeladdr], alpha);
++            continue;
++        }
++
+         if (alpha == 31)
+         {
+             u32 attr = polyattr | edge;
+@@ -1294,10 +1344,17 @@
+                 }
+             }
+ 
++            // GoldLink (UC11): an attached object's pixel over the world: the world is kept.
++            if (polygon->Attached && pixeladdr < BufferSize && !(AttrBuffer[pixeladdr] & (1u << 30)))
++            {
++                UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
++                UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+-            AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
++            if (pixeladdr < BufferSize) // (the edge's lower pixel is past the one-layer buffers)
++                AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
+         }
+         else
+         {
+@@ -1344,14 +1401,21 @@
+ 
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
++        bool under = false; // GoldLink (UC11): for the world under an attached object
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
++            if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(UnderDepth[pixeladdr], z, 0))
++                under = true; // behind the attached object, in front of what's under it
++            else
++            {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+ 
+             pixeladdr += BufferSize;
+             dstattr = AttrBuffer[pixeladdr];
+             if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+                 continue;
++            }
+         }
+ 
+         u32 vr = interpX.Interpolate(rl, rr);
+@@ -1367,6 +1431,18 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (under) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                UnderColor[pixeladdr] = color;
++                UnderDepth[pixeladdr] = z;
++            }
++            else
++                UnderColor[pixeladdr] = AlphaBlend(gpu.GPU3D, color, UnderColor[pixeladdr], alpha);
++            continue;
++        }
++
+         if (alpha == 31)
+         {
+             u32 attr = polyattr | edge;
+@@ -1394,10 +1470,17 @@
+                 }
+             }
+ 
++            // GoldLink (UC11): an attached object's pixel over the world: the world is kept.
++            if (polygon->Attached && pixeladdr < BufferSize && !(AttrBuffer[pixeladdr] & (1u << 30)))
++            {
++                UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
++                UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+-            AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
++            if (pixeladdr < BufferSize) // (the edge's lower pixel is past the one-layer buffers)
++                AttachTrans[pixeladdr] = 0; // GoldLink (UC11): an opaque pixel over a shadow
+         }
+         else
+         {
+@@ -1515,7 +1598,10 @@
+                 ColorBuffer[pixeladdr] = edgeR | (edgeG << 8) | (edgeB << 16) | (ColorBuffer[pixeladdr] & 0xFF000000);
+ 
+                 // break antialiasing coverage (checkme)
+-                AttrBuffer[pixeladdr] = (AttrBuffer[pixeladdr] & 0xFFFFE0FF) | 0x00001000;
++                // GoldLink (UC11): in the steady overworld the outline is drawn whole (full
++                // coverage) instead of blended half with what's under it (the user: buildings'
++                // outlines looked see-through).
++                AttrBuffer[pixeladdr] = (AttrBuffer[pixeladdr] & 0xFFFFE0FF) | (gpu3d.RenderOrtho ? 0x00001F00 : 0x00001000);
+             }
+         }
+     }
+@@ -1791,6 +1877,7 @@
+     // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
+     memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
+     memcpy(ShownAttachTrans, &AttachTrans[FirstPixelOffset], sizeof(ShownAttachTrans)); // GoldLink (UC11)
++    memcpy(ShownUnder, &UnderColor[FirstPixelOffset], sizeof(ShownUnder));
+     memcpy(ShownAttr, &AttrBuffer[FirstPixelOffset], sizeof(ShownAttr));
+ 
+     if (RenderThreadRunning.load(std::memory_order_relaxed))

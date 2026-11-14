@@ -177,10 +177,13 @@ pub fn set_log_sink(sink: Option<LogSink>) {
 pub struct Attached {
     /// The shift (DS pixels, x then y) it was drawn with.
     pub shift: [f32; 2],
+    /// Where its reference truly is (the DS screen's columns and rows).
+    pub origin: [f64; 2],
     /// Per pixel: 1 an attached object's opaque pixel (the picture's), 2 its translucent one (its
     /// shadow, which the picture doesn't have: `trans`), else 0.
     pub mask: Vec<u8>,
-    /// The translucent pixels' colour and alpha, 0xAARRGGBB.
+    /// The translucent pixels' colour and alpha, 0xAARRGGBB; at the opaque ones, the world under
+    /// them (0xFFRRGGBB), as it would be without the attached objects.
     pub trans: Vec<u32>,
 }
 
@@ -413,6 +416,15 @@ impl Nds {
         unsafe { sys::gl_core_set_steady(self.ptr(), c_int::from(on)) }
     }
 
+    /// Where the steady world's origin truly is in the picture on screen (the DS screen's columns
+    /// and rows; patch 0023): the window lands it on a whole pixel of its own.
+    pub fn steady_origin(&self) -> [f64; 2] {
+        let mut xy = [0f64; 2];
+        // SAFETY: the shim writes two doubles.
+        unsafe { sys::gl_core_steady_origin(self.ptr(), xy.as_mut_ptr()) };
+        xy
+    }
+
     /// When the picture on screen was drawn steady: the shift (pixels, x then y) it was drawn
     /// with, to be taken back at the screen's resolution.
     pub fn steady_shift(&self) -> Option<[f32; 2]> {
@@ -429,8 +441,9 @@ impl Nds {
         let side = side.min(Self::MAX_WIDE_SIDE);
         let n = (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT;
         let (mut mask, mut trans, mut shift) = (vec![0u8; n], vec![0u32; n], [0f32; 2]);
-        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each and shift two floats, what the
-        // shim writes.
+        let mut origin = [0f64; 2];
+        // SAFETY: mask and trans hold (256 + 2 * side) * 192 each, shift and origin two each,
+        // what the shim writes.
         let found = unsafe {
             sys::gl_core_attached(
                 self.ptr(),
@@ -438,9 +451,15 @@ impl Nds {
                 mask.as_mut_ptr(),
                 trans.as_mut_ptr(),
                 shift.as_mut_ptr(),
+                origin.as_mut_ptr(),
             )
         };
-        (found > 0).then_some(Attached { shift, mask, trans })
+        (found > 0).then_some(Attached {
+            shift,
+            origin,
+            mask,
+            trans,
+        })
     }
 
     /// The top screen's pixels (`256 + 2 * side` across, 192 rows; `side` 0 for the DS's screen)

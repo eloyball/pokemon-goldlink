@@ -216,7 +216,13 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out)
     return n;
 }
 
-int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy)
+void gl_core_steady_origin(GlCore *core, double *xy)
+{
+    xy[0] = core->nds->GPU.GPU3D.ShownOrthoOrigin[0];
+    xy[1] = core->nds->GPU.GPU3D.ShownOrthoOrigin[1];
+}
+
+int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy, double *at)
 {
     side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
     const int width = 256 + 2 * side;
@@ -226,6 +232,8 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
         return 0;
     xy[0] = gpu3d.ShownAttachSlide[0];
     xy[1] = gpu3d.ShownAttachSlide[1];
+    at[0] = gpu3d.ShownAttachTrue[0];
+    at[1] = gpu3d.ShownAttachTrue[1];
     auto &soft = static_cast<melonDS::SoftRenderer &>(gpu.GPU3D.GetCurrentRenderer());
     auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
     constexpr int max = melonDS::GPU2D::SoftRenderer::MaxSide;
@@ -237,6 +245,7 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
     {
         const uint32_t *attr = soft.GetShownAttrLine(y) + from;
         const uint32_t *shadow = soft.GetShownAttachTransLine(y) + from;
+        const uint32_t *under = soft.GetShownUnderLine(y) + from;
         uint8_t *row = out + y * width;
         uint32_t *trow = trans + y * width;
         for (int x = 0; x < width; x++)
@@ -247,7 +256,12 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
             if (soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
                 continue;
             if (attr[x] & 0x40000000u)
-                row[x] = 1; // an attached object's opaque pixel
+            {
+                // An attached object's opaque pixel, and the world under it.
+                const uint32_t c = under[x];
+                row[x] = 1;
+                trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+            }
             else if (shadow[x] != 0)
             {
                 // Its translucent pixel, kept aside by the renderer: 0xAARRGGBB.

@@ -129,6 +129,8 @@ pub struct GameApp {
     edge_fill: [[Option<Vec<egui::Color32>>; 2]; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
+    /// And where the world's origin truly is in it (DS screen columns and rows): see `pixel_lock`.
+    steady_origin: [f64; 2],
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
     /// shadow), slid back by its own shift, and the 2D drawn over the scene (a text box, a
     /// banner), where it is.
@@ -210,6 +212,7 @@ impl GameApp {
             shown_scale: 1.0,
             prescale: 1,
             steady_shift: None,
+            steady_origin: [0.0; 2],
             attached: Layer::default(),
             fixed: Layer::default(),
             edge_fill: [[None, None], [None, None]],
@@ -420,6 +423,7 @@ impl GameApp {
                 .then(|| frame.wide.clone());
                 self.wide_side = frame.wide_side;
                 self.steady_shift = frame.steady_shift;
+                self.steady_origin = frame.steady_origin;
                 self.edge_fill = [
                     edge_rows(&frame.pixels[..256 * 192]),
                     edge_rows(&frame.pixels[256 * 192..256 * 384]),
@@ -437,6 +441,15 @@ impl GameApp {
             }
             return;
         };
+        // The top picture before the lighting, with an attached layer: the world under the player
+        // is lit as the player's own pixels are (split_layer).
+        let unlit: Option<Vec<u32>> = attached
+            .as_ref()
+            .filter(|_| lit && self.steady_shift.is_some())
+            .map(|_| match &wide {
+                Some(w) => w.clone(),
+                None => pixels[..256 * 192].to_vec(),
+            });
         if lit {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
@@ -454,14 +467,16 @@ impl GameApp {
             let fixed_mask = fit(&fixed, w);
             if let Some(a) = &attached {
                 let (mask, trans) = (fit(&a.mask, w), fit(&a.trans, w));
-                let img = split_layer(top, &mask, &fixed_mask, w, k, Some(&trans));
+                let gain = light_gain(top, unlit.as_deref(), &mask);
+                let img = split_layer(top, &mask, &fixed_mask, w, k, Some(&trans), Some(gain));
                 self.attached
                     .set(ctx, "attached", img, options, w != 256, Some(a.shift));
+                self.attached.origin = a.origin;
             }
             if !fixed.is_empty() {
                 let none = vec![0; w * 192];
                 let other = attached.as_ref().map_or(none, |a| fit(&a.mask, w));
-                let img = split_layer(top, &fixed_mask, &other, w, k, None);
+                let img = split_layer(top, &fixed_mask, &other, w, k, None, None);
                 self.fixed.set(ctx, "fixed", img, options, w != 256, None);
             }
         }
@@ -961,21 +976,29 @@ impl GameApp {
                 let shift = self
                     .steady_shift
                     .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
+                let ppp = ui.ctx().pixels_per_point();
+                let origin = self.steady_origin;
                 match &wide {
                     Some(w) => {
                         let cols = (256 + 2 * self.wide_side) as f32;
-                        let (r, uv) = slide(frame, rows(1.0), shift, cols, false);
+                        let side = self.wide_side as f64;
+                        let locked = shift.map(|s| pixel_lock(s, origin, frame, cols, side, ppp));
+                        let (r, uv) = slide(frame, rows(1.0), locked, cols, false);
                         p.image(w.id(), r, uv, egui::Color32::WHITE);
-                        self.attached.draw(&p, frame, true, cols, shift.is_some());
-                        self.fixed.draw(&p, frame, true, cols, shift.is_some());
+                        self.attached
+                            .draw(&p, frame, true, cols, shift.is_some(), side);
+                        self.fixed
+                            .draw(&p, frame, true, cols, shift.is_some(), side);
                     }
                     None => {
+                        let locked = shift.map(|s| pixel_lock(s, origin, middle, 256.0, 0.0, ppp));
                         let (r, uv) =
-                            slide(middle, screen_uvs(self.prescale).0, shift, 256.0, true);
+                            slide(middle, screen_uvs(self.prescale).0, locked, 256.0, true);
                         p.image(t.id(), r, uv, egui::Color32::WHITE);
                         self.attached
-                            .draw(&p, middle, false, 256.0, shift.is_some());
-                        self.fixed.draw(&p, middle, false, 256.0, shift.is_some());
+                            .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
+                        self.fixed
+                            .draw(&p, middle, false, 256.0, shift.is_some(), 0.0);
                     }
                 };
             }
@@ -1097,10 +1120,14 @@ impl GameApp {
                             .steady_shift
                             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
                         let (top_uv, bottom_uv) = screen_uvs(self.prescale);
-                        let (slid, uv) = slide(top, top_uv, shift, 256.0, true);
+                        let ppp = ctx.pixels_per_point();
+                        let origin = self.steady_origin;
+                        let locked = shift.map(|s| pixel_lock(s, origin, top, 256.0, 0.0, ppp));
+                        let (slid, uv) = slide(top, top_uv, locked, 256.0, true);
                         p.image(t.id(), slid, uv, egui::Color32::WHITE);
-                        self.attached.draw(p, top, false, 256.0, shift.is_some());
-                        self.fixed.draw(p, top, false, 256.0, shift.is_some());
+                        self.attached
+                            .draw(p, top, false, 256.0, shift.is_some(), 0.0);
+                        self.fixed.draw(p, top, false, 256.0, shift.is_some(), 0.0);
                         p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                     }
                 }
@@ -1228,6 +1255,8 @@ struct Layer {
     shown: bool,
     wide: bool,
     shift: Option<[f32; 2]>,
+    /// Where what it's slid for truly is (DS screen columns and rows): see `pixel_lock`.
+    origin: [f64; 2],
 }
 
 impl Layer {
@@ -1249,10 +1278,19 @@ impl Layer {
         self.shift = shift;
     }
 
-    /// Over the picture drawn into `dst` (`cols` DS pixels across), when this frame has it for
-    /// that picture: slid back by its own shift when the picture is slid (`slid`), else as drawn
-    /// (the attached layer holds the shadow, which the picture doesn't: it's always drawn).
-    fn draw(&self, p: &egui::Painter, dst: egui::Rect, wide: bool, cols: f32, slid: bool) {
+    /// Over the picture drawn into `dst` (`cols` DS pixels across, the screen's column 0 at
+    /// `side`), when this frame has it for that picture: slid back by its own shift when the
+    /// picture is slid (`slid`), else as drawn (the attached layer holds the shadow, which the
+    /// picture doesn't: it's always drawn).
+    fn draw(
+        &self,
+        p: &egui::Painter,
+        dst: egui::Rect,
+        wide: bool,
+        cols: f32,
+        slid: bool,
+        side: f64,
+    ) {
         let Some(t) = self
             .texture
             .as_ref()
@@ -1261,18 +1299,46 @@ impl Layer {
             return;
         };
         let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        let (r, uv) = slide(dst, full, self.shift.filter(|_| slid), cols, false);
+        let ppp = p.ctx().pixels_per_point();
+        let shift = self
+            .shift
+            .filter(|_| slid)
+            .map(|s| pixel_lock(s, self.origin, dst, cols, side, ppp));
+        let (r, uv) = slide(dst, full, shift, cols, false);
         p.image(t.id(), r, uv, egui::Color32::WHITE);
     }
+}
+
+/// The lighting's gain per channel where the player is (their opaque pixels, `mask` 1: lit `top`
+/// over `unlit`), for the world under them; none (1) without the lighting.
+fn light_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8]) -> [f32; 3] {
+    let Some(unlit) = unlit else {
+        return [1.0; 3];
+    };
+    let (mut lit_sum, mut raw_sum) = ([0f32; 3], [0f32; 3]);
+    for i in (0..mask.len()).filter(|&i| mask[i] == 1) {
+        for (c, sh) in [16, 8, 0].into_iter().enumerate() {
+            lit_sum[c] += ((top[i] >> sh) & 255) as f32;
+            raw_sum[c] += ((unlit[i] >> sh) & 255) as f32;
+        }
+    }
+    let mut gain = [1f32; 3];
+    for c in 0..3 {
+        if raw_sum[c] > 255.0 {
+            gain[c] = lit_sum[c] / raw_sum[c];
+        }
+    }
+    gain
 }
 
 /// A layer of the steady overworld's picture (UC11), `w` across, 192 rows, each pixel `k` times as
 /// large, drawn over the slid picture (with its own shift, or none): where `mask` is 1, `top`'s
 /// pixel, opaque; where it's 2, `trans`'s (0xAARRGGBB: a shadow the picture doesn't have); the
-/// rest transparent. In `top` (the picture that's slid) the 1s all take the colour of the nearest
-/// scene pixel (neither this layer's 1s nor `other`), filled in from the edge: where the shifts
-/// differ (about half a pixel at most) the scene shows there, never this layer's pixels a second
-/// time at another shift.
+/// rest transparent. In `top` (the picture that's slid) the 1s take the world under them (with
+/// `under`: `trans` there, the renderer's, times the lighting's gain) or else the colour of the
+/// nearest scene pixel (neither this layer's 1s nor `other`), filled in from the edge: where the
+/// shifts differ (about half a pixel at most) the world shows there, never this layer's pixels a
+/// second time at another shift.
 fn split_layer(
     top: &mut [u32],
     mask: &[u8],
@@ -1280,6 +1346,7 @@ fn split_layer(
     w: usize,
     k: usize,
     trans: Option<&[u32]>,
+    under: Option<[f32; 3]>,
 ) -> egui::ColorImage {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     let h = 192;
@@ -1299,8 +1366,17 @@ fn split_layer(
             _ => {}
         }
     }
+    if let (Some(gain), Some(t)) = (under, trans) {
+        for i in (0..w * h).filter(|&i| mask[i] == 1) {
+            let c = t[i];
+            let ch = |sh: u32, g: f32| (((((c >> sh) & 255) as f32) * g).min(255.0) as u32) << sh;
+            top[i] = ch(16, gain[0]) | ch(8, gain[1]) | ch(0, gain[2]);
+        }
+        return enlarged_layer(layer, w, h, k);
+    }
     // Breadth first from the scene's pixels beside the layer.
     let mut done: Vec<bool> = (0..w * h).map(|i| mask[i] != 1).collect();
+    let mut fill = vec![0u32; w * h];
     let mut queue = std::collections::VecDeque::new();
     for y in 0..h {
         for x in 0..w {
@@ -1313,6 +1389,7 @@ fn split_layer(
                 || (y > 0 && mask[i - w] == 1)
                 || (y + 1 < h && mask[i + w] == 1);
             if beside {
+                fill[i] = top[i];
                 queue.push_back(i);
             }
         }
@@ -1328,11 +1405,17 @@ fn split_layer(
         for n in near.into_iter().flatten() {
             if !done[n] {
                 done[n] = true;
-                top[n] = top[i];
+                fill[n] = fill[i];
+                top[n] = fill[i];
                 queue.push_back(n);
             }
         }
     }
+    enlarged_layer(layer, w, h, k)
+}
+
+/// A layer's pixels (`w` by `h`) as a texture image, each `k` by `k`.
+fn enlarged_layer(layer: Vec<egui::Color32>, w: usize, h: usize, k: usize) -> egui::ColorImage {
     if k <= 1 {
         return egui::ColorImage {
             size: [w, h],
@@ -1438,6 +1521,35 @@ fn edge_rows(top: &[u32]) -> [Option<Vec<egui::Color32>>; 2] {
             .collect()
     };
     [side(0..8), side(248..256)]
+}
+
+/// The steady overworld (UC11): `shift` (DS pixels) adjusted by under half a screen pixel so that
+/// what it's slid for (truly at `origin`: DS screen columns and rows; the picture's column 0 is
+/// the screen's `-side`) lands on a whole pixel of the screen, drawn into `dst` (`cols` DS
+/// pixels across, 192 rows; `ppp` the screen's pixels per point). At a scale that isn't whole
+/// (7.5), which game pixel gets one screen pixel more depends on where the picture lands within a
+/// screen pixel; slid by fractions as the world moved, fine texture flickered (the user's play
+/// test). Locked so, every game pixel keeps its screen pixels while it moves.
+fn pixel_lock(
+    shift: [f32; 2],
+    origin: [f64; 2],
+    dst: egui::Rect,
+    cols: f32,
+    side: f64,
+    ppp: f32,
+) -> [f32; 2] {
+    let axis = |shift: f32, origin: f64, min: f32, size: f32, n: f32| {
+        let s = f64::from(size * ppp / n);
+        if s <= 0.0 {
+            return shift;
+        }
+        let ideal = f64::from(min * ppp) + origin * s;
+        (f64::from(shift) + (ideal - ideal.round()) / s) as f32
+    };
+    [
+        axis(shift[0], origin[0] + side, dst.min.x, dst.width(), cols),
+        axis(shift[1], origin[1], dst.min.y, dst.height(), 192.0),
+    ]
 }
 
 /// The steady overworld (UC11): the top picture `uv` (the DS screen's 192 rows, `cols` columns
