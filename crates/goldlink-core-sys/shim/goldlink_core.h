@@ -110,7 +110,9 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
 // The top screen's pixels drawn by what the steady camera follows (the player, their shadow,
 // a mount: patch 0022), on top, into `out` (as gl_core_fixed_2d's): 1 opaque (the picture's
 // pixel; in `trans` the world under it, 0xFFRRGGBB: patch 0023), 2 translucent (a shadow, not
-// blended into the picture: its colour and alpha in `trans`, 0xAARRGGBB), else 0; and the shift (pixels, x then y) they were drawn with, which the window
+// blended into the picture: its colour and alpha in `trans`, 0xAARRGGBB), 3 the world in front of
+// one (the picture's pixel; in `trans` the attached object's behind it: patch 0024), 4 the same
+// surface within two pixels of a 3 (the picture's), else 0; and the shift (pixels, x then y) they were drawn with, which the window
 // takes back for them, and where their reference truly is (`at`: the screen's columns and rows);
 // how many (0: none this frame, the rest then unwritten).
 int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, float *xy, double *at);

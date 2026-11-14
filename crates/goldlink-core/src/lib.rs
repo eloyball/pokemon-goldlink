@@ -180,10 +180,13 @@ pub struct Attached {
     /// Where its reference truly is (the DS screen's columns and rows).
     pub origin: [f64; 2],
     /// Per pixel: 1 an attached object's opaque pixel (the picture's), 2 its translucent one (its
-    /// shadow, which the picture doesn't have: `trans`), else 0.
+    /// shadow, which the picture doesn't have: `trans`), 3 the world in front of one (the
+    /// picture's; the attached object's behind it in `trans`), 4 the same surface just past a 3,
+    /// else 0.
     pub mask: Vec<u8>,
     /// The translucent pixels' colour and alpha, 0xAARRGGBB; at the opaque ones, the world under
-    /// them (0xFFRRGGBB), as it would be without the attached objects.
+    /// them (0xFFRRGGBB), as it would be without the attached objects; at 3, the attached
+    /// object's pixel behind the world (0xFFRRGGBB).
     pub trans: Vec<u32>,
 }
 

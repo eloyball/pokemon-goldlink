@@ -1,0 +1,198 @@
+GoldLink's change to melonDS (UC11): the steady overworld keeps the attached objects' pixels hidden
+behind the world.
+
+- GPU3D_Soft: where something of the world is in front of an attached object (the player behind
+  a windmill's blade, a roof's corner, a person), the attached object's own opaque pixel behind it
+  (BehindColor, BehindDepth, the nearest; ShownBehind with the depth): drawn behind it, or covered
+  by it later. The player's layer and the world slide by different fractions; the window drew the
+  player cut where the world covered it, and what was in front at the world's shift: a gap or an
+  overlap all round it (an outline, the user's play test). With these the window draws the
+  player whole and what's in front over them.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D_Soft.h	2026-11-14 13:36:52.133096177 -0500
++++ b/src/GPU3D_Soft.h	2026-11-14 13:36:52.143793706 -0500
+@@ -62,6 +62,12 @@
+     // and in front of that (UnderDepth). The window shows it where the world slides out from
+     // under the player's layer (half a pixel at most), instead of a guess.
+     const u32* GetShownUnderLine(int line) const { return &ShownUnder[line * ScanlineWidth]; }
++    // GoldLink (UC11): where something of the world is in front of an attached object, the
++    // attached object's own opaque pixel behind it (ColorBuffer's format; 0: none), the nearest.
++    // The window draws the player's layer whole and what's in front over it with the world's
++    // shift (the two slide apart by a fraction: an outline round anything in front of the player,
++    // the user's play test).
++    const u32* GetShownBehindLine(int line) const { return &ShownBehind[line * ScanlineWidth]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+     void EnableRenderThread();
+@@ -499,6 +505,9 @@
+     u32 UnderColor[BufferSize] {};
+     u32 UnderDepth[BufferSize] {};
+     u32 ShownUnder[ScanlineWidth * 192] {};
++    u32 BehindColor[BufferSize] {};
++    u32 BehindDepth[BufferSize] {};
++    u32 ShownBehind[ScanlineWidth * 192] {};
+     u32 AttrBuffer[BufferSize * 2];
+ 
+     // attribute buffer:
+--- a/src/GPU3D_Soft.cpp	2026-11-14 13:36:52.133061271 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 13:36:52.144241699 -0500
+@@ -1160,11 +1160,15 @@
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
+         bool under = false; // GoldLink (UC11): for the world under an attached object
++        bool behind = false; // and for an attached object's pixel behind the world
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
+             if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
+                 && fnDepthTest(UnderDepth[pixeladdr], z, 0))
+                 under = true; // behind the attached object, in front of what's under it
++            else if (polygon->Attached && !(dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(BehindDepth[pixeladdr], z, 0))
++                behind = true; // the attached object behind the world
+             else
+             {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+@@ -1189,6 +1193,16 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (behind) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                BehindColor[pixeladdr] = color;
++                BehindDepth[pixeladdr] = z;
++            }
++            continue;
++        }
++
+         if (under) // GoldLink (UC11)
+         {
+             if (alpha == 31)
+@@ -1239,6 +1253,13 @@
+                 UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
+                 UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
+             }
++            // GoldLink (UC11): the world's pixel over an attached object's: that one is kept.
++            if (!polygon->Attached && pixeladdr < BufferSize && (AttrBuffer[pixeladdr] & (1u << 30))
++                && DepthBuffer[pixeladdr] < BehindDepth[pixeladdr])
++            {
++                BehindColor[pixeladdr] = ColorBuffer[pixeladdr];
++                BehindDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+@@ -1288,11 +1309,15 @@
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
+         bool under = false; // GoldLink (UC11): for the world under an attached object
++        bool behind = false; // and for an attached object's pixel behind the world
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
+             if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
+                 && fnDepthTest(UnderDepth[pixeladdr], z, 0))
+                 under = true; // behind the attached object, in front of what's under it
++            else if (polygon->Attached && !(dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(BehindDepth[pixeladdr], z, 0))
++                behind = true; // the attached object behind the world
+             else
+             {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+@@ -1317,6 +1342,16 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (behind) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                BehindColor[pixeladdr] = color;
++                BehindDepth[pixeladdr] = z;
++            }
++            continue;
++        }
++
+         if (under) // GoldLink (UC11)
+         {
+             if (alpha == 31)
+@@ -1355,6 +1390,13 @@
+                 UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
+                 UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
+             }
++            // GoldLink (UC11): the world's pixel over an attached object's: that one is kept.
++            if (!polygon->Attached && pixeladdr < BufferSize && (AttrBuffer[pixeladdr] & (1u << 30))
++                && DepthBuffer[pixeladdr] < BehindDepth[pixeladdr])
++            {
++                BehindColor[pixeladdr] = ColorBuffer[pixeladdr];
++                BehindDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+@@ -1407,11 +1449,15 @@
+         // if depth test against the topmost pixel fails, test
+         // against the pixel underneath
+         bool under = false; // GoldLink (UC11): for the world under an attached object
++        bool behind = false; // and for an attached object's pixel behind the world
+         if (!fnDepthTest(DepthBuffer[pixeladdr], z, dstattr))
+         {
+             if (!polygon->Attached && (dstattr & (1u << 30)) && pixeladdr < BufferSize
+                 && fnDepthTest(UnderDepth[pixeladdr], z, 0))
+                 under = true; // behind the attached object, in front of what's under it
++            else if (polygon->Attached && !(dstattr & (1u << 30)) && pixeladdr < BufferSize
++                && fnDepthTest(BehindDepth[pixeladdr], z, 0))
++                behind = true; // the attached object behind the world
+             else
+             {
+             if (!(dstattr & 0xF) || pixeladdr >= BufferSize) continue;
+@@ -1436,6 +1482,16 @@
+         // alpha test
+         if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
+ 
++        if (behind) // GoldLink (UC11)
++        {
++            if (alpha == 31)
++            {
++                BehindColor[pixeladdr] = color;
++                BehindDepth[pixeladdr] = z;
++            }
++            continue;
++        }
++
+         if (under) // GoldLink (UC11)
+         {
+             if (alpha == 31)
+@@ -1486,6 +1542,13 @@
+                 UnderColor[pixeladdr] = ColorBuffer[pixeladdr];
+                 UnderDepth[pixeladdr] = DepthBuffer[pixeladdr];
+             }
++            // GoldLink (UC11): the world's pixel over an attached object's: that one is kept.
++            if (!polygon->Attached && pixeladdr < BufferSize && (AttrBuffer[pixeladdr] & (1u << 30))
++                && DepthBuffer[pixeladdr] < BehindDepth[pixeladdr])
++            {
++                BehindColor[pixeladdr] = ColorBuffer[pixeladdr];
++                BehindDepth[pixeladdr] = DepthBuffer[pixeladdr];
++            }
+             DepthBuffer[pixeladdr] = z;
+             ColorBuffer[pixeladdr] = color;
+             AttrBuffer[pixeladdr] = attr;
+@@ -1749,6 +1812,8 @@
+     u32 clearz = ((gpu.GPU3D.RenderClearAttr2 & 0x7FFF) * 0x200) + 0x1FF;
+     u32 polyid = gpu.GPU3D.RenderClearAttr1 & 0x3F000000; // this sets the opaque polygonID
+     memset(AttachTrans, 0, sizeof(AttachTrans)); // GoldLink (UC11)
++    memset(BehindColor, 0, sizeof(BehindColor));
++    memset(BehindDepth, 0xFF, sizeof(BehindDepth));
+ 
+     // fill screen borders for edge marking
+ 
+@@ -1885,6 +1950,7 @@
+     memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
+     memcpy(ShownAttachTrans, &AttachTrans[FirstPixelOffset], sizeof(ShownAttachTrans)); // GoldLink (UC11)
+     memcpy(ShownUnder, &UnderColor[FirstPixelOffset], sizeof(ShownUnder));
++    memcpy(ShownBehind, &BehindColor[FirstPixelOffset], sizeof(ShownBehind));
+     memcpy(ShownAttr, &AttrBuffer[FirstPixelOffset], sizeof(ShownAttr));
+ 
+     if (RenderThreadRunning.load(std::memory_order_relaxed))

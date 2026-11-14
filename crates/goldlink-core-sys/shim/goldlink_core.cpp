@@ -246,6 +246,7 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
         const uint32_t *attr = soft.GetShownAttrLine(y) + from;
         const uint32_t *shadow = soft.GetShownAttachTransLine(y) + from;
         const uint32_t *under = soft.GetShownUnderLine(y) + from;
+        const uint32_t *behind = soft.GetShownBehindLine(y) + from;
         uint8_t *row = out + y * width;
         uint32_t *trow = trans + y * width;
         for (int x = 0; x < width; x++)
@@ -262,6 +263,13 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
                 row[x] = 1;
                 trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
             }
+            else if (behind[x] != 0)
+            {
+                // Something of the world in front of an attached object: its pixel behind it.
+                const uint32_t c = behind[x];
+                row[x] = 3;
+                trow[x] = 0xFF000000u | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
+            }
             else if (shadow[x] != 0)
             {
                 // Its translucent pixel, kept aside by the renderer: 0xAARRGGBB.
@@ -270,6 +278,34 @@ int gl_core_attached(GlCore *core, int side, uint8_t *out, uint32_t *trans, floa
                 trow[x] = (a << 24) | (ch(c) << 16) | (ch(c >> 8) << 8) | ch(c >> 16);
             }
             n += row[x] != 0;
+        }
+    }
+    // What's in front, a little past where it covers them (4): the scene's pixels within two of
+    // a 3 at that pixel's depth (the same surface), for the window to draw over the player too.
+    for (int y = 0; y < 192; y++)
+    {
+        const uint32_t *depth = soft.GetShownDepthLine(y) + from;
+        for (int x = 0; x < width; x++)
+        {
+            if (out[y * width + x] != 0 || soft2d.Layer3D[y][from + x] != 1 || soft2d.Fixed2D[y][from + x])
+                continue;
+            bool near = false;
+            for (int yy = std::max(0, y - 2); yy <= std::min(191, y + 2) && !near; yy++)
+            {
+                const uint32_t *d = soft.GetShownDepthLine(yy) + from;
+                for (int xx = std::max(0, x - 2); xx <= std::min(width - 1, x + 2); xx++)
+                    if (out[yy * width + xx] == 3
+                        && std::abs((int)(depth[x] & 0xFFFFFF) - (int)(d[xx] & 0xFFFFFF)) < 0x8000)
+                    {
+                        near = true;
+                        break;
+                    }
+            }
+            if (near)
+            {
+                out[y * width + x] = 4;
+                n++;
+            }
         }
     }
     return n;
