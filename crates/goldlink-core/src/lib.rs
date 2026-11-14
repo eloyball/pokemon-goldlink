@@ -401,13 +401,27 @@ impl Nds {
         unsafe { sys::gl_core_set_steady(self.ptr(), c_int::from(on)) }
     }
 
-    /// When the picture on screen was drawn steady and nothing 2D is drawn over the scene: the
-    /// shift (pixels, x then y) it was drawn with, to be taken back at the screen's resolution.
+    /// When the picture on screen was drawn steady: the shift (pixels, x then y) it was drawn
+    /// with, to be taken back at the screen's resolution.
     pub fn steady_shift(&self) -> Option<[f32; 2]> {
         let mut xy = [0f32; 2];
         // SAFETY: the shim writes two floats.
         let on = unsafe { sys::gl_core_steady_shift(self.ptr(), xy.as_mut_ptr()) };
         (on == 1).then_some(xy)
+    }
+
+    /// The top screen's pixels (`256 + 2 * side` across, 192 rows; `side` 0 for the DS's screen)
+    /// where 2D shows over the 3D scene unblended (a text box, a banner): 1 there, else 0. Empty
+    /// when there's none. A steady picture's slide leaves them where they are.
+    pub fn fixed_2d(&self, side: usize) -> Vec<u8> {
+        let side = side.min(Self::MAX_WIDE_SIDE);
+        let mut out = vec![0u8; (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT];
+        // SAFETY: out holds (256 + 2 * side) * 192 bytes, what the shim writes.
+        let n = unsafe { sys::gl_core_fixed_2d(self.ptr(), side as c_int, out.as_mut_ptr()) };
+        if n == 0 {
+            out.clear();
+        }
+        out
     }
 
     /// A screen `256 + 2 * side` pixels wide (0x00RRGGBB, 192 rows): the screen as shown in the

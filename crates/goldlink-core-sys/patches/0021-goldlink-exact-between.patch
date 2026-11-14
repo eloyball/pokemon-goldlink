@@ -1,0 +1,240 @@
+GoldLink's change to melonDS (UC11): the steady overworld's picture in between lands exactly
+halfway, and 2D drawn over the scene is marked so it isn't slid with it.
+
+- GPU3D: walking up or down the camera moves 1.5 pixels a scene (0.75 per world unit), and the
+  picture in between moved the world back by half the scene's whole-pixel move (0 or 1), while
+  the window slid it by the scene's own shift: the world showed 1.5, 0, 0.5 and 1 pixels a frame
+  instead of 0.75 every frame (the user's play test, 2026-11-14: walking up stutters). The world
+  is now moved by the whole pixels nearest to exactly halfway (the camera's true motion, from
+  where the world's origin lands before the shift: OrthoOrigin, kept with the scene through the
+  swap), and the rest is the in-between's own shift (MidOrthoShift, shown as ShownOrthoShift for
+  that frame). Objects moving on their own are moved by their own exact half, in 1/256 pixel
+  (MidShift's unit). Only when the scenes' overall motion matches the camera's; otherwise as
+  before.
+- GPU2D_Soft: Fixed2D, per main-engine line (Layer3D's columns), where a background or sprite is
+  what shows, not alpha-blended with the 3D layer (BlendsWith3D, ColorComposite's decision).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-14 09:37:57.266418116 -0500
++++ b/src/GPU3D.h	2026-11-14 09:38:26.354065425 -0500
+@@ -276,6 +276,12 @@
+     bool RenderOrtho = false, ShownOrtho = false;
+     bool OrthoFlushed = false;     // the scene flushed (waiting for the swap) used it
+     float OrthoFlushedShift[2] {};
++    // Where the world's origin lands on screen before the shift (pixels): the scene being built's,
++    // the flushed one's, the rendered one's and the one rendered before it. Between two scenes,
++    // the difference is how far the camera really moved (for the picture in between).
++    double OrthoOrigin[2] {}, OrthoFlushedOrigin[2] {}, RenderOrthoOrigin[2] {}, PrevOrthoOrigin[2] {};
++    float PrevOrthoShift[2] {};
++    bool PrevOrtho = false;
+     double OrthoNear = 0;          // this scene: the object nearest the screen's centre (distance)
+     double OrthoNearScore = 1e30;
+     // The player's distance is learned once per camera setup (the projection's scale and the
+@@ -413,6 +419,12 @@
+     // game would draw it at 60 Hz. Whole pixels, so the steady overworld stays on its pixels.
+     // (The scene being built isn't complete until late in the frame between, so each scene shows
+     // a frame later: halfway on its first frame, itself on its second.)
++    // In the steady overworld the world is moved by whole pixels, the nearest to exactly halfway
++    // (the camera's true motion: walking up, 1.5 pixels a scene, isn't a whole number of pixels
++    // halved), and the rest is the picture's own shift (MidOrthoShift), which the window slides
++    // back as it does a scene's: the world moves exactly halfway on screen. Whatever moves on its
++    // own (people, the player the camera follows) is moved by its own exact half, in fractions of
++    // a pixel, so it too lands exactly halfway on screen.
+     struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; };
+     bool MidWanted = false;
+     bool MidReplaying = false;   // this engine is the shadow, replaying a scene
+@@ -424,7 +436,9 @@
+     std::vector<MidObject> MidObjects, MidRenderObjects; // the scene being built's, the rendered one's
+     s32 MidLastClip[16] {};
+     int MidCurObject = -1;
+-    std::vector<s32> MidShift;   // the shadow's: each object's shift, pixels, x then y
++    std::vector<s32> MidShift;   // the shadow's: each object's shift, 1/MidUnit pixels, x then y
++    static constexpr s32 MidUnit = 256;
++    float MidOrthoShift[2] {};   // the steady overworld's shift for the picture in between
+     std::unique_ptr<GPU3D> MidShadow;
+     std::array<Polygon*,2048> MidList {}, MidSavedList {};
+     u32 MidSavedNumPolygons = 0;
+--- a/src/GPU3D.cpp	2026-11-14 09:37:57.264606947 -0500
++++ b/src/GPU3D.cpp	2026-11-14 09:38:26.355471324 -0500
+@@ -1506,8 +1506,9 @@
+         const s64 w = vertextrans->Position[3], width = MidWidth(), height = Viewport[5];
+         if (w > 0 && width > 0 && height > 0)
+         {
+-            vertextrans->Position[0] += (s32)((dx * 2 * w + (dx < 0 ? -width : width) / 2) / width);
+-            vertextrans->Position[1] -= (s32)((dy * 2 * w + (dy < 0 ? -height : height) / 2) / height);
++            const s64 uw = width * MidUnit, uh = height * MidUnit;
++            vertextrans->Position[0] += (s32)((dx * 2 * w + (dx < 0 ? -uw : uw) / 2) / uw);
++            vertextrans->Position[1] -= (s32)((dy * 2 * w + (dy < 0 ? -uh : uh) / 2) / uh);
+         }
+     }
+ 
+@@ -2761,6 +2762,8 @@
+     ClipMatrixDirty = true;
+     OrthoShift[0] = (float)ox;
+     OrthoShift[1] = (float)oy;
++    OrthoOrigin[0] = x;
++    OrthoOrigin[1] = y;
+     OrthoScene = true;
+     OrthoSceneFromPersp |= OrthoFromPersp;
+ }
+@@ -2790,6 +2793,7 @@
+ {
+     OrthoFlushed = OrthoScene;
+     memcpy(OrthoFlushedShift, OrthoShift, sizeof(OrthoFlushedShift));
++    memcpy(OrthoFlushedOrigin, OrthoOrigin, sizeof(OrthoFlushedOrigin));
+     if (OrthoSceneFromPersp && OrthoCameraAt >= 0 && OrthoNearScore < 0.05)
+     {
+         OrthoCamera &c = OrthoCameras[OrthoCameraAt];
+@@ -2823,7 +2827,7 @@
+             memcpy(ShownProjMatrix, RenderProjMatrix, sizeof(RenderProjMatrix));
+             ShownWBuffer = RenderNumPolygons > 0 && RenderPolygonRAM[0]->WBuffer;
+             ShownOrtho = RenderOrtho;
+-            memcpy(ShownOrthoShift, RenderOrthoShift, sizeof(ShownOrthoShift));
++            memcpy(ShownOrthoShift, MidShown ? MidOrthoShift : RenderOrthoShift, sizeof(ShownOrthoShift));
+             // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
+             // and drawn this time (unless a new scene replaces it now).
+             if (MidShown)
+@@ -2837,8 +2841,12 @@
+                         most = i;
+                 if (most >= 0)
+                     memcpy(RenderProjMatrix, FrameProj[most].Matrix, sizeof(RenderProjMatrix));
++                PrevOrtho = RenderOrtho;
++                memcpy(PrevOrthoShift, RenderOrthoShift, sizeof(PrevOrthoShift));
++                memcpy(PrevOrthoOrigin, RenderOrthoOrigin, sizeof(PrevOrthoOrigin));
+                 RenderOrtho = OrthoFlushed;
+                 memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
++                memcpy(RenderOrthoOrigin, OrthoFlushedOrigin, sizeof(RenderOrthoOrigin));
+ 
+                 if (NumPolygons)
+                 {
+@@ -3557,7 +3565,40 @@
+             gy = move.second / 4.0f;
+         }
+     auto half = [](float v) { return (s32)std::floor(v / 2 + 0.5f); };
+-    const s32 hx = half(-gx), hy = half(-gy);
++    s32 hx = half(-gx), hy = half(-gy);
++
++    // The steady overworld, both scenes: the camera's true motion (t), and the world's whole-pixel
++    // move (h) nearest to halfway back from the new scene. The world is drawn (true position +
++    // shift) and shown slid back by the picture's shift, so the in-between's shift is
++    // s = o + h + t/2 (o the new scene's): the world shows exactly halfway, |s| <= 1/2. Only when
++    // the scene's overall motion is the camera's (the world moved by t plus the change of shift).
++    bool exact = false;
++    double tx = 0, ty = 0, dox = 0, doy = 0;
++    if (RenderOrtho && PrevOrtho && most > 0)
++    {
++        tx = RenderOrthoOrigin[0] - PrevOrthoOrigin[0];
++        ty = RenderOrthoOrigin[1] - PrevOrthoOrigin[1];
++        dox = RenderOrthoShift[0] - PrevOrthoShift[0];
++        doy = RenderOrthoShift[1] - PrevOrthoShift[1];
++        exact = std::fabs(tx + dox - gx) < 0.3 && std::fabs(ty + doy - gy) < 0.3;
++    }
++    if (exact)
++    {
++        hx = -(s32)std::lround(RenderOrthoShift[0] + tx / 2);
++        hy = -(s32)std::lround(RenderOrthoShift[1] + ty / 2);
++        MidOrthoShift[0] = (float)(RenderOrthoShift[0] + hx + tx / 2);
++        MidOrthoShift[1] = (float)(RenderOrthoShift[1] + hy + ty / 2);
++    }
++    else
++        memcpy(MidOrthoShift, RenderOrthoShift, sizeof(MidOrthoShift));
++    // An object that moved by (dx, dy) on screen: its own exact half (in the steady overworld,
++    // moved by its true motion, d minus the change of shift, measured from the world's); else
++    // whole pixels, as before.
++    auto own = [&](float d, double t, double dO, s32 h) -> s32 {
++        if (!exact)
++            return half(-d) * MidUnit;
++        return (s32)std::lround((h + t / 2 - (d - dO) / 2) * MidUnit);
++    };
+ 
+     // Each object: halfway back to its match (the one alike nearest where the overall motion,
+     // or no motion, puts it); with the world (half the overall motion) without one.
+@@ -3565,7 +3606,7 @@
+     for (u32 j = 0; j < MidObjects.size(); j++)
+     {
+         const MidObject& c = MidObjects[j];
+-        s32 sx = hx, sy = hy;
++        s32 sx = hx * MidUnit, sy = hy * MidUnit;
+         if (c.Placed)
+         {
+             float best = Near;
+@@ -3580,9 +3621,9 @@
+                 {
+                     best = cost;
+                     if (world < 0.3f)
+-                        sx = hx, sy = hy;
++                        sx = hx * MidUnit, sy = hy * MidUnit;
+                     else
+-                        sx = half(-dx), sy = half(-dy);
++                        sx = own(dx, tx, dox, hx), sy = own(dy, ty, doy, hy);
+                 }
+             }
+         }
+--- a/src/GPU2D_Soft.h	2026-11-14 09:37:57.269783562 -0500
++++ b/src/GPU2D_Soft.h	2026-11-14 09:38:56.388536566 -0500
+@@ -53,6 +53,11 @@
+     u16 LineBlendCnt[192] {};
+     u8 LineEVY[192] {};
+     u8 Layer3D[192][256 + 2 * MaxSide] {};
++    // GoldLink (UC11): per main-engine line, 1 where a 2D layer (a background or a sprite: a text
++    // box, a town's banner, a menu) is what shows, not blended with the 3D scene under it. The
++    // steady overworld slides the 3D scene at the screen's resolution; these pixels stay put.
++    // Same columns as Layer3D.
++    u8 Fixed2D[192][256 + 2 * MaxSide] {};
+     // The strips' width when drawn.
+     int WideDrawn[2] {};
+ 
+@@ -192,6 +197,7 @@
+         return rb | g | 0xFF000000;
+     }
+     u32 ColorComposite(int i, u32 val1, u32 val2) const;
++    bool BlendsWith3D(int i, u32 val1, u32 val2) const; // GoldLink (UC11)
+ 
+     template<u32 bgmode> void DrawScanlineBGMode(u32 line);
+     void DrawScanlineBGMode6(u32 line);
+--- a/src/GPU2D_Soft.cpp	2026-11-14 09:37:57.268118166 -0500
++++ b/src/GPU2D_Soft.cpp	2026-11-14 09:38:56.389090105 -0500
+@@ -103,6 +103,19 @@
+     return val1;
+ }
+ 
++// GoldLink (UC11): whether ColorComposite blends the top layer val1 (2D) with val2, the 3D
++// layer: its alpha blending (a semi-transparent sprite or a blend target pair), as it decides.
++bool SoftRenderer::BlendsWith3D(int i, u32 val1, u32 val2) const
++{
++    const u32 flag1 = val1 >> 24, flag2 = val2 >> 24;
++    const u32 blendCnt = CurUnit->BlendCnt;
++    if ((flag2 & 0xC0) != 0x40 || !(blendCnt & 0x0100))
++        return false;
++    if (flag1 & 0x80)
++        return true;
++    return (blendCnt & flag1) && (WindowMask[i] & 0x20) && ((blendCnt >> 6) & 0x3) == 1;
++}
++
+ void SoftRenderer::DrawScanline(u32 line, Unit* unit)
+ {
+     CurUnit = unit;
+@@ -115,7 +128,10 @@
+ 
+     // GoldLink (UC11): this line's 3D mask starts empty; DrawScanline_BGOBJ fills it.
+     if (CurUnit->Num == 0 && line < 192)
++    {
+         memset(Layer3D[line], 0, sizeof(Layer3D[line]));
++        memset(Fixed2D[line], 0, sizeof(Fixed2D[line]));
++    }
+     // GoldLink (UC11): this line's fades, as the engine will apply them, for the lighting.
+     if (CurUnit->Num == 0 && line < 192)
+     {
+@@ -989,7 +1005,11 @@
+             {
+                 int col = i + SideShift + MaxSide;
+                 if (col >= 0 && col < 256 + 2 * MaxSide)
++                {
+                     mask[col] = ((val1 >> 24) & 0xC0) == 0x40 ? 1 : ((val2 >> 24) & 0xC0) == 0x40 ? 2 : 0;
++                    const u32 flag1 = val1 >> 24;
++                    Fixed2D[line][col] = (flag1 & 0x40) == 0 && flag1 != 0x20 && !BlendsWith3D(i, val1, val2);
++                }
+             }
+             BGOBJLine[i] = ColorComposite(i, val1, val2);
+         }

@@ -129,6 +129,12 @@ pub struct GameApp {
     edge_fill: [[Option<Vec<egui::Color32>>; 2]; 2],
     /// The steady overworld's shift for the top picture on screen (UC11): slid back by it.
     steady_shift: Option<[f32; 2]>,
+    /// With it: the 2D drawn over the scene (a text box, a banner), drawn over the slid picture
+    /// where it is (fixed_layer), when there is any.
+    fixed: Option<egui::TextureHandle>,
+    fixed_shown: bool,
+    /// The layer is the wider picture's (else the DS screen's).
+    fixed_wide: bool,
     /// hg-engine's MEGA button, as the touch screen shows it (None: not offered; else lit), and
     /// its Mega symbol cut from there.
     mega: Option<bool>,
@@ -205,6 +211,9 @@ impl GameApp {
             shown_scale: 1.0,
             prescale: 1,
             steady_shift: None,
+            fixed: None,
+            fixed_shown: false,
+            fixed_wide: false,
             edge_fill: [[None, None], [None, None]],
             mega: None,
             mega_icon: None,
@@ -418,11 +427,12 @@ impl GameApp {
                     edge_rows(&frame.pixels[256 * 192..256 * 384]),
                 ];
                 let light = if lit { frame.light.clone() } else { None };
-                Some((frame.pixels.clone(), wide, frame.wide_side, light))
+                let fixed = frame.fixed.clone();
+                Some((frame.pixels.clone(), wide, frame.wide_side, light, fixed))
             }
         };
         let (k, options) = sharp_prescale(self.shown_scale, self.config.video.filter);
-        let Some((mut pixels, mut wide, side, light)) = shown else {
+        let Some((mut pixels, mut wide, side, light, fixed)) = shown else {
             if self.texture.is_none() {
                 let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
                 self.texture = Some(ctx.load_texture("screens", img, options));
@@ -433,6 +443,31 @@ impl GameApp {
             self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
         }
         let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
+        // The 2D over the steady scene: taken out of the top picture into its own layer, which
+        // isn't slid.
+        self.fixed_shown = false;
+        if self.steady_shift.is_some() && !fixed.is_empty() {
+            let full = 256 + 2 * side;
+            let (top, w, mask): (&mut [u32], usize, Vec<u8>) = match wide.as_deref_mut() {
+                Some(wide) if fixed.len() == full * 192 => (wide, full, fixed),
+                _ => {
+                    let from = if fixed.len() == full * 192 { side } else { 0 };
+                    let cols = fixed.len() / 192;
+                    let mask = fixed
+                        .chunks_exact(cols)
+                        .flat_map(|r| r[from..from + 256].iter().copied())
+                        .collect();
+                    (&mut pixels[..256 * 192], 256, mask)
+                }
+            };
+            let img = fixed_layer(top, &mask, w, k);
+            self.fixed_shown = true;
+            self.fixed_wide = w != 256;
+            match &mut self.fixed {
+                Some(t) if t.size() == img.size => t.set(img, options),
+                _ => self.fixed = Some(ctx.load_texture("fixed", img, options)),
+            }
+        }
         if let Some(wide) = &wide {
             let w = 256 + 2 * side;
             let img = image(wide, w, 192);
@@ -929,16 +964,27 @@ impl GameApp {
                 let shift = self
                     .steady_shift
                     .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
+                let fixed = self
+                    .fixed
+                    .as_ref()
+                    .filter(|_| shift.is_some() && self.fixed_shown);
+                let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                 match &wide {
                     Some(w) => {
                         let cols = (256 + 2 * self.wide_side) as f32;
                         let (r, uv) = slide(frame, rows(1.0), shift, cols, false);
-                        p.image(w.id(), r, uv, egui::Color32::WHITE)
+                        p.image(w.id(), r, uv, egui::Color32::WHITE);
+                        if let Some(f) = fixed.filter(|_| self.fixed_wide) {
+                            p.image(f.id(), frame, full, egui::Color32::WHITE);
+                        }
                     }
                     None => {
                         let (r, uv) =
                             slide(middle, screen_uvs(self.prescale).0, shift, 256.0, true);
-                        p.image(t.id(), r, uv, egui::Color32::WHITE)
+                        p.image(t.id(), r, uv, egui::Color32::WHITE);
+                        if let Some(f) = fixed.filter(|_| !self.fixed_wide) {
+                            p.image(f.id(), middle, full, egui::Color32::WHITE);
+                        }
                     }
                 };
             }
@@ -1060,8 +1106,19 @@ impl GameApp {
                             .steady_shift
                             .filter(|_| matches!(scene, Scene::Overworld | Scene::StartMenu));
                         let (top_uv, bottom_uv) = screen_uvs(self.prescale);
-                        let (top, uv) = slide(top, top_uv, shift, 256.0, true);
-                        p.image(t.id(), top, uv, egui::Color32::WHITE);
+                        let (slid, uv) = slide(top, top_uv, shift, 256.0, true);
+                        p.image(t.id(), slid, uv, egui::Color32::WHITE);
+                        if let Some(f) = self
+                            .fixed
+                            .as_ref()
+                            .filter(|_| shift.is_some() && self.fixed_shown && !self.fixed_wide)
+                        {
+                            let full = egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2(1.0, 1.0),
+                            );
+                            p.image(f.id(), top, full, egui::Color32::WHITE);
+                        }
                         p.image(t.id(), bottom, bottom_uv, egui::Color32::WHITE);
                     }
                 }
@@ -1169,6 +1226,59 @@ fn sharp_prescale(scale: f32, filter: Filter) -> (usize, egui::TextureOptions) {
 }
 
 /// The game's picture (`w` by `h`, 0x00RRGGBB) as a texture image, each pixel `k` by `k`.
+/// The steady overworld's 2D over the scene (UC11): `mask`'s pixels of `top` (`w` across, 192
+/// rows), each `k` times as large, opaque, the rest transparent: drawn over the slid picture
+/// where they are. In `top` (the picture that's slid), each of them beside the scene takes that
+/// scene pixel's colour: the slide (half a pixel at most) shows the scene there, not the
+/// layer's edge a second time.
+fn fixed_layer(top: &mut [u32], mask: &[u8], w: usize, k: usize) -> egui::ColorImage {
+    let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
+    let h = 192;
+    let mut layer = vec![egui::Color32::TRANSPARENT; w * h];
+    for (i, px) in layer.iter_mut().enumerate() {
+        if mask[i] != 0 {
+            *px = colour(top[i]);
+        }
+    }
+    let scene = |x: usize, y: usize| mask[y * w + x] == 0;
+    for y in 0..h {
+        for x in 0..w {
+            if mask[y * w + x] == 0 {
+                continue;
+            }
+            let near = [
+                (x > 0).then(|| (x - 1, y)),
+                (x + 1 < w).then(|| (x + 1, y)),
+                (y > 0).then(|| (x, y - 1)),
+                (y + 1 < h).then(|| (x, y + 1)),
+            ];
+            if let Some((nx, ny)) = near.into_iter().flatten().find(|&(nx, ny)| scene(nx, ny)) {
+                top[y * w + x] = top[ny * w + nx];
+            }
+        }
+    }
+    if k <= 1 {
+        return egui::ColorImage {
+            size: [w, h],
+            pixels: layer,
+        };
+    }
+    let mut pixels = Vec::with_capacity(w * k * h * k);
+    for row in layer.chunks_exact(w) {
+        let line: Vec<_> = row
+            .iter()
+            .flat_map(|&p| std::iter::repeat_n(p, k))
+            .collect();
+        for _ in 0..k {
+            pixels.extend_from_slice(&line);
+        }
+    }
+    egui::ColorImage {
+        size: [w * k, h * k],
+        pixels,
+    }
+}
+
 fn enlarged(px: &[u32], w: usize, h: usize, k: usize) -> egui::ColorImage {
     let colour = |p: u32| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8);
     if k <= 1 {

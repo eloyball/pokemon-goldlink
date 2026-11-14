@@ -100,10 +100,13 @@ void gl_core_set_wide(GlCore *core, int side);
 // The steady overworld (UC11, patch 0005): field scenes drawn with an orthographic camera locked
 // to the pixels while `on`. GoldLink turns it on in the overworld only.
 void gl_core_set_steady(GlCore *core, int on);
-// Whether the picture on screen was drawn so (0: no; 1: yes; 2: yes, with 2D drawn over the
-// scene, such as a text box, which mustn't move with it), and the shift (pixels, x then y) it was
-// drawn with, which the window takes back at the screen's resolution.
+// Whether the picture on screen was drawn so (0: no; 1: yes), and the shift (pixels, x then y) it
+// was drawn with, which the window takes back at the screen's resolution.
 int gl_core_steady_shift(GlCore *core, float *xy);
+// The top screen's pixels where 2D (a text box, a banner, a menu) shows over the 3D scene, not
+// blended with it (patch 0021): 1 there, else 0, into `out` ((256 + 2 * side) x 192, the wider
+// picture's columns, `side` 0 for the DS's screen); how many. They aren't slid with the scene.
+int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
 // The screen `256 + 2*side` wide into `out` (192 rows): the centre is the screen as shown, the
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);

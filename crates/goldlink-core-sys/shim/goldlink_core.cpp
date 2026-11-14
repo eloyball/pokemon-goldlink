@@ -195,16 +195,25 @@ int gl_core_steady_shift(GlCore *core, float *xy)
     const auto &gpu3d = gpu.GPU3D;
     xy[0] = gpu3d.ShownOrthoShift[0];
     xy[1] = gpu3d.ShownOrthoShift[1];
-    if (!gpu3d.ShownOrtho)
-        return 0;
-    // 2D drawn over the scene on the top screen (a text box, a town's banner): it mustn't move
-    // with the scene, so the picture isn't slid.
-    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(gpu.GetRenderer2D());
-    int over = 0;
+    return gpu3d.ShownOrtho ? 1 : 0;
+}
+
+int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out)
+{
+    side = std::clamp(side, 0, melonDS::GPU3D::MaxWideSide);
+    const int width = 256 + 2 * side;
+    auto &soft2d = static_cast<melonDS::GPU2D::SoftRenderer &>(core->nds->GPU.GetRenderer2D());
+    constexpr int max = melonDS::GPU2D::SoftRenderer::MaxSide;
+    const int from = max - std::min(side, max);
+    int n = 0;
     for (int y = 0; y < 192; y++)
-        for (int x = 0; x < 256; x++)
-            over += soft2d.Layer3D[y][melonDS::GPU3D::MaxWideSide + x] == 2;
-    return over > 128 ? 2 : 1;
+    {
+        uint8_t *row = out + y * width;
+        std::memset(row, 0, width);
+        for (int x = 0; x < width && from + x < 256 + 2 * max; x++)
+            n += row[x] = soft2d.Fixed2D[y][from + x];
+    }
+    return n;
 }
 
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out)

@@ -60,6 +60,9 @@ pub struct Frame {
     /// The steady overworld (UC11): the shift (DS pixels, x then y) this top picture was drawn
     /// with; the window slides it back by that at the screen's resolution.
     pub steady_shift: Option<[f32; 2]>,
+    /// With a steady shift: the top picture's pixels (as wide as `wide`, or the screen's 256)
+    /// where 2D shows over the scene (`Nds::fixed_2d`), which aren't slid. Empty when none.
+    pub fixed: Vec<u8>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -150,6 +153,7 @@ impl Runner {
                 seq: 0,
                 light: None,
                 steady_shift: None,
+                fixed: Vec::new(),
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -367,6 +371,11 @@ fn run(
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;
             f.steady_shift = emu.nds.steady_shift();
+            f.fixed = if f.steady_shift.is_some() {
+                emu.nds.fixed_2d(side)
+            } else {
+                Vec::new()
+            };
             f.seq = emu.frame_count();
             light = std::mem::replace(&mut f.light, light_now);
         }
