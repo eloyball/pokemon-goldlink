@@ -753,6 +753,16 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
     out.extend_from_slice(&b.layer);
     // Then each pixel's polygon ID (the ROM tags a neighbouring area's untextured blocks 62).
     out.extend_from_slice(&b.ids);
+    // Then the steady overworld's attached layer (Nds::attached): its shift (two f32, NaN with
+    // none) and its pixels (as wide as the picture).
+    let (shift, mask) = emu
+        .nds
+        .attached(side)
+        .map_or(([f32::NAN; 2], vec![0; wide.len()]), |a| (a.shift, a.mask));
+    for v in shift {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend_from_slice(&mask);
     std::fs::write(path, out)?;
     // The battle HUD's view of the frame (UC9's band), beside it.
     let ui = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());
