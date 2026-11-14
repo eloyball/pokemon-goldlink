@@ -523,6 +523,43 @@ const LYRA_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=motion (UC11's steady overworld): from the save, up and down running,
+/// cycling and walking, then the debug warp to Route 40, south to the sea and surfing down,
+/// right and up; every frame recorded (each its own rec- folder).
+const MOTION_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys(Keys::UP.0 | Keys::B.0), 90, "run-up"),
+    Step::Walk(Keys(Keys::DOWN.0 | Keys::B.0), 90, "run-down"),
+    Step::Debug(C::COOP_DEBUG_TOGGLE_BIKE as u8, 0),
+    Step::Wait(60),
+    Step::Walk(Keys::UP, 90, "bike-up"),
+    Step::Walk(Keys::DOWN, 90, "bike-down"),
+    Step::Debug(C::COOP_DEBUG_TOGGLE_BIKE as u8, 0),
+    Step::Wait(60),
+    Step::Walk(Keys::UP, 90, "walk-up"),
+    Step::Walk(Keys::DOWN, 90, "walk-down"),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 6),
+    Step::Wait(420),
+    Step::Walk(Keys::DOWN, 200, ""),
+    Step::Debug(C::COOP_DEBUG_SURF as u8, 0),
+    Step::Wait(150),
+    Step::Walk(Keys::DOWN, 120, "surf-down"),
+    Step::Walk(Keys::RIGHT, 90, "surf-right"),
+    Step::Walk(Keys::UP, 60, "surf-up"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=route40: the debug warp to Route 40 (its beach), a picture.
+const ROUTE40_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 6),
+    Step::Wait(420),
+    Step::Shot("route40"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -752,6 +789,8 @@ fn steps() -> &'static [Step] {
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
         Ok("mom") => MOM_STEPS,
+        Ok("motion") => MOTION_STEPS,
+        Ok("route40") => ROUTE40_STEPS,
         Ok("lyra") => LYRA_STEPS,
         Ok("left-rec") => LEFT_REC_STEPS,
         Ok("down-rec") => DOWN_REC_STEPS,
