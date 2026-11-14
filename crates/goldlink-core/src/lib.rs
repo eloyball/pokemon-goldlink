@@ -410,6 +410,21 @@ impl Nds {
         (on == 1).then_some(xy)
     }
 
+    /// The steady overworld's attached layer (patch 0022): the top screen's pixels (as
+    /// [`Nds::fixed_2d`]'s) drawn by what the camera follows (the player, their shadow, a mount),
+    /// and the shift (pixels, x then y) they were drawn with, to be taken back for them alone.
+    /// None when there's none this frame.
+    pub fn attached(&self, side: usize) -> Option<([f32; 2], Vec<u8>)> {
+        let side = side.min(Self::MAX_WIDE_SIDE);
+        let mut out = vec![0u8; (SCREEN_WIDTH + 2 * side) * SCREEN_HEIGHT];
+        let mut xy = [0f32; 2];
+        // SAFETY: out holds (256 + 2 * side) * 192 bytes and xy two floats, what the shim writes.
+        let n = unsafe {
+            sys::gl_core_attached(self.ptr(), side as c_int, out.as_mut_ptr(), xy.as_mut_ptr())
+        };
+        (n > 0).then_some((xy, out))
+    }
+
     /// The top screen's pixels (`256 + 2 * side` across, 192 rows; `side` 0 for the DS's screen)
     /// where 2D shows over the 3D scene unblended (a text box, a banner): 1 there, else 0. Empty
     /// when there's none. A steady picture's slide leaves them where they are.

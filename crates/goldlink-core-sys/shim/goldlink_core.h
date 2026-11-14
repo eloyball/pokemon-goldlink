@@ -107,6 +107,11 @@ int gl_core_steady_shift(GlCore *core, float *xy);
 // blended with it (patch 0021): 1 there, else 0, into `out` ((256 + 2 * side) x 192, the wider
 // picture's columns, `side` 0 for the DS's screen); how many. They aren't slid with the scene.
 int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out);
+// The top screen's pixels drawn by what the steady camera follows (the player, their shadow,
+// a mount: patch 0022), on top: 1 there, else 0, into `out` (as gl_core_fixed_2d's), and the shift
+// (pixels, x then y) they were drawn with, which the window takes back for them; how many (0:
+// none this frame, `out` and `xy` then unwritten).
+int gl_core_attached(GlCore *core, int side, uint8_t *out, float *xy);
 // The screen `256 + 2*side` wide into `out` (192 rows): the centre is the screen as shown, the
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);

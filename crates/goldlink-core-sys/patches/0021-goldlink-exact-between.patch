@@ -1,23 +1,23 @@
-GoldLink's change to melonDS (UC11): the steady overworld's picture in between lands exactly
-halfway, and 2D drawn over the scene is marked so it isn't slid with it.
+GoldLink's change to melonDS (UC11): the steady overworld's picture in between moves the world
+exactly halfway, and 2D drawn over the scene is marked so it isn't slid with it.
 
 - GPU3D: walking up or down the camera moves 1.5 pixels a scene (0.75 per world unit), and the
   picture in between moved the world back by half the scene's whole-pixel move (0 or 1), while
   the window slid it by the scene's own shift: the world showed 1.5, 0, 0.5 and 1 pixels a frame
-  instead of 0.75 every frame (the user's play test, 2026-11-14: walking up stutters). The world
-  is now moved by the whole pixels nearest to exactly halfway (the camera's true motion, from
-  where the world's origin lands before the shift: OrthoOrigin, kept with the scene through the
-  swap), and the rest is the in-between's own shift (MidOrthoShift, shown as ShownOrthoShift for
-  that frame). Objects moving on their own are moved by their own exact half, in 1/256 pixel
-  (MidShift's unit). Only when the scenes' overall motion matches the camera's; otherwise as
-  before.
+  instead of 0.75 every frame (the user's play test, 2026-11-14: walking up stutters). Each scene
+  now keeps where the world's origin lands before the shift (OrthoOrigin, kept through the swap),
+  so the camera's true motion is known; the world is moved by the whole pixels nearest to
+  halfway and the in-between's own shift (MidOrthoShift, shown as ShownOrthoShift for that frame)
+  makes up the rest, at any speed. Anything moving on its own is moved by the whole pixels
+  nearest to its own halfway (MidShift is in 1/256 pixel; patch 0022 uses fractions). Only when
+  the scenes' overall motion matches the camera's; otherwise as before.
 - GPU2D_Soft: Fixed2D, per main-engine line (Layer3D's columns), where a background or sprite is
   what shows, not alpha-blended with the 3D layer (BlendsWith3D, ColorComposite's decision).
 
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
 --- a/src/GPU3D.h	2026-11-14 09:37:57.266418116 -0500
-+++ b/src/GPU3D.h	2026-11-14 09:38:26.354065425 -0500
++++ b/src/GPU3D.h	2026-11-14 10:44:18.805538865 -0500
 @@ -276,6 +276,12 @@
      bool RenderOrtho = false, ShownOrtho = false;
      bool OrthoFlushed = false;     // the scene flushed (waiting for the swap) used it
@@ -31,20 +31,19 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      double OrthoNear = 0;          // this scene: the object nearest the screen's centre (distance)
      double OrthoNearScore = 1e30;
      // The player's distance is learned once per camera setup (the projection's scale and the
-@@ -413,6 +419,12 @@
+@@ -413,6 +419,11 @@
      // game would draw it at 60 Hz. Whole pixels, so the steady overworld stays on its pixels.
      // (The scene being built isn't complete until late in the frame between, so each scene shows
      // a frame later: halfway on its first frame, itself on its second.)
-+    // In the steady overworld the world is moved by whole pixels, the nearest to exactly halfway
-+    // (the camera's true motion: walking up, 1.5 pixels a scene, isn't a whole number of pixels
-+    // halved), and the rest is the picture's own shift (MidOrthoShift), which the window slides
-+    // back as it does a scene's: the world moves exactly halfway on screen. Whatever moves on its
-+    // own (people, the player the camera follows) is moved by its own exact half, in fractions of
-+    // a pixel, so it too lands exactly halfway on screen.
++    // In the steady overworld the picture in between has its own shift (MidOrthoShift), which the
++    // window slides back as it does a scene's: the world is moved by the whole pixels nearest to
++    // halfway from the camera's true motion (walking up, 1.5 pixels a scene) and the shift makes
++    // up the rest, so the world shows exactly halfway; anything moving on its own is moved by the
++    // whole pixels nearest to its own halfway.
      struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; };
      bool MidWanted = false;
      bool MidReplaying = false;   // this engine is the shadow, replaying a scene
-@@ -424,7 +436,9 @@
+@@ -424,7 +435,9 @@
      std::vector<MidObject> MidObjects, MidRenderObjects; // the scene being built's, the rendered one's
      s32 MidLastClip[16] {};
      int MidCurObject = -1;
@@ -56,7 +55,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      std::array<Polygon*,2048> MidList {}, MidSavedList {};
      u32 MidSavedNumPolygons = 0;
 --- a/src/GPU3D.cpp	2026-11-14 09:37:57.264606947 -0500
-+++ b/src/GPU3D.cpp	2026-11-14 09:38:26.355471324 -0500
++++ b/src/GPU3D.cpp	2026-11-14 10:44:18.805455929 -0500
 @@ -1506,8 +1506,9 @@
          const s64 w = vertextrans->Position[3], width = MidWidth(), height = Viewport[5];
          if (w > 0 && width > 0 && height > 0)
@@ -108,18 +107,21 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
  
                  if (NumPolygons)
                  {
-@@ -3557,7 +3565,40 @@
+@@ -3557,7 +3565,45 @@
              gy = move.second / 4.0f;
          }
      auto half = [](float v) { return (s32)std::floor(v / 2 + 0.5f); };
 -    const s32 hx = half(-gx), hy = half(-gy);
 +    s32 hx = half(-gx), hy = half(-gy);
 +
-+    // The steady overworld, both scenes: the camera's true motion (t), and the world's whole-pixel
-+    // move (h) nearest to halfway back from the new scene. The world is drawn (true position +
-+    // shift) and shown slid back by the picture's shift, so the in-between's shift is
-+    // s = o + h + t/2 (o the new scene's): the world shows exactly halfway, |s| <= 1/2. Only when
-+    // the scene's overall motion is the camera's (the world moved by t plus the change of shift).
++    // The steady overworld, both scenes: the camera's true motion (t). Everything is drawn at
++    // whole pixels (the DS's rasterizer has no finer positions) and the picture is slid back by
++    // its shift s. The world is moved by the whole pixels h nearest to halfway, and s is what
++    // makes it exact: the world is drawn at true position + o (the new scene's shift) + h and
++    // shows at true + o + h - s, halfway is true - t/2, so s = o + h + t/2 (|s| <= 1/2, any
++    // speed). Anything else moving on its own is moved by the whole pixels nearest to its own
++    // halfway against s: off by at most half a pixel, as the DS draws it. Only when the scene's
++    // overall motion is the camera's (the world moved by t plus the change of shift).
 +    bool exact = false;
 +    double tx = 0, ty = 0, dox = 0, doy = 0;
 +    if (RenderOrtho && PrevOrtho && most > 0)
@@ -130,27 +132,29 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +        doy = RenderOrthoShift[1] - PrevOrthoShift[1];
 +        exact = std::fabs(tx + dox - gx) < 0.3 && std::fabs(ty + doy - gy) < 0.3;
 +    }
++    double mx = 0, my = 0; // the in-between's shift
 +    if (exact)
 +    {
 +        hx = -(s32)std::lround(RenderOrthoShift[0] + tx / 2);
 +        hy = -(s32)std::lround(RenderOrthoShift[1] + ty / 2);
-+        MidOrthoShift[0] = (float)(RenderOrthoShift[0] + hx + tx / 2);
-+        MidOrthoShift[1] = (float)(RenderOrthoShift[1] + hy + ty / 2);
++        mx = RenderOrthoShift[0] + hx + tx / 2;
++        my = RenderOrthoShift[1] + hy + ty / 2;
++        MidOrthoShift[0] = (float)mx;
++        MidOrthoShift[1] = (float)my;
 +    }
 +    else
 +        memcpy(MidOrthoShift, RenderOrthoShift, sizeof(MidOrthoShift));
-+    // An object that moved by (dx, dy) on screen: its own exact half (in the steady overworld,
-+    // moved by its true motion, d minus the change of shift, measured from the world's); else
-+    // whole pixels, as before.
-+    auto own = [&](float d, double t, double dO, s32 h) -> s32 {
++    // An object that moved by (dx, dy) on screen: halfway back (in the steady overworld, by its
++    // true motion, d minus the change of shift, against the picture's shift s, o the new scene's).
++    auto own = [&](float d, double s, double o, double dO) -> s32 {
 +        if (!exact)
 +            return half(-d) * MidUnit;
-+        return (s32)std::lround((h + t / 2 - (d - dO) / 2) * MidUnit);
++        return (s32)std::lround(s - o - (d - dO) / 2) * MidUnit;
 +    };
  
      // Each object: halfway back to its match (the one alike nearest where the overall motion,
      // or no motion, puts it); with the world (half the overall motion) without one.
-@@ -3565,7 +3606,7 @@
+@@ -3565,7 +3611,7 @@
      for (u32 j = 0; j < MidObjects.size(); j++)
      {
          const MidObject& c = MidObjects[j];
@@ -159,7 +163,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          if (c.Placed)
          {
              float best = Near;
-@@ -3580,9 +3621,9 @@
+@@ -3580,9 +3626,9 @@
                  {
                      best = cost;
                      if (world < 0.3f)
@@ -167,7 +171,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +                        sx = hx * MidUnit, sy = hy * MidUnit;
                      else
 -                        sx = half(-dx), sy = half(-dy);
-+                        sx = own(dx, tx, dox, hx), sy = own(dy, ty, doy, hy);
++                        sx = own(dx, mx, RenderOrthoShift[0], dox), sy = own(dy, my, RenderOrthoShift[1], doy);
                  }
              }
          }

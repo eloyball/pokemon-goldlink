@@ -1,0 +1,343 @@
+GoldLink's change to melonDS (UC11): the steady overworld draws what the camera follows on a layer
+of its own, so it and the world are both exact at any speed.
+
+The world is drawn at a fixed phase within a pixel and the window slides the picture back by its
+shift at the screen's resolution. The player moves across the world by fractions of a pixel
+(walking up 1.5 a scene, running 3, surfing and slow walks other fractions), and the DS draws at
+whole pixels only, so with one slide per picture either the world or the player jumped half a
+pixel (the user's play test, 2026-11-14: the player stuttered walking up and down once the world
+didn't).
+
+- GPU3D: at every swap MidClassify finds the objects that stay put on screen while the camera
+  moves (under half its step: the player, their shadow, a bobbing surf mount, a follower walking
+  straight behind; the same match as the pictures in between, by key, then place, as people's
+  sprites share keys). From the next scene they're drawn moved by one shift (AttachShift) that
+  puts the largest of them at the same phase within a pixel every frame, and flagged
+  (Polygon::Attached); the picture's layer shift (AttachSlide) goes with the frame like
+  OrthoShift. In the picture in between they're drawn as in the new scene, and keep their place
+  on screen; patch 0021 moves the world exactly halfway.
+- GPU3D_Soft: an attached object's pixels carry attribute bit 30 (opaque) or 31 (translucent,
+  kept under later translucent ones); edge marking compares the polygon IDs alone (bits 24-29).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-14 10:44:18.824311943 -0500
++++ b/src/GPU3D.h	2026-11-14 10:42:38.146741770 -0500
+@@ -74,6 +74,8 @@
+ 
+     int Type; // 0=regular 1=line
+ 
++    bool Attached; // GoldLink (UC11): drawn by an object the camera follows (GPU3D::AttachedKeys)
++
+     u32 VTop, VBottom; // vertex indices
+     s32 YTop, YBottom; // Y coords
+     s32 XTop, XBottom; // associated X coords
+@@ -420,11 +422,11 @@
+     // (The scene being built isn't complete until late in the frame between, so each scene shows
+     // a frame later: halfway on its first frame, itself on its second.)
+     // In the steady overworld the picture in between has its own shift (MidOrthoShift), which the
+-    // window slides back as it does a scene's: the world is moved by the whole pixels nearest to
+-    // halfway from the camera's true motion (walking up, 1.5 pixels a scene) and the shift makes
+-    // up the rest, so the world shows exactly halfway; anything moving on its own is moved by the
+-    // whole pixels nearest to its own halfway.
+-    struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; };
++    // window slides back as it does a scene's, and every object is moved by the whole pixels
++    // nearest to halfway from the camera's true motion and its own: walking up the camera moves
++    // 1.5 pixels a scene, and the world and the player it follows can't both land exactly halfway
++    // in whole pixels, so the shift splits the difference (each 1/8 of a pixel off at most).
++    struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; bool Attached; };
+     bool MidWanted = false;
+     bool MidReplaying = false;   // this engine is the shadow, replaying a scene
+     bool MidLogOk = false;       // the scene being built is fully logged from its start
+@@ -438,6 +440,32 @@
+     std::vector<s32> MidShift;   // the shadow's: each object's shift, 1/MidUnit pixels, x then y
+     static constexpr s32 MidUnit = 256;
+     float MidOrthoShift[2] {};   // the steady overworld's shift for the picture in between
++    std::vector<u8> MidAttachedList; // the shadow's: which of the replayed objects are attached
++
++    // GoldLink (UC11): the steady overworld's attached layer. The world is drawn at a fixed phase
++    // within a pixel and slid back at the screen's resolution; the player the camera follows moves
++    // across it by fractions of a pixel (walking up, 1.5 a scene), and the DS draws at whole
++    // pixels only, so with one slide the player jumped half a pixel every other scene. Objects
++    // the camera follows (not moving on screen while the camera moves: the player, their shadow,
++    // a mount, a follower walking straight behind) are recognised at each swap (MidClassify, by
++    // the same match as the pictures in between) and, from the next scene on, drawn moved by one
++    // shift (AttachShift) that puts the first of them at the same phase within a pixel every
++    // frame; their pixels are marked (the soft renderer's attribute bits 30 and 31) and the window
++    // slides them back by their own shift (AttachSlide), so they too show exactly where they are.
++    // Each from the last swap: its key (MidObject::Key) and where it was before the shift (pixels,
++    // MidObject's X and Y less the scene's OrthoShift); a new object is one of them with that key
++    // within AttachNear of there (people's sprites share keys).
++    struct AttachedObject { u32 Key; double X, Y; };
++    std::vector<AttachedObject> AttachedKeys;
++    static constexpr double AttachNear = 2;
++    double AttachedRef[2] {};       // the reference one's (the one with the most vertices)
++    bool AttachedValid = false;
++    bool AttachUsed = false;        // the scene being built drew one
++    float AttachShift[2] {}, AttachSlide[2] {};          // the scene being built's
++    bool FlushedAttach = false, RenderAttach = false, ShownAttach = false;
++    float FlushedAttachShift[2] {}, RenderAttachShift[2] {};
++    float FlushedAttachSlide[2] {}, RenderAttachSlide[2] {}, ShownAttachSlide[2] {};
++    void MidClassify() noexcept;
+     std::unique_ptr<GPU3D> MidShadow;
+     std::array<Polygon*,2048> MidList {}, MidSavedList {};
+     u32 MidSavedNumPolygons = 0;
+--- a/src/GPU3D.cpp	2026-11-14 10:44:18.824243033 -0500
++++ b/src/GPU3D.cpp	2026-11-14 11:01:53.466320671 -0500
+@@ -1340,6 +1340,7 @@
+ 
+     poly->Degenerate = false;
+     poly->Type = 0;
++    poly->Attached = MidCurObject >= 0 && (size_t)MidCurObject < MidObjects.size() && MidObjects[MidCurObject].Attached;
+ 
+     poly->FacingView = facingview;
+ 
+@@ -1500,6 +1501,16 @@
+     vertextrans->Position[3] = (vertex[0]*ClipMatrix[3] + vertex[1]*ClipMatrix[7] + vertex[2]*ClipMatrix[11] + vertex[3]*ClipMatrix[15]) >> 12;
+     // GoldLink (UC11): replaying a scene for the picture in between, the object's shift, in
+     // whole pixels, before clipping.
++    if (!MidReplaying && MidCurObject >= 0 && (size_t)MidCurObject < MidObjects.size() && MidObjects[MidCurObject].Attached)
++    {
++        // GoldLink (UC11): an attached object, at the reference's phase (GPU3D.h, AttachShift).
++        const double w = vertextrans->Position[3], width = MidWidth(), height = Viewport[5];
++        if (w > 0 && width > 0 && height > 0)
++        {
++            vertextrans->Position[0] += (s32)std::lround(AttachShift[0] * 2 * w / width);
++            vertextrans->Position[1] -= (s32)std::lround(AttachShift[1] * 2 * w / height);
++        }
++    }
+     if (MidReplaying && MidCurObject >= 0 && (size_t)MidCurObject * 2 + 1 < MidShift.size())
+     {
+         const s64 dx = MidShift[MidCurObject * 2], dy = MidShift[MidCurObject * 2 + 1];
+@@ -2764,6 +2775,17 @@
+     OrthoShift[1] = (float)oy;
+     OrthoOrigin[0] = x;
+     OrthoOrigin[1] = y;
++    // The attached objects' shift (MidClassify): the reference one at the same phase.
++    if (AttachedValid)
++    {
++        const double o[2] = {ox, oy};
++        for (int i = 0; i < 2; i++)
++        {
++            const double v = AttachedRef[i] + o[i];
++            AttachShift[i] = (float)(std::floor(v - Phase + 0.5) + Phase - v);
++            AttachSlide[i] = (float)(o[i] + AttachShift[i]);
++        }
++    }
+     OrthoScene = true;
+     OrthoSceneFromPersp |= OrthoFromPersp;
+ }
+@@ -2792,6 +2814,10 @@
+ void GPU3D::OrthoEndScene() noexcept
+ {
+     OrthoFlushed = OrthoScene;
++    FlushedAttach = OrthoScene && AttachUsed;
++    memcpy(FlushedAttachShift, AttachShift, sizeof(FlushedAttachShift));
++    memcpy(FlushedAttachSlide, AttachSlide, sizeof(FlushedAttachSlide));
++    AttachUsed = false;
+     memcpy(OrthoFlushedShift, OrthoShift, sizeof(OrthoFlushedShift));
+     memcpy(OrthoFlushedOrigin, OrthoOrigin, sizeof(OrthoFlushedOrigin));
+     if (OrthoSceneFromPersp && OrthoCameraAt >= 0 && OrthoNearScore < 0.05)
+@@ -2827,6 +2853,8 @@
+             memcpy(ShownProjMatrix, RenderProjMatrix, sizeof(RenderProjMatrix));
+             ShownWBuffer = RenderNumPolygons > 0 && RenderPolygonRAM[0]->WBuffer;
+             ShownOrtho = RenderOrtho;
++            ShownAttach = RenderAttach;
++            memcpy(ShownAttachSlide, RenderAttachSlide, sizeof(ShownAttachSlide));
+             memcpy(ShownOrthoShift, MidShown ? MidOrthoShift : RenderOrthoShift, sizeof(ShownOrthoShift));
+             // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
+             // and drawn this time (unless a new scene replaces it now).
+@@ -2845,6 +2873,9 @@
+                 memcpy(PrevOrthoShift, RenderOrthoShift, sizeof(PrevOrthoShift));
+                 memcpy(PrevOrthoOrigin, RenderOrthoOrigin, sizeof(PrevOrthoOrigin));
+                 RenderOrtho = OrthoFlushed;
++                RenderAttach = FlushedAttach;
++                memcpy(RenderAttachShift, FlushedAttachShift, sizeof(RenderAttachShift));
++                memcpy(RenderAttachSlide, FlushedAttachSlide, sizeof(RenderAttachSlide));
+                 memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
+                 memcpy(RenderOrthoOrigin, OrthoFlushedOrigin, sizeof(RenderOrthoOrigin));
+ 
+@@ -2919,6 +2950,7 @@
+             // 30 Hz) is shown first halfway from it.
+             if (MidWanted && RenderingEnabled && MidSceneFrames >= 2)
+                 MidPrepare();
++            MidClassify();
+             MidStartScene();
+         }
+     }
+@@ -3414,6 +3446,18 @@
+             o.Y = (float)((1 - ClipMatrix[13] / w) * height / 2);
+             o.Placed = std::fabs(o.X) < 4096 && std::fabs(o.Y) < 4096;
+         }
++        // Attached (GPU3D.h, AttachedKeys): replayed, as it was live; live, by key and place.
++        if (MidReplaying)
++            o.Attached = MidObjects.size() < MidAttachedList.size() && MidAttachedList[MidObjects.size()];
++        else if (AttachedValid && OrthoScene && o.Placed)
++            for (const AttachedObject& a : AttachedKeys)
++                if (a.Key == o.Key && std::fabs(o.X - OrthoShift[0] - a.X) < AttachNear
++                    && std::fabs(o.Y - OrthoShift[1] - a.Y) < AttachNear)
++                {
++                    o.Attached = true;
++                    AttachUsed = true;
++                    break;
++                }
+         if (MidObjects.size() < 8192)
+             MidObjects.push_back(o);
+         MidCurObject = (int)MidObjects.size() - 1;
+@@ -3572,9 +3616,11 @@
+     // its shift s. The world is moved by the whole pixels h nearest to halfway, and s is what
+     // makes it exact: the world is drawn at true position + o (the new scene's shift) + h and
+     // shows at true + o + h - s, halfway is true - t/2, so s = o + h + t/2 (|s| <= 1/2, any
+-    // speed). Anything else moving on its own is moved by the whole pixels nearest to its own
+-    // halfway against s: off by at most half a pixel, as the DS draws it. Only when the scene's
+-    // overall motion is the camera's (the world moved by t plus the change of shift).
++    // speed). Objects the camera follows are on their own layer, with their own shift
++    // (AttachShift: as drawn in the new scene, their place doesn't change on screen). Anything
++    // else moving on its own (people) is moved by the whole pixels nearest to its own halfway
++    // against s: off by at most half a pixel, as the DS draws them. Only when the scene's overall
++    // motion is the camera's (the world moved by t plus the change of shift).
+     bool exact = false;
+     double tx = 0, ty = 0, dox = 0, doy = 0;
+     if (RenderOrtho && PrevOrtho && most > 0)
+@@ -3632,11 +3678,19 @@
+                 }
+             }
+         }
++        if (c.Attached)
++        {
++            sx = (s32)std::lround(RenderAttachShift[0] * MidUnit);
++            sy = (s32)std::lround(RenderAttachShift[1] * MidUnit);
++        }
+         shift[j * 2] = sx;
+         shift[j * 2 + 1] = sy;
+     }
+ 
+     GPU3D& s = *MidShadow;
++    s.MidAttachedList.resize(MidObjects.size());
++    for (u32 j = 0; j < MidObjects.size(); j++)
++        s.MidAttachedList[j] = MidObjects[j].Attached;
+     s.MidShift = std::move(shift);
+     s.MidReplaying = true;
+     s.MidObjects.clear();
+@@ -3679,6 +3733,65 @@
+     return true;
+ }
+ 
++// GoldLink (UC11): see GPU3D.h, AttachedKeys. At a swap (MidObjects the scene swapped in,
++// MidRenderObjects the one before): while the camera moves, the objects that stay put on screen
++// (their move, less the change of shift, under half the camera's and at most a pixel: a surf
++// mount bobs) are the ones it follows, for the next scenes. With the camera still they are kept; after a jump (a warp) or outside
++// the steady overworld, there are none.
++void GPU3D::MidClassify() noexcept
++{
++    if (!MidWanted || !RenderOrtho || !PrevOrtho || MidObjects.empty() || MidRenderObjects.empty())
++    {
++        AttachedKeys.clear();
++        AttachedValid = false;
++        return;
++    }
++    const double tx = RenderOrthoOrigin[0] - PrevOrthoOrigin[0], ty = RenderOrthoOrigin[1] - PrevOrthoOrigin[1];
++    if (std::fabs(tx) < 0.3 && std::fabs(ty) < 0.3)
++        return;
++    constexpr double Reach = 48;
++    if (std::fabs(tx) > Reach || std::fabs(ty) > Reach)
++    {
++        AttachedKeys.clear();
++        AttachedValid = false;
++        return;
++    }
++    const double dox = RenderOrthoShift[0] - PrevOrthoShift[0], doy = RenderOrthoShift[1] - PrevOrthoShift[1];
++    const double still = std::min(1.0, std::max(std::fabs(tx), std::fabs(ty)) / 2);
++    std::unordered_multimap<u64, u32> before;
++    before.reserve(MidRenderObjects.size());
++    auto key = [](const MidObject& o) { return ((u64)o.Key << 32) | o.Verts; };
++    for (u32 i = 0; i < MidRenderObjects.size(); i++)
++        if (MidRenderObjects[i].Placed)
++            before.emplace(key(MidRenderObjects[i]), i);
++    std::vector<AttachedObject> found;
++    u32 most = 0;
++    for (const MidObject& c : MidObjects)
++    {
++        if (!c.Placed)
++            continue;
++        auto [from, to] = before.equal_range(key(c));
++        for (auto it = from; it != to; ++it)
++        {
++            const MidObject& b = MidRenderObjects[it->second];
++            if (std::fabs(c.X - b.X - dox) < still && std::fabs(c.Y - b.Y - doy) < still)
++            {
++                const double x = c.X - RenderOrthoShift[0], y = c.Y - RenderOrthoShift[1];
++                found.push_back({c.Key, x, y});
++                if (c.Verts > most)
++                {
++                    most = c.Verts;
++                    AttachedRef[0] = x;
++                    AttachedRef[1] = y;
++                }
++                break;
++            }
++        }
++    }
++    AttachedKeys = std::move(found);
++    AttachedValid = !AttachedKeys.empty();
++}
++
+ // The picture in between was shown: the scene's own list is back, to be drawn.
+ void GPU3D::MidEndShown() noexcept
+ {
+--- a/src/GPU3D_Soft.h	2026-11-14 10:39:20.564859587 -0500
++++ b/src/GPU3D_Soft.h	2026-11-14 10:43:35.691694957 -0500
+@@ -49,7 +49,8 @@
+     // RenderFrame keeps the shown one first.
+     const u32* GetShownDepthLine(int line) const { return &ShownDepth[line * ScanlineWidth]; }
+     // GoldLink (UC11): the attributes of the picture on screen (the attribute buffer's layout below:
+-    // the opaque polygon ID in bits 24-29), kept with the depth.
++    // the opaque polygon ID in bits 24-29; bit 30 an attached object's opaque pixel, 31 its
++    // translucent one: GPU3D::AttachedKeys), kept with the depth.
+     const u32* GetShownAttrLine(int line) const { return &ShownAttr[line * ScanlineWidth]; }
+ 
+     void SetupRenderThread(GPU& gpu);
+--- a/src/GPU3D_Soft.cpp	2026-11-14 10:39:20.564796989 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 10:43:35.691649822 -0500
+@@ -562,7 +562,9 @@
+ void SoftRenderer::PlotTranslucentPixel(const GPU3D& gpu3d, u32 pixeladdr, u32 color, u32 z, u32 polyattr, u32 shadow)
+ {
+     u32 dstattr = AttrBuffer[pixeladdr];
+-    u32 attr = (polyattr & 0xE0F0) | ((polyattr >> 8) & 0xFF0000) | (1<<22) | (dstattr & 0xFF001F0F);
++    u32 attr = (polyattr & 0xE0F0) | ((polyattr >> 8) & 0x3F0000) | (1<<22) | (dstattr & 0xFF001F0F);
++    if (polyattr & (1u << 30))
++        attr |= 1u << 31; // GoldLink (UC11): a translucent attached pixel
+ 
+     if (shadow)
+     {
+@@ -940,6 +942,10 @@
+     Polygon* polygon = rp->PolyData;
+ 
+     u32 polyattr = (polygon->Attr & 0x3F008000);
++    // GoldLink (UC11): an attached object's pixels (GPU3D::AttachedKeys) carry bit 30 (opaque)
++    // or 31 (translucent, PlotTranslucentPixel), for the window's layer.
++    if (polygon->Attached)
++        polyattr |= 1u << 30;
+     if (!polygon->FacingView) polyattr |= (1<<4);
+ 
+     u32 polyalpha = (polygon->Attr >> 16) & 0x1F;
+@@ -1477,13 +1483,14 @@
+             u32 attr = AttrBuffer[pixeladdr];
+             if (!(attr & 0xF)) continue;
+ 
+-            u32 polyid = attr >> 24; // opaque polygon IDs are used for edgemarking
++            // GoldLink (UC11): bits 30-31 mark attached pixels; the IDs are bits 24-29.
++            u32 polyid = (attr >> 24) & 0x3F; // opaque polygon IDs are used for edgemarking
+             u32 z = DepthBuffer[pixeladdr];
+ 
+-            if ((x - 1 >= left && (polyid != (AttrBuffer[pixeladdr-1] >> 24)) && (z < DepthBuffer[pixeladdr-1])) ||
+-                (x + 1 < right && (polyid != (AttrBuffer[pixeladdr+1] >> 24)) && (z < DepthBuffer[pixeladdr+1])) ||
+-                (up && (polyid != (AttrBuffer[pixeladdr-ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr-ScanlineWidth])) ||
+-                (down && (polyid != (AttrBuffer[pixeladdr+ScanlineWidth] >> 24)) && (z < DepthBuffer[pixeladdr+ScanlineWidth])))
++            if ((x - 1 >= left && (polyid != ((AttrBuffer[pixeladdr-1] >> 24) & 0x3F)) && (z < DepthBuffer[pixeladdr-1])) ||
++                (x + 1 < right && (polyid != ((AttrBuffer[pixeladdr+1] >> 24) & 0x3F)) && (z < DepthBuffer[pixeladdr+1])) ||
++                (up && (polyid != ((AttrBuffer[pixeladdr-ScanlineWidth] >> 24) & 0x3F)) && (z < DepthBuffer[pixeladdr-ScanlineWidth])) ||
++                (down && (polyid != ((AttrBuffer[pixeladdr+ScanlineWidth] >> 24) & 0x3F)) && (z < DepthBuffer[pixeladdr+ScanlineWidth])))
+             {
+                 u16 edgecolor = gpu3d.RenderEdgeTable[polyid >> 3];
+                 u32 edgeR = (edgecolor << 1) & 0x3E; if (edgeR) edgeR++;

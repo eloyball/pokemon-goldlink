@@ -63,6 +63,9 @@ pub struct Frame {
     /// With a steady shift: the top picture's pixels (as wide as `wide`, or the screen's 256)
     /// where 2D shows over the scene (`Nds::fixed_2d`), which aren't slid. Empty when none.
     pub fixed: Vec<u8>,
+    /// With a steady shift: what the camera follows (`Nds::attached`), its own shift and its
+    /// pixels (as `fixed`), slid back by that shift alone.
+    pub attached: Option<([f32; 2], Vec<u8>)>,
 }
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
@@ -154,6 +157,7 @@ impl Runner {
                 light: None,
                 steady_shift: None,
                 fixed: Vec::new(),
+                attached: None,
             }),
             audio: Mutex::new(AudioRing::new()),
             events: Mutex::new(Vec::new()),
@@ -376,6 +380,7 @@ fn run(
             } else {
                 Vec::new()
             };
+            f.attached = f.steady_shift.and_then(|_| emu.nds.attached(side));
             f.seq = emu.frame_count();
             light = std::mem::replace(&mut f.light, light_now);
         }
