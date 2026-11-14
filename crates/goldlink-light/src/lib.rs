@@ -84,7 +84,32 @@ pub struct Scene<'a> {
     /// neighbouring area's map with: its graphics aren't loaded, so it's hazed.
     pub ids: &'a [u8],
     pub haze_id: Option<u8>,
+    /// Which map area each pixel is in: whatever isn't in the player's is hazed too.
+    pub zones: Option<Zones<'a>>,
 }
+
+/// The overworld's map areas, for the neighbouring-area haze: where each pixel is in the world
+/// (from its depth, the projection and the camera), the cell of the map matrix there (512 world
+/// units square) and the map area that cell belongs to.
+#[derive(Clone, Copy)]
+pub struct Zones<'a> {
+    /// The field's camera: world to view, 20.12, 4 rows of 3 (vectors on the left).
+    pub camera: [i32; 12],
+    /// How far the picture has the world shifted (pixels, x then y): a picture in between
+    /// draws its scene's world half a step back.
+    pub shift: [i32; 2],
+    /// Each matrix cell's map area, row by row, and the matrix's width.
+    pub cells: &'a [u16],
+    pub width: usize,
+    /// The player's map area.
+    pub here: u16,
+}
+
+/// A map matrix cell's size, in world units (32 tiles of 16).
+const MATRIX_CELL: f32 = 512.0;
+/// Frames the haze takes to move from one map area's neighbours to another's (the player
+/// crossing into the next area).
+const ZONE_FADE_FRAMES: f32 = 24.0;
 
 /// A line's screen-wide fades as the DS applies them after composing (goldlink-core `Fade`):
 /// the master brightness `[mode, factor]` (0 none, 1 toward white, 2 toward black; factor 0..16),
@@ -510,6 +535,10 @@ pub struct Lighting {
     tracked_at: Option<std::time::Instant>,
     /// Per bright patch (its label): how much of its glow shows (its light source's weight).
     patch_weight: Vec<f32>,
+    /// The map area the haze is around, and the one it's leaving with how far it has gone (0
+    /// to 1).
+    zone_here: Option<u16>,
+    zone_leaving: Option<(u16, f32)>,
 }
 
 impl Default for Lighting {
@@ -624,6 +653,8 @@ impl Lighting {
             tracked: Vec::new(),
             tracked_at: None,
             patch_weight: Vec::new(),
+            zone_here: None,
+            zone_leaving: None,
         }
     }
 
@@ -821,11 +852,32 @@ impl Lighting {
         {
             self.far_blur(w, h, -f[2], p.far_blur);
         }
-        // 6. A neighbouring area's map, hazed: out of reach, its missing graphics softened away.
-        if let Some(id) = scene.haze_id
-            && scene.ids.len() >= scene.width * h
-        {
-            self.neighbour_haze(w, h, x0, scene, id);
+        // 6. Neighbouring areas, hazed: out of reach (and with missing graphics softened away),
+        // whichever side of the screen they're on. Crossing into another area, the haze moves
+        // over to its neighbours in a moment.
+        let here = scene.zones.map(|z| z.here);
+        if here != self.zone_here {
+            self.zone_leaving = self.zone_here.zip(here).map(|(was, _)| (was, 0.0));
+            self.zone_here = here;
+        }
+        let tagged = self.neighbour_mask(w, h, x0, scene, &rows, here);
+        match self.zone_leaving {
+            Some((was, t)) if t < 1.0 => {
+                let before = self.out.clone();
+                let leaving = self.neighbour_mask(w, h, x0, scene, &rows, Some(was));
+                self.neighbour_haze(w, h, &leaving);
+                let old = std::mem::replace(&mut self.out, before);
+                self.neighbour_haze(w, h, &tagged);
+                let k = t * t * (3.0 - 2.0 * t);
+                for (o, b) in self.out.iter_mut().zip(&old) {
+                    *o = mix(*b, *o, k);
+                }
+                self.zone_leaving = Some((was, t + 1.0 / ZONE_FADE_FRAMES));
+            }
+            _ => {
+                self.zone_leaving = None;
+                self.neighbour_haze(w, h, &tagged);
+            }
         }
         // 7. The grade and the vignette; 2D-only pixels as they were.
         {
@@ -844,20 +896,79 @@ impl Lighting {
         }
     }
 
-    /// A neighbouring area's map (the pixels the game drew with polygon ID `id`): the ROM tags it
-    /// because that area's graphics aren't loaded (stand-in textures, missing pieces). From the
-    /// border with this area to the picture's edge it fades, a little blurred and greyed, into
-    /// the dark: nothing at the border, nearly black at the edge (UC11, chosen from previews).
-    fn neighbour_haze(&mut self, w: usize, h: usize, x0: usize, scene: &Scene, id: u8) {
+    /// The pixels of the 3D scene outside the map area `here`: in the world (from their depth),
+    /// in a cell of the map matrix that belongs to another area (or none); and those the ROM
+    /// drew with the neighbouring-area polygon ID (an area whose graphics aren't loaded).
+    fn neighbour_mask(
+        &self,
+        w: usize,
+        h: usize,
+        x0: usize,
+        scene: &Scene,
+        rows: &[[f32; 4]; 4],
+        here: Option<u16>,
+    ) -> Vec<bool> {
+        let n = w * h;
+        let cells = &self.cells;
+        let ids = (scene.ids.len() >= scene.width * h).then_some(scene.ids);
+        let to_world = scene
+            .zones
+            .and_then(|z| world_from_view(&z.camera).map(|m| (z, m)));
+        (0..n)
+            .map(|i| {
+                if cells[i].layer == 0 {
+                    return false;
+                }
+                let (x, y) = (i % w, i / w);
+                let col = x0 + x;
+                if let (Some(ids), Some(id)) = (ids, scene.haze_id)
+                    && ids[y * scene.width + col] == id
+                {
+                    return true;
+                }
+                let (Some((z, m)), Some(here)) = (to_world, here) else {
+                    return false;
+                };
+                // Where this pixel's point is in the scene drawn (a picture in between has the
+                // world shifted), then in the world.
+                let xn = (col as f32 + 0.5 - z.shift[0] as f32 - scene.width as f32 / 2.0) / 128.0;
+                let yn = 1.0 - (y as f32 + 0.5 - z.shift[1] as f32) / (HEIGHT as f32 / 2.0);
+                let zn = scene.depth[y * scene.width + col] as f32 / 8_388_607.5 - 1.0;
+                let Some(view) = unproject(rows, xn, yn, zn) else {
+                    return false;
+                };
+                let world = apply_affine(&m, view);
+                let (cx, cz) = (
+                    (world[0] / MATRIX_CELL).floor(),
+                    (world[2] / MATRIX_CELL).floor(),
+                );
+                // Outside the matrix: no area.
+                let height = z.cells.len().checked_div(z.width).unwrap_or(0);
+                let inside =
+                    cx >= 0.0 && cz >= 0.0 && (cx as usize) < z.width && (cz as usize) < height;
+                let area = if inside {
+                    z.cells[cz as usize * z.width + cx as usize]
+                } else {
+                    0
+                };
+                area != here
+            })
+            .collect()
+    }
+
+    /// Neighbouring areas (the `tagged` pixels) in the wider picture's sides: out of reach, and
+    /// some with their graphics missing (stand-in textures, missing pieces). Past the DS's own
+    /// view they fade, a little blurred and greyed, into the dark: nothing at the view's edge or
+    /// at the border with this area, nearly black at the picture's edge (UC11, chosen from
+    /// previews).
+    fn neighbour_haze(&mut self, w: usize, h: usize, tagged: &[bool]) {
         const STRENGTH: f32 = 0.95; // at the picture's edge
         const BLUR: usize = 2;
         const FLAT: f32 = 0.5; // how much of the pixel's own detail gives way to a plain colour
         const DARK: f32 = 0.12; // the colour's brightness, of this area's average
+        const BORDER_SOFT: f32 = 6.0; // pixels from the border with this area to most of the haze
         let n = w * h;
         let cells = &self.cells;
-        let tagged: Vec<bool> = (0..n)
-            .map(|i| cells[i].layer != 0 && scene.ids[(i / w) * scene.width + x0 + i % w] == id)
-            .collect();
         if !tagged.iter().any(|&t| t) {
             return;
         }
@@ -943,12 +1054,26 @@ impl Lighting {
             })
             .collect();
         let shade = lum(haze) / lum(avg).max(1e-4);
+        // Only past the DS's own view (the wider picture's sides): what the game shows is never
+        // hazed. From nothing at the view's edge (and at the border with this area) to the most
+        // at the picture's edge.
+        let view = (
+            w.saturating_sub(256) / 2,
+            (w.saturating_sub(256) / 2 + 256).min(w),
+        );
+        let side = view.0 as f32;
         for i in 0..n {
-            if tagged[i] {
-                // 0 at the border with this area, 1 at the picture's edge.
-                let (x, y) = (i % w, i / w);
-                let edge = x.min(w - 1 - x).min(y).min(h - 1 - y) as f32;
-                let t = dist[i] / (dist[i] + edge + 1.0);
+            let x = i % w;
+            let beyond = if x < view.0 {
+                view.0 - x
+            } else if x >= view.1 {
+                x + 1 - view.1
+            } else {
+                0
+            };
+            if tagged[i] && beyond > 0 && side > 0.0 {
+                let r = (beyond as f32 / side).min(1.0);
+                let t = r * dist[i] / (dist[i] + BORDER_SOFT);
                 let t = t * t * (3.0 - 2.0 * t);
                 let b = blurred[i];
                 let target = mix(scale([lum(b); 3], shade), haze, FLAT);
@@ -1584,6 +1709,43 @@ fn invert(m: &[i32; 16]) -> Option<[f64; 16]> {
     Some(inv.map(|v| v / det))
 }
 
+/// World from view for a camera (world to view, 20.12, 4 rows of 3: x' = x R + T): the inverse
+/// rotation's rows, then the translation, as 4 rows of 3 for [`apply_affine`].
+fn world_from_view(camera: &[i32; 12]) -> Option<[f32; 12]> {
+    let c: Vec<f64> = camera.iter().map(|&v| v as f64 / 4096.0).collect();
+    let r = |i: usize, j: usize| c[i * 3 + j];
+    let det = r(0, 0) * (r(1, 1) * r(2, 2) - r(1, 2) * r(2, 1))
+        - r(0, 1) * (r(1, 0) * r(2, 2) - r(1, 2) * r(2, 0))
+        + r(0, 2) * (r(1, 0) * r(2, 1) - r(1, 1) * r(2, 0));
+    if det.abs() < 1e-9 {
+        return None;
+    }
+    // The inverse of R (cofactors over the determinant).
+    let mut inv = [0f64; 9];
+    for i in 0..3 {
+        for j in 0..3 {
+            let (a, b) = ((j + 1) % 3, (j + 2) % 3);
+            let (p, q) = ((i + 1) % 3, (i + 2) % 3);
+            inv[i * 3 + j] = (r(a, p) * r(b, q) - r(a, q) * r(b, p)) / det;
+        }
+    }
+    // x = (x' - T) R^-1: the translation row is -T R^-1.
+    let t = [c[9], c[10], c[11]];
+    let mut out = [0f32; 12];
+    for i in 0..9 {
+        out[i] = inv[i] as f32;
+    }
+    for j in 0..3 {
+        out[9 + j] = -(t[0] * inv[j] + t[1] * inv[3 + j] + t[2] * inv[6 + j]) as f32;
+    }
+    Some(out)
+}
+
+/// `v` times an affine matrix of 4 rows of 3 (vectors on the left).
+fn apply_affine(m: &[f32; 12], v: V3) -> V3 {
+    [0, 1, 2].map(|j| v[0] * m[j] + v[1] * m[3 + j] + v[2] * m[6 + j] + m[9 + j])
+}
+
 /// The inverse projection's rows, for [`unproject`].
 fn unprojection(proj: &[i32; 16]) -> Option<[[f32; 4]; 4]> {
     let inv = invert(proj)?;
@@ -1676,6 +1838,91 @@ mod tests {
     }
 
     #[test]
+    fn world_from_view_undoes_the_camera() {
+        // Tilted 49 degrees about x, then moved.
+        let (s, co) = (49f64.to_radians().sin(), 49f64.to_radians().cos());
+        let f = |v: f64| (v * 4096.0).round() as i32;
+        let camera = [
+            f(1.0),
+            0,
+            0,
+            0,
+            f(co),
+            f(s),
+            0,
+            f(-s),
+            f(co),
+            f(-300.0),
+            f(-120.0),
+            f(-650.0),
+        ];
+        let m = world_from_view(&camera).expect("a camera has an inverse");
+        let world: V3 = [700.0, 16.0, 300.0];
+        let c: Vec<f32> = camera.iter().map(|&v| v as f32 / 4096.0).collect();
+        let view = [0, 1, 2]
+            .map(|j| world[0] * c[j] + world[1] * c[3 + j] + world[2] * c[6 + j] + c[9 + j]);
+        let back = apply_affine(&m, view);
+        for k in 0..3 {
+            assert!((back[k] - world[k]).abs() < 0.05, "{back:?} vs {world:?}");
+        }
+    }
+
+    #[test]
+    fn neighbouring_areas_are_hazed_only_past_the_ds_view() {
+        let width = 384;
+        let (depth, layer) = floor(width);
+        // World = view moved: x by 512 (the screen's right half is the matrix's second column),
+        // z by 1024 (inside the matrix's two rows). The player's area is the first column's.
+        let camera = [
+            4096,
+            0,
+            0,
+            0,
+            4096,
+            0,
+            0,
+            0,
+            4096,
+            -512 * 4096,
+            0,
+            -1024 * 4096,
+        ];
+        let cells = [7u16, 8, 7, 8];
+        let lit = |zones: Option<Zones>| {
+            let scene = Scene {
+                depth: &depth,
+                layer: &layer,
+                proj: PROJ,
+                fade: &[],
+                width,
+                ids: &[],
+                haze_id: None,
+                zones,
+            };
+            let mut px = vec![0x0080_8080u32; width * HEIGHT];
+            Lighting::new().overworld(&mut px, width, 0, &scene, Place::Outdoor, Phase::Day);
+            px
+        };
+        let plain = lit(None);
+        let hazed = lit(Some(Zones {
+            camera,
+            shift: [0, 0],
+            cells: &cells,
+            width: 2,
+            here: 7,
+        }));
+        let changed = |x: usize| (0..150).any(|y| plain[y * width + x] != hazed[y * width + x]);
+        // The DS's own view (columns 64..320) and the player's area: as they were.
+        assert!((0..320).all(|x| !changed(x)));
+        // The other area past the view: hazed, the most at the picture's edge.
+        assert!(changed(383));
+        let y = 100 * width;
+        let lum = |p: u32| ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255);
+        assert!(lum(hazed[y + 380]) < lum(plain[y + 380]));
+        assert!(lum(hazed[y + 380]) < lum(hazed[y + 330]));
+    }
+
+    #[test]
     fn the_text_box_is_left_alone_and_the_floor_is_lit() {
         let width = 384;
         let (depth, layer) = floor(width);
@@ -1687,6 +1934,7 @@ mod tests {
             width,
             ids: &[],
             haze_id: None,
+            zones: None,
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
         let mut lighting = Lighting::new();
@@ -1712,6 +1960,7 @@ mod tests {
             width,
             ids: &[],
             haze_id: None,
+            zones: None,
         };
         let dark = 0x0050_5060u32;
         let mut plain = vec![dark; 256 * HEIGHT];

@@ -10,6 +10,7 @@ pub mod emulator;
 mod files;
 pub mod runner;
 pub mod saves;
+pub mod zones;
 
 pub use emulator::{Emulator, Event, GameSetup, Input, screen_hash};
 pub use files::write_atomic;

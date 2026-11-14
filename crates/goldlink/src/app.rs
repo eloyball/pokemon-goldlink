@@ -475,6 +475,17 @@ impl GameApp {
                     fade: &l.buffers.fade,
                     ids: &l.buffers.ids,
                     haze_id: Some(goldlink_core::NEIGHBOUR_POLYGON_ID),
+                    zones: l
+                        .buffers
+                        .camera
+                        .filter(|_| l.zones_width > 0)
+                        .map(|camera| goldlink_light::Zones {
+                            camera,
+                            shift: l.buffers.world_shift,
+                            cells: &l.zones,
+                            width: l.zones_width,
+                            here: l.map,
+                        }),
                 },
                 Place::of_map(l.map),
             )

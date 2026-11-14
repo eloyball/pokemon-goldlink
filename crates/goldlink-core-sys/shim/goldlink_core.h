@@ -113,6 +113,9 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t *ids, int32_t proj[16]);
+/* The field's camera of the picture on screen (world to view, 20.12, 4 rows of 3) and how far
+ * that picture has the world shifted (pixels, x then y); 0 when no field camera was seen. */
+int gl_core_shown_camera(GlCore *core, int32_t camera[12], int32_t shift[2]);
 // Each top-screen line's fades (UC11, patch 0008), 4 bytes a line: the master brightness's mode
 // (0 none, 1 toward white, 2 toward black) and factor (0..16), then the same for the colour
 // effect's brightness on the 3D layer (where the 3D scene shows on top).

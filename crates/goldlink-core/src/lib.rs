@@ -186,6 +186,11 @@ pub struct LightBuffers {
     /// The projection matrix, 20.12, as the DS keeps it (row by row, vectors on the left).
     pub proj: [i32; 16],
     pub w_depth: bool,
+    /// The field's camera (world to view, 20.12, 4 rows of 3), when the picture has one.
+    pub camera: Option<[i32; 12]>,
+    /// How far the picture has the world shifted (pixels, x then y): a picture in between draws
+    /// its scene's world that far back.
+    pub world_shift: [i32; 2],
     /// Each line's fades (192): see [`Fade`].
     pub fade: Vec<Fade>,
 }
@@ -445,6 +450,16 @@ impl Nds {
             )
         };
         out.w_depth = kind == 2;
+        let mut camera = [0i32; 12];
+        // SAFETY: camera holds 12 ints and world_shift 2, what the shim writes.
+        let seen = unsafe {
+            sys::gl_core_shown_camera(
+                self.ptr(),
+                camera.as_mut_ptr(),
+                out.world_shift.as_mut_ptr(),
+            )
+        };
+        out.camera = (seen != 0).then_some(camera);
         out.fade.resize(SCREEN_HEIGHT, [0; 4]);
         // SAFETY: fade holds 192 four-byte lines, what the shim writes.
         unsafe { sys::gl_core_light_fades(self.ptr(), out.fade.as_mut_ptr().cast()) };

@@ -1,0 +1,97 @@
+GoldLink's change to melonDS (UC11): the field's camera for GoldLink. The position matrix the game
+loads right after a field projection (world to view) goes with its scene through the swap to the
+picture on screen (ShownCamera), with the world's shift on a picture in between
+(ShownWorldShift): GoldLink finds where each pixel is in the world, and which map area it's in.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-13 20:02:32.211219085 -0500
++++ b/src/GPU3D.h	2026-11-13 20:04:54.853381432 -0500
+@@ -436,6 +436,16 @@
+     bool MidPrepare() noexcept;
+     void MidEndShown() noexcept;
+ 
++    // GoldLink (UC11): the field's camera (the position matrix loaded right after a field
++    // projection: world to view, 20.12, 4 rows of 3), for the scene being built, flushed,
++    // rendered and on screen; and how far the picture on screen has the world shifted (pixels,
++    // x then y: a picture in between draws its scene's world half a step back). GoldLink finds
++    // where each pixel is in the world with it (the lighting's neighbouring areas).
++    bool CameraNext = false;
++    s32 SceneCamera[12] {}, FlushedCamera[12] {}, RenderCamera[12] {}, ShownCamera[12] {};
++    bool SceneCameraSeen = false, FlushedCameraSeen = false, RenderCameraSeen = false, ShownCameraSeen = false;
++    s32 RenderWorldShift[2] {}, ShownWorldShift[2] {};
++
+     u32 FlushRequest = 0;
+     u32 FlushAttributes = 0;
+     u32 ScrolledLine[256]; // not part of the hardware state, don't serialize
+--- a/src/GPU3D.cpp	2026-11-13 20:02:32.212192183 -0500
++++ b/src/GPU3D.cpp	2026-11-13 20:04:54.853275463 -0500
+@@ -2146,6 +2146,10 @@
+             FlushAttributes = entry.Param & 0x3;
+             if (OrthoSceneFromPersp) FlushAttributes &= ~0x2; // GoldLink (UC11): Z-buffering, w is constant
+             OrthoEndScene();
++            // GoldLink (UC11): the scene's camera goes with it.
++            memcpy(FlushedCamera, SceneCamera, sizeof(FlushedCamera));
++            FlushedCameraSeen = SceneCameraSeen;
++            SceneCameraSeen = CameraNext = false;
+             CycleCount = 325;
+             // probably safe to just reset all pipelines
+             // but needs checked
+@@ -2225,6 +2229,7 @@
+                                 && m[6] == 0 && m[7] == 0 && m[0] > 0 && m[5] > 0;
+                             OrthoFromPersp = plain && m[11] == -0x1000 && m[15] == 0;
+                             OrthoArmed = OrthoWanted && plain && (OrthoFromPersp || (m[11] == 0 && m[15] > 0));
++                            CameraNext = plain && (OrthoFromPersp || (m[11] == 0 && m[15] > 0));
+                         }
+                         if (OrthoArmed)
+                             memcpy(OrthoPersp, ProjMatrix, sizeof(OrthoPersp));
+@@ -2261,6 +2266,12 @@
+                     else
+                     {
+                         // GoldLink (UC11): the camera, after a field perspective.
++                        if (CameraNext && MatrixMode == 2)
++                        {
++                            memcpy(SceneCamera, ExecParams, sizeof(SceneCamera));
++                            SceneCameraSeen = true;
++                            CameraNext = false;
++                        }
+                         if (OrthoArmed && MatrixMode == 2)
+                             OrthoProjection((s32*)ExecParams);
+                         MatrixLoad4x3(PosMatrix, (s32*)ExecParams);
+@@ -2713,6 +2724,9 @@
+             ShownWBuffer = RenderNumPolygons > 0 && RenderPolygonRAM[0]->WBuffer;
+             ShownOrtho = RenderOrtho;
+             memcpy(ShownOrthoShift, RenderOrthoShift, sizeof(ShownOrthoShift));
++            memcpy(ShownCamera, RenderCamera, sizeof(ShownCamera));
++            ShownCameraSeen = RenderCameraSeen;
++            memcpy(ShownWorldShift, RenderWorldShift, sizeof(ShownWorldShift));
+             // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
+             // and drawn this time (unless a new scene replaces it now).
+             if (MidShown)
+@@ -2728,6 +2742,9 @@
+                     memcpy(RenderProjMatrix, FrameProj[most].Matrix, sizeof(RenderProjMatrix));
+                 RenderOrtho = OrthoFlushed;
+                 memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
++                memcpy(RenderCamera, FlushedCamera, sizeof(RenderCamera));
++                RenderCameraSeen = FlushedCameraSeen;
++                RenderWorldShift[0] = RenderWorldShift[1] = 0;
+ 
+                 if (NumPolygons)
+                 {
+@@ -3516,6 +3533,8 @@
+     MidSavedNumPolygons = RenderNumPolygons;
+     RenderPolygonRAM = MidList;
+     RenderNumPolygons = s.NumPolygons;
++    RenderWorldShift[0] = hx; // GoldLink (UC11): the world drawn half a step back
++    RenderWorldShift[1] = hy;
+     RenderFrameIdentical = false;
+     MidShown = true;
+     MidStats[0]++;
+@@ -3527,6 +3546,7 @@
+ {
+     RenderPolygonRAM = MidSavedList;
+     RenderNumPolygons = MidSavedNumPolygons;
++    RenderWorldShift[0] = RenderWorldShift[1] = 0;
+     MidShown = false;
+     MidRedraw = true;
+ }

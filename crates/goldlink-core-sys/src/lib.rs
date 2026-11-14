@@ -75,6 +75,7 @@ unsafe extern "C" {
         out: *mut u32,
     ) -> c_int;
     pub fn gl_core_light_fades(core: *mut GlCore, out: *mut u8);
+    pub fn gl_core_shown_camera(core: *mut GlCore, camera: *mut i32, shift: *mut i32) -> c_int;
     pub fn gl_core_light_buffers(
         core: *mut GlCore,
         depth: *mut u32,
