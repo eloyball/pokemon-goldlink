@@ -1,0 +1,26 @@
+GoldLink's change to melonDS (UC11): the steady overworld at its exact scale from a camera's first
+scene. Until a camera setup has learned the player's distance (its first five scenes), it uses
+the last one's, a few percent off (6% leaving the Route 36 gatehouse): outside the 6% within which
+the scale is rounded to a quarter pixel, the picture shrank for half a second and jumped back. The
+rounding now takes anything within 12.5%.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.cpp	2026-11-13 21:52:24.902622626 -0500
++++ b/src/GPU3D.cpp	2026-11-13 22:15:52.944816789 -0500
+@@ -2728,9 +2728,13 @@
+             const double hx = m[0] / 4096.0 / w0 * (camera[0] / 4096.0) * Viewport[4] / 2.0;
+             const double hz = m[5] / 4096.0 / w0 * std::fabs(camera[7] / 4096.0) * Viewport[5] / 2.0;
+             const double qx = std::round(hx * 4) / 4, qz = std::round(hz * 4) / 4;
+-            if (qx > 0 && std::fabs(qx / hx - 1) < 0.06)
++            // Always (within 12.5%): a camera setup's first scenes, before the player's
++            // distance is learned, use the last one's, a few percent off (6% leaving a gatehouse
++            // for Route 36); outside the old 6% that showed as the picture shrinking for half a
++            // second, then jumping back. Rounded, it is the same exact scale from the start.
++            if (qx > 0 && std::fabs(qx / hx - 1) < 0.125)
+                 m[0] = (s32)std::lround(m[0] * qx / hx);
+-            if (qz > 0 && std::fabs(qz / hz - 1) < 0.06)
++            if (qz > 0 && std::fabs(qz / hz - 1) < 0.125)
+                 m[5] = (s32)std::lround(m[5] * qz / hz);
+         }
+     }
