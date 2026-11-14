@@ -1,0 +1,471 @@
+GoldLink's change to melonDS (UC11): pictures in between. HeartGold's loop runs at 30 Hz, so each
+3D scene shows for two frames and everything moving on screen moves in two-frame jumps (4 pixels
+at a time under a walking player). Each scene's geometry commands and objects (runs of vertices
+under one clip matrix) are kept. When a scene is swapped in after one shown for two frames, its
+first frame is drawn by a second geometry engine replaying it from the state it started in, every
+object moved halfway back to where it was in the scene before (matched by its first vertex and
+vertex count, nearest where the scene's overall motion puts it; unmatched, with that motion),
+shifted in whole pixels in clip space before clipping; its second frame is the scene itself. The
+picture moves every frame, at the cost of one frame: the next scene is only complete late in the
+frame between. GoldLink turns it on with the steady overworld (the overworld only).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-13 19:05:03.568089752 -0500
++++ b/src/GPU3D.h	2026-11-13 20:02:32.211219085 -0500
+@@ -21,6 +21,7 @@
+ 
+ #include <array>
+ #include <memory>
++#include <vector>
+ 
+ #include "Savestate.h"
+ #include "FIFO.h"
+@@ -397,6 +398,44 @@
+     int NumFrameProj = 0;
+     void CountFrameProj() noexcept;
+ 
++    // GoldLink (UC11): pictures in between. HeartGold's whole loop runs at 30 Hz: it draws a new
++    // 3D scene every other frame and the frame between shows the last one again, so whatever
++    // moves on screen (the world under a walking player, people, a trainer sliding in) moves in
++    // jumps of two frames. Each scene's geometry commands are kept (MidLog), and every object in
++    // it (a run of vertices under one clip matrix: a map block, a building, a person, a sprite)
++    // with where its origin lands on screen (MidObjects). When a scene is swapped in after one
++    // shown for two frames, its first frame is drawn by a second geometry engine (MidShadow)
++    // replaying it from the state it started in, every object moved on screen halfway back
++    // toward where it was in the scene before: the matching object there (the same first
++    // vertex and vertex count, nearest where the scene's overall motion puts it), or, with no
++    // match, by half the overall motion. The shift is added in clip space before clipping, so
++    // nothing is cut short at the picture's edges: the picture between is a whole scene, as the
++    // game would draw it at 60 Hz. Whole pixels, so the steady overworld stays on its pixels.
++    // (The scene being built isn't complete until late in the frame between, so each scene shows
++    // a frame later: halfway on its first frame, itself on its second.)
++    struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; };
++    bool MidWanted = false;
++    bool MidReplaying = false;   // this engine is the shadow, replaying a scene
++    bool MidLogOk = false;       // the scene being built is fully logged from its start
++    bool MidShown = false;       // the picture being rendered is one in between
++    bool MidRedraw = false;      // the scene's own picture is due after one in between
++    u32 MidSceneFrames = 0;      // frames the scene rendered has been shown
++    std::vector<CmdFIFOEntry> MidLog;
++    std::vector<MidObject> MidObjects, MidRenderObjects; // the scene being built's, the rendered one's
++    s32 MidLastClip[16] {};
++    int MidCurObject = -1;
++    std::vector<s32> MidShift;   // the shadow's: each object's shift, pixels, x then y
++    std::unique_ptr<GPU3D> MidShadow;
++    std::array<Polygon*,2048> MidList {}, MidSavedList {};
++    u32 MidSavedNumPolygons = 0;
++    u32 MidStats[2] {};          // pictures in between: drawn, nothing to match
++    int MidWidth() const noexcept { return WideActive() ? 256 + 2 * WideSide : (int)Viewport[4]; }
++    void MidTrackVertex() noexcept;
++    void MidStartScene() noexcept;
++    void MidCopyState(const GPU3D& o) noexcept;
++    bool MidPrepare() noexcept;
++    void MidEndShown() noexcept;
++
+     u32 FlushRequest = 0;
+     u32 FlushAttributes = 0;
+     u32 ScrolledLine[256]; // not part of the hardware state, don't serialize
+--- a/src/GPU3D.cpp	2026-11-13 19:05:03.566107843 -0500
++++ b/src/GPU3D.cpp	2026-11-13 20:02:32.212192183 -0500
+@@ -20,6 +20,8 @@
+ #include <stdio.h>
+ #include <string.h>
+ #include <algorithm>
++#include <map>
++#include <unordered_map>
+ #include "NDS.h"
+ #include "GPU.h"
+ #include "FIFO.h"
+@@ -196,6 +198,13 @@
+     NumOrthoCameras = 0;
+     OrthoCameraAt = -1;
+     OrthoNearScore = 1e30;
++    // Nor of its pictures in between.
++    MidLogOk = MidShown = MidRedraw = false;
++    MidSceneFrames = 0;
++    MidLog.clear();
++    MidObjects.clear();
++    MidRenderObjects.clear();
++    MidCurObject = -1;
+ 
+     CmdFIFO.Clear();
+     CmdPIPE.Clear();
+@@ -323,6 +332,18 @@
+ {
+     file->Section("GP3D");
+ 
++    // GoldLink (UC11): a picture in between isn't hardware state: the scene's own list is
++    // saved, and after a load nothing is matched until the next scene starts.
++    if (MidShown)
++        MidEndShown();
++    if (!file->Saving)
++    {
++        MidLogOk = false;
++        MidObjects.clear();
++        MidRenderObjects.clear();
++        MidCurObject = -1;
++    }
++
+     SoftRenderer* softRenderer = dynamic_cast<SoftRenderer*>(CurrentRenderer.get());
+     if (softRenderer && softRenderer->IsThreaded())
+     {
+@@ -1376,10 +1397,24 @@
+     Vertex* vertextrans = &TempVertexBuffer[VertexNumInPoly];
+ 
+     UpdateClipMatrix();
++    if (MidWanted)
++        MidTrackVertex(); // GoldLink (UC11)
+     vertextrans->Position[0] = WideX((vertex[0]*ClipMatrix[0] + vertex[1]*ClipMatrix[4] + vertex[2]*ClipMatrix[8] + vertex[3]*ClipMatrix[12]) >> 12);
+     vertextrans->Position[1] = (vertex[0]*ClipMatrix[1] + vertex[1]*ClipMatrix[5] + vertex[2]*ClipMatrix[9] + vertex[3]*ClipMatrix[13]) >> 12;
+     vertextrans->Position[2] = (vertex[0]*ClipMatrix[2] + vertex[1]*ClipMatrix[6] + vertex[2]*ClipMatrix[10] + vertex[3]*ClipMatrix[14]) >> 12;
+     vertextrans->Position[3] = (vertex[0]*ClipMatrix[3] + vertex[1]*ClipMatrix[7] + vertex[2]*ClipMatrix[11] + vertex[3]*ClipMatrix[15]) >> 12;
++    // GoldLink (UC11): replaying a scene for the picture in between, the object's shift, in
++    // whole pixels, before clipping.
++    if (MidReplaying && MidCurObject >= 0 && (size_t)MidCurObject * 2 + 1 < MidShift.size())
++    {
++        const s64 dx = MidShift[MidCurObject * 2], dy = MidShift[MidCurObject * 2 + 1];
++        const s64 w = vertextrans->Position[3], width = MidWidth(), height = Viewport[5];
++        if (w > 0 && width > 0 && height > 0)
++        {
++            vertextrans->Position[0] += (s32)((dx * 2 * w + (dx < 0 ? -width : width) / 2) / width);
++            vertextrans->Position[1] -= (s32)((dy * 2 * w + (dy < 0 ? -height : height) / 2) / height);
++        }
++    }
+ 
+     // this probably shouldn't be.
+     // the way color is handled during clipping needs investigation. TODO
+@@ -1733,6 +1768,10 @@
+ 
+ GPU3D::CmdFIFOEntry GPU3D::CmdFIFORead() noexcept
+ {
++    // GoldLink (UC11): the shadow replaying a scene has no FIFO, DMA or IRQ of its own.
++    if (MidReplaying)
++        return CmdPIPE.Read();
++
+     CmdFIFOEntry ret = CmdPIPE.Read();
+ 
+     if (CmdPIPE.Level() <= 2)
+@@ -1768,6 +1807,15 @@
+ {
+     CmdFIFOEntry entry = CmdFIFORead();
+ 
++    // GoldLink (UC11): the scene's commands, for the picture in between.
++    if (MidLogOk && !MidReplaying)
++    {
++        if (MidLog.size() < 0x40000)
++            MidLog.push_back(entry);
++        else
++            MidLogOk = false;
++    }
++
+     //printf("FIFO: processing %02X %08X. Levels: FIFO=%d, PIPE=%d\n", entry.Command, entry.Param, CmdFIFO->Level(), CmdPIPE->Level());
+ 
+     // each FIFO entry takes 1 cycle to be processed
+@@ -2657,6 +2705,7 @@
+ {
+     if (GeometryEnabled)
+     {
++        MidSceneFrames++; // GoldLink (UC11)
+         if (RenderingEnabled)
+         {
+             // GoldLink (UC11): what the screen showed this frame is what was rendered last.
+@@ -2664,6 +2713,10 @@
+             ShownWBuffer = RenderNumPolygons > 0 && RenderPolygonRAM[0]->WBuffer;
+             ShownOrtho = RenderOrtho;
+             memcpy(ShownOrthoShift, RenderOrthoShift, sizeof(ShownOrthoShift));
++            // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
++            // and drawn this time (unless a new scene replaces it now).
++            if (MidShown)
++                MidEndShown();
+             if (FlushRequest)
+             {
+                 // GoldLink (UC11): the projection most of the new frame's polygons used.
+@@ -2702,7 +2755,7 @@
+             }
+             else
+             {
+-                RenderFrameIdentical = RenderDispCnt == DispCnt
++                RenderFrameIdentical = !MidRedraw && RenderDispCnt == DispCnt
+                     && RenderAlphaRef == AlphaRef
+                     && RenderClearAttr1 == ClearAttr1
+                     && RenderClearAttr2 == ClearAttr2
+@@ -2728,6 +2781,7 @@
+ 
+             RenderClearAttr1 = ClearAttr1;
+             RenderClearAttr2 = ClearAttr2;
++            MidRedraw = false; // GoldLink (UC11)
+         }
+ 
+         if (FlushRequest)
+@@ -2742,6 +2796,11 @@
+             NumFrameProj = 0; // GoldLink (UC11)
+ 
+             FlushRequest = 0;
++            // GoldLink (UC11): a scene that follows one shown for two frames or more (the game's
++            // 30 Hz) is shown first halfway from it.
++            if (MidWanted && RenderingEnabled && MidSceneFrames >= 2)
++                MidPrepare();
++            MidStartScene();
+         }
+     }
+ }
+@@ -3218,5 +3277,258 @@
+ : Accelerated(Accelerated)
+ { }
+ 
++// GoldLink (UC11): see GPU3D.h, MidWanted. A vertex: the first under a new clip matrix starts an
++// object, keyed by its first vertex and how it's drawn, placed where its origin lands on screen.
++void GPU3D::MidTrackVertex() noexcept
++{
++    if (MidCurObject < 0 || memcmp(MidLastClip, ClipMatrix, sizeof(MidLastClip)) != 0)
++    {
++        memcpy(MidLastClip, ClipMatrix, sizeof(MidLastClip));
++        MidObject o {};
++        o.Key = ((u32)(u16)CurVertex[0] | ((u32)(u16)CurVertex[1] << 16))
++            ^ ((u32)(u16)CurVertex[2] * 0x9E3779B1u) ^ (PolygonMode << 28) ^ ((CurPolygonAttr & 0xF0) << 20);
++        const double w = ClipMatrix[15];
++        const int width = MidWidth(), height = (int)Viewport[5];
++        if (w > 0 && width > 0 && height > 0)
++        {
++            o.X = (float)((WideX(ClipMatrix[12]) / w + 1) * width / 2);
++            o.Y = (float)((1 - ClipMatrix[13] / w) * height / 2);
++            o.Placed = std::fabs(o.X) < 4096 && std::fabs(o.Y) < 4096;
++        }
++        if (MidObjects.size() < 8192)
++            MidObjects.push_back(o);
++        MidCurObject = (int)MidObjects.size() - 1;
++    }
++    MidObjects[MidCurObject].Verts++;
++}
++
++// A new scene starts (its predecessor was just swapped in): its objects and commands are kept
++// from here, and the shadow takes the geometry state it starts from.
++void GPU3D::MidStartScene() noexcept
++{
++    MidRenderObjects.swap(MidObjects);
++    MidObjects.clear();
++    MidCurObject = -1;
++    MidLog.clear();
++    MidSceneFrames = 0;
++    MidLogOk = MidWanted;
++    if (!MidWanted)
++        return;
++    if (!MidShadow)
++        MidShadow = std::make_unique<GPU3D>(NDS);
++    MidShadow->MidCopyState(*this);
++}
++
++// The geometry engine's state (what commands read), from the real one at a scene's start.
++void GPU3D::MidCopyState(const GPU3D& o) noexcept
++{
++#define MID_COPY(field) memcpy(&field, &o.field, sizeof(field))
++    MidWanted = o.MidWanted;
++    MID_COPY(ZeroDotWLimit);
++    MID_COPY(CycleCount);
++    MID_COPY(VertexPipeline);
++    MID_COPY(NormalPipeline);
++    MID_COPY(PolygonPipeline);
++    MID_COPY(VertexSlotCounter);
++    MID_COPY(VertexSlotsFree);
++    MID_COPY(ExecParams);
++    MID_COPY(ExecParamCount);
++    MID_COPY(MatrixMode);
++    MID_COPY(ProjMatrix);
++    MID_COPY(PosMatrix);
++    MID_COPY(VecMatrix);
++    MID_COPY(TexMatrix);
++    MID_COPY(ClipMatrix);
++    MID_COPY(ClipMatrixDirty);
++    MID_COPY(Viewport);
++    MID_COPY(WideSide);
++    MID_COPY(OrthoWanted);
++    MID_COPY(OrthoDepth);
++    MID_COPY(OrthoArmed);
++    MID_COPY(OrthoFromPersp);
++    MID_COPY(OrthoPersp);
++    MID_COPY(OrthoScene);
++    MID_COPY(OrthoSceneFromPersp);
++    MID_COPY(OrthoShift);
++    MID_COPY(OrthoNear);
++    MID_COPY(OrthoNearScore);
++    MID_COPY(OrthoCameras);
++    MID_COPY(NumOrthoCameras);
++    MID_COPY(OrthoCameraAt);
++    MID_COPY(ProjMatrixStack);
++    MID_COPY(PosMatrixStack);
++    MID_COPY(VecMatrixStack);
++    MID_COPY(TexMatrixStack);
++    MID_COPY(ProjMatrixStackPointer);
++    MID_COPY(PosMatrixStackPointer);
++    MID_COPY(TexMatrixStackPointer);
++    MID_COPY(DispCnt);
++    MID_COPY(PolygonMode);
++    MID_COPY(CurVertex);
++    MID_COPY(VertexColor);
++    MID_COPY(TexCoords);
++    MID_COPY(RawTexCoords);
++    MID_COPY(Normal);
++    MID_COPY(LightDirection);
++    MID_COPY(SpecRecip);
++    MID_COPY(LightColor);
++    MID_COPY(MatDiffuse);
++    MID_COPY(MatAmbient);
++    MID_COPY(MatSpecular);
++    MID_COPY(MatEmission);
++    MID_COPY(UseShininessTable);
++    MID_COPY(ShininessTable);
++    MID_COPY(PolygonAttr);
++    MID_COPY(CurPolygonAttr);
++    MID_COPY(TexParam);
++    MID_COPY(TexPalette);
++    MID_COPY(PosTestResult);
++    MID_COPY(VecTestResult);
++    MID_COPY(TempVertexBuffer);
++    MID_COPY(VertexNum);
++    MID_COPY(VertexNumInPoly);
++    MID_COPY(NumConsecutivePolygons);
++    MID_COPY(FlushAttributes);
++#undef MID_COPY
++    GeometryEnabled = RenderingEnabled = true;
++    LastStripPolygon = nullptr;
++    CurRAMBank = 0;
++    CurVertexRAM = &VertexRAM[0];
++    CurPolygonRAM = &PolygonRAM[0];
++    NumVertices = NumPolygons = NumOpaquePolygons = 0;
++    NumFrameProj = 0;
++    CmdPIPE.Clear();
++    MidObjects.clear();
++    MidCurObject = -1;
+ }
+ 
++// A new scene was just swapped in after one shown for two frames: for its first frame, it's
++// replayed with every object halfway back to where it was in the last, and that's rendered.
++bool GPU3D::MidPrepare() noexcept
++{
++    if (!MidLogOk || !MidShadow || MidLog.empty() || MidObjects.empty() || MidRenderObjects.empty()
++        || RenderNumPolygons == 0)
++    {
++        MidStats[1]++;
++        return false;
++    }
++    auto key = [](const MidObject& o) { return ((u64)o.Key << 32) | o.Verts; };
++    std::unordered_multimap<u64, u32> before;
++    before.reserve(MidRenderObjects.size());
++    for (u32 i = 0; i < MidRenderObjects.size(); i++)
++        if (MidRenderObjects[i].Placed)
++            before.emplace(key(MidRenderObjects[i]), i);
++
++    // The scene's overall motion: the most common move (to a quarter pixel) between objects
++    // alike within reach.
++    constexpr float Reach = 48, Near = 16;
++    std::map<std::pair<long, long>, u32> votes;
++    for (const MidObject& c : MidObjects)
++    {
++        if (!c.Placed)
++            continue;
++        auto [from, to] = before.equal_range(key(c));
++        for (auto it = from; it != to; ++it)
++        {
++            const MidObject& b = MidRenderObjects[it->second];
++            const float dx = c.X - b.X, dy = c.Y - b.Y;
++            if (std::fabs(dx) <= Reach && std::fabs(dy) <= Reach)
++                votes[{std::lround(dx * 4), std::lround(dy * 4)}]++;
++        }
++    }
++    float gx = 0, gy = 0;
++    u32 most = 0;
++    for (const auto& [move, n] : votes)
++        if (n > most)
++        {
++            most = n;
++            gx = move.first / 4.0f;
++            gy = move.second / 4.0f;
++        }
++    auto half = [](float v) { return (s32)std::floor(v / 2 + 0.5f); };
++    const s32 hx = half(-gx), hy = half(-gy);
++
++    // Each object: halfway back to its match (the one alike nearest where the overall motion,
++    // or no motion, puts it); with the world (half the overall motion) without one.
++    std::vector<s32> shift(MidObjects.size() * 2);
++    for (u32 j = 0; j < MidObjects.size(); j++)
++    {
++        const MidObject& c = MidObjects[j];
++        s32 sx = hx, sy = hy;
++        if (c.Placed)
++        {
++            float best = Near;
++            auto [from, to] = before.equal_range(key(c));
++            for (auto it = from; it != to; ++it)
++            {
++                const MidObject& b = MidRenderObjects[it->second];
++                const float dx = c.X - b.X, dy = c.Y - b.Y;
++                const float world = std::hypot(dx - gx, dy - gy);
++                const float cost = std::min(world, std::hypot(dx, dy));
++                if (cost <= best)
++                {
++                    best = cost;
++                    if (world < 0.3f)
++                        sx = hx, sy = hy;
++                    else
++                        sx = half(-dx), sy = half(-dy);
++                }
++            }
++        }
++        shift[j * 2] = sx;
++        shift[j * 2 + 1] = sy;
++    }
++
++    GPU3D& s = *MidShadow;
++    s.MidShift = std::move(shift);
++    s.MidReplaying = true;
++    s.MidObjects.clear();
++    s.MidCurObject = -1;
++    for (const CmdFIFOEntry& e : MidLog)
++    {
++        if (e.Command == 0x50)
++            break;
++        s.CmdPIPE.Write(e);
++        s.ExecuteCommand();
++    }
++    s.MidReplaying = false;
++    if (s.MidObjects.size() != MidObjects.size())
++    {
++        // The replay didn't build the same scene: nothing in between.
++        MidStats[1]++;
++        return false;
++    }
++
++    // Its list, as the swap would make it: opaque polygons, then translucent ones, Y-sorted.
++    u32 io = 0, it = s.NumOpaquePolygons;
++    for (u32 i = 0; i < s.NumPolygons; i++)
++    {
++        Polygon* poly = &s.CurPolygonRAM[i];
++        if (poly->Translucent)
++            MidList[it++] = poly;
++        else
++            MidList[io++] = poly;
++    }
++    std::stable_sort(MidList.begin(),
++        MidList.begin() + ((FlushAttributes & 0x1) ? s.NumOpaquePolygons : s.NumPolygons), YSort);
++
++    MidSavedList = RenderPolygonRAM;
++    MidSavedNumPolygons = RenderNumPolygons;
++    RenderPolygonRAM = MidList;
++    RenderNumPolygons = s.NumPolygons;
++    RenderFrameIdentical = false;
++    MidShown = true;
++    MidStats[0]++;
++    return true;
++}
++
++// The picture in between was shown: the scene's own list is back, to be drawn.
++void GPU3D::MidEndShown() noexcept
++{
++    RenderPolygonRAM = MidSavedList;
++    RenderNumPolygons = MidSavedNumPolygons;
++    MidShown = false;
++    MidRedraw = true;
++}
++
++}

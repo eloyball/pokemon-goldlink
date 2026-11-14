@@ -178,6 +178,8 @@ void gl_core_set_wide(GlCore *core, int side)
 void gl_core_set_steady(GlCore *core, int on)
 {
     core->nds->GPU.GPU3D.OrthoWanted = on != 0;
+    // The pictures in between come with it (patch 0014): the overworld moves at 60 Hz.
+    core->nds->GPU.GPU3D.MidWanted = on != 0;
 }
 
 int gl_core_steady_shift(GlCore *core, float *xy)
@@ -294,6 +296,15 @@ int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t
     }
     std::memcpy(proj, gpu.GPU3D.ShownProjMatrix, 16 * 4);
     return gpu.GPU3D.ShownWBuffer ? 2 : 1;
+}
+
+int gl_core_shown_camera(GlCore *core, int32_t camera[12], int32_t shift[2])
+{
+    const auto &gpu3d = core->nds->GPU.GPU3D;
+    std::memcpy(camera, gpu3d.ShownCamera, 12 * 4);
+    shift[0] = gpu3d.ShownWorldShift[0];
+    shift[1] = gpu3d.ShownWorldShift[1];
+    return gpu3d.ShownCameraSeen ? 1 : 0;
 }
 
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
