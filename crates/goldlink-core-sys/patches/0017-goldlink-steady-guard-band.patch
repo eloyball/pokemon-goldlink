@@ -1,0 +1,159 @@
+GoldLink's change to melonDS (UC11): the steady overworld clips with a guard band. A polygon cut
+at the picture's edge gets new corners there, on whole pixels, while its own corners land between
+pixels, so its texture mapping changed a little as it slid past the edge: texels near the edges
+(trees, the ground) jumped a pixel now and then. With a full-screen viewport and the steady
+overworld on, the x and y planes are 64 pixels past the picture and the rasterizer trims to the
+pixel (corners past the picture are kept signed; polygons from above the screen start their edges
+at its first line); box tests keep the exact frustum, so the game culls as it always did.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-13 20:41:17.499656565 -0500
++++ b/src/GPU3D.h	2026-11-13 20:46:08.372415070 -0500
+@@ -436,6 +436,11 @@
+     bool MidPrepare() noexcept;
+     void MidEndShown() noexcept;
+ 
++    // GoldLink (UC11): the steady overworld's guard band (pixels past the picture's edges where
++    // polygons are clipped; GuardClip in GPU3D.cpp).
++    static constexpr s32 GuardBand = 64;
++    int GuardClip(Vertex* vertices, int nverts, int clipstart) noexcept;
++
+     // GoldLink (UC11): the field's camera (the position matrix loaded right after a field
+     // projection: world to view, 20.12, 4 rows of 3), for the scene being built, flushed,
+     // rendered and on screen; and how far the picture on screen has the world shifted (pixels,
+--- a/src/GPU3D.cpp	2026-11-13 20:41:17.508640718 -0500
++++ b/src/GPU3D.cpp	2026-11-13 20:46:08.372328447 -0500
+@@ -973,6 +973,50 @@
+     return nverts;
+ }
+ 
++// GoldLink (UC11): clipping with a guard band. A polygon cut at the picture's edge gets new
++// corners there, on whole pixels, while its own land between them: its texture mapping changes a
++// little as it slides past the edge, and with the steady overworld's world locked to the pixels
++// that showed as texels jumping a pixel near the edges (trees, the ground). With the band, the x
++// and y planes are GuardBand pixels past the picture (the rasterizer trims to the pixel): a
++// polygon crossing the edge keeps its own corners and is drawn exactly as it would be on screen.
++// Each pass scales the compared coordinate and w so the plane is the band's (exactly undone for
++// every corner that isn't new).
++static void GuardScale(Vertex* v, int nverts, int comp, s32 mc, s32 mw)
++{
++    for (int i = 0; i < nverts; i++)
++    {
++        v[i].Position[comp] *= mc;
++        v[i].Position[3] *= mw;
++    }
++}
++
++static s32 FloorDiv(s64 a, s64 b)
++{
++    return (s32)(a >= 0 ? a / b : -((-a + b - 1) / b));
++}
++
++static void GuardUnscale(Vertex* v, int nverts, int comp, s32 mc, s32 mw)
++{
++    for (int i = 0; i < nverts; i++)
++    {
++        v[i].Position[comp] = FloorDiv(v[i].Position[comp], mc);
++        v[i].Position[3] = FloorDiv(v[i].Position[3], mw);
++    }
++}
++
++int GPU3D::GuardClip(Vertex* vertices, int nverts, int clipstart) noexcept
++{
++    const s32 halfw = MidWidth() / 2, halfh = (s32)Viewport[5] / 2;
++    nverts = ClipAgainstPlane<2, true>(*this, vertices, nverts, clipstart);
++    GuardScale(vertices, nverts, 1, halfh, halfh + GuardBand);
++    nverts = ClipAgainstPlane<1, true>(*this, vertices, nverts, clipstart);
++    GuardUnscale(vertices, nverts, 1, halfh, halfh + GuardBand);
++    GuardScale(vertices, nverts, 0, halfw, halfw + GuardBand);
++    nverts = ClipAgainstPlane<0, true>(*this, vertices, nverts, clipstart);
++    GuardUnscale(vertices, nverts, 0, halfw, halfw + GuardBand);
++    return nverts;
++}
++
+ bool ClipCoordsEqual(Vertex* a, Vertex* b)
+ {
+     return a->Position[0] == b->Position[0] &&
+@@ -1114,6 +1158,15 @@
+ 
+     // clipping
+ 
++    // GoldLink (UC11): the steady overworld clips with a guard band (GuardClip), when the
++    // viewport is the whole screen and the coordinates leave room to scale.
++    bool guard = OrthoWanted && Viewport[4] == 256 && Viewport[5] == 192 && Viewport[0] == 0;
++    for (int i = 0; guard && i < nverts; i++)
++        for (int k = 0; k < 4; k++)
++            guard &= std::abs((s64)clippedvertices[i].Position[k]) < (1 << 23);
++    if (guard)
++        nverts = GuardClip(clippedvertices, nverts, clipstart);
++    else
+     nverts = ClipPolygon<true>(*this, clippedvertices, nverts, clipstart);
+     if (nverts == 0)
+     {
+@@ -1175,6 +1228,26 @@
+         // the wide buffer's column (the screen's x=0 is MaxWideSide in)
+         vtx->FinalPosition[0] = (posX + MaxWideSide - WideSide) & 0x1FF;
+         vtx->FinalPosition[1] = posY & 0xFF;
++        // GoldLink (UC11): with the guard band, corners past the picture: the same arithmetic,
++        // signed (floored), unwrapped.
++        if (guard && w != 0)
++        {
++            s64 nx = (s64)vtx->Position[0] + (s64)w, ny = -(s64)vtx->Position[1] + (s64)w, den = w;
++            if (w > 0xFFFF)
++            {
++                nx >>= 1;
++                ny >>= 1;
++                den >>= 1;
++            }
++            den <<= 1;
++            s32 gx;
++            if (WideActive())
++                gx = FloorDiv(nx * (256 + 2 * WideSide) + (255 + 2 * WideSide), den);
++            else
++                gx = FloorDiv(nx * Viewport[4], den) + Viewport[0] + WideSide;
++            vtx->FinalPosition[0] = gx + MaxWideSide - WideSide;
++            vtx->FinalPosition[1] = FloorDiv(ny * Viewport[5], den) + Viewport[3];
++        }
+ 
+         // hi-res positions
+         // to consider: only do this when using the GL renderer? apply the aforementioned quirk to this?
+@@ -1312,6 +1385,11 @@
+     s32 ytop = 192, ybot = 0;
+     s32 xtop = 256, xbot = 0;
+     u32 wsize = 0;
++    if (guard) // GoldLink (UC11): corners can be past the picture
++    {
++        ytop = INT32_MAX; ybot = INT32_MIN;
++        xtop = 0; xbot = INT32_MIN;
++    }
+ 
+     for (int i = 0; i < nverts; i++)
+     {
+@@ -1341,9 +1419,9 @@
+     poly->YTop = ytop; poly->YBottom = ybot;
+     poly->XTop = xtop; poly->XBottom = xbot;
+ 
+-    if (ybot > 192) poly->Degenerate = true;
++    if (ybot > 192 && !guard) poly->Degenerate = true;
+ 
+-    poly->SortKey = (ybot << 8) | ytop;
++    poly->SortKey = (std::clamp(ybot, 0, 192) << 8) | std::clamp(ytop, 0, 192);
+     if (poly->Translucent) poly->SortKey |= 0x10000;
+ 
+     poly->WBuffer = (FlushAttributes & 0x2);
+--- a/src/GPU3D_Soft.cpp	2026-11-13 20:41:17.499584339 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-13 20:46:08.372481375 -0500
+@@ -700,8 +700,10 @@
+     }
+     else
+     {
+-        SetupPolygonLeftEdge(rp, ytop);
+-        SetupPolygonRightEdge(rp, ytop);
++        // GoldLink (UC11): a polygon from above the screen (the steady overworld's guard band)
++        // starts its edges at the first line drawn.
++        SetupPolygonLeftEdge(rp, std::max(ytop, 0));
++        SetupPolygonRightEdge(rp, std::max(ytop, 0));
+     }
+ }
+ 
