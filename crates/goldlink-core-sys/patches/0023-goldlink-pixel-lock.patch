@@ -18,6 +18,15 @@ attached layer truly are, and keeps the world under the attached layer.
   end, into the copy kept for the picture on screen, wiping pixels of the shadow (holes that moved,
   the user's play test: the shadow flashed the ground's colour).
 
+- GPU3D_Soft: an attached object's edges keep full anti-aliasing coverage: blended with the
+  world under them, they slid with the player's layer while the world moved (a see-through
+  outline on the sprite's side, the user's play test).
+
+- GPU3D: the steady overworld's projection also puts the world's origin in the middle of a
+  Z-buffer step: the camera's move along its view changed every depth by a fraction of a step,
+  neighbours' depths rounded apart differently from frame to frame, and the lighting's normals
+  (from those differences) flickered on walls, balconies and windows (the user's play test).
+
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
 --- a/src/GPU3D.h	2026-11-14 12:07:05.940492461 -0500
@@ -46,8 +55,26 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      std::unique_ptr<GPU3D> MidShadow;
      std::array<Polygon*,2048> MidList {}, MidSavedList {};
 --- a/src/GPU3D.cpp	2026-11-14 12:07:05.940411689 -0500
-+++ b/src/GPU3D.cpp	2026-11-14 12:28:28.131429132 -0500
-@@ -2781,6 +2781,9 @@
++++ b/src/GPU3D.cpp	2026-11-14 13:16:10.953798304 -0500
+@@ -2765,6 +2765,17 @@
+     const double ox = std::floor(x - Phase + 0.5) + Phase - x, oy = std::floor(y - Phase + 0.5) + Phase - y;
+     m[12] += (s32)std::lround(w * ox * 2.0 / Viewport[4] * 4096);
+     m[13] += (s32)std::lround(-w * oy * 2.0 / Viewport[5] * 4096);
++    // GoldLink (UC11): and in depth. The camera's move along its view changes every depth by a
++    // fraction of the Z-buffer's step (z/w in 1/0x4000), and neighbours' depths rounded apart by
++    // one step more or less from frame to frame: the lighting's normals, from those differences,
++    // flickered on walls and windows (the user's play test). The world's origin is put in the
++    // middle of a step: every depth keeps its fraction, the depth picture moves by whole steps.
++    {
++        const double cz = (camera[9] / 4096.0) * (m[2] / 4096.0) + (camera[10] / 4096.0) * (m[6] / 4096.0)
++            + (camera[11] / 4096.0) * (m[10] / 4096.0) + m[14] / 4096.0;
++        const double q = cz / w * 0x4000;
++        m[14] += (s32)std::lround((std::floor(q) + 0.5 - q) / 0x4000 * w * 4096);
++    }
+     memcpy(ProjMatrix, m, sizeof(m));
+     ClipMatrixDirty = true;
+     OrthoShift[0] = (float)ox;
+@@ -2781,6 +2792,9 @@
              AttachBase[i] = std::floor(v - Phase + 0.5) + Phase;
              AttachSlide[i] = (float)(AttachBase[i] - AttachedRef[i]);
          }
@@ -57,7 +84,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      }
      OrthoScene = true;
      OrthoSceneFromPersp |= OrthoFromPersp;
-@@ -2812,6 +2815,7 @@
+@@ -2812,6 +2826,7 @@
      OrthoFlushed = OrthoScene;
      FlushedAttach = OrthoScene && AttachUsed;
      memcpy(FlushedAttachSlide, AttachSlide, sizeof(FlushedAttachSlide));
@@ -65,7 +92,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      AttachUsed = false;
      memcpy(OrthoFlushedShift, OrthoShift, sizeof(OrthoFlushedShift));
      memcpy(OrthoFlushedOrigin, OrthoOrigin, sizeof(OrthoFlushedOrigin));
-@@ -2850,6 +2854,8 @@
+@@ -2850,6 +2865,8 @@
              ShownOrtho = RenderOrtho;
              ShownAttach = RenderAttach;
              memcpy(ShownAttachSlide, RenderAttachSlide, sizeof(ShownAttachSlide));
@@ -74,7 +101,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
              memcpy(ShownOrthoShift, MidShown ? MidOrthoShift : RenderOrthoShift, sizeof(ShownOrthoShift));
              // GoldLink (UC11): the picture in between was shown; the scene's own list is back,
              // and drawn this time (unless a new scene replaces it now).
-@@ -2870,6 +2876,7 @@
+@@ -2870,6 +2887,7 @@
                  RenderOrtho = OrthoFlushed;
                  RenderAttach = FlushedAttach;
                  memcpy(RenderAttachSlide, FlushedAttachSlide, sizeof(RenderAttachSlide));
@@ -82,7 +109,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
                  memcpy(RenderOrthoShift, OrthoFlushedShift, sizeof(RenderOrthoShift));
                  memcpy(RenderOrthoOrigin, OrthoFlushedOrigin, sizeof(RenderOrthoOrigin));
  
-@@ -3650,9 +3657,14 @@
+@@ -3650,9 +3668,14 @@
          my = RenderOrthoShift[1] + hy + ty / 2;
          MidOrthoShift[0] = (float)mx;
          MidOrthoShift[1] = (float)my;
@@ -122,7 +149,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
  
      // attribute buffer:
 --- a/src/GPU3D_Soft.cpp	2026-11-14 12:07:05.940520854 -0500
-+++ b/src/GPU3D_Soft.cpp	2026-11-14 12:31:46.964188911 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-14 13:03:09.604795040 -0500
 @@ -592,6 +592,11 @@
      if (!(dstattr & (1<<15)))
          attr &= ~(1<<15);
@@ -176,7 +203,19 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          if (alpha == 31)
          {
              u32 attr = polyattr | edge;
-@@ -1204,10 +1228,17 @@
+@@ -1193,6 +1217,11 @@
+                     if (cov > 31) cov = 31;
+                     xcov += (l_edgecov & 0x3FF);
+                 }
++                // GoldLink (UC11): an attached object's edges whole: blended with the world under
++                // them they slid with the player's layer while the world moved (a see-through
++                // outline on the sprite's side, the user's play test).
++                if (polygon->Attached)
++                    cov = 31;
+                 attr |= (cov << 8);
+ 
+                 // push old pixel down if needed
+@@ -1204,10 +1233,17 @@
                  }
              }
  
@@ -195,7 +234,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
          else
          {
-@@ -1251,14 +1282,21 @@
+@@ -1251,14 +1287,21 @@
  
          // if depth test against the topmost pixel fails, test
          // against the pixel underneath
@@ -217,7 +256,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
  
          u32 vr = interpX.Interpolate(rl, rr);
-@@ -1274,6 +1312,18 @@
+@@ -1274,6 +1317,18 @@
          // alpha test
          if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
  
@@ -236,7 +275,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          if (alpha == 31)
          {
              u32 attr = polyattr | edge;
-@@ -1294,10 +1344,17 @@
+@@ -1294,10 +1349,17 @@
                  }
              }
  
@@ -255,7 +294,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
          else
          {
-@@ -1344,14 +1401,21 @@
+@@ -1344,14 +1406,21 @@
  
          // if depth test against the topmost pixel fails, test
          // against the pixel underneath
@@ -277,7 +316,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
  
          u32 vr = interpX.Interpolate(rl, rr);
-@@ -1367,6 +1431,18 @@
+@@ -1367,6 +1436,18 @@
          // alpha test
          if (alpha <= gpu.GPU3D.RenderAlphaRef) continue;
  
@@ -296,7 +335,19 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          if (alpha == 31)
          {
              u32 attr = polyattr | edge;
-@@ -1394,10 +1470,17 @@
+@@ -1383,6 +1464,11 @@
+                     if (cov < 0) cov = 0;
+                     xcov += (r_edgecov & 0x3FF);
+                 }
++                // GoldLink (UC11): an attached object's edges whole: blended with the world under
++                // them they slid with the player's layer while the world moved (a see-through
++                // outline on the sprite's side, the user's play test).
++                if (polygon->Attached)
++                    cov = 31;
+                 attr |= (cov << 8);
+ 
+                 // push old pixel down if needed
+@@ -1394,10 +1480,17 @@
                  }
              }
  
@@ -315,7 +366,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          }
          else
          {
-@@ -1791,6 +1874,7 @@
+@@ -1791,6 +1884,7 @@
      // GoldLink (UC11): the depth of the picture just shown, before this render replaces it.
      memcpy(ShownDepth, &DepthBuffer[FirstPixelOffset], sizeof(ShownDepth));
      memcpy(ShownAttachTrans, &AttachTrans[FirstPixelOffset], sizeof(ShownAttachTrans)); // GoldLink (UC11)

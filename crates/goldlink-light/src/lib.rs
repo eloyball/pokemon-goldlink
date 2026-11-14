@@ -448,6 +448,9 @@ struct Cell {
     layer: u8,
     /// A light source (a lit window, a lamp, a sign).
     emissive: bool,
+    /// How much of one, 0..1: shown as its own colour that much, lit the rest (a pixel near the
+    /// threshold eases between the two instead of flipping).
+    glow: f32,
 }
 
 /// The lighting's working buffers and tables, kept between frames.
@@ -475,6 +478,10 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
+    /// The picture's mean brightness, followed slowly (the light sources' threshold): taken
+    /// frame by frame it changed as the view moved, and window panes near it flickered between
+    /// lit and glowing (the user's play test, walking up past houses).
+    mean: Option<f32>,
 }
 
 impl Default for Lighting {
@@ -586,6 +593,7 @@ impl Lighting {
             focus: None,
             tracked: Vec::new(),
             tracked_at: None,
+            mean: None,
         }
     }
 
@@ -689,6 +697,7 @@ impl Lighting {
                     let g = y * scene.width + col;
                     cell.base = linear(lin, px[y * w + x]);
                     cell.emissive = false;
+                    cell.glow = 0.0;
                     cell.layer = 0;
                     // Only where the 3D scene itself shows: a text box, a sign's banner or a menu
                     // over it stays as the game drew it.
@@ -742,7 +751,7 @@ impl Lighting {
                 for (x, out) in row.iter_mut().enumerate() {
                     let i = y * w + x;
                     let c = cells[i];
-                    if c.layer == 0 || c.emissive {
+                    if c.layer == 0 || c.glow >= 1.0 {
                         *out = c.base;
                         continue;
                     }
@@ -764,7 +773,7 @@ impl Lighting {
                         light = add(light, scale(l.colour, fall * fall * (0.3 + 0.7 * facing)));
                     }
                     let lit = scale(mul(c.base, light), 1.0 / norm);
-                    *out = lit;
+                    *out = add(scale(lit, 1.0 - c.glow), scale(c.base, c.glow));
                 }
             });
         }
@@ -933,16 +942,31 @@ impl Lighting {
                 count += 1;
             }
         }
-        let mean = total / count.max(1) as f32;
+        let now_mean = total / count.max(1) as f32;
+        // Followed over about a second; afresh after a pause (as the tracked lights are).
+        let fresh = self
+            .tracked_at
+            .is_none_or(|t| t.elapsed() > std::time::Duration::from_millis(500));
+        let mean = match self.mean {
+            Some(m) if !fresh => m + (now_mean - m) * 0.02,
+            _ => now_mean,
+        };
+        self.mean = Some(mean);
         let threshold = (mean * 2.2).max(0.25);
+        let ease = |l: f32, at: f32| ((l / at - 0.9) / 0.2).clamp(0.0, 1.0);
         for c in &mut self.cells[..n] {
             let b = c.base;
             let l = lum(b);
             let warm = b[0] >= b[2] * 1.15;
-            c.emissive = c.layer == 1
-                && l > threshold
-                && (warm || l > threshold * 1.8)
-                && b[0].max(b[1]).max(b[2]) > 0.45;
+            c.glow = if c.layer == 1 && b[0].max(b[1]).max(b[2]) > 0.45 {
+                let bright = ease(l, threshold);
+                let s = if warm { 1.0 } else { ease(l, threshold * 1.8) };
+                let g = bright * s;
+                g * g * (3.0 - 2.0 * g)
+            } else {
+                0.0
+            };
+            c.emissive = c.glow > 0.5;
         }
         // Patches: 4-connected runs of light pixels.
         self.label[..n].fill(0);

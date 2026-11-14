@@ -467,7 +467,7 @@ impl GameApp {
             let fixed_mask = fit(&fixed, w);
             if let Some(a) = &attached {
                 let (mask, trans) = (fit(&a.mask, w), fit(&a.trans, w));
-                let gain = light_gain(top, unlit.as_deref(), &mask);
+                let gain = light_gain(top, unlit.as_deref(), &mask, w);
                 let img = split_layer(top, &mask, &fixed_mask, w, k, Some(&trans), Some(gain));
                 self.attached
                     .set(ctx, "attached", img, options, w != 256, Some(a.shift));
@@ -1214,23 +1214,15 @@ impl Drop for GameApp {
 }
 
 /// How the game's pictures are uploaded for the chosen filter at `scale` physical pixels per DS
-/// pixel: (whole-number enlargement, sampling). "Sharp" at a scale that isn't a whole number
-/// (2.5x and up) is sharp bilinear: the picture enlarged by the whole part (at most 4x) with
-/// sharp pixels, then smoothed by what's left, so every DS pixel is the same width on screen with
-/// only its edge blended into the next. Nearest sampling alone makes some pixels a screen pixel
-/// wider than others, and as the steady overworld moves the world those widths move with it:
-/// edges crawl (the user's play test, 2026-11-13). At a whole-number scale, or under 2.5x,
-/// nearest sampling is already even or the blend would show: unchanged.
-fn sharp_prescale(scale: f32, filter: Filter) -> (usize, egui::TextureOptions) {
+/// pixel: (whole-number enlargement, sampling). "Sharp" is nearest sampling at any scale: pixel
+/// art, no blending (the user: smoothed it looked blurry at some window sizes). At a scale that
+/// isn't a whole number some game pixels get a screen pixel more than others; the steady overworld
+/// lands the world on whole screen pixels (`pixel_lock`), so those widths stay with the world as
+/// it moves instead of crawling (the reason this was sharp bilinear before, 2026-11-13).
+fn sharp_prescale(_scale: f32, filter: Filter) -> (usize, egui::TextureOptions) {
     match filter {
         Filter::Linear => (1, egui::TextureOptions::LINEAR),
-        Filter::Nearest if scale < 2.5 || (scale - scale.round()).abs() < 0.02 => {
-            (1, egui::TextureOptions::NEAREST)
-        }
-        Filter::Nearest => (
-            (scale.floor() as usize).clamp(2, 4),
-            egui::TextureOptions::LINEAR,
-        ),
+        Filter::Nearest => (1, egui::TextureOptions::NEAREST),
     }
 }
 
@@ -1309,17 +1301,30 @@ impl Layer {
     }
 }
 
-/// The lighting's gain per channel where the player is (their opaque pixels, `mask` 1: lit `top`
-/// over `unlit`), for the world under them; none (1) without the lighting.
-fn light_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8]) -> [f32; 3] {
+/// The lighting's gain per channel on the ground around the player (the scene's pixels within
+/// two of their opaque ones, `mask` 1: lit `top` over `unlit`), for the world under them (the
+/// player's own pixels have their own light: the ground under them came out another shade, ghost
+/// pixels at the sprite's edge); none (1) without the lighting. `w` across.
+fn light_gain(top: &[u32], unlit: Option<&[u32]>, mask: &[u8], w: usize) -> [f32; 3] {
     let Some(unlit) = unlit else {
         return [1.0; 3];
     };
+    let h = mask.len() / w.max(1);
+    let near = |x: usize, y: usize| {
+        (y.saturating_sub(2)..(y + 3).min(h))
+            .any(|yy| (x.saturating_sub(2)..(x + 3).min(w)).any(|xx| mask[yy * w + xx] == 1))
+    };
     let (mut lit_sum, mut raw_sum) = ([0f32; 3], [0f32; 3]);
-    for i in (0..mask.len()).filter(|&i| mask[i] == 1) {
-        for (c, sh) in [16, 8, 0].into_iter().enumerate() {
-            lit_sum[c] += ((top[i] >> sh) & 255) as f32;
-            raw_sum[c] += ((unlit[i] >> sh) & 255) as f32;
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if mask[i] != 0 || !near(x, y) {
+                continue;
+            }
+            for (c, sh) in [16, 8, 0].into_iter().enumerate() {
+                lit_sum[c] += ((top[i] >> sh) & 255) as f32;
+                raw_sum[c] += ((unlit[i] >> sh) & 255) as f32;
+            }
         }
     }
     let mut gain = [1f32; 3];
@@ -1543,8 +1548,11 @@ fn pixel_lock(
         if s <= 0.0 {
             return shift;
         }
+        // A quarter past a whole pixel: with nearest sampling at 7.5x (or 8x) no game pixel's edge
+        // is then on a screen pixel's centre, where the last bit of arithmetic picks the side.
         let ideal = f64::from(min * ppp) + origin * s;
-        (f64::from(shift) + (ideal - ideal.round()) / s) as f32
+        let landed = (ideal - 0.25).round() + 0.25;
+        (f64::from(shift) + (ideal - landed) / s) as f32
     };
     [
         axis(shift[0], origin[0] + side, dst.min.x, dst.width(), cols),
@@ -1611,25 +1619,13 @@ mod slide_tests {
     }
 
     #[test]
-    fn sharp_pixels_stay_even_at_any_scale() {
-        // A whole-number scale, or a small one: nearest sampling, as before.
-        assert_eq!(
-            sharp_prescale(7.0, Filter::Nearest),
-            (1, egui::TextureOptions::NEAREST)
-        );
-        assert_eq!(
-            sharp_prescale(1.6, Filter::Nearest),
-            (1, egui::TextureOptions::NEAREST)
-        );
-        // 7.5x: four times with sharp pixels, the rest smoothed (only the pixels' edges blend).
-        assert_eq!(
-            sharp_prescale(7.5, Filter::Nearest),
-            (4, egui::TextureOptions::LINEAR)
-        );
-        assert_eq!(
-            sharp_prescale(3.72, Filter::Nearest),
-            (3, egui::TextureOptions::LINEAR)
-        );
+    fn sharp_pixels_are_nearest_at_any_scale() {
+        for scale in [7.0, 1.6, 7.5, 3.72] {
+            assert_eq!(
+                sharp_prescale(scale, Filter::Nearest),
+                (1, egui::TextureOptions::NEAREST)
+            );
+        }
         assert_eq!(
             sharp_prescale(3.72, Filter::Linear),
             (1, egui::TextureOptions::LINEAR)
