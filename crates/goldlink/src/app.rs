@@ -756,13 +756,13 @@ impl GameApp {
                 });
                 changed |= ui.checkbox(&mut v.integer_scale, "Whole-number scaling only").changed();
                 changed |= ui
-                    .checkbox(&mut v.lighting, "Lighting")
+                    .checkbox(&mut v.lighting, "Revamped lighting")
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
                     .changed();
                 changed |= ui
-                    .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Shadows"))
+                    .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"))
                     .on_hover_text(SHADOWS_HINT)
-                    .on_disabled_hover_text("With the lighting on")
+                    .on_disabled_hover_text("With the revamped lighting on")
                     .changed();
                 changed |= ui
                     .checkbox(&mut v.steady, "Smooth camera")

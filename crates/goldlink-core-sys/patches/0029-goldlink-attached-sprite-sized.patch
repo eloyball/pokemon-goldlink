@@ -1,0 +1,75 @@
+GoldLink's change to melonDS (UC13): only sprite-sized objects are attached.
+
+Patch 0022 attaches the objects that stay put on screen while the camera moves (the player, a
+follower, a mount, a shadow). Dark Cave's darkness, a ring of soft-edged polygons round the
+player as big as the picture, stays put too: drawn in the attached picture it blacked the cave
+out but for the player's sprite (the user's play test). Each object's extent on screen is kept as
+its vertices come (MidTrackVertex), and one wider or taller than AttachMaxSize (72 pixels) isn't
+attached (MidClassify).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D.h	2026-11-14 23:36:35.440076568 -0500
++++ b/src/GPU3D.h	2026-11-14 23:37:05.860635300 -0500
+@@ -428,7 +428,8 @@
+     // in whole pixels, so the shift splits the difference (each 1/8 of a pixel off at most).
+     // Attached: drawn by the attached layer's rule (GPU3D.h, AttachedKeys), its origin moved by
+     // (DX, DY) clip units to the target (TX, TY).
+-    struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; bool Attached; s32 TX, TY, DX, DY; };
++    struct MidObject { u32 Key; u32 Verts; float X, Y; bool Placed; bool Attached; s32 TX, TY, DX, DY;
++        float MinX = 1e9f, MaxX = -1e9f, MinY = 1e9f, MaxY = -1e9f; }; // GoldLink (UC13): its extent on screen
+     bool MidWanted = false;
+     bool MidReplaying = false;   // this engine is the shadow, replaying a scene
+     bool MidLogOk = false;       // the scene being built is fully logged from its start
+@@ -439,6 +440,8 @@
+     std::vector<MidObject> MidObjects, MidRenderObjects; // the scene being built's, the rendered one's
+     s32 MidLastClip[16] {};
+     int MidCurObject = -1;
++    // GoldLink (UC13): the largest an attached object is on screen, across or down (DS pixels).
++    static constexpr float AttachMaxSize = 72;
+     std::vector<s32> MidShift;   // the shadow's: each object's shift, 1/MidUnit pixels, x then y
+     static constexpr s32 MidUnit = 256;
+     float MidOrthoShift[2] {};   // the steady overworld's shift for the picture in between
+--- a/src/GPU3D.cpp	2026-11-14 23:36:35.442125462 -0500
++++ b/src/GPU3D.cpp	2026-11-14 23:37:05.860531424 -0500
+@@ -3505,7 +3505,27 @@
+             MidObjects.push_back(o);
+         MidCurObject = (int)MidObjects.size() - 1;
+     }
+-    MidObjects[MidCurObject].Verts++;
++    MidObject& cur = MidObjects[MidCurObject];
++    cur.Verts++;
++    // GoldLink (UC13): where the vertex lands on screen, for the object's extent (MidClassify:
++    // only sprite-sized objects are attached).
++    {
++        const s32* m = ClipMatrix;
++        const double v0 = CurVertex[0], v1 = CurVertex[1], v2 = CurVertex[2];
++        const double x = (v0 * m[0] + v1 * m[4] + v2 * m[8]) / 4096.0 + m[12];
++        const double y = (v0 * m[1] + v1 * m[5] + v2 * m[9]) / 4096.0 + m[13];
++        const double w = (v0 * m[3] + v1 * m[7] + v2 * m[11]) / 4096.0 + m[15];
++        const int width = MidWidth(), height = (int)Viewport[5];
++        if (w > 0 && width > 0 && height > 0)
++        {
++            const float sx = (float)((WideX((s64)x) / w + 1) * width / 2);
++            const float sy = (float)((1 - y / w) * height / 2);
++            cur.MinX = std::min(cur.MinX, sx);
++            cur.MaxX = std::max(cur.MaxX, sx);
++            cur.MinY = std::min(cur.MinY, sy);
++            cur.MaxY = std::max(cur.MaxY, sy);
++        }
++    }
+ }
+ 
+ // A new scene starts (its predecessor was just swapped in): its objects and commands are kept
+@@ -3814,7 +3834,10 @@
+     double ref[2] = {0, 0};
+     for (const MidObject& c : MidObjects)
+     {
+-        if (!c.Placed)
++        // GoldLink (UC13): sprite-sized only (a person, a follower, a mount, a shadow): Dark Cave's
++        // darkness, a ring round the player as big as the picture, stays put on screen too, and
++        // drawn as the player's it blacked the cave out (the user's play test).
++        if (!c.Placed || c.MaxX - c.MinX > AttachMaxSize || c.MaxY - c.MinY > AttachMaxSize)
+             continue;
+         auto [from, to] = before.equal_range(key(c));
+         for (auto it = from; it != to; ++it)

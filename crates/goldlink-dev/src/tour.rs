@@ -682,9 +682,9 @@ const CAVE_STEPS_IN: &[Step] = &[
     Step::Wait(60),
     Step::Walk(Keys::UP, 40, ""),
     Step::Wait(240),
-    Step::Walk(Keys::UP, 16, ""),
-    Step::Wait(60),
-    Step::Walk(Keys::LEFT, 16, ""),
+    Step::Walk(Keys::UP, 48, ""),
+    Step::Walk(Keys::LEFT, 48, ""),
+    Step::Walk(Keys::RIGHT, 48, ""),
     Step::Walk(Keys::NONE, 30, "cave"),
     Step::Close,
 ];

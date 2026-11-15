@@ -412,8 +412,8 @@ fn small_grade(phase: Phase) -> Grade {
     }
 }
 
-/// At most this many point lights cast shadows (the nearest the player), UC13.
-const MAX_SHADOW_LIGHTS: usize = 3;
+/// The point lights nearest the player with the finer shadow maps (UC13).
+const MAX_FINE_LIGHTS: usize = 3;
 /// Sunlit patches smaller than this (pixels) inside shadow are shadowed; shadow specks smaller
 /// than `SHADOW_SPECK` in the sun are lit (UC13).
 const LIT_ISLAND: usize = 48;
@@ -770,18 +770,19 @@ impl Lighting {
                 (c.layer != 0).then_some(c.pos)
             };
             self.shadow.prepare(&scene.geometry, &fwd, &rows, up, &seen);
-            if let Some((azimuth, elevation, strength)) = shadow::sky(scene.hours) {
+            if let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours) {
                 let dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
-                let texels = if shadow::sun(scene.hours).is_some() {
-                    shadow::TEXELS
-                } else {
-                    shadow::MOON_TEXELS
-                };
-                self.shadow.build_sun(dir, texels, self.pool.as_ref());
+                self.shadow
+                    .build_sun(dir, shadow::TEXELS, self.pool.as_ref());
                 if self.shadow.has_sun() {
                     p.key_dir = dir;
                     sun_strength = strength;
                 }
+            } else if let Some((azimuth, elevation, _)) = shadow::moon(scene.hours) {
+                // By night the moon's light comes from where it stands, but casts no shadows of
+                // its own: faint beside the lit windows' and lamps', and its map cost a fifth of
+                // the night's lighting.
+                p.key_dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
             }
         }
         self.normals(w, h);
@@ -803,34 +804,6 @@ impl Lighting {
                 range: p.player_range,
             });
         }
-        // The lights that cast shadows (UC13), outdoors: the lit windows and lamps nearest the
-        // player (at most MAX_SHADOW_LIGHTS). Indoors and in caves the game's own shadows stay
-        // (the user, 2026-11-14: "indoor shadows should remain vanilla"). `slots[i]`: light i's
-        // shadow maps, if it has them.
-        let mut slots = vec![None; lights.len()];
-        if self.shadow.ready && place == Place::Outdoor {
-            let player = (lum(p.player_light) > 0.0 && focus.is_some()).then(|| lights.len() - 1);
-            let near = focus.unwrap_or([0.0, 0.0, -600.0]);
-            let mut chosen: Vec<usize> = (0..lights.len())
-                .filter(|&i| Some(i) != player && lum(lights[i].colour) > 0.02)
-                .collect();
-            chosen.sort_by(|&a, &b| {
-                let da = sub(lights[a].pos, near);
-                let db = sub(lights[b].pos, near);
-                dot(da, da).total_cmp(&dot(db, db))
-            });
-            chosen.truncate(MAX_SHADOW_LIGHTS);
-            chosen.sort_unstable();
-            let at: Vec<(V3, f32)> = chosen
-                .iter()
-                .map(|&i| (lights[i].pos, lights[i].range))
-                .collect();
-            self.shadow.build_points(&at, self.pool.as_ref());
-            for (slot, &i) in chosen.iter().enumerate() {
-                slots[i] = Some(slot);
-            }
-        }
-
         // Each pixel where the polygons put it (UC13), once for every light's test.
         self.true_pos.clear();
         self.true_pos.resize(n, None);
@@ -842,6 +815,48 @@ impl Lighting {
                     *out = (c.layer != 0).then(|| shadows.place(c.pos)).flatten();
                 }
             });
+        }
+
+        // The lights that cast shadows (UC13), outdoors: the lit windows and lamps nearest the
+        // player (at most MAX_SHADOW_LIGHTS). Indoors and in caves the game's own shadows stay
+        // (the user, 2026-11-14: "indoor shadows should remain vanilla"). `slots[i]`: light i's
+        // shadow maps, if it has them.
+        let mut slots = vec![None; lights.len()];
+        if self.shadow.ready && place == Place::Outdoor {
+            let player = (lum(p.player_light) > 0.0 && focus.is_some()).then(|| lights.len() - 1);
+            let near = focus.unwrap_or([0.0, 0.0, -600.0]);
+            // Every light that shines casts shadows: with only the nearest the player casting, the
+            // others lit what they couldn't reach (the roof over a lit window, past its eaves),
+            // and which ones did changed as the player walked (the user's look, Violet City).
+            // The nearest the player get finer maps.
+            let mut chosen: Vec<usize> = (0..lights.len())
+                .filter(|&i| Some(i) != player && lum(lights[i].colour) > 0.0)
+                .collect();
+            chosen.sort_by(|&a, &b| {
+                let da = sub(lights[a].pos, near);
+                let db = sub(lights[b].pos, near);
+                dot(da, da).total_cmp(&dot(db, db))
+            });
+            let at: Vec<(V3, f32, usize)> = chosen
+                .iter()
+                .enumerate()
+                .map(|(k, &i)| {
+                    let face = if k < MAX_FINE_LIGHTS {
+                        shadow::FACE
+                    } else {
+                        shadow::FACE_COARSE
+                    };
+                    (lights[i].pos, lights[i].range, face)
+                })
+                .collect();
+            // Every third pixel's place, for which faces of a light's cube anything looks out
+            // through.
+            let receivers: Vec<V3> = self.true_pos.iter().step_by(3).flatten().copied().collect();
+            self.shadow
+                .build_points(&at, &receivers, self.pool.as_ref());
+            for (slot, &i) in chosen.iter().enumerate() {
+                slots[i] = Some(slot);
+            }
         }
 
         // The sun's reach per pixel (UC13), small islands cleaned up. With each pixel's own
@@ -903,6 +918,11 @@ impl Lighting {
                         let d = d2.sqrt().max(1e-3);
                         let fall = 1.0 - d / l.range;
                         let facing = (dot(n, v) / d).max(0.0);
+                        let add_light = scale(l.colour, fall * fall * (0.3 + 0.7 * facing));
+                        // Too faint to see: no shadow test.
+                        if lum(add_light) < 0.004 {
+                            continue;
+                        }
                         // In its shadow (UC13): its light doesn't reach.
                         let reach = match (slot, tpos[i]) {
                             (Some(k), Some(tp)) => {
@@ -910,10 +930,7 @@ impl Lighting {
                             }
                             _ => 1.0,
                         };
-                        light = add(
-                            light,
-                            scale(l.colour, fall * fall * (0.3 + 0.7 * facing) * reach),
-                        );
+                        light = add(light, scale(add_light, reach));
                     }
                     let lit = scale(mul(c.base, light), 1.0 / norm);
                     *out = add(scale(lit, 1.0 - c.glow), scale(c.base, c.glow));

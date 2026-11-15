@@ -64,10 +64,8 @@ const SKIP: u32 = 4 | 8 | 32 | 64;
 /// The ground's normal when no polygons say (HeartGold's field camera).
 const DEFAULT_UP: V3 = [0.0, 0.66, 0.75];
 
-/// Shadow map texels per view unit (a DS pixel across is one unit): the sun's; the moon's, its
-/// shadows faint and long (a low moon stretched the map), half as many.
+/// Shadow map texels per view unit (a DS pixel across is one unit).
 pub const TEXELS: f32 = 2.0;
-pub const MOON_TEXELS: f32 = 1.0;
 /// At most this many texels a side.
 const MAX_SIDE: usize = 1536;
 /// How far a pixel is pushed off its surface (along its normal, then toward the sun) before the
@@ -121,11 +119,6 @@ pub fn moon(hours: f32) -> Option<(f32, f32, f32)> {
     }
     let azimuth = 80f32.to_radians() * arc.cos();
     Some((azimuth, elevation.max(25f32.to_radians()), strength))
-}
-
-/// The sun by day, the moon by night.
-pub fn sky(hours: f32) -> Option<(f32, f32, f32)> {
-    sun(hours).or_else(|| moon(hours))
 }
 
 /// A card: a sprite turned toward the camera (a person, a Pokémon, a sign, a tree). Casting, it
@@ -314,6 +307,30 @@ impl DepthMap {
     ) {
         let mut tris = Vec::new();
         for c in casters.iter().chain(extra) {
+            // A point light's face: casters wholly outside its view (behind it, or past one of
+            // its four sides) are passed over at once (each caster lies in one or two faces).
+            if let View::Face {
+                pos,
+                forward,
+                right,
+                upward,
+                ..
+            } = self.view
+            {
+                let mut out = [true; 5];
+                for k in &c.corners {
+                    let d = sub(k.p, pos);
+                    let (z, x, y) = (dot(d, forward), dot(d, right), dot(d, upward));
+                    out[0] &= z < NEAR;
+                    out[1] &= x > z;
+                    out[2] &= x < -z;
+                    out[3] &= y > z;
+                    out[4] &= y < -z;
+                }
+                if out.iter().any(|&o| o) {
+                    continue;
+                }
+            }
             let m = self.view.polygon(&c.corners);
             for k in 1..m.len().saturating_sub(1) {
                 let t = Tri {
@@ -390,8 +407,9 @@ struct PointMaps {
     faces: Vec<DepthMap>,
 }
 
-/// Texels a side of a point light's face.
-const FACE: usize = 96;
+/// Texels a side of a point light's face: the nearest the player's, the others'.
+pub const FACE: usize = 64;
+pub const FACE_COARSE: usize = 32;
 
 /// The picture's polygons as shadow casters, and the depth maps of the lights that cast shadows:
 /// the sun (or the moon) and the nearest point lights.
@@ -877,7 +895,16 @@ impl Shadows {
 
     /// The point lights' maps (`lights`: where each is, as the lighting places it), and each
     /// card's light from them.
-    pub fn build_points(&mut self, lights: &[(V3, f32)], pool: Option<&rayon::ThreadPool>) {
+    /// The point lights' maps (`lights`: where each is as the lighting places it, its reach and
+    /// its faces' size; `receivers`: a sample of the picture's pixels where the polygons put
+    /// them), and each card's light from them. Only the faces something in reach looks out
+    /// through are drawn; all of every light's at once on the pool's threads.
+    pub fn build_points(
+        &mut self,
+        lights: &[(V3, f32, usize)],
+        receivers: &[V3],
+        pool: Option<&rayon::ThreadPool>,
+    ) {
         self.points.clear();
         if !self.ready {
             return;
@@ -891,10 +918,15 @@ impl Shadows {
             [0.0, 0.0, 1.0],
             [0.0, 0.0, -1.0],
         ];
-        for &(light, range) in lights {
+        // Per light: where it is, what casts within its reach, and its faces (empty where nothing
+        // in reach looks out through them).
+        let mut work: Vec<(Vec<&Caster>, Vec<Caster>)> = Vec::new();
+        let mut faces: Vec<(usize, DepthMap)> = Vec::new();
+        for &(light, range, size) in lights {
             let Some(pos) = self.true_place(light) else {
                 continue;
             };
+            let k = self.points.len();
             let cards: Vec<Caster> = self
                 .standing_cards(|foot| {
                     let d = sub(pos, foot);
@@ -904,48 +936,70 @@ impl Shadows {
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
             // Only what's within its reach casts (what's beyond it lies in the dark anyway).
-            let near: Vec<usize> = (0..self.casters.len())
-                .filter(|&i| reaches(&self.casters[i].corners, pos, range))
-                .collect();
-            let mut faces: Vec<DepthMap> = axes
+            let near: Vec<&Caster> = self
+                .casters
                 .iter()
-                .map(|&forward| {
-                    let helper = if forward[1].abs() > 0.5 {
-                        [0.0, 0.0, 1.0]
-                    } else {
-                        [0.0, 1.0, 0.0]
-                    };
-                    let right = normalize(cross(helper, forward));
-                    let upward = cross(forward, right);
+                .filter(|c| reaches(&c.corners, pos, range))
+                .collect();
+            let mut used = [false; 6];
+            for r in receivers {
+                let d = sub(*r, pos);
+                if dot(d, d) >= range * range {
+                    continue;
+                }
+                let a = (0..3)
+                    .max_by(|&a, &b| d[a].abs().total_cmp(&d[b].abs()))
+                    .unwrap_or(0);
+                used[2 * a + usize::from(d[a] < 0.0)] = true;
+            }
+            for (f, &forward) in axes.iter().enumerate() {
+                let helper = if forward[1].abs() > 0.5 {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    [0.0, 1.0, 0.0]
+                };
+                let right = normalize(cross(helper, forward));
+                let upward = cross(forward, right);
+                let side = if used[f] { size } else { 0 };
+                faces.push((
+                    k,
                     DepthMap::new(
                         View::Face {
                             pos,
                             forward,
                             right,
                             upward,
-                            size: FACE as f32,
+                            size: size as f32,
                         },
-                        [FACE, FACE],
-                    )
-                })
-                .collect();
-            let alpha = &self.alpha;
-            let casters: Vec<&Caster> = near.iter().map(|&i| &self.casters[i]).collect();
-            let cards: Vec<&Caster> = cards.iter().collect();
-            match pool {
-                Some(pool) => {
-                    use rayon::prelude::*;
-                    pool.install(|| {
-                        faces
-                            .par_iter_mut()
-                            .for_each(|f| f.draw(&casters, &cards, alpha, None))
-                    });
-                }
-                None => faces
-                    .iter_mut()
-                    .for_each(|f| f.draw(&casters, &cards, alpha, None)),
+                        [side, side],
+                    ),
+                ));
             }
-            self.points.push(PointMaps { pos, faces });
+            work.push((near, cards));
+            self.points.push(PointMaps {
+                pos,
+                faces: Vec::new(),
+            });
+        }
+        let alpha = &self.alpha;
+        let draw = |(k, f): &mut (usize, DepthMap)| {
+            if f.side[0] == 0 {
+                return;
+            }
+            let (near, cards) = &work[*k];
+            let cards: Vec<&Caster> = cards.iter().collect();
+            f.draw(near, &cards, alpha, None);
+        };
+        match pool {
+            Some(pool) => {
+                use rayon::prelude::*;
+                pool.install(|| faces.par_iter_mut().for_each(draw));
+            }
+            None => faces.iter_mut().for_each(draw),
+        }
+        drop(work);
+        for (k, f) in faces {
+            self.points[k].faces.push(f);
         }
         for k in 0..self.cards.len() {
             let points = (0..self.points.len())
