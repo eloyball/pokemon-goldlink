@@ -689,6 +689,34 @@ const CAVE_STEPS_IN: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=down2 (UC13): two steps down, then standing (the user's Violet City
+/// lanterns: the player between them).
+const DOWN2_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 32, ""),
+    Step::Walk(Keys::NONE, 90, ""),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=down1 / down1-left2 (UC13): a step down (then two left), then
+/// standing: the player level with the user's lanterns, on open ground.
+const DOWN1_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 16, ""),
+    Step::Walk(Keys::NONE, 90, ""),
+    Step::Close,
+];
+const DOWN1_LEFT2_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 16, ""),
+    Step::Walk(Keys::LEFT, 32, ""),
+    Step::Walk(Keys::NONE, 90, ""),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -939,6 +967,9 @@ fn steps() -> &'static [Step] {
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
         Ok("settle-right") => SETTLE_RIGHT_STEPS,
+        Ok("down2") => DOWN2_STEPS,
+        Ok("down1") => DOWN1_STEPS,
+        Ok("down1-left2") => DOWN1_LEFT2_STEPS,
         Ok("cave-steps") => CAVE_STEPS_IN,
         Ok("mom") => MOM_STEPS,
         Ok("stand") => STAND_STEPS,

@@ -143,6 +143,8 @@ struct Card {
     tex: Option<ShadowTex>,
     param: u32,
     attached: bool,
+    /// The object it belongs to (a person's sprite, or a part of a lantern drawn as a card).
+    object: i32,
     /// How much of each light reaches it (the sun's, then each point light's): the whole card
     /// is lit as one (another card's shadow across a flat sprite cut it in blocks: the user's
     /// look, 2026-11-14): a person as their foot, a tree (taller than a person) as the mean along
@@ -724,6 +726,7 @@ impl Shadows {
                         tex,
                         param: p.tex_param,
                         attached: p.flags & FLAG_ATTACHED != 0,
+                        object: p.object,
                         sun: 1.0,
                         points: Vec::new(),
                     });
@@ -1035,6 +1038,13 @@ impl Shadows {
                 }
                 seen.iter().max_by_key(|s| s.1).map(|s| s.0 as i32 - 1)
             });
+            // What the light shines from casts nothing for it, if it's drawn as cards (a lantern's
+            // glowing face and cap are: they shadowed the ground beside and above it, the user's
+            // look); people, Pokemon and the player still do.
+            let cards: Vec<Caster> = cards
+                .into_iter()
+                .filter(|c| c.card == 0 || Some(self.cards[c.card as usize - 1].object) != source)
+                .collect();
             let lamp = source.is_some_and(|o| {
                 self.object_extent
                     .get(&o)
