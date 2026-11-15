@@ -42,6 +42,10 @@ pub const DEBUG_SEQ: usize = of!(B, debug_seq);
 pub const DEBUG_ARG: usize = of!(B, debug_arg);
 pub const DEBUG_RESULT: usize = of!(B, debug_result);
 pub const SAVE_COUNTER: usize = of!(B, save_counter);
+/// The adventure-start save's state (the ROM's `enum CoopStartSaveState`: none, running, done).
+pub const START_SAVE_STATE: usize = of!(B, start_save_state);
+pub const START_SAVE_NONE: u8 = 0;
+pub const START_SAVE_DONE: u8 = 2;
 pub const SAVE_SLOT_READY: usize = of!(B, save_slot_ready);
 pub const RESET_REQUEST: usize = of!(B, reset_request);
 pub const SESSION_OUT: usize = of!(B, session_out);
@@ -205,6 +209,7 @@ mod tests {
             [SAVE_COUNTER, SAVE_SLOT_READY, RESET_REQUEST],
             [0x1E0, 0x1E4, 0x1E5]
         );
+        assert_eq!(START_SAVE_STATE, 0x1AF);
         assert_eq!([SESSION_OUT, EXCHANGE_PTR], [0x1F0, 0x1FC]);
         assert_eq!(
             [

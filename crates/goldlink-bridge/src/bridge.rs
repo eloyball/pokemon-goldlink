@@ -238,6 +238,8 @@ pub struct Bridge {
     slot_state: SlotState,
     slot_key: Option<String>,
     last_save_counter: Option<u32>,
+    /// The world whose adventure-start save is behind this player (see [`start_save`]).
+    start_saved: Option<String>,
     last_rom_heartbeat: u32,
     swap_requested: Instant,
     /// The host power-cycles the emulator straight into the game when asked
@@ -331,6 +333,7 @@ impl Bridge {
             slot_state: SlotState::None,
             slot_key: None,
             last_save_counter: None,
+            start_saved: None,
             last_rom_heartbeat: 0,
             swap_requested: Instant::now(),
             boots_into_game: false,
@@ -1116,6 +1119,16 @@ impl Bridge {
         let payload = sanitize::server_payload(&pkt[payload_at..], self.limits);
         ram[mb + SERVER_PAYLOAD..mb + SERVER_PAYLOAD + SERVER_PAYLOAD_SIZE]
             .copy_from_slice(&payload);
+        let (remember, state) = start_save(
+            ram[mb + GATES + GATE_CAMPAIGN_STARTED] == 1,
+            first_ok,
+            self.start_saved.as_deref() == Some(self.active_room.as_str()),
+            ram[mb + START_SAVE_STATE],
+        );
+        if remember {
+            self.start_saved = Some(self.active_room.clone());
+        }
+        ram[mb + START_SAVE_STATE] = state;
         ram[mb + ASSIGNED_PLAYER_ID] = self.assigned_slot;
         ram[mb + ACTIVE_PLAYERS_MASK] = pkt[7] & 0x3F;
         put_u32(ram, mb + SERVER_TICK, u32_at(pkt, 8));
@@ -1401,9 +1414,60 @@ fn has_link_magic(pkt: &[u8], at: usize) -> bool {
     link::has_magic(pkt, at)
 }
 
+/// The adventure-start save (dev/docs/MILESTONE2_PLAN.md 7.2) happens once a world: the ROM
+/// saves and says "Everyone is here! Your adventure begins now!" when the relay has locked the
+/// roster and this player is in the bedroom with an empty party, unless its `start_save_state`
+/// says it's done, which it forgets when the game restarts. So after loading the save back, or
+/// walking back into the bedroom before their first Pokémon, it said so and saved again (the
+/// user). The bridge remembers instead: the world was locked before this player connected (its
+/// first packet), or the ROM finished the save; from then on "none" reads "done". `started`: the
+/// relay's lock; `first`: this connection's first packet; `saved`: remembered for this world;
+/// `state`: the ROM's. Gives whether to remember it now, and the state to write back.
+fn start_save(started: bool, first: bool, saved: bool, state: u8) -> (bool, u8) {
+    let remember = !saved && ((started && first) || state == START_SAVE_DONE);
+    let done = saved || remember;
+    let state = if started && done && state == START_SAVE_NONE {
+        START_SAVE_DONE
+    } else {
+        state
+    };
+    (remember, state)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_adventure_start_save_happens_once_a_world() {
+        // Locked live with this player there: the ROM saves (nothing written over it).
+        assert_eq!(
+            start_save(true, false, false, START_SAVE_NONE),
+            (false, START_SAVE_NONE)
+        );
+        // The ROM finished it: remembered.
+        assert_eq!(
+            start_save(true, false, false, START_SAVE_DONE),
+            (true, START_SAVE_DONE)
+        );
+        // The game restarted (its state reset): done again, no second save.
+        assert_eq!(
+            start_save(true, false, true, START_SAVE_NONE),
+            (false, START_SAVE_DONE)
+        );
+        // Connecting to a world locked before (the save loaded back): done from the first packet.
+        assert_eq!(
+            start_save(true, true, false, START_SAVE_NONE),
+            (true, START_SAVE_DONE)
+        );
+        // A world not started yet: nothing.
+        assert_eq!(
+            start_save(false, true, false, START_SAVE_NONE),
+            (false, START_SAVE_NONE)
+        );
+        // While the ROM's save runs, left alone.
+        assert_eq!(start_save(true, false, true, 1), (false, 1));
+    }
     use goldlink_abi::CoopActivity as A;
 
     fn mailbox(trainer: u32, active: u8, activity: u32) -> Vec<u8> {

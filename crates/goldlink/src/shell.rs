@@ -664,6 +664,13 @@ impl eframe::App for Shell {
         self.step(ctx);
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        // The game's Tab (its touch screen), before egui moves its focus with it.
+        if let Stage::Playing { game, .. } | Stage::Leaving { game, .. } = &mut self.stage {
+            game.take_tab(raw);
+        }
+    }
+
     fn on_exit(&mut self) {
         self.shutdown();
     }

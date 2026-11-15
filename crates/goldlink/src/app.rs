@@ -185,6 +185,8 @@ pub struct GameApp {
     no_gpu: bool,
     /// Each emulated frame lit and shown before the next is taken (the dev tour's films).
     pub frames_in_step: bool,
+    /// Tab was pressed for the game since the last frame ([`GameApp::take_tab`]).
+    tab: bool,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -267,6 +269,7 @@ impl GameApp {
             light_thread: None,
             no_gpu: false,
             frames_in_step: false,
+            tab: false,
 
             settings_open: false,
             messages,
@@ -1213,12 +1216,11 @@ impl GameApp {
         }
         if self.config.video.layout == Layout::OneScreen {
             self.one.follow(scene);
-            if !self.blocked()
-                && !ctx.wants_keyboard_input()
-                && ctx.input(|i| i.key_pressed(egui::Key::Tab))
-            {
+            if std::mem::take(&mut self.tab) && !self.blocked() {
                 let shown = self.bottom != egui::Rect::NOTHING;
                 self.one.by_hand = Some(!shown);
+                // The keys go to the game again (no button keeps the keyboard).
+                ctx.memory_mut(|m| m.stop_text_input());
             }
         }
         self.feed_input(ctx);
@@ -1303,6 +1305,30 @@ impl GameApp {
         action
     }
 
+    /// Tab (shows or hides the touch screen in the one-screen layout) is the game's while no
+    /// menu is open: taken out of the window's input before egui sees it, as egui moves its
+    /// keyboard focus to the next button on Tab, and while a button had it the game's keys were
+    /// ignored until a click on the picture (the user). Called before each frame.
+    pub fn take_tab(&mut self, raw: &mut egui::RawInput) {
+        if self.blocked() || self.config.video.layout != Layout::OneScreen {
+            return;
+        }
+        raw.events.retain(|e| match e {
+            egui::Event::Key {
+                key: egui::Key::Tab,
+                pressed,
+                repeat,
+                ..
+            } => {
+                if *pressed && !*repeat {
+                    self.tab = true;
+                }
+                false
+            }
+            _ => true,
+        });
+    }
+
     /// Leaves the world and writes the save (the window closes).
     pub fn shutdown(&mut self) {
         self.stop();
@@ -1321,6 +1347,7 @@ impl eframe::App for GameApp {
         if let Some(extra) = self.extra_input.as_mut() {
             extra(raw);
         }
+        self.take_tab(raw);
     }
 
     fn on_exit(&mut self) {

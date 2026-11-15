@@ -66,7 +66,8 @@ enum Step {
     /// to it are, and the VBlank callback (the addresses goldlink_bridge::naming needs). With
     /// true, also taps the intro's touch-only buttons (NO INFO NEEDED, the controls' Touch).
     MashUntilNaming(u32, bool),
-    /// Types this on the window's keyboard ('\n' Enter, '\x08' Backspace), as a player would.
+    /// Types this on the window's keyboard ('\n' Enter, '\x08' Backspace, '\t' Tab), as a player
+    /// would.
     Type(&'static str),
     /// Logs the naming screen's entry (its character codes) and what naming::read sees.
     NamingLog,
@@ -689,6 +690,20 @@ const CAVE_STEPS_IN: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=tab: Tab shows the touch screen, Tab hides it, a shot of each (the
+/// window logs whenever a button holds the keyboard: the game's keys are ignored then).
+const TAB_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Type("\t"),
+    Step::Wait(40),
+    Step::Shot("tab-shown"),
+    Step::Type("\t"),
+    Step::Wait(40),
+    Step::Shot("tab-hidden"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=down2 (UC13): two steps down, then standing (the user's Violet City
 /// lanterns: the player between them).
 const DOWN2_STEPS: &[Step] = &[
@@ -968,6 +983,7 @@ fn steps() -> &'static [Step] {
         Ok("right5") => RIGHT5_STEPS,
         Ok("settle-right") => SETTLE_RIGHT_STEPS,
         Ok("down2") => DOWN2_STEPS,
+        Ok("tab") => TAB_STEPS,
         Ok("down1") => DOWN1_STEPS,
         Ok("down1-left2") => DOWN1_LEFT2_STEPS,
         Ok("cave-steps") => CAVE_STEPS_IN,
@@ -1064,6 +1080,8 @@ struct State {
     seq: u8,
     log: Vec<String>,
     sized: bool,
+    /// Whether a button held the keyboard last frame (logged as it changes).
+    focused: bool,
     last_menu: Option<(i8, bool)>,
     /// A debug command waiting for the ROM's answer: its sequence number, command, and frames.
     pending: Option<(u8, u8, u32)>,
@@ -1164,6 +1182,7 @@ impl Tour {
             for c in text.chars() {
                 raw.events.push(match c {
                     '\n' => key(egui::Key::Enter),
+                    '\t' => key(egui::Key::Tab),
                     '\x08' => key(egui::Key::Backspace),
                     c => egui::Event::Text(c.to_string()),
                 });
@@ -1178,6 +1197,12 @@ impl Tour {
     /// The window's part: screenshots when the game side asks, and closing at the end.
     pub fn ui(&self, ctx: &egui::Context) {
         let mut s = self.state();
+        // A button holding the keyboard (the game's keys are ignored then): logged as it changes.
+        let focused = ctx.memory(|m| m.focused().is_some());
+        if focused != s.focused {
+            s.focused = focused;
+            eprintln!("tour: a button holds the keyboard: {focused}");
+        }
         // GOLDLINK_DEV_TOUR_SIZE=WxH: the window's inner size for the shots (once).
         if !s.sized {
             s.sized = true;
