@@ -72,6 +72,11 @@ const MAX_SIDE: usize = 1536;
 /// test, so a surface doesn't shadow itself.
 const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
+/// How far an upright face's bottom edge goes on back along the camera's rays (view units): past
+/// the ground behind a model standing a little above it.
+const SKIRT: f32 = 6.0;
+/// How thick an upright face is as a caster, and how far its copy reaches down (view units).
+const SLAB: f32 = 3.0;
 /// How far a standing card goes into the ground when it casts (view units): the test's margin.
 const SINK: f32 = 1.5;
 
@@ -429,6 +434,86 @@ impl ShadowMap {
                     card_id = self.cards.len() as u32;
                 }
             }
+            // An upright face (a wall, a post, a sign's box) meets the ground where it shows on
+            // the picture: its bottom edge goes on back along the camera's rays (a strip seen
+            // edge-on, so the picture is the same) to the ground behind. The game stands some
+            // models a unit or two above the ground (the sign, the mailbox, the windmill) and the
+            // DS draws no face turned from the camera, so from the north the sun saw under them,
+            // and their shadows started a pixel or two short (the user's look).
+            if card_id == 0 && dot(n, up).abs() < 0.3 {
+                let low = corners
+                    .iter()
+                    .map(|c| dot(c.p, up))
+                    .fold(f32::MAX, f32::min);
+                let bottom: Vec<usize> = (0..corners.len())
+                    .filter(|&k| dot(corners[k].p, up) - low < 0.5)
+                    .collect();
+                if let [k0, k1, ..] = bottom[..] {
+                    let back = |p: V3| {
+                        let d = if ortho {
+                            [0.0, 0.0, -1.0]
+                        } else {
+                            normalize(p)
+                        };
+                        add(p, scale(d, SKIRT))
+                    };
+                    let (a, b) = (corners[k0].p, corners[k1].p);
+                    let (sa, sb) = (corners[k0].st, corners[k1].st);
+                    let skirt = vec![
+                        Corner {
+                            p: a,
+                            st: sa,
+                            scr: [0.0; 2],
+                        },
+                        Corner {
+                            p: b,
+                            st: sb,
+                            scr: [0.0; 2],
+                        },
+                        Corner {
+                            p: back(b),
+                            st: sb,
+                            scr: [0.0; 2],
+                        },
+                        Corner {
+                            p: back(a),
+                            st: sa,
+                            scr: [0.0; 2],
+                        },
+                    ];
+                    for c in &skirt {
+                        let m = [dot(c.p, self.u), dot(c.p, self.v)];
+                        for k in 0..2 {
+                            lo[k] = lo[k].min(m[k]);
+                            hi[k] = hi[k].max(m[k]);
+                        }
+                    }
+                    polys.push((skirt, -1, 0, 0));
+                }
+                // And it's solid: the DS draws no face turned from the camera, so a post was an
+                // open shell to a sun in the north. A copy of the face behind it (away from the
+                // camera, reaching down to the ground) makes it a slab.
+                let north = normalize(cross(up, [1.0, 0.0, 0.0]));
+                let slab: Vec<Corner> = corners
+                    .iter()
+                    .map(|c| {
+                        let down = if dot(c.p, up) - low < 0.5 { SLAB } else { 0.0 };
+                        Corner {
+                            p: sub(add(c.p, scale(north, SLAB)), scale(up, down)),
+                            st: c.st,
+                            scr: c.scr,
+                        }
+                    })
+                    .collect();
+                for c in &slab {
+                    let m = [dot(c.p, self.u), dot(c.p, self.v)];
+                    for k in 0..2 {
+                        lo[k] = lo[k].min(m[k]);
+                        hi[k] = hi[k].max(m[k]);
+                    }
+                }
+                polys.push((slab, p.tex, p.tex_param, 0));
+            }
             for c in &corners {
                 let m = [dot(c.p, self.u), dot(c.p, self.v)];
                 for k in 0..2 {
@@ -597,7 +682,7 @@ impl ShadowMap {
         // Pushed off the surface further the more it turns from the sun (a wall the sun grazes
         // changes depth fast across a texel).
         let facing = dot(n, self.dir).clamp(0.05, 1.0);
-        let slope = ((1.0 - facing * facing).sqrt() / facing).min(6.0);
+        let slope = ((1.0 - facing * facing).sqrt() / facing).min(3.0);
         let q = add(p, scale(n, NORMAL_OFFSET * (1.0 + slope)));
         let x = (dot(q, self.u) - self.origin[0]) * self.texels;
         let y = (dot(q, self.v) - self.origin[1]) * self.texels;

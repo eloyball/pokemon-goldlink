@@ -799,11 +799,13 @@ impl Lighting {
             });
         }
 
-        // The sun's reach per pixel (UC13), small islands cleaned up.
+        // The sun's reach per pixel (UC13), small islands cleaned up. With each pixel's own
+        // normal, not the smoothed one: smoothing tilted the ground beside a post's foot toward
+        // the post's face, and the test then looked past the post (a lit strip at its foot).
         self.sun_vis.clear();
         self.sun_vis.resize(n, 1.0);
         if sun_strength > 0.0 {
-            let (cells, nrm, sun) = (&self.cells, &self.nrm, &self.shadow);
+            let (cells, nrm, sun) = (&self.cells, &self.tmp3, &self.shadow);
             par_rows(self.pool.as_ref(), &mut self.sun_vis, w, |y, row| {
                 for (x, out) in row.iter_mut().enumerate() {
                     let c = cells[y * w + x];
