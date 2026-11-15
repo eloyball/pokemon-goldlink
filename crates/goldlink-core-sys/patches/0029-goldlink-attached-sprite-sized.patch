@@ -8,7 +8,7 @@ its object.
   as its vertices come (MidTrackVertex), and one wider or taller than AttachMaxSize (72 pixels)
   isn't attached (MidClassify).
 - By night the game's black painted shadows (a building's, a sign's, a post's) can be softened
-  (SoftenGameShadows: their alpha at most 5 of 31); the grey blobs under people are faint as
+  (SoftenGameShadows: their alpha at most 1 of 31, just visible); the grey blobs under people are faint as
   they are.
 - Each polygon keeps its object (Polygon::Object: MidObjects' index, a model or a sprite), and
   the shadow geometry (patch 0028) gives it, so a light's own fixture (a lantern) can be told
@@ -97,7 +97,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          auto [from, to] = before.equal_range(key(c));
          for (auto it = from; it != to; ++it)
 --- a/src/GPU3D_Soft.h	2026-11-15 00:26:38.655202130 -0500
-+++ b/src/GPU3D_Soft.h	2026-11-15 00:36:46.928537507 -0500
++++ b/src/GPU3D_Soft.h	2026-11-15 00:42:07.197415048 -0500
 @@ -86,7 +86,7 @@
      // clip coordinates (the lighting places it in 3D with the projection, as it does pixels), its
      // texture coordinates and screen position; each textured polygon's texture as transparency
@@ -115,7 +115,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
 +    // at most SoftShadowAlpha (of 31) strong: by night they stay, but at the game's strength they
 +    // looked too dark beside the lighting (the user). The blobs under people (grey) are faint.
 +    bool SoftenGameShadows = false;
-+    static constexpr u32 SoftShadowAlpha = 5;
++    static constexpr u32 SoftShadowAlpha = 1;
  
      void SetupRenderThread(GPU& gpu);
      void EnableRenderThread();
