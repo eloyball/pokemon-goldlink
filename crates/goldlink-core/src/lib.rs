@@ -625,6 +625,13 @@ impl Nds {
         unsafe { sys::gl_core_set_hide_game_shadows(self.ptr(), c_int::from(on)) }
     }
 
+    /// Softens the game's black painted shadows (a building's, a sign's) from the next render
+    /// (UC13: by night, beside the lighting).
+    pub fn set_soften_game_shadows(&mut self, on: bool) {
+        // SAFETY: the core is live; the shim only sets a flag.
+        unsafe { sys::gl_core_set_soften_game_shadows(self.ptr(), c_int::from(on)) }
+    }
+
     /// What the lighting needs from the top screen (UC11) into `out`; false when the top screen
     /// can't show the 3D scene (then `out` is left as it was).
     pub fn light_buffers(&self, out: &mut LightBuffers) -> bool {

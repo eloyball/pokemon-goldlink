@@ -177,6 +177,8 @@ typedef struct GlShadowTex
 void gl_core_shadow_counts(GlCore *core, uint32_t counts[4]);
 // Leave the game's own shadows out of the 3D picture (UC13, patch 0028), from the next render.
 void gl_core_set_hide_game_shadows(GlCore *core, int on);
+// Soften the game's black painted shadows (UC13, patch 0029), from the next render.
+void gl_core_set_soften_game_shadows(GlCore *core, int on);
 void gl_core_shadow_geometry(GlCore *core, GlShadowPoly *polys, GlShadowVert *verts, GlShadowTex *texs, uint8_t *alpha);
 // Each top-screen line's fades (UC11, patch 0008), 4 bytes a line: the master brightness's mode
 // (0 none, 1 toward white, 2 toward black) and factor (0..16), then the same for the colour
