@@ -114,7 +114,6 @@ pub fn run(session: Session) -> Result<(), String> {
             .with_inner_size(size)
             .with_min_inner_size(layout::window_size(&config.video, 1.0) + bar)
             .with_title(&title),
-        #[cfg(windows)]
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

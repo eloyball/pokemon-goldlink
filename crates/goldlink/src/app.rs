@@ -1401,12 +1401,6 @@ impl eframe::App for GameApp {
         }
     }
 
-    #[cfg(not(windows))]
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.stop();
-    }
-
-    #[cfg(windows)]
     fn on_exit(&mut self) {
         self.stop();
     }

@@ -40,11 +40,23 @@ sha2 = "0.10"
 hex = "0.4"
 goldlink-sign = { path = "../goldlink-sign" }
 
-# The BizHawk version's launcher's choices, kept: OpenGL on Linux and macOS; on Windows wgpu
-# (Direct3D 12, with Windows' software adapter when there's no usable GPU), since many Windows
-# drivers, VMs and remote desktops lack OpenGL.
-[target.'cfg(not(windows))'.dependencies]
-eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+# wgpu on every OS (UC14: the lighting and shadows run on the GPU, written once in WGSL): Vulkan
+# on Linux with wgpu's OpenGL fallback, Metal on macOS, Direct3D 12 on Windows (with Windows'
+# software adapter when there's no usable GPU; many Windows drivers, VMs and remote desktops lack
+# OpenGL).
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.eframe]
+version = "0.31"
+default-features = false
+features = ["wgpu", "default_fonts", "wayland", "x11"]
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.wgpu]
+version = "24"
+default-features = false
+features = ["wgsl"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu = { version = "24", default-features = false, features = ["metal", "wgsl"] }
 
 # rfd's file chooser there goes through the desktop portal on zbus over Tokio, which needs a
 # runtime to drive it (launcher.rs `run_dialog`).

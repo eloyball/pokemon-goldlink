@@ -661,12 +661,6 @@ impl eframe::App for Shell {
         self.step(ctx);
     }
 
-    #[cfg(not(windows))]
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.shutdown();
-    }
-
-    #[cfg(windows)]
     fn on_exit(&mut self) {
         self.shutdown();
     }
@@ -692,7 +686,6 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/goldlink.png"))
                     .expect("the app icon is a PNG"),
             ),
-        #[cfg(windows)]
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
