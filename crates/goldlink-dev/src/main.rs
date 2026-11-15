@@ -301,6 +301,8 @@ fn window_with_bridge(
         extra_input: tour::shared().map(|t| t.input()),
         // The tour shows the release look (GOLDLINK_DEV_TOUR_WORLD names the world in its bar).
         release_look: std::env::var("GOLDLINK_DEV_TOUR_WORLD").ok(),
+        // The tour's films: every frame lit and shown before the next.
+        frames_in_step: std::env::var_os("GOLDLINK_DEV_TOUR_FILM").is_some(),
     })
 }
 

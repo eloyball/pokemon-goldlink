@@ -21,6 +21,7 @@
 //! Pixels where the 3D scene doesn't show (a text box, menus) are left exactly as they are.
 //! Battles and menus get [`Lighting::grade`] only: a small grade, no lighting.
 
+mod gpu;
 mod places;
 mod shadow;
 
@@ -420,21 +421,12 @@ fn small_grade(phase: Phase) -> Grade {
 
 /// The point lights nearest the player with the finer shadow maps (UC13).
 const MAX_FINE_LIGHTS: usize = 3;
-/// Sunlit patches smaller than this (pixels) inside shadow are shadowed; shadow specks smaller
-/// than `SHADOW_SPECK` in the sun are lit (UC13).
-const LIT_ISLAND: usize = 48;
-const SHADOW_SPECK: usize = 6;
-
-/// Ambient occlusion's reach, in view units (a tile is 16).
-const AO_RANGE: f32 = 20.0;
 /// A window light's reach.
 const LIGHT_RANGE: f32 = 90.0;
 /// At most this many point lights (the biggest bright patches).
 const MAX_LIGHTS: usize = 16;
 /// Neighbours further apart than this in depth (one pixel apart) are different surfaces.
 const EDGE: f32 = 12.0;
-/// The least light the ambient keeps where occlusion is strongest.
-const AMBIENT_FLOOR: f32 = 0.55;
 /// How much the S-curve deepens contrast.
 const CONTRAST: f32 = 0.10;
 /// 4096 steps of linear light to an sRGB byte, with the contrast curve.
@@ -489,9 +481,6 @@ pub struct Lighting {
     layer: Vec<u8>,
     nrm: Vec<V3>,
     tmp3: Vec<V3>,
-    out: Vec<V3>,
-    ao: Vec<f32>,
-    tmp1: Vec<f32>,
     label: Vec<u32>,
     stack: Vec<u32>,
     /// The vignette for (width, height, strength), per pixel.
@@ -502,15 +491,15 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
-    /// The sun's depth map (UC13), and how much of the sun reaches each pixel.
+    /// The cast shadows' casters and maps (UC13).
     shadow: shadow::Shadows,
-    sun_vis: Vec<f32>,
-    /// Each pixel where the polygons put it (UC13).
-    true_pos: Vec<Option<V3>>,
     /// The picture's mean brightness, followed slowly (the light sources' threshold): taken
     /// frame by frame it changed as the view moved, and window panes near it flickered between
     /// lit and glowing (the user's play test, walking up past houses).
     mean: Option<f32>,
+    /// The GPU that lights the overworld (UC14); None: no usable GPU.
+    gpu: Option<gpu::Gpu>,
+    gpu_out: Vec<u32>,
 }
 
 impl Default for Lighting {
@@ -615,9 +604,6 @@ impl Lighting {
             layer: Vec::new(),
             nrm: Vec::new(),
             tmp3: Vec::new(),
-            out: Vec::new(),
-            ao: Vec::new(),
-            tmp1: Vec::new(),
             label: Vec::new(),
             stack: Vec::new(),
             vignette: (0, 0, 0.0, Vec::new()),
@@ -626,8 +612,8 @@ impl Lighting {
             tracked_at: None,
             mean: None,
             shadow: shadow::Shadows::default(),
-            sun_vis: Vec::new(),
-            true_pos: Vec::new(),
+            gpu: None,
+            gpu_out: Vec::new(),
         }
     }
 
@@ -643,6 +629,13 @@ impl Lighting {
                     .collect(),
             );
         }
+    }
+
+    /// Lights the overworld on the GPU (UC14), a device of the lighting's own; false when there's
+    /// no usable one (the lighting is then off).
+    pub fn use_gpu(&mut self) -> bool {
+        self.gpu = gpu::Gpu::new();
+        self.gpu.is_some()
     }
 
     /// How many threads share the work (tests and timing).
@@ -664,7 +657,8 @@ impl Lighting {
     }
 
     /// The overworld: lights `px` (`w` x 192, 0x00RRGGBB), whose column 0 is the scene's
-    /// column `x0`. Pixels the scene marks as 2D only are left as they are.
+    /// column `x0`. Pixels the scene marks as 2D only are left as they are. False when there's no
+    /// GPU to light it on (UC14: the picture is left unlit).
     pub fn overworld(
         &mut self,
         px: &mut [u32],
@@ -673,12 +667,21 @@ impl Lighting {
         scene: &Scene,
         place: Place,
         phase: Phase,
-    ) {
+    ) -> bool {
+        if !self.has_gpu() {
+            return false;
+        }
         // The game's fades come off first and go back on last (the scene is lit, not the fade).
         let layer = Some((scene.layer, scene.width));
         let faded = Faded::lift(px, w, x0, scene.fade, layer);
         self.overworld_scene(px, w, x0, scene, place, phase);
         faded.put_back(px, w, x0, scene.fade, layer);
+        true
+    }
+
+    /// Whether the overworld is lit on a GPU (UC14); without one it's left unlit.
+    pub fn has_gpu(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| !g.failed())
     }
 
     /// Battles and menus with the game's fades known (`fade`, 192 lines): the small grade on the
@@ -713,11 +716,9 @@ impl Lighting {
         };
         let mut p = preset(place, phase);
         self.cells.resize(n, Cell::default());
-        for v in [&mut self.nrm, &mut self.tmp3, &mut self.out] {
+        for v in [&mut self.nrm, &mut self.tmp3] {
             v.resize(n, [0.0; 3]);
         }
-        self.ao.resize(n, 1.0);
-        self.tmp1.resize(n, 1.0);
         self.label.resize(n, 0);
 
         // 1. Colour, position, which pixels are the 3D scene.
@@ -777,12 +778,10 @@ impl Lighting {
                 let c = cells[y as usize * w + x as usize];
                 (c.layer != 0).then_some(c.pos)
             };
-            self.shadow
-                .prepare(&scene.geometry, &fwd, &rows, up, &seen, self.pool.as_ref());
+            self.shadow.prepare(&scene.geometry, &fwd, &rows, up, &seen);
             if let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours) {
                 let dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
-                self.shadow
-                    .build_sun(dir, shadow::TEXELS, self.pool.as_ref());
+                self.shadow.build_sun(dir, shadow::TEXELS);
                 if self.shadow.has_sun() {
                     p.key_dir = dir;
                     sun_strength = strength;
@@ -794,8 +793,11 @@ impl Lighting {
                 p.key_dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
             }
         }
-        self.normals(w, h);
-        self.occlusion(w, h, p.ao);
+        // The normals, occlusion and light are the GPU's; finding the light sources needs the
+        // normals here too.
+        if p.points > 0.0 {
+            self.normals(w, h);
+        }
         let found = if p.points > 0.0 {
             self.find_lights(w, h, p.points)
         } else {
@@ -813,19 +815,6 @@ impl Lighting {
                 range: p.player_range,
             });
         }
-        // Each pixel where the polygons put it (UC13), once for every light's test.
-        self.true_pos.clear();
-        self.true_pos.resize(n, None);
-        if self.shadow.ready {
-            let (cells, shadows) = (&self.cells, &self.shadow);
-            par_rows(self.pool.as_ref(), &mut self.true_pos, w, |y, row| {
-                for (x, out) in row.iter_mut().enumerate() {
-                    let c = cells[y * w + x];
-                    *out = (c.layer != 0).then(|| shadows.place(c.pos)).flatten();
-                }
-            });
-        }
-
         // The lights that cast shadows (UC13), outdoors: the lit windows and lamps nearest the
         // player (at most MAX_SHADOW_LIGHTS). Indoors and in caves the game's own shadows stay
         // (the user, 2026-11-14: "indoor shadows should remain vanilla"). `slots[i]`: light i's
@@ -860,7 +849,14 @@ impl Lighting {
                 .collect();
             // Every third pixel's place, for which faces of a light's cube anything looks out
             // through.
-            let receivers: Vec<V3> = self.true_pos.iter().step_by(3).flatten().copied().collect();
+            let shadows = &self.shadow;
+            let receivers: Vec<V3> = self
+                .cells
+                .iter()
+                .step_by(3)
+                .filter(|c| c.layer != 0)
+                .filter_map(|c| shadows.place(c.pos))
+                .collect();
             self.shadow
                 .build_points(&at, &receivers, self.pool.as_ref());
             for (slot, &i) in chosen.iter().enumerate() {
@@ -868,148 +864,91 @@ impl Lighting {
             }
         }
 
-        // The sun's reach per pixel (UC13), small islands cleaned up. With each pixel's own
-        // normal, not the smoothed one: smoothing tilted the ground beside a post's foot toward
-        // the post's face, and the test then looked past the post (a lit strip at its foot).
-        self.sun_vis.clear();
-        self.sun_vis.resize(n, 1.0);
-        if sun_strength > 0.0 {
-            let (tpos, nrm, shadows) = (&self.true_pos, &self.tmp3, &self.shadow);
-            par_rows(self.pool.as_ref(), &mut self.sun_vis, w, |y, row| {
-                for (x, out) in row.iter_mut().enumerate() {
-                    let Some(tp) = tpos[y * w + x] else {
-                        continue;
-                    };
-                    let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
-                    *out = shadows.light(None, tp, nrm[y * w + x], !player, x0 + x, y);
-                }
-            });
-            self.clean_islands(w, h);
-        }
-
-        // 3. Ambient, key light and point lights, on each pixel's own colour.
-        {
-            let norm = lum(p.ambient) + lum(p.key) * 0.85 + lum(p.player_light) * 0.45;
-            let (cells, nrm, ao) = (&self.cells, &self.nrm, &self.ao);
-            let lights = &lights;
-            let sun_vis = &self.sun_vis;
-            let (shadows, raw, slots, tpos) = (&self.shadow, &self.tmp3, &slots, &self.true_pos);
-            par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
-                for (x, out) in row.iter_mut().enumerate() {
-                    let i = y * w + x;
-                    let c = cells[i];
-                    if c.layer == 0 || c.glow >= 1.0 {
-                        *out = c.base;
-                        continue;
-                    }
-                    // The player's own pixels (the attached picture, with no depth of its own: it
-                    // shows the world's under it) are lit as a sprite: facing the camera, no
-                    // occlusion. By the world's, the dark where a desk or a television meets the
-                    // floor showed on them (the user's look, 2026-11-14).
-                    let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
-                    let (n, ao) = if player {
-                        ([0.0, 0.0, 1.0], 1.0)
-                    } else {
-                        (nrm[i], ao[i])
-                    };
-                    let wrap = ((dot(n, p.key_dir) + 0.35) / 1.35).clamp(0.0, 1.0);
-                    let shade = 1.0 - sun_strength * (1.0 - sun_vis[i]);
-                    let mut light = add(
-                        scale(p.ambient, AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * ao),
-                        scale(p.key, wrap * ao * shade),
-                    );
-                    for (l, slot) in lights.iter().zip(slots) {
-                        let v = sub(l.pos, c.pos);
-                        let d2 = dot(v, v);
-                        if d2 >= l.range * l.range {
-                            continue;
-                        }
-                        let d = d2.sqrt().max(1e-3);
-                        let fall = 1.0 - d / l.range;
-                        let facing = (dot(n, v) / d).max(0.0);
-                        let add_light = scale(l.colour, fall * fall * (0.3 + 0.7 * facing));
-                        // Too faint to see: no shadow test.
-                        if lum(add_light) < 0.004 {
-                            continue;
-                        }
-                        // In its shadow (UC13): its light doesn't reach.
-                        let reach = match (slot, tpos[i]) {
-                            (Some(k), Some(tp)) => {
-                                shadows.light(Some(*k), tp, raw[i], !player, x0 + x, y)
-                            }
-                            _ => 1.0,
-                        };
-                        light = add(light, scale(add_light, reach));
-                    }
-                    let lit = scale(mul(c.base, light), 1.0 / norm);
-                    *out = add(scale(lit, 1.0 - c.glow), scale(c.base, c.glow));
-                }
-            });
-        }
-
-        // 5. The grade and the vignette; 2D-only pixels as they were.
-        {
-            self.vignette_table(w, h, p.grade.vignette);
-            let (cells, out, srgb, vig) = (&self.cells, &self.out, &self.to_srgb, &self.vignette.3);
-            par_rows(self.pool.as_ref(), &mut px[..n], w, |y, row| {
-                for (x, px) in row.iter_mut().enumerate() {
-                    let i = y * w + x;
-                    if cells[i].layer == 0 {
-                        continue;
-                    }
-                    let v = vig[i];
-                    *px = pack(srgb, apply_grade(out[i], &p.grade, v));
-                }
-            });
-        }
+        // 3 to 5 on the GPU (UC14): the light, the cast shadows, the grade.
+        self.light_on_gpu(px, w, h, x0, scene, &p, sun_strength, &lights, &slots);
     }
 
-    /// Small islands in the sun's reach: a patch of sunlit ground smaller than [`LIT_ISLAND`]
-    /// pixels inside shadow (a sliver between two trees' shadows, seen as a stray rectangle: the
-    /// user's look) is shadowed, and a speck of shadow under [`SHADOW_SPECK`] pixels in the sun is
-    /// lit. Islands are 4-connected runs of the 3D scene's pixels.
-    fn clean_islands(&mut self, w: usize, h: usize) {
+    /// Steps 3 to 5 on the GPU (UC14): the light, the cast shadows, the grade. Unlit when the GPU
+    /// fails.
+    #[allow(clippy::too_many_arguments)]
+    fn light_on_gpu(
+        &mut self,
+        px: &mut [u32],
+        w: usize,
+        h: usize,
+        x0: usize,
+        scene: &Scene,
+        p: &Preset,
+        sun_strength: f32,
+        lights: &[PointLight],
+        slots: &[Option<usize>],
+    ) {
         let n = w * h;
-        for (lit, limit) in [(true, LIT_ISLAND), (false, SHADOW_SPECK)] {
-            let side = |i: usize| (self.sun_vis[i] >= 0.5) == lit;
-            self.label[..n].fill(0);
-            let mut region = Vec::new();
-            let mut flip = Vec::new();
-            for start in 0..n {
-                if self.label[start] != 0 || self.cells[start].layer == 0 || !side(start) {
-                    continue;
+        let pixels: Vec<gpu::Pixel> = (0..n)
+            .map(|i| {
+                let c = self.cells[i];
+                let (x, y) = (i % w, i / w);
+                let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
+                gpu::Pixel {
+                    pos: [
+                        c.pos[0],
+                        c.pos[1],
+                        c.pos[2],
+                        f32::from(u8::from(c.layer != 0)),
+                    ],
+                    info: [px[i], c.glow.to_bits(), u32::from(player), 0],
                 }
-                self.label[start] = 1;
-                self.stack.clear();
-                self.stack.push(start as u32);
-                region.clear();
-                // Touching the picture's edge: it may go on past it, left as it is.
-                let mut edge = false;
-                while let Some(i) = self.stack.pop() {
-                    let i = i as usize;
-                    region.push(i);
-                    let (x, y) = (i % w, i / w);
-                    edge |= x == 0 || y == 0 || x + 1 == w || y + 1 == h;
-                    let next = [
-                        (x > 0).then(|| i - 1),
-                        (x + 1 < w).then(|| i + 1),
-                        (y > 0).then(|| i - w),
-                        (y + 1 < h).then(|| i + w),
-                    ];
-                    for j in next.into_iter().flatten() {
-                        if self.label[j] == 0 && self.cells[j].layer != 0 && side(j) {
-                            self.label[j] = 1;
-                            self.stack.push(j as u32);
-                        }
-                    }
-                }
-                if !edge && region.len() < limit {
-                    flip.extend_from_slice(&region);
-                }
-            }
-            for i in flip {
-                self.sun_vis[i] = if lit { 0.0 } else { 1.0 };
-            }
+            })
+            .collect();
+        let glights: Vec<gpu::Light> = lights
+            .iter()
+            .zip(slots)
+            .map(|(l, s)| gpu::Light {
+                pos: [l.pos[0], l.pos[1], l.pos[2], l.range],
+                colour: [
+                    l.colour[0],
+                    l.colour[1],
+                    l.colour[2],
+                    s.map_or(-1.0, |s| s as f32),
+                ],
+            })
+            .collect();
+        let v4 = |v: V3, w: f32| [v[0], v[1], v[2], w];
+        let g = &p.grade;
+        let mut taps = [[0i32; 4]; 8];
+        for (t, &(dx, dy)) in taps.iter_mut().zip(&self.ao_taps) {
+            *t = [dx as i32, dy as i32, 0, 0];
+        }
+        let frame = gpu::Frame {
+            dims: [w as u32, h as u32, x0 as u32, shadow::PICTURE_WIDTH as u32],
+            counts: [glights.len() as u32, 0, 0, 0],
+            params: [
+                sun_strength,
+                lum(p.ambient) + lum(p.key) * 0.85 + lum(p.player_light) * 0.45,
+                1.6 * p.ao / self.ao_taps.len() as f32,
+                g.vignette,
+            ],
+            key_dir: v4(p.key_dir, 0.0),
+            ambient: v4(p.ambient, 0.0),
+            key: v4(p.key, 0.0),
+            tint: v4(g.tint, g.saturation),
+            shadow: v4(g.shadow, g.exposure),
+            high: v4(g.highlight, 0.0),
+            taps,
+            ..Default::default()
+        };
+        self.gpu_out.resize(n, 0);
+        let input = gpu::Input {
+            frame,
+            pixels: &pixels,
+            lights: &glights,
+            shadows: &self.shadow,
+        };
+        let Some(gpu) = self.gpu.as_mut() else {
+            return;
+        };
+        if gpu.run(&input, &mut self.gpu_out) {
+            px[..n].copy_from_slice(&self.gpu_out[..n]);
         }
     }
 
@@ -1072,78 +1011,6 @@ impl Lighting {
                     }
                 }
                 *out = normalize(sum);
-            }
-        });
-    }
-
-    /// Screen-space ambient occlusion: taps around each pixel that lie in front of its surface
-    /// (along its normal) and within reach darken it; then smoothed over the same surface.
-    fn occlusion(&mut self, w: usize, h: usize, strength: f32) {
-        let (pos, layer, nrm, taps) = (&self.pos, &self.layer, &self.nrm, &self.ao_taps);
-        let k = 1.6 * strength / taps.len() as f32;
-        let reach = taps
-            .iter()
-            .map(|t| t.0.unsigned_abs().max(t.1.unsigned_abs()))
-            .max()
-            .unwrap_or(0);
-        par_rows(self.pool.as_ref(), &mut self.tmp1, w, |y, row| {
-            let inner_y = y >= reach && y + reach < h;
-            for (x, out) in row.iter_mut().enumerate() {
-                let i = y * w + x;
-                *out = 1.0;
-                if layer[i] == 0 {
-                    continue;
-                }
-                let (p, n) = (pos[i], nrm[i]);
-                let inner = inner_y && x >= reach && x + reach < w;
-                let mut occ = 0.0;
-                for &(dx, dy) in taps {
-                    let j = if inner {
-                        (i as isize + dy * w as isize + dx) as usize
-                    } else {
-                        let (xx, yy) = (x as isize + dx, y as isize + dy);
-                        if xx < 0 || yy < 0 || xx >= w as isize || yy >= h as isize {
-                            continue;
-                        }
-                        yy as usize * w + xx as usize
-                    };
-                    if layer[j] == 0 {
-                        continue;
-                    }
-                    let v = sub(pos[j], p);
-                    let d2 = dot(v, v);
-                    let along = dot(n, v);
-                    // In front of the surface (cos > 0.15) and within reach.
-                    if along <= 0.0 || d2 >= AO_RANGE * AO_RANGE || along * along <= 0.0225 * d2 {
-                        continue;
-                    }
-                    let d = d2.sqrt();
-                    occ += (along / d - 0.15) * (1.0 - d / AO_RANGE);
-                }
-                *out = (1.0 - k * occ).clamp(0.5, 1.0);
-            }
-        });
-        let raw = &self.tmp1;
-        par_rows(self.pool.as_ref(), &mut self.ao, w, |y, row| {
-            let (y0, y1) = (y.saturating_sub(1), (y + 1).min(h - 1));
-            for (x, out) in row.iter_mut().enumerate() {
-                let i = y * w + x;
-                if layer[i] == 0 {
-                    *out = 1.0;
-                    continue;
-                }
-                let z = pos[i][2];
-                let (x0, x1) = (x.saturating_sub(1), (x + 1).min(w - 1));
-                let (mut sum, mut cnt) = (0.0, 0.0);
-                for yy in y0..=y1 {
-                    for j in yy * w + x0..=yy * w + x1 {
-                        if layer[j] != 0 && (pos[j][2] - z).abs() < 3.0 {
-                            sum += raw[j];
-                            cnt += 1.0;
-                        }
-                    }
-                }
-                *out = sum / cnt;
             }
         });
     }
@@ -1553,6 +1420,10 @@ mod tests {
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
         let mut lighting = Lighting::new();
+        if !lighting.use_gpu() {
+            eprintln!("no GPU here: the overworld's lighting isn't tested");
+            return;
+        }
         lighting.overworld(&mut px, 256, 64, &scene, Place::Outdoor, Phase::Day);
         // The text box's rows: untouched.
         assert!(px[160 * 256..].iter().all(|&p| p == 0x0080_8080));
@@ -1585,8 +1456,13 @@ mod tests {
                 lamp[y * 256 + x] = 0x00FF_C060;
             }
         }
+        if !Lighting::new().use_gpu() {
+            eprintln!("no GPU here: the overworld's lighting isn't tested");
+            return;
+        }
         let lit = |frames: usize, px: &[u32]| {
             let mut lighting = Lighting::new();
+            lighting.use_gpu();
             let mut out = px.to_vec();
             for _ in 0..frames {
                 out = px.to_vec();

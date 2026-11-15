@@ -3,6 +3,8 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -177,7 +179,12 @@ pub struct GameApp {
     /// button tapped once back in the overworld (`feed_input`).
     shoes_tap: Option<(ShoesTap, Instant)>,
     /// The lighting's buffers and worker threads (UC11), from the first lit frame.
-    lighting: Option<goldlink_light::Lighting>,
+    /// The lighting's thread (UC14), with the lighting on.
+    light_thread: Option<LightThread>,
+    /// No usable GPU for the lighting (UC14): it's off for this session (said once).
+    no_gpu: bool,
+    /// Each emulated frame lit and shown before the next is taken (the dev tour's films).
+    pub frames_in_step: bool,
 
     settings_open: bool,
     messages: VecDeque<Message>,
@@ -257,7 +264,9 @@ impl GameApp {
             mega_icon: None,
             shoes_icon: None,
             shoes_tap: None,
-            lighting: None,
+            light_thread: None,
+            no_gpu: false,
+            frames_in_step: false,
 
             settings_open: false,
             messages,
@@ -435,8 +444,11 @@ impl GameApp {
 
     fn update_texture(&mut self, ctx: &egui::Context) {
         let Some(runner) = &self.runner else { return };
-        let lit = self.config.video.lighting;
-        let shown = {
+        let lit = self.config.video.lighting && !self.no_gpu;
+        // A new frame from the emulation: what the HUD reads at once; the picture lit on the
+        // lighting thread (UC14), so the window never waits for it (at 240 Hz it has 4 ms a
+        // frame, and lighting a frame took 6).
+        let taken = {
             let frame = lock(&runner.shared.frame);
             if frame.seq == self.last_seq {
                 None
@@ -493,45 +505,77 @@ impl GameApp {
                     && frame.wide_side > 0
                     && !frame.wide.is_empty())
                 .then(|| frame.wide.clone());
-                self.wide_side = frame.wide_side;
-                self.steady_shift = frame.steady_shift;
                 self.running_shoes = frame.running_shoes;
-                self.steady_origin = frame.steady_origin;
-                self.edge_fill = [
-                    edge_rows(&frame.pixels[..256 * 192]),
-                    edge_rows(&frame.pixels[256 * 192..256 * 384]),
-                ];
-                let light = if lit { frame.light.clone() } else { None };
-                let layers = (frame.fixed.clone(), frame.attached.clone());
-                Some((frame.pixels.clone(), wide, frame.wide_side, light, layers))
+                Some(Shown {
+                    pixels: frame.pixels.clone(),
+                    wide,
+                    side: frame.wide_side,
+                    light: if lit { frame.light.clone() } else { None },
+                    fixed: frame.fixed.clone(),
+                    attached: frame.attached.clone(),
+                    steady_shift: frame.steady_shift,
+                    steady_origin: frame.steady_origin,
+                    edge_fill: [
+                        edge_rows(&frame.pixels[..256 * 192]),
+                        edge_rows(&frame.pixels[256 * 192..256 * 384]),
+                    ],
+                    unlit: None,
+                })
+            }
+        };
+        let shown = match (taken, lit) {
+            (taken, false) => {
+                self.light_thread = None;
+                taken
+            }
+            (taken, true) => {
+                let worker = self
+                    .light_thread
+                    .get_or_insert_with(|| LightThread::start(ctx.clone()));
+                if let Some(s) = taken {
+                    worker.send(s, self.config.video.shadows);
+                    if self.frames_in_step {
+                        worker.wait();
+                    }
+                }
+                let (lit, gone) = (worker.take(), worker.no_gpu());
+                if gone {
+                    // No usable GPU: the picture as the game draws it, said once.
+                    self.no_gpu = true;
+                    self.light_thread = None;
+                    self.say(
+                        "Your graphics card can't run GoldLink's lighting, so it's off.",
+                        false,
+                    );
+                }
+                lit
             }
         };
         let (k, options) = sharp_prescale(self.shown_scale, self.config.video.filter);
-        let Some((mut pixels, mut wide, side, light, (fixed, attached))) = shown else {
+        let Some(Shown {
+            mut pixels,
+            mut wide,
+            side,
+            fixed,
+            attached,
+            steady_shift,
+            steady_origin,
+            edge_fill,
+            unlit,
+            ..
+        }) = shown
+        else {
             if self.texture.is_none() {
                 let img = egui::ColorImage::new([256, 384], egui::Color32::BLACK);
                 self.texture = Some(ctx.load_texture("screens", img, options));
             }
             return;
         };
-        // The top picture before the lighting, with the attached picture: the two pictures put
-        // together are lit as the top picture is (each DS pixel's gain).
-        let unlit: Option<Vec<u32>> = attached
-            .as_ref()
-            .filter(|_| lit && self.steady_shift.is_some())
-            .map(|_| match &wide {
-                Some(w) => w.clone(),
-                None => pixels[..256 * 192].to_vec(),
-            });
-        if lit {
-            self.light(
-                &mut pixels,
-                wide.as_deref_mut(),
-                side,
-                light.as_ref(),
-                attached.as_ref(),
-            );
-        }
+        // What the picture shown is: its wider sides, its slide, its edges.
+        self.wide_side = side;
+        self.steady_shift = steady_shift;
+        self.steady_origin = steady_origin;
+        self.edge_fill = edge_fill;
         let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
         // The steady overworld's layers (UC11, UC12): the player and the world put together at
         // the screen's resolution round the player, slid with the picture, and the 2D over the
@@ -569,140 +613,6 @@ impl GameApp {
             Some(t) => t.set(img, options),
             None => self.texture = Some(ctx.load_texture("screens", img, options)),
         }
-    }
-
-    /// The lighting (UC11): the overworld lit on the top screen (the wider picture when it's
-    /// shown, else the screen), everything else (battles, menus, the touch screen) graded.
-    fn light(
-        &mut self,
-        pixels: &mut [u32],
-        wide: Option<&mut [u32]>,
-        side: usize,
-        light: Option<&goldlink_runtime::LightFrame>,
-        attached: Option<&goldlink_core::Attached>,
-    ) {
-        use goldlink_light::{Phase, Place, Scene};
-        // Where the attached picture shows on top, opaque, on the lighting's columns (UC13): its
-        // pixel is there and the picture shows its colour (not something drawn in front of the
-        // player: a roof's pixels lit as the player's left a ghost of them on it, the user's look).
-        let width = goldlink_core::LightBuffers::WIDTH;
-        let (shown, shown_w): (&[u32], usize) = match wide.as_deref() {
-            Some(w) => (w, 256 + 2 * side),
-            None => (&pixels[..256 * 192], 256),
-        };
-        let player: Vec<u8> = attached.map_or_else(Vec::new, |a| {
-            let cols = a.plain.len() / 192;
-            let off = cols as isize - width as isize;
-            let soff = shown_w as isize - width as isize;
-            let near = |p: u32, q: u32| {
-                [16, 8, 0]
-                    .iter()
-                    .all(|&s| ((p >> s) & 255).abs_diff((q >> s) & 255) <= 12)
-            };
-            (0..width * 192)
-                .map(|i| {
-                    let y = i / width;
-                    let (x, sx) = (
-                        (i % width) as isize + off / 2,
-                        (i % width) as isize + soff / 2,
-                    );
-                    let at = (x >= 0 && (x as usize) < cols).then(|| a.att[y * cols + x as usize]);
-                    let on = (sx >= 0 && (sx as usize) < shown_w)
-                        .then(|| shown[y * shown_w + sx as usize]);
-                    u8::from(match (at, on) {
-                        (Some(c), Some(s)) => c >> 24 >= 0xF0 && near(c, s),
-                        _ => false,
-                    })
-                })
-                .collect()
-        });
-        let lighting = self
-            .lighting
-            .get_or_insert_with(goldlink_light::Lighting::new);
-        let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
-        let phase = Phase::of_hour(hour);
-        let world = light.filter(|l| l.overworld());
-        // The picture's polygons for the cast shadows (UC13), as the lighting takes them.
-        let shadows = self.config.video.shadows;
-        let (polys, verts): (Vec<_>, Vec<_>) = world.filter(|_| shadows).map_or_else(Default::default, |l| {
-            let g = &l.buffers.geometry;
-            (
-                g.polys
-                    .iter()
-                    .map(|p| goldlink_light::ShadowPoly {
-                        first_vert: p.first_vert,
-                        num_verts: p.num_verts,
-                        attr: p.attr,
-                        tex_param: p.tex_param,
-                        tex: p.tex,
-                        flags: p.flags,
-                        object: p.object,
-                    })
-                    .collect(),
-                g.verts
-                    .iter()
-                    .map(|v| goldlink_light::ShadowVert {
-                        clip: v.clip,
-                        st: v.st,
-                        screen: v.screen,
-                    })
-                    .collect(),
-            )
-        });
-        let texs: Vec<_> = world.map_or_else(Vec::new, |l| {
-            l.buffers
-                .geometry
-                .texs
-                .iter()
-                .map(|t| goldlink_light::ShadowTex {
-                    width: t.width,
-                    height: t.height,
-                    offset: t.offset,
-                })
-                .collect()
-        });
-        let scene = world.map(|l| {
-            (
-                Scene {
-                    depth: &l.buffers.depth,
-                    layer: &l.buffers.layer,
-                    proj: l.buffers.proj,
-                    width: goldlink_core::LightBuffers::WIDTH,
-                    fade: &l.buffers.fade,
-                    geometry: goldlink_light::Geometry {
-                        polys: &polys,
-                        verts: &verts,
-                        texs: &texs,
-                        alpha: &l.buffers.geometry.alpha,
-                    },
-                    hours: l.hour as f32 + l.minute as f32 / 60.0,
-                    attached: &player,
-                },
-                Place::of_map(l.map),
-            )
-        });
-        let middle = goldlink_core::Nds::MAX_WIDE_SIDE;
-        // The game's fades on the top screen, when the 3D scene is there (a battle's flash).
-        let fade: &[goldlink_light::Fade] = light.map_or(&[], |l| &l.buffers.fade);
-        let (top, bottom) = pixels.split_at_mut(256 * 192);
-        match wide {
-            Some(wide) => {
-                let w = 256 + 2 * side;
-                match &scene {
-                    Some((s, place)) => {
-                        lighting.overworld(wide, w, middle - side, s, *place, phase)
-                    }
-                    None => lighting.grade_faded(wide, w, phase, fade),
-                }
-                // The DS screen alone shows where the wider picture doesn't (menus, the title).
-                lighting.grade_faded(top, 256, phase, fade);
-            }
-            None => match &scene {
-                Some((s, place)) => lighting.overworld(top, 256, middle, s, *place, phase),
-                None => lighting.grade_faded(top, 256, phase, fade),
-            },
-        }
-        lighting.grade(bottom, 256, 192, phase);
     }
 
     fn collect_events(&mut self) {
@@ -2100,6 +2010,285 @@ fn slide(
         )
     };
     (egui::Rect::from_min_max(at(kept.min), at(kept.max)), kept)
+}
+
+/// The lighting (UC11): the overworld lit on the top screen (the wider picture when it's
+/// shown, else the screen), everything else (battles, menus, the touch screen) graded.
+fn light(
+    lighting: &mut goldlink_light::Lighting,
+    shadows: bool,
+    pixels: &mut [u32],
+    wide: Option<&mut [u32]>,
+    side: usize,
+    light: Option<&goldlink_runtime::LightFrame>,
+    attached: Option<&goldlink_core::Attached>,
+) {
+    use goldlink_light::{Phase, Place, Scene};
+    // Where the attached picture shows on top, opaque, on the lighting's columns (UC13): its
+    // pixel is there and the picture shows its colour (not something drawn in front of the
+    // player: a roof's pixels lit as the player's left a ghost of them on it, the user's look).
+    let width = goldlink_core::LightBuffers::WIDTH;
+    let (shown, shown_w): (&[u32], usize) = match wide.as_deref() {
+        Some(w) => (w, 256 + 2 * side),
+        None => (&pixels[..256 * 192], 256),
+    };
+    let player: Vec<u8> = attached.map_or_else(Vec::new, |a| {
+        let cols = a.plain.len() / 192;
+        let off = cols as isize - width as isize;
+        let soff = shown_w as isize - width as isize;
+        let near = |p: u32, q: u32| {
+            [16, 8, 0]
+                .iter()
+                .all(|&s| ((p >> s) & 255).abs_diff((q >> s) & 255) <= 12)
+        };
+        (0..width * 192)
+            .map(|i| {
+                let y = i / width;
+                let (x, sx) = (
+                    (i % width) as isize + off / 2,
+                    (i % width) as isize + soff / 2,
+                );
+                let at = (x >= 0 && (x as usize) < cols).then(|| a.att[y * cols + x as usize]);
+                let on =
+                    (sx >= 0 && (sx as usize) < shown_w).then(|| shown[y * shown_w + sx as usize]);
+                u8::from(match (at, on) {
+                    (Some(c), Some(s)) => c >> 24 >= 0xF0 && near(c, s),
+                    _ => false,
+                })
+            })
+            .collect()
+    });
+    let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
+    let phase = Phase::of_hour(hour);
+    let world = light.filter(|l| l.overworld());
+    // The picture's polygons for the cast shadows (UC13), as the lighting takes them.
+    let (polys, verts): (Vec<_>, Vec<_>) =
+        world
+            .filter(|_| shadows)
+            .map_or_else(Default::default, |l| {
+                let g = &l.buffers.geometry;
+                (
+                    g.polys
+                        .iter()
+                        .map(|p| goldlink_light::ShadowPoly {
+                            first_vert: p.first_vert,
+                            num_verts: p.num_verts,
+                            attr: p.attr,
+                            tex_param: p.tex_param,
+                            tex: p.tex,
+                            flags: p.flags,
+                            object: p.object,
+                        })
+                        .collect(),
+                    g.verts
+                        .iter()
+                        .map(|v| goldlink_light::ShadowVert {
+                            clip: v.clip,
+                            st: v.st,
+                            screen: v.screen,
+                        })
+                        .collect(),
+                )
+            });
+    let texs: Vec<_> = world.map_or_else(Vec::new, |l| {
+        l.buffers
+            .geometry
+            .texs
+            .iter()
+            .map(|t| goldlink_light::ShadowTex {
+                width: t.width,
+                height: t.height,
+                offset: t.offset,
+            })
+            .collect()
+    });
+    let scene = world.map(|l| {
+        (
+            Scene {
+                depth: &l.buffers.depth,
+                layer: &l.buffers.layer,
+                proj: l.buffers.proj,
+                width: goldlink_core::LightBuffers::WIDTH,
+                fade: &l.buffers.fade,
+                geometry: goldlink_light::Geometry {
+                    polys: &polys,
+                    verts: &verts,
+                    texs: &texs,
+                    alpha: &l.buffers.geometry.alpha,
+                },
+                hours: l.hour as f32 + l.minute as f32 / 60.0,
+                attached: &player,
+            },
+            Place::of_map(l.map),
+        )
+    });
+    let middle = goldlink_core::Nds::MAX_WIDE_SIDE;
+    // The game's fades on the top screen, when the 3D scene is there (a battle's flash).
+    let fade: &[goldlink_light::Fade] = light.map_or(&[], |l| &l.buffers.fade);
+    let (top, bottom) = pixels.split_at_mut(256 * 192);
+    match wide {
+        Some(wide) => {
+            let w = 256 + 2 * side;
+            match &scene {
+                Some((s, place)) => {
+                    lighting.overworld(wide, w, middle - side, s, *place, phase);
+                }
+                None => lighting.grade_faded(wide, w, phase, fade),
+            }
+            // The DS screen alone shows where the wider picture doesn't (menus, the title).
+            lighting.grade_faded(top, 256, phase, fade);
+        }
+        None => match &scene {
+            Some((s, place)) => {
+                lighting.overworld(top, 256, middle, s, *place, phase);
+            }
+            None => lighting.grade_faded(top, 256, phase, fade),
+        },
+    }
+    lighting.grade(bottom, 256, 192, phase);
+}
+
+/// A frame taken from the emulation, as the window shows it (lit on the lighting thread).
+struct Shown {
+    pixels: Vec<u32>,
+    wide: Option<Vec<u32>>,
+    side: usize,
+    light: Option<goldlink_runtime::LightFrame>,
+    fixed: Vec<u8>,
+    attached: Option<goldlink_core::Attached>,
+    steady_shift: Option<[f32; 2]>,
+    steady_origin: [f64; 2],
+    edge_fill: [[Option<EdgeFill>; 2]; 2],
+    /// The top picture before the lighting, with the attached picture: the two put together are
+    /// lit as the top picture is (each DS pixel's gain).
+    unlit: Option<Vec<u32>>,
+}
+
+/// A frame waiting to be lit, and whether the casters cast (the Shadows setting).
+type Job = Arc<(Mutex<Option<(Shown, bool)>>, Condvar)>;
+/// The frame lit last.
+type Done = Arc<(Mutex<Option<Shown>>, Condvar)>;
+
+/// The lighting's own thread (UC14): each frame lit there (its CPU part and the GPU's, the GPU
+/// being the window's), the window taking the latest when it's done. Frames the lighting falls
+/// behind on are skipped, never queued.
+struct LightThread {
+    job: Job,
+    done: Done,
+    stop: Arc<AtomicBool>,
+    /// No usable GPU (or it failed): nothing is lit.
+    no_gpu: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl LightThread {
+    fn start(ctx: egui::Context) -> Self {
+        let job: Job = Arc::default();
+        let done: Done = Arc::default();
+        let stop = Arc::new(AtomicBool::new(false));
+        let no_gpu = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let (job, done, stop, no_gpu) =
+                (job.clone(), done.clone(), stop.clone(), no_gpu.clone());
+            std::thread::Builder::new()
+                .name("goldlink-lighting".into())
+                .spawn(move || {
+                    let mut lighting = goldlink_light::Lighting::new();
+                    if !lighting.use_gpu() {
+                        no_gpu.store(true, Ordering::Relaxed);
+                        ctx.request_repaint();
+                        return;
+                    }
+                    loop {
+                        let (mut s, shadows) = {
+                            let mut g = lock(&job.0);
+                            loop {
+                                if stop.load(Ordering::Relaxed) {
+                                    return;
+                                }
+                                if let Some(j) = g.take() {
+                                    break j;
+                                }
+                                g = job.1.wait(g).unwrap_or_else(|e| e.into_inner());
+                            }
+                        };
+                        s.unlit = s
+                            .attached
+                            .as_ref()
+                            .filter(|_| s.steady_shift.is_some())
+                            .map(|_| match &s.wide {
+                                Some(w) => w.clone(),
+                                None => s.pixels[..256 * 192].to_vec(),
+                            });
+                        light(
+                            &mut lighting,
+                            shadows,
+                            &mut s.pixels,
+                            s.wide.as_deref_mut(),
+                            s.side,
+                            s.light.as_ref(),
+                            s.attached.as_ref(),
+                        );
+                        if !lighting.has_gpu() {
+                            no_gpu.store(true, Ordering::Relaxed);
+                        }
+                        *lock(&done.0) = Some(s);
+                        done.1.notify_all();
+                        ctx.request_repaint();
+                    }
+                })
+                .expect("the lighting's thread starts")
+        };
+        Self {
+            job,
+            done,
+            stop,
+            no_gpu,
+            thread: Some(thread),
+        }
+    }
+
+    fn no_gpu(&self) -> bool {
+        self.no_gpu.load(Ordering::Relaxed)
+    }
+
+    /// Lights `s` next (in place of a frame not started yet).
+    fn send(&self, s: Shown, shadows: bool) {
+        *lock(&self.job.0) = Some((s, shadows));
+        self.job.1.notify_one();
+    }
+
+    /// Waits (a moment at most) for the frame sent last.
+    fn wait(&self) {
+        let deadline = Instant::now() + Duration::from_millis(500);
+        let mut g = lock(&self.done.0);
+        while g.is_none() && !self.no_gpu() {
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            g = self
+                .done
+                .1
+                .wait_timeout(g, deadline - now)
+                .map_or_else(|e| e.into_inner().0, |r| r.0);
+        }
+    }
+
+    /// The frame lit last, once.
+    fn take(&self) -> Option<Shown> {
+        lock(&self.done.0).take()
+    }
+}
+
+impl Drop for LightThread {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        self.job.1.notify_all();
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
 }
 
 #[cfg(test)]

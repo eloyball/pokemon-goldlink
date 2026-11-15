@@ -14,3 +14,7 @@ workspace = true
 # A pool of worker threads that stays up between frames (spawning threads per step cost more
 # than the steps).
 rayon = "1"
+# The lighting and the cast shadows on the GPU (UC14): wgpu, as the window's.
+wgpu = { version = "24", default-features = false, features = ["wgsl"] }
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }

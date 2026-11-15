@@ -73,10 +73,6 @@ const DEFAULT_UP: V3 = [0.0, 0.66, 0.75];
 pub const TEXELS: f32 = 2.0;
 /// At most this many texels a side.
 const MAX_SIDE: usize = 1536;
-/// How far a pixel is pushed off its surface (along its normal, then toward the sun) before the
-/// test, so a surface doesn't shadow itself.
-const NORMAL_OFFSET: f32 = 0.4;
-const BIAS: f32 = 0.4;
 /// How far an upright face's bottom edge goes on back along the camera's rays (view units): past
 /// the ground behind a model standing a little above it.
 const SKIRT: f32 = 6.0;
@@ -129,43 +125,30 @@ pub fn moon(hours: f32) -> Option<(f32, f32, f32)> {
 /// A card: a sprite turned toward the camera (a person, a Pokémon, a sign, a tree). Casting, it
 /// stands at its foot turned toward the light.
 #[derive(Debug, Clone)]
-struct Card {
+pub(crate) struct Card {
     /// On the card's plane: a point, its normal, across and up the card (unit).
-    origin: V3,
-    normal: V3,
-    across: V3,
-    up: V3,
+    pub(crate) origin: V3,
+    pub(crate) normal: V3,
+    pub(crate) across: V3,
+    pub(crate) up: V3,
     /// Its extent along `across` and `up` from `origin` (`b[0]`: its feet, its lowest texels that
     /// show).
-    a: [f32; 2],
-    b: [f32; 2],
+    pub(crate) a: [f32; 2],
+    pub(crate) b: [f32; 2],
     /// Where it stands on the ground.
-    foot: V3,
+    pub(crate) foot: V3,
     /// Its corners: across from its middle, up from its feet, texture coordinates.
     local: Vec<([f32; 2], [f32; 2])>,
     tex: Option<ShadowTex>,
     param: u32,
-    attached: bool,
-    /// How much of each light reaches it (the sun's, then each point light's): the whole card
-    /// is lit as one (another card's shadow across a flat sprite cut it in blocks: the user's
-    /// look, 2026-11-14): a person as their foot, a tree (taller than a person) as the mean along
-    /// its middle (by its foot alone a forest came out patchy).
-    sun: f32,
-    points: Vec<f32>,
+    /// The whole card is lit as one (light.wgsl `cards_lit`: another card's shadow across a flat
+    /// sprite cut it in blocks, the user's look, 2026-11-14): a person as their foot, a tree
+    /// (taller than a person) as the mean along its middle (by its foot alone a forest came out
+    /// patchy).
+    pub(crate) attached: bool,
 }
 
 impl Card {
-    /// Whether `p` lies on this card (within a unit or two).
-    fn holds(&self, p: V3) -> bool {
-        let d = sub(p, self.origin);
-        let (a, b) = (dot(d, self.across), dot(d, self.up));
-        dot(d, self.normal).abs() < 2.5
-            && a > self.a[0] - 1.5
-            && a < self.a[1] + 1.5
-            && b > self.b[0] - 1.5
-            && b < self.b[1] + 1.5
-    }
-
     /// Its corners standing at its foot, turned to face `toward` (a horizontal direction), sunk
     /// into the ground by the test's margin so the shadow starts where the feet touch it.
     fn standing(&self, up: V3, toward: V3) -> Vec<Corner> {
@@ -194,7 +177,7 @@ struct Caster {
 /// and texels per unit) or from a point light through one face of a cube (`forward`, `right`,
 /// `upward`, 90 degrees, `size` texels a side).
 #[derive(Debug, Clone, Copy)]
-enum View {
+pub(crate) enum View {
     Sun {
         dir: V3,
         u: V3,
@@ -282,35 +265,26 @@ impl View {
     }
 }
 
-/// A depth map of the casters as one light sees them.
-struct DepthMap {
-    view: View,
-    side: [usize; 2],
-    /// Per texel: the nearest to the light, and its card (index + 1; 0 none).
-    depth: Vec<f32>,
-    card: Vec<u32>,
+/// A depth map of the casters as one light sees them: its triangles, drawn on the GPU (UC14,
+/// gpu.rs and maps.wgsl).
+pub(crate) struct DepthMap {
+    pub(crate) view: View,
+    pub(crate) side: [usize; 2],
+    pub(crate) tris: Vec<Tri>,
 }
 
 impl DepthMap {
     fn new(view: View, side: [usize; 2]) -> Self {
-        let n = side[0] * side[1];
         Self {
             view,
             side,
-            depth: vec![f32::MIN; n],
-            card: vec![0; n],
+            tris: Vec::new(),
         }
     }
 
-    /// Draws the casters (`casters`, then `extra`) in bands of rows on the pool's threads.
-    fn draw(
-        &mut self,
-        casters: &[&Caster],
-        extra: &[&Caster],
-        alpha: &[u8],
-        pool: Option<&rayon::ThreadPool>,
-    ) {
-        let mut tris = Vec::new();
+    /// The casters (`casters`, then `extra`) as triangles on the map.
+    fn draw(&mut self, casters: &[&Caster], extra: &[&Caster]) {
+        self.tris.clear();
         for c in casters.iter().chain(extra) {
             // A point light's face: casters wholly outside its view (behind it, or past one of
             // its four sides) are passed over at once (each caster lies in one or two faces).
@@ -353,63 +327,16 @@ impl DepthMap {
                 if y1 < 0.0 || y0 >= self.side[1] as f32 {
                     continue;
                 }
-                tris.push((y0.floor().max(0.0) as usize, y1.ceil() as usize, t));
+                self.tris.push(t);
             }
         }
-        let width = self.side[0];
-        let draw = |band: usize, depth: &mut [f32], card: &mut [u32]| {
-            let (r0, r1) = (band * BAND, band * BAND + depth.len() / width);
-            for (y0, y1, t) in &tris {
-                if *y1 <= r0 || *y0 >= r1 {
-                    continue;
-                }
-                t.draw((*y0).max(r0), (*y1).min(r1), r0, width, depth, card, alpha);
-            }
-        };
-        let bands = self
-            .depth
-            .chunks_mut(BAND * width)
-            .zip(self.card.chunks_mut(BAND * width))
-            .enumerate();
-        match pool {
-            Some(pool) => {
-                use rayon::prelude::*;
-                let mut bands: Vec<_> = bands.collect();
-                pool.install(|| bands.par_iter_mut().for_each(|(b, (d, c))| draw(*b, d, c)));
-            }
-            None => bands.for_each(|(b, (d, c))| draw(b, d, c)),
-        }
-    }
-
-    /// Whether something nearer the light lies over `q` (a point already pushed off its surface)
-    /// with `slope` (how far its surface turns from the light, for the bias): the card it is
-    /// (index + 1), 0 for a polygon; None when nothing does.
-    fn over(&self, q: V3, slope: f32) -> Option<u32> {
-        let [x, y, d] = self.view.map(q)?;
-        if x < 0.0 || y < 0.0 {
-            return None;
-        }
-        let (x, y) = (x as usize, y as usize);
-        if x >= self.side[0] || y >= self.side[1] {
-            return None;
-        }
-        let i = y * self.side[0] + x;
-        let occluded = match self.view {
-            View::Sun { texels, .. } => self.depth[i] > d + BIAS * (1.0 + slope / texels),
-            // One over the distance: nearer than the receiver by the bias.
-            View::Face { .. } => {
-                let z = 1.0 / d;
-                self.depth[i] > 1.0 / (z - BIAS * (1.0 + slope)).max(NEAR)
-            }
-        };
-        occluded.then_some(self.card[i])
     }
 }
 
 /// A point light's depth maps: the six faces of a cube round it.
-struct PointMaps {
-    pos: V3,
-    faces: Vec<DepthMap>,
+pub(crate) struct PointMaps {
+    pub(crate) pos: V3,
+    pub(crate) faces: Vec<DepthMap>,
 }
 
 /// Texels a side of a point light's face: the nearest the player's, the others'.
@@ -423,28 +350,28 @@ pub struct Shadows {
     /// The ground's normal found in the last picture.
     pub up: V3,
     /// The projection and its inverse (rows, vectors on the left).
-    proj: [[f32; 4]; 4],
-    rows: [[f32; 4]; 4],
+    pub(crate) proj: [[f32; 4]; 4],
+    pub(crate) rows: [[f32; 4]; 4],
     /// Where the polygons truly land: column = fit[0] + fit[1] * x, row = fit[2] + fit[3] * y (x, y
     /// normalised device coordinates). The steady overworld's viewport isn't the screen's (it's
     /// 4/3 as wide), so the lighting's pixels ([`super::unproject`]) are placed on another scale
     /// across than the polygons: [`Shadows::true_place`] moves them onto the polygons'.
-    fit: [f32; 4],
+    pub(crate) fit: [f32; 4],
     /// Everything that casts but the cards (with their skirts and slabs).
     casters: Vec<Caster>,
-    cards: Vec<Card>,
-    /// Per pixel of the picture (`PICTURE_WIDTH` x 192): the card it shows (index + 1; 0 none).
-    card_px: Vec<u32>,
-    alpha: Vec<u8>,
+    pub(crate) cards: Vec<Card>,
+    pub(crate) alpha: Vec<u8>,
     /// The sun's map and its direction (toward it); the point lights' maps.
-    sun: Option<(DepthMap, V3)>,
-    points: Vec<PointMaps>,
+    pub(crate) sun: Option<(DepthMap, V3)>,
+    pub(crate) points: Vec<PointMaps>,
     /// A corner of the drawn ground (view space), for laying the sun's texels on the world.
     anchor: Option<[f64; 3]>,
     /// Where the picture's pixels lie (view space, a sample): the sun's map covers them (what
     /// casts past the picture's edges can shadow only what's in it).
     shown: Vec<V3>,
     pub ready: bool,
+    /// Each card's shape on the picture (columns, rows, its nearness).
+    pub(crate) card_tris: Vec<Tri>,
 }
 
 /// Least squares `y = a + b x` over `(x, y)` sums; None when the xs don't spread.
@@ -520,7 +447,6 @@ impl Shadows {
         rows: &[[f32; 4]; 4],
         up: V3,
         seen: &dyn Fn(f32, f32) -> Option<V3>,
-        pool: Option<&rayon::ThreadPool>,
     ) {
         self.ready = false;
         self.sun = None;
@@ -766,8 +692,6 @@ impl Shadows {
                         tex,
                         param: p.tex_param,
                         attached: p.flags & FLAG_ATTACHED != 0,
-                        sun: 1.0,
-                        points: Vec::new(),
                     });
                     shapes.push((corners.clone(), tex, p.tex_param));
                     continue;
@@ -834,12 +758,9 @@ impl Shadows {
                 });
             }
         }
-        // Which card each pixel of the picture shows (the nearest, its transparent texels left
-        // out).
-        self.card_px.clear();
-        self.card_px.resize(PICTURE_WIDTH * PICTURE_HEIGHT, 0);
-        let mut near = vec![f32::MIN; PICTURE_WIDTH * PICTURE_HEIGHT];
-        let mut tris = Vec::new();
+        // Each card's shape on the picture (its columns, rows and nearness), for the map of which
+        // card each pixel shows (the nearest, its transparent texels left out: drawn on the GPU).
+        self.card_tris.clear();
         for (k, (c, tex, param)) in shapes.iter().enumerate() {
             let z = c.iter().map(|c| c.p[2]).sum::<f32>() / c.len() as f32;
             for j in 1..c.len().saturating_sub(1) {
@@ -850,48 +771,12 @@ impl Shadows {
                     param: *param,
                     card: k as u32 + 1,
                 };
-                if t.area().abs() < 1e-6 {
-                    continue;
-                }
-                // Its own rows only.
                 let y0 = t.m.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
                 let y1 = t.m.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
-                let y0 = y0.floor().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
-                let y1 = y1.ceil().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
-                if y0 < y1 {
-                    tris.push((y0, y1, t));
+                if t.area().abs() >= 1e-6 && y1 > 0.0 && y0 < PICTURE_HEIGHT as f32 {
+                    self.card_tris.push(t);
                 }
             }
-        }
-        // In bands of rows on the pool's threads (a forest's cards cost milliseconds on one).
-        let draw = |band: usize, near: &mut [f32], card: &mut [u32]| {
-            let (r0, r1) = (band * BAND, band * BAND + near.len() / PICTURE_WIDTH);
-            for (y0, y1, t) in &tris {
-                if *y1 <= r0 || *y0 >= r1 {
-                    continue;
-                }
-                t.draw(
-                    (*y0).max(r0),
-                    (*y1).min(r1),
-                    r0,
-                    PICTURE_WIDTH,
-                    near,
-                    card,
-                    g.alpha,
-                );
-            }
-        };
-        let bands = near
-            .chunks_mut(BAND * PICTURE_WIDTH)
-            .zip(self.card_px.chunks_mut(BAND * PICTURE_WIDTH))
-            .enumerate();
-        match pool {
-            Some(pool) => {
-                use rayon::prelude::*;
-                let mut bands: Vec<_> = bands.collect();
-                pool.install(|| bands.par_iter_mut().for_each(|(b, (n, c))| draw(*b, n, c)));
-            }
-            None => bands.for_each(|(b, (n, c))| draw(b, n, c)),
         }
         self.ready = true;
     }
@@ -914,7 +799,7 @@ impl Shadows {
 
     /// The sun's (or the moon's) map, toward `dir` at `texels` per unit, and each card's light
     /// from it.
-    pub fn build_sun(&mut self, dir: V3, texels: f32, pool: Option<&rayon::ThreadPool>) {
+    pub fn build_sun(&mut self, dir: V3, texels: f32) {
         self.sun = None;
         let up = self.up;
         let u = normalize(cross(up, dir));
@@ -983,11 +868,8 @@ impl Shadows {
         let mut map = DepthMap::new(view, side);
         let casters: Vec<&Caster> = self.casters.iter().collect();
         let cards: Vec<&Caster> = cards.iter().collect();
-        map.draw(&casters, &cards, &self.alpha, pool);
+        map.draw(&casters, &cards);
         self.sun = Some((map, dir));
-        for k in 0..self.cards.len() {
-            self.cards[k].sun = self.card_light(k, None, flat);
-        }
     }
 
     /// The point lights' maps (`lights`: where each is, as the lighting places it), and each
@@ -1081,14 +963,13 @@ impl Shadows {
                 faces: Vec::new(),
             });
         }
-        let alpha = &self.alpha;
         let draw = |(k, f): &mut (usize, DepthMap)| {
             if f.side[0] == 0 {
                 return;
             }
             let (near, cards) = &work[*k];
             let cards: Vec<&Caster> = cards.iter().collect();
-            f.draw(near, &cards, alpha, None);
+            f.draw(near, &cards);
         };
         match pool {
             Some(pool) => {
@@ -1101,119 +982,11 @@ impl Shadows {
         for (k, f) in faces {
             self.points[k].faces.push(f);
         }
-        for k in 0..self.cards.len() {
-            let points = (0..self.points.len())
-                .map(|i| {
-                    let d = sub(self.points[i].pos, self.cards[k].foot);
-                    let flat = normalize(sub(d, scale(up, dot(d, up))));
-                    self.card_light(k, Some(i), flat)
-                })
-                .collect();
-            self.cards[k].points = points;
-        }
-    }
-
-    /// A card's light from the sun (`point` None) or a point light, itself left out: a person's,
-    /// their foot's; a tree's, the mean along its middle (`flat`: toward the light, level).
-    fn card_light(&self, k: usize, point: Option<usize>, flat: V3) -> f32 {
-        let c = &self.cards[k];
-        let up = self.up;
-        let height = c.b[1] - c.b[0];
-        if height > TREE_HEIGHT {
-            let at = |f: f32| add(c.foot, scale(up, height * f));
-            [0.3, 0.5, 0.7]
-                .iter()
-                .map(|&f| self.visible(point, at(f), flat, true, Some(k)))
-                .sum::<f32>()
-                / 3.0
-        } else {
-            self.visible(point, add(c.foot, scale(up, 0.5)), up, true, Some(k))
-        }
     }
 
     /// Whether the sun's map was drawn this frame.
     pub fn has_sun(&self) -> bool {
         self.sun.is_some()
-    }
-
-    /// How much of a light (the sun with `point` None, else that point light) reaches `p` (where
-    /// the polygons put the pixel: [`Shadows::place`]; at the picture's column `col` and row
-    /// `row`; its surface's normal `n`): 0 or 1. With `attached` false (the player's own pixels),
-    /// what the camera follows casts nothing.
-    pub fn light(
-        &self,
-        point: Option<usize>,
-        p: V3,
-        n: V3,
-        attached: bool,
-        col: usize,
-        row: usize,
-    ) -> f32 {
-        if !self.ready {
-            return 1.0;
-        }
-        // A card's pixels: lit as one.
-        if col < PICTURE_WIDTH
-            && let Some(&k) = self.card_px.get(row * PICTURE_WIDTH + col)
-            && k > 0
-        {
-            let c = &self.cards[k as usize - 1];
-            if (!attached && c.attached) || c.holds(p) {
-                return match point {
-                    None => c.sun,
-                    Some(i) => c.points.get(i).copied().unwrap_or(1.0),
-                };
-            }
-        }
-        self.visible(point, p, n, attached, None)
-    }
-
-    /// Whether a light reaches `p` (where the polygons put it), `card` left out.
-    fn visible(
-        &self,
-        point: Option<usize>,
-        p: V3,
-        n: V3,
-        attached: bool,
-        card: Option<usize>,
-    ) -> f32 {
-        // Toward the light, and the map that sees `p`.
-        let (to, map) = match point {
-            None => match &self.sun {
-                Some((map, dir)) => (*dir, map),
-                None => return 1.0,
-            },
-            Some(i) => {
-                let Some(pm) = self.points.get(i) else {
-                    return 1.0;
-                };
-                let d = sub(p, pm.pos);
-                // The face whose axis is nearest the direction from the light.
-                let k = (0..3)
-                    .max_by(|&a, &b| d[a].abs().total_cmp(&d[b].abs()))
-                    .unwrap_or(0);
-                let face = 2 * k + usize::from(d[k] < 0.0);
-                (normalize(scale(d, -1.0)), &pm.faces[face])
-            }
-        };
-        // Pushed off the surface further the more it turns from the light (a wall the light
-        // grazes changes depth fast across a texel).
-        let facing = dot(n, to).clamp(0.05, 1.0);
-        let slope = ((1.0 - facing * facing).sqrt() / facing).min(3.0);
-        let q = add(p, scale(n, NORMAL_OFFSET * (1.0 + slope)));
-        match map.over(q, slope) {
-            None => 1.0,
-            Some(0) => 0.0,
-            Some(k) => {
-                let k = k as usize - 1;
-                let c = &self.cards[k];
-                if card == Some(k) || c.holds(p) || (!attached && c.attached) {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-        }
     }
 
     /// A pixel's place as the lighting found it, where the polygons put it (for
@@ -1253,20 +1026,17 @@ const LEVEL_MIN_AREA: f32 = 64.0;
 const TREE_HEIGHT: f32 = 44.0;
 
 /// The lighting's picture: the wide picture's columns, the screen's rows.
-const PICTURE_WIDTH: usize = 384;
+pub(crate) const PICTURE_WIDTH: usize = 384;
 const PICTURE_HEIGHT: usize = 192;
-
-/// Rows of the map a thread draws at a time.
-const BAND: usize = 16;
 
 /// A triangle on the map: each corner's column, row (texels) and depth toward the sun, and its
 /// texture coordinates.
-struct Tri {
-    m: [[f32; 3]; 3],
-    st: [[f32; 2]; 3],
-    tex: Option<ShadowTex>,
-    param: u32,
-    card: u32,
+pub(crate) struct Tri {
+    pub(crate) m: [[f32; 3]; 3],
+    pub(crate) st: [[f32; 2]; 3],
+    pub(crate) tex: Option<ShadowTex>,
+    pub(crate) param: u32,
+    pub(crate) card: u32,
 }
 
 impl Tri {
@@ -1274,84 +1044,10 @@ impl Tri {
         let m = &self.m;
         (m[1][0] - m[0][0]) * (m[2][1] - m[0][1]) - (m[2][0] - m[0][0]) * (m[1][1] - m[0][1])
     }
-
-    /// Rows `y0..y1` of the map into a band starting at row `r0` (`width` texels a row).
-    #[allow(clippy::too_many_arguments)]
-    fn draw(
-        &self,
-        y0: usize,
-        y1: usize,
-        r0: usize,
-        width: usize,
-        depth: &mut [f32],
-        card: &mut [u32],
-        alpha: &[u8],
-    ) {
-        let (m, c) = (&self.m, &self.st);
-        let inv = 1.0 / self.area();
-        let x0 = m
-            .iter()
-            .map(|p| p[0])
-            .fold(f32::MAX, f32::min)
-            .floor()
-            .max(0.0) as usize;
-        let x1 = (m.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(width);
-        for y in y0..y1 {
-            let py = y as f32 + 0.5;
-            let row = (y - r0) * width;
-            // Only the row's span inside the triangle (its edges crossing the row's middle, a
-            // texel's margin either side; the tests below decide each texel as before): a long
-            // slanted triangle (a tree's shadow by a low sun) covers little of its box.
-            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-            for k in 0..3 {
-                let (a, b) = (m[k], m[(k + 1) % 3]);
-                if (a[1] - py) * (b[1] - py) > 0.0 || a[1] == b[1] {
-                    continue;
-                }
-                let x = a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
-                lo = lo.min(x);
-                hi = hi.max(x);
-            }
-            if lo > hi {
-                continue;
-            }
-            let xs = ((lo - 1.0).floor().max(0.0) as usize).max(x0);
-            let xe = (((hi + 1.0).ceil().max(0.0)) as usize).min(x1);
-            for x in xs..xe {
-                let px = x as f32 + 0.5;
-                let w0 = ((m[1][0] - px) * (m[2][1] - py) - (m[2][0] - px) * (m[1][1] - py)) * inv;
-                let w1 = ((m[2][0] - px) * (m[0][1] - py) - (m[0][0] - px) * (m[2][1] - py)) * inv;
-                let w2 = 1.0 - w0 - w1;
-                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                    continue;
-                }
-                let d = w0 * m[0][2] + w1 * m[1][2] + w2 * m[2][2];
-                let i = row + x;
-                if d <= depth[i] {
-                    continue;
-                }
-                if let Some(t) = self.tex {
-                    let s = w0 * c[0][0] + w1 * c[1][0] + w2 * c[2][0];
-                    let tt = w0 * c[0][1] + w1 * c[1][1] + w2 * c[2][1];
-                    let s = wrap(s.floor() as i32, t.width as i32, self.param, 16, 18);
-                    let tt = wrap(tt.floor() as i32, t.height as i32, self.param, 17, 19);
-                    let a = alpha
-                        .get(t.offset as usize + tt as usize * t.width as usize + s as usize)
-                        .copied()
-                        .unwrap_or(31);
-                    if a < 16 {
-                        continue;
-                    }
-                }
-                depth[i] = d;
-                card[i] = self.card;
-            }
-        }
-    }
 }
 
 /// A texel coordinate wrapped as the DS does: repeat (bit `rep`), mirrored (bit `flip`), else
-/// clamped.
+/// clamped (maps.wgsl `wrap` too).
 fn wrap(v: i32, size: i32, param: u32, rep: u32, flip: u32) -> i32 {
     if param & (1 << rep) != 0 {
         if param & (1 << flip) != 0 && v & size != 0 {
@@ -1524,6 +1220,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wrapping_follows_the_ds() {
+        assert_eq!(wrap(17, 16, 1 << 16, 16, 18), 1);
+        assert_eq!(wrap(17, 16, (1 << 16) | (1 << 18), 16, 18), 14);
+        assert_eq!(wrap(-3, 16, 0, 16, 18), 0);
+    }
+
+    #[test]
     fn the_sun_rises_east_and_sets_west() {
         assert!(sun(3.0).is_none());
         assert!(sun(21.0).is_none());
@@ -1540,12 +1243,5 @@ mod tests {
         let noon = Shadows::sun_dir(normalize(up), 0.0, 1.0);
         let south = normalize(cross([1.0, 0.0, 0.0], up));
         assert!(dot(noon, south) < -0.3, "{noon:?}");
-    }
-
-    #[test]
-    fn wrapping_follows_the_ds() {
-        assert_eq!(wrap(17, 16, 1 << 16, 16, 18), 1);
-        assert_eq!(wrap(17, 16, (1 << 16) | (1 << 18), 16, 18), 14);
-        assert_eq!(wrap(-3, 16, 0, 16, 18), 0);
     }
 }

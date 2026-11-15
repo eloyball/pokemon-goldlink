@@ -86,6 +86,9 @@ pub struct Session {
     /// The release window's look for this world (its top bar, Esc's menu; UC8) instead of the
     /// in-window World panel: the dev binary's screenshots show what players see.
     pub release_look: Option<String>,
+    /// Each emulated frame lit and shown before the next is taken (the dev tour's films:
+    /// players' windows light on the lighting's own thread and never wait for it).
+    pub frames_in_step: bool,
 }
 
 /// Boots the game and shows it in a window until the player closes it. The save is written on
@@ -100,6 +103,7 @@ pub fn run(session: Session) -> Result<(), String> {
         extra_ui,
         extra_input,
         release_look,
+        frames_in_step,
     } = session;
     let (config, note) = Config::load(&data_dir);
     let emu = Emulator::new(setup)?;
@@ -136,6 +140,7 @@ pub fn run(session: Session) -> Result<(), String> {
                 };
                 app.extra_ui = extra_ui;
                 app.extra_input = extra_input;
+                app.frames_in_step = frames_in_step;
                 Ok(Box::new(app))
             }),
         )

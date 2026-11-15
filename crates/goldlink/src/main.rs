@@ -102,6 +102,7 @@ fn main() -> ExitCode {
             extra_ui: None,
             extra_input: None,
             release_look: None,
+            frames_in_step: false,
         })
     })();
     match result {

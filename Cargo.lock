@@ -1478,7 +1478,10 @@ dependencies = [
 name = "goldlink-light"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "pollster",
  "rayon",
+ "wgpu",
 ]
 
 [[package]]
