@@ -70,10 +70,10 @@ const TEXELS: f32 = 2.0;
 const MAX_SIDE: usize = 1536;
 /// How far a pixel is pushed off its surface (along its normal, then toward the sun) before the
 /// test, so a surface doesn't shadow itself.
-const NORMAL_OFFSET: f32 = 1.0;
-const BIAS: f32 = 1.0;
+const NORMAL_OFFSET: f32 = 0.4;
+const BIAS: f32 = 0.4;
 /// How far a standing card goes into the ground when it casts (view units): the test's margin.
-const SINK: f32 = 2.5;
+const SINK: f32 = 1.5;
 
 /// Where the sun is at `hours` (0..24, the DS clock): its azimuth (from north toward east), its
 /// elevation, and how strong its shadows are (0 at night). It crosses the northern sky, so every
