@@ -40,6 +40,8 @@ pub enum Command {
     Wide(usize),
     /// Hand the lighting its buffers with each frame (UC11).
     Lighting(bool),
+    /// Cast shadows with the lighting (UC13): the game's own are left out outdoors.
+    Shadows(bool),
     /// The steady overworld (UC11).
     Steady(bool),
     /// Runs on the emulation thread between frames (dev tools, tests).
@@ -314,6 +316,7 @@ fn run(
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
     let mut lighting = false;
+    let mut shadows = true;
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
     let mut light: Option<LightFrame> = None;
     loop {
@@ -359,6 +362,7 @@ fn run(
                 }
                 Command::Wide(side) => emu.set_wide(side),
                 Command::Lighting(on) => lighting = on,
+                Command::Shadows(on) => shadows = on,
                 Command::Steady(on) => emu.set_steady(on),
                 Command::Call(f) => f(&mut emu),
             }
@@ -386,7 +390,7 @@ fn run(
         let outdoors = light_now.as_ref().is_some_and(|l| {
             l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
         });
-        emu.nds.set_hide_game_shadows(outdoors);
+        emu.nds.set_hide_game_shadows(outdoors && shadows);
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);

@@ -874,6 +874,11 @@ impl Lobby {
             .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
             .changed();
         changed |= ui
+            .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Shadows"))
+            .on_hover_text(crate::app::SHADOWS_HINT)
+            .on_disabled_hover_text("With the lighting on")
+            .changed();
+        changed |= ui
             .checkbox(&mut v.steady, "Smooth camera")
             .on_hover_text(
                 "The camera glides smoothly as you move, the town's pixels kept still; off: the game's own camera, which shimmers",

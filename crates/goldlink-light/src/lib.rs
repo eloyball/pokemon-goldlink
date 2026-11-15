@@ -878,14 +878,22 @@ impl Lighting {
                         *out = c.base;
                         continue;
                     }
-                    let (n, ao) = (nrm[i], ao[i]);
+                    // The player's own pixels (the attached picture, with no depth of its own: it
+                    // shows the world's under it) are lit as a sprite: facing the camera, no
+                    // occlusion. By the world's, the dark where a desk or a television meets the
+                    // floor showed on them (the user's look, 2026-11-14).
+                    let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
+                    let (n, ao) = if player {
+                        ([0.0, 0.0, 1.0], 1.0)
+                    } else {
+                        (nrm[i], ao[i])
+                    };
                     let wrap = ((dot(n, p.key_dir) + 0.35) / 1.35).clamp(0.0, 1.0);
                     let shade = 1.0 - sun_strength * (1.0 - sun_vis[i]);
                     let mut light = add(
                         scale(p.ambient, AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * ao),
                         scale(p.key, wrap * ao * shade),
                     );
-                    let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
                     for (l, slot) in lights.iter().zip(slots) {
                         let v = sub(l.pos, c.pos);
                         let d2 = dot(v, v);

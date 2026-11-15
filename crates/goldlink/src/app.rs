@@ -41,6 +41,9 @@ fn screen_uvs(k: usize) -> (egui::Rect, egui::Rect) {
 /// How long the HUD holds a touch on the game's button (then lets go).
 const TAP: Duration = Duration::from_millis(100);
 
+/// The Shadows setting's hint (both settings screens).
+pub const SHADOWS_HINT: &str = "Outdoors, things cast shadows from the sun, the moon and lit windows and lamps; off: the game's own shadows";
+
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameAction {
@@ -282,6 +285,7 @@ impl GameApp {
             r.send(Command::Wide(side));
             // The lighting's buffers come with each frame only while it's on.
             r.send(Command::Lighting(v.lighting));
+            r.send(Command::Shadows(v.shadows));
             r.send(Command::Steady(v.steady));
         }
     }
@@ -578,16 +582,37 @@ impl GameApp {
         attached: Option<&goldlink_core::Attached>,
     ) {
         use goldlink_light::{Phase, Place, Scene};
-        // Where the attached picture shows opaque, on the lighting's columns (UC13).
+        // Where the attached picture shows on top, opaque, on the lighting's columns (UC13): its
+        // pixel is there and the picture shows its colour (not something drawn in front of the
+        // player: a roof's pixels lit as the player's left a ghost of them on it, the user's look).
         let width = goldlink_core::LightBuffers::WIDTH;
+        let (shown, shown_w): (&[u32], usize) = match wide.as_deref() {
+            Some(w) => (w, 256 + 2 * side),
+            None => (&pixels[..256 * 192], 256),
+        };
         let player: Vec<u8> = attached.map_or_else(Vec::new, |a| {
             let cols = a.plain.len() / 192;
             let off = cols as isize - width as isize;
+            let soff = shown_w as isize - width as isize;
+            let near = |p: u32, q: u32| {
+                [16, 8, 0]
+                    .iter()
+                    .all(|&s| ((p >> s) & 255).abs_diff((q >> s) & 255) <= 12)
+            };
             (0..width * 192)
                 .map(|i| {
-                    let (x, y) = ((i % width) as isize + off / 2, i / width);
+                    let y = i / width;
+                    let (x, sx) = (
+                        (i % width) as isize + off / 2,
+                        (i % width) as isize + soff / 2,
+                    );
                     let at = (x >= 0 && (x as usize) < cols).then(|| a.att[y * cols + x as usize]);
-                    u8::from(at.is_some_and(|c| c >> 24 >= 0xF0))
+                    let on = (sx >= 0 && (sx as usize) < shown_w)
+                        .then(|| shown[y * shown_w + sx as usize]);
+                    u8::from(match (at, on) {
+                        (Some(c), Some(s)) => c >> 24 >= 0xF0 && near(c, s),
+                        _ => false,
+                    })
                 })
                 .collect()
         });
@@ -598,7 +623,8 @@ impl GameApp {
         let phase = Phase::of_hour(hour);
         let world = light.filter(|l| l.overworld());
         // The picture's polygons for the cast shadows (UC13), as the lighting takes them.
-        let (polys, verts): (Vec<_>, Vec<_>) = world.map_or_else(Default::default, |l| {
+        let shadows = self.config.video.shadows;
+        let (polys, verts): (Vec<_>, Vec<_>) = world.filter(|_| shadows).map_or_else(Default::default, |l| {
             let g = &l.buffers.geometry;
             (
                 g.polys
@@ -732,6 +758,11 @@ impl GameApp {
                 changed |= ui
                     .checkbox(&mut v.lighting, "Lighting")
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+                    .changed();
+                changed |= ui
+                    .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Shadows"))
+                    .on_hover_text(SHADOWS_HINT)
+                    .on_disabled_hover_text("With the lighting on")
                     .changed();
                 changed |= ui
                     .checkbox(&mut v.steady, "Smooth camera")

@@ -664,6 +664,31 @@ const DOWN_PAST_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=settle-right (UC13): the field's message closed, then right for three
+/// seconds and standing (the user's SAVE02 room: past the desk and the television).
+const SETTLE_RIGHT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Mash(900),
+    Step::Settle(1200),
+    Step::Walk(Keys::RIGHT, 180, ""),
+    Step::Walk(Keys::NONE, 60, ""),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=cave-steps (UC13): from a save a tile below a cave's mouth, in, then a
+/// step up, a step left and standing (the user: Dark Cave went black after a step).
+const CAVE_STEPS_IN: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::UP, 40, ""),
+    Step::Wait(240),
+    Step::Walk(Keys::UP, 16, ""),
+    Step::Wait(60),
+    Step::Walk(Keys::LEFT, 16, ""),
+    Step::Walk(Keys::NONE, 30, "cave"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=right5 (UC11's steady overworld): right for five seconds.
 const RIGHT5_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -913,6 +938,8 @@ fn steps() -> &'static [Step] {
         Ok("far-left") => FAR_LEFT_STEPS,
         Ok("up5") => UP5_STEPS,
         Ok("right5") => RIGHT5_STEPS,
+        Ok("settle-right") => SETTLE_RIGHT_STEPS,
+        Ok("cave-steps") => CAVE_STEPS_IN,
         Ok("mom") => MOM_STEPS,
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,

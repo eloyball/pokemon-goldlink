@@ -416,6 +416,8 @@ pub struct Shadows {
     /// The sun's map and its direction (toward it); the point lights' maps.
     sun: Option<(DepthMap, V3)>,
     points: Vec<PointMaps>,
+    /// A corner of the drawn ground (view space), for laying the sun's texels on the world.
+    anchor: Option<[f64; 3]>,
     pub ready: bool,
 }
 
@@ -522,6 +524,9 @@ impl Shadows {
         };
         let (fx, fy) = (fit(0, [191.5, 128.0]), fit(1, [95.5, -96.0]));
         self.fit = [fx[0], fx[1], fy[0], fy[1]];
+        // A point that moves with the world: where its origin is drawn (the wide picture's
+        // columns: the screen's plus 64), on the level plane through the eye (the camera moves
+        // level). Orthographic cameras only (the steady overworld's).
         self.casters.clear();
         self.cards.clear();
 
@@ -578,6 +583,33 @@ impl Shadows {
             best.map_or(foot, |t| add(foot, scale(d, t)))
         };
         let north = normalize(cross(up, [1.0, 0.0, 0.0]));
+        // A corner of the drawn ground that moves with the world exactly: the nearest the
+        // picture's middle of the untextured flat polygons wholly in the picture (not cut at its
+        // edge). The sun's texels are laid from it (else they slid under the scene as the camera
+        // moved, and shadows' edges flickered: the user's look).
+        {
+            let mut best: Option<(f32, V3)> = None;
+            for (c, n, p) in &placed {
+                if p.tex >= 0 || dot(*n, up) < 0.97 {
+                    continue;
+                }
+                if !c.iter().all(|k| {
+                    k.scr[0] > 8.0
+                        && k.scr[0] < (PICTURE_WIDTH - 8) as f32
+                        && k.scr[1] > 8.0
+                        && k.scr[1] < (PICTURE_HEIGHT - 8) as f32
+                }) {
+                    continue;
+                }
+                for k in c {
+                    let d = (k.scr[0] - 192.0).powi(2) + (k.scr[1] - 96.0).powi(2);
+                    if best.is_none_or(|b| d < b.0) {
+                        best = Some((d, k.p));
+                    }
+                }
+            }
+            self.anchor = best.map(|(_, p)| p.map(|v| v as f64));
+        }
         // The ground's main level: the height (along up) most of the flat ground lies at. Flat
         // ground there casts nothing (nothing at that level lies under it): left out of the maps,
         // which were mostly ground (the user's machine draws them every frame). Raised flat
@@ -811,11 +843,17 @@ impl Shadows {
         }
         let extent = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1.0);
         let texels = texels.min(MAX_SIDE as f32 / extent);
-        // The map's origin on whole texels of view space, so a still scene maps the same.
-        let origin = [
-            (lo[0] * texels).floor() / texels,
-            (lo[1] * texels).floor() / texels,
-        ];
+        // The map's origin on whole texels from the world's anchor (texels laid on the world, so
+        // they stay put on it as the camera moves), else from the eye.
+        let (au, av) = self.anchor.map_or((0.0, 0.0), |a| {
+            let d = |x: V3| a[0] * x[0] as f64 + a[1] * x[1] as f64 + a[2] * x[2] as f64;
+            (d(u), d(v))
+        });
+        let snap = |lo: f32, a: f64| -> f32 {
+            let t = texels as f64;
+            (a + ((lo as f64 - a) * t).floor() / t) as f32
+        };
+        let origin = [snap(lo[0], au), snap(lo[1], av)];
         let side = [
             (((hi[0] - origin[0]) * texels).ceil() as usize + 1).min(MAX_SIDE),
             (((hi[1] - origin[1]) * texels).ceil() as usize + 1).min(MAX_SIDE),
