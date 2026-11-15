@@ -58,6 +58,9 @@ pub struct Geometry<'a> {
 }
 
 const FLAG_ATTACHED: u32 = 1;
+/// Past the picture's edges (patch 0030): not drawn, a caster only (a building or a row of trees
+/// just above the screen shadows the ground in view).
+const FLAG_OFFSCREEN: u32 = 128;
 /// Cast nothing: the DS's shadow volumes (4, 8), lines (32), the game's own shadows (64). See-through
 /// polygons (alpha under 31) cast nothing either; ones drawn whole with an alpha texture (the
 /// windmill's soft-edged blades, flag 2) cast through their texels that show.
@@ -438,6 +441,9 @@ pub struct Shadows {
     points: Vec<PointMaps>,
     /// A corner of the drawn ground (view space), for laying the sun's texels on the world.
     anchor: Option<[f64; 3]>,
+    /// Where the picture's pixels lie (view space, a sample): the sun's map covers them (what
+    /// casts past the picture's edges can shadow only what's in it).
+    shown: Vec<V3>,
     pub ready: bool,
 }
 
@@ -525,7 +531,16 @@ impl Shadows {
         self.alpha.extend_from_slice(g.alpha);
         // Where the vertices land against their device coordinates.
         let mut s = [[0f64; 5]; 2];
-        for v in g.verts {
+        let drawn = g
+            .polys
+            .iter()
+            .filter(|p| p.flags & FLAG_OFFSCREEN == 0)
+            .filter_map(|p| {
+                g.verts
+                    .get(p.first_vert as usize..(p.first_vert + p.num_verts) as usize)
+            })
+            .flatten();
+        for v in drawn {
             if v.clip[3] == 0 {
                 continue;
             }
@@ -567,6 +582,16 @@ impl Shadows {
             }
             placed.push((corners, scale(n, 1.0 / area), p));
         }
+        // Where the picture's pixels lie, every fourth (the drawn polygons reach the guard band,
+        // far past the picture).
+        self.shown.clear();
+        for row in (0..PICTURE_HEIGHT).step_by(4).chain([PICTURE_HEIGHT - 1]) {
+            for col in (0..PICTURE_WIDTH).step_by(4).chain([PICTURE_WIDTH - 1]) {
+                if let Some(q) = seen(col as f32 + 0.5, row as f32 + 0.5) {
+                    self.shown.extend(self.true_place(q));
+                }
+            }
+        }
         // The camera's rays: along -z (an orthographic camera, as the steady overworld's), else
         // from the eye.
         let ortho = proj[2][3].abs() < 1e-6;
@@ -579,14 +604,15 @@ impl Shadows {
         };
         // People are drawn nearer the camera than where they stand (so they show over the
         // ground): their foot goes back along the camera's ray onto the ground behind it.
+        // Flat ground only (a roof behind a person isn't where they stand).
+        let flats: Vec<&(Vec<Corner>, V3, &ShadowPoly)> = placed
+            .iter()
+            .filter(|(_, n, p)| p.tex < 0 && dot(*n, up) >= 0.97)
+            .collect();
         let ground = |foot: V3| -> V3 {
             let d = back(foot);
             let mut best: Option<f32> = None;
-            for (c, n, p) in &placed {
-                // Flat ground only (a roof behind a person isn't where they stand).
-                if p.tex >= 0 || dot(*n, up) < 0.97 {
-                    continue;
-                }
+            for (c, n, _) in flats.iter().map(|f| (&f.0, &f.1, f.2)) {
                 let dn = dot(d, *n);
                 if dn.abs() < 1e-4 {
                     continue;
@@ -637,7 +663,8 @@ impl Shadows {
         let level = {
             let mut bins: Vec<(f32, f32)> = Vec::new();
             for (c, n, p) in &placed {
-                if p.tex >= 0 || dot(*n, up) < 0.97 {
+                // What the picture shows (past its edges, another level can be most of it).
+                if p.tex >= 0 || dot(*n, up) < 0.97 || p.flags & FLAG_OFFSCREEN != 0 {
                     continue;
                 }
                 let h = (dot(c[0].p, up)).round();
@@ -647,7 +674,25 @@ impl Shadows {
                     None => bins.push((h, area)),
                 }
             }
-            bins.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|b| b.0)
+            // The lowest level (flat ground can shadow only what lies lower), at the middle of
+            // the ground's heights within LEVEL_SPREAD of it: the picture in between moves each
+            // map block by its own whole pixels, and the same ground came out at two heights two
+            // units apart. By the most ground instead, the level flipped between a town's ground
+            // and a river's bed as the water came into view, and the town's ground's shadows on
+            // the water popped in and out (the user, walking up Violet City). The lowest changes
+            // only as lower ground comes into view at the picture's edge, a sliver.
+            let lowest = bins
+                .iter()
+                .filter(|b| b.1 >= LEVEL_MIN_AREA)
+                .map(|b| b.0)
+                .fold(None, |m: Option<f32>, h| Some(m.map_or(h, |m| m.min(h))));
+            lowest.map(|h| {
+                let (area, sum) = bins
+                    .iter()
+                    .filter(|b| b.0 - h <= LEVEL_SPREAD && b.0 >= h)
+                    .fold((0.0f32, 0.0f32), |s, b| (s.0 + b.1, s.1 + b.0 * b.1));
+                sum / area
+            })
         };
         let mut shapes: Vec<(Vec<Corner>, Option<ShadowTex>, u32)> = Vec::new();
         for (corners, n, p) in &placed {
@@ -774,7 +819,11 @@ impl Shadows {
                 });
             }
             let ground_level = dot(*n, up) > 0.97
-                && level.is_some_and(|l| corners.iter().all(|c| (dot(c.p, up) - l).abs() < 1.5));
+                && level.is_some_and(|l| {
+                    corners
+                        .iter()
+                        .all(|c| (dot(c.p, up) - l).abs() < LEVEL_SPREAD + 1.5)
+                });
             if !ground_level {
                 self.casters.push(Caster {
                     corners: corners.clone(),
@@ -858,7 +907,23 @@ impl Shadows {
                 }
             }
         }
-        if lo[0] > hi[0] {
+        // No more than what the picture shows (the casters past its edges reach far past it; a
+        // map over them all is more texels to draw).
+        if !self.shown.is_empty() {
+            let (mut slo, mut shi) = ([f32::MAX; 2], [f32::MIN; 2]);
+            for p in &self.shown {
+                let m = [dot(*p, u), dot(*p, v)];
+                for i in 0..2 {
+                    slo[i] = slo[i].min(m[i]);
+                    shi[i] = shi[i].max(m[i]);
+                }
+            }
+            for i in 0..2 {
+                lo[i] = lo[i].max(slo[i] - 1.0);
+                hi[i] = hi[i].min(shi[i] + 1.0);
+            }
+        }
+        if lo[0] > hi[0] || lo[1] > hi[1] {
             return;
         }
         let extent = (hi[0] - lo[0]).max(hi[1] - lo[1]).max(1.0);
@@ -1143,6 +1208,14 @@ impl Shadows {
     }
 }
 
+/// How far apart (view units, along up) flat ground still counts as one level: the picture in
+/// between moves each map block by its own whole pixels (two units apart at most seen); raised
+/// ground (a bridge, a ledge) is 8 or more above.
+const LEVEL_SPREAD: f32 = 3.0;
+/// The least flat ground (square view units) a level needs to count (a polygon's sliver at the
+/// picture's edge, a step's top, aren't one).
+const LEVEL_MIN_AREA: f32 = 64.0;
+
 /// Cards taller than this (view units) are scenery (trees): lit by their middle, not their foot.
 const TREE_HEIGHT: f32 = 44.0;
 
@@ -1193,7 +1266,25 @@ impl Tri {
         for y in y0..y1 {
             let py = y as f32 + 0.5;
             let row = (y - r0) * width;
-            for x in x0..x1 {
+            // Only the row's span inside the triangle (its edges crossing the row's middle, a
+            // texel's margin either side; the tests below decide each texel as before): a long
+            // slanted triangle (a tree's shadow by a low sun) covers little of its box.
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for k in 0..3 {
+                let (a, b) = (m[k], m[(k + 1) % 3]);
+                if (a[1] - py) * (b[1] - py) > 0.0 || a[1] == b[1] {
+                    continue;
+                }
+                let x = a[0] + (py - a[1]) * (b[0] - a[0]) / (b[1] - a[1]);
+                lo = lo.min(x);
+                hi = hi.max(x);
+            }
+            if lo > hi {
+                continue;
+            }
+            let xs = ((lo - 1.0).floor().max(0.0) as usize).max(x0);
+            let xe = (((hi + 1.0).ceil().max(0.0)) as usize).min(x1);
+            for x in xs..xe {
                 let px = x as f32 + 0.5;
                 let w0 = ((m[1][0] - px) * (m[2][1] - py) - (m[2][0] - px) * (m[1][1] - py)) * inv;
                 let w1 = ((m[2][0] - px) * (m[0][1] - py) - (m[0][0] - px) * (m[2][1] - py)) * inv;

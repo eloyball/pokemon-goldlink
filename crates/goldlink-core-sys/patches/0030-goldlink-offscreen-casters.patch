@@ -1,0 +1,284 @@
+GoldLink's change to melonDS (UC13): the polygons just past the picture's edges kept for the cast
+shadows.
+
+- The sun is in the north, so every shadow falls down the screen (or aside, morning and evening):
+  a tall building or a row of trees just above the picture shadows the ground in view. Walking up,
+  those shadows popped in as their casters came in (the user, at noon toward Sprout Tower).
+- The steady overworld's guard band drops a polygon wholly past one of the picture's edges (never
+  drawn; kept, they overflowed polygon RAM in the Ruins of Alph). Those above the picture (to a
+  screen up) and beside it (to half a screen) are now kept (GPU3D::OffscreenPoly: clip and texture
+  coordinates, screen positions by the guard band's arithmetic past the edges, attributes; at
+  most 4096 a scene) beside polygon RAM, swapped with the scene; the picture in between has its
+  replay's. None below: nothing there shadows the picture (a light's shadows point away from it
+  too). The shadow geometry (patch 0028) gives them as polygons flagged ShadowOffscreen: casters
+  only.
+- The game draws a map prop (a building, Sprout Tower) only when its box passes the hardware box
+  test (map_prop_manager.c), so a tall building just above the screen sent nothing. In the steady
+  overworld a box now passes up to half a screen above the picture and a quarter screen either
+  side (BoxTest); only drawing follows a box test there, and what's past the edges is dropped and
+  kept as above. Further (a screen up, half aside) the game drew late now and then (a frame shown
+  twice walking up Violet City).
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+--- a/src/GPU3D.h	2026-11-15 12:32:18.462197572 -0500
++++ b/src/GPU3D.h	2026-11-15 12:32:41.383521502 -0500
+@@ -492,6 +492,25 @@
+     void MidClassify() noexcept;
+     std::unique_ptr<GPU3D> MidShadow;
+     std::array<Polygon*,2048> MidList {}, MidSavedList {};
++
++    // GoldLink (UC13): the polygons the steady overworld's guard band drops (wholly past one of
++    // the picture's edges: never drawn, never in polygon RAM), kept for the cast shadows: a tall
++    // building or a row of trees just above the screen shadows the ground in view (the sun is in
++    // the north), and its shadow no longer pops in with it. Clip coordinates, texture
++    // coordinates, screen positions (the guard band's arithmetic, past the edges) and attributes.
++    struct OffscreenPoly
++    {
++        s32 Clip[4][4];
++        s16 ST[4][2];
++        s32 Screen[4][2];
++        u32 NumVerts, Attr, TexParam, TexPalette;
++        bool Facing, Line;
++    };
++    static constexpr size_t MaxOffscreen = 4096;
++    // Being built (this scene's), the rendered scene's, the picture in between's (the shadow's
++    // replay); RenderOffscreen points at the one rendered.
++    std::vector<OffscreenPoly> CurOffscreen, SceneOffscreen, MidOffscreen;
++    const std::vector<OffscreenPoly>* RenderOffscreen = &SceneOffscreen;
+     u32 MidSavedNumPolygons = 0;
+     u32 MidStats[2] {};          // pictures in between: drawn, nothing to match
+     int MidWidth() const noexcept { return WideActive() ? 256 + 2 * WideSide : (int)Viewport[4]; }
+--- a/src/GPU3D.cpp	2026-11-15 12:32:18.462223360 -0500
++++ b/src/GPU3D.cpp	2026-11-15 13:05:19.610177707 -0500
+@@ -1177,6 +1177,63 @@
+         }
+         if (above || below)
+         {
++            // GoldLink (UC13): kept for the cast shadows (OffscreenPoly): those above the picture
++            // (to a screen up) and beside it (to half a screen), not below it. The sun is in the
++            // north and a light's shadows point away from it, so nothing below the picture
++            // shadows what's in it; further off, they're more to draw than they're worth.
++            bool keep = CurOffscreen.size() < MaxOffscreen;
++            if (keep)
++            {
++                bool below = true, far = true, left = true, right = true;
++                for (int i = 0; i < nverts; i++)
++                {
++                    const s64 x = clippedvertices[i].Position[0], y = clippedvertices[i].Position[1];
++                    const s64 w = clippedvertices[i].Position[3];
++                    below &= y < -w;
++                    far &= y > 3 * w;
++                    left &= x < -2 * w;
++                    right &= x > 2 * w;
++                }
++                keep = !below && !far && !left && !right;
++            }
++            if (keep)
++            {
++                OffscreenPoly o {};
++                o.NumVerts = (u32)nverts;
++                o.Attr = CurPolygonAttr;
++                o.TexParam = TexParam;
++                o.TexPalette = TexPalette;
++                o.Facing = facingview;
++                o.Line = polytype == 1;
++                bool ok = true;
++                for (int i = 0; i < nverts && ok; i++)
++                {
++                    const Vertex& v = clippedvertices[i];
++                    for (int k = 0; k < 4; k++) o.Clip[i][k] = v.Position[k];
++                    o.ST[i][0] = v.TexCoords[0];
++                    o.ST[i][1] = v.TexCoords[1];
++                    // The screen position as the guard band computes it (below), past the edges.
++                    const s64 w = v.Position[3] & 0x00FFFFFF;
++                    if (w == 0) { ok = false; break; }
++                    s64 nx = (s64)v.Position[0] + w, ny = -(s64)v.Position[1] + w, den = w;
++                    if (w > 0xFFFF)
++                    {
++                        nx >>= 1;
++                        ny >>= 1;
++                        den >>= 1;
++                    }
++                    den <<= 1;
++                    s32 gx;
++                    if (WideActive())
++                        gx = FloorDiv(nx * (256 + 2 * WideSide) + (255 + 2 * WideSide), den);
++                    else
++                        gx = FloorDiv(nx * Viewport[4], den) + Viewport[0] + WideSide;
++                    o.Screen[i][0] = gx + MaxWideSide - WideSide;
++                    o.Screen[i][1] = FloorDiv(ny * Viewport[5], den) + Viewport[3];
++                }
++                if (ok)
++                    CurOffscreen.push_back(o);
++            }
+             LastStripPolygon = NULL;
+             return;
+         }
+@@ -1742,6 +1799,25 @@
+         cube[i].Position[2] = ((s64)x*ClipMatrix[2] + (s64)y*ClipMatrix[6] + (s64)z*ClipMatrix[10] + (s64)0x1000*ClipMatrix[14]) >> 12;
+         cube[i].Position[3] = ((s64)x*ClipMatrix[3] + (s64)y*ClipMatrix[7] + (s64)z*ClipMatrix[11] + (s64)0x1000*ClipMatrix[15]) >> 12;
+     }
++    // GoldLink (UC13): in the steady overworld a box passes up to half a screen above the picture
++    // and a quarter screen either side (the game draws a map prop, a building, only when its box
++    // passes: map_prop_manager.c). Its polygons there are dropped as the guard band drops any past
++    // the edges (never drawn) and kept for the cast shadows (OffscreenPoly): the sun is in the
++    // north, and a building's shadow came into view only with the building (the user, walking up
++    // to Sprout Tower at noon; the lab's morning shadow in New Bark Town). Only drawing follows a
++    // box test there. Further (a screen up, half a screen aside) the game drew late now and then
++    // (a frame shown twice walking up Violet City). Tested as clip coordinates moved and scaled
++    // so the wider volume is the usual one: y in [-w, 2w] (y' = (2y - w) / 3), x within 1.5w
++    // (x' = x * 2 / 3).
++    if (OrthoWanted && Viewport[4] == 256 && Viewport[5] == 192 && Viewport[0] == 0)
++    {
++        for (int i = 0; i < 8; i++)
++        {
++            const s64 w = cube[i].Position[3];
++            cube[i].Position[1] = (s32)(((s64)cube[i].Position[1] * 2 - w) / 3);
++            cube[i].Position[0] = (s32)((s64)cube[i].Position[0] * 2 / 3);
++        }
++    }
+ 
+     // front face (-Z)
+     face[0] = cube[0]; face[1] = cube[1]; face[2] = cube[2]; face[3] = cube[3];
+@@ -2930,6 +3006,9 @@
+ 
+                 RenderNumPolygons = NumPolygons;
+                 RenderFrameIdentical = false;
++                // GoldLink (UC13): the scene's polygons past the edges with it.
++                SceneOffscreen.swap(CurOffscreen);
++                RenderOffscreen = &SceneOffscreen;
+             }
+             else
+             {
+@@ -2972,6 +3051,7 @@
+             NumPolygons = 0;
+             NumOpaquePolygons = 0;
+             NumFrameProj = 0; // GoldLink (UC11)
++            CurOffscreen.clear(); // GoldLink (UC13)
+ 
+             FlushRequest = 0;
+             // GoldLink (UC11): a scene that follows one shown for two frames or more (the game's
+@@ -3758,6 +3838,7 @@
+     for (u32 j = 0; j < MidObjects.size(); j++)
+         s.MidAttachedList[j] = {MidObjects[j].Attached, MidObjects[j].TX, MidObjects[j].TY};
+     s.MidShift = std::move(shift);
++    s.CurOffscreen.clear(); // GoldLink (UC13): its polygons past the edges
+     s.MidReplaying = true;
+     s.MidObjects.clear();
+     s.MidCurObject = -1;
+@@ -3793,6 +3874,8 @@
+     MidSavedNumPolygons = RenderNumPolygons;
+     RenderPolygonRAM = MidList;
+     RenderNumPolygons = s.NumPolygons;
++    MidOffscreen.swap(s.CurOffscreen); // GoldLink (UC13)
++    RenderOffscreen = &MidOffscreen;
+     RenderFrameIdentical = false;
+     MidShown = true;
+     MidStats[0]++;
+@@ -3893,6 +3976,7 @@
+ {
+     RenderPolygonRAM = MidSavedList;
+     RenderNumPolygons = MidSavedNumPolygons;
++    RenderOffscreen = &SceneOffscreen; // GoldLink (UC13)
+     MidShown = false;
+     MidRedraw = true;
+ }
+--- a/src/GPU3D_Soft.h	2026-11-15 12:32:18.462315293 -0500
++++ b/src/GPU3D_Soft.h	2026-11-15 12:33:00.679824799 -0500
+@@ -89,7 +89,7 @@
+     struct ShadowPoly { u32 FirstVert, NumVerts, Attr, TexParam, TexPalette; s32 Tex; u32 Flags; s32 Object; };
+     // Flags: what kind of polygon (Polygon's fields).
+     static constexpr u32 ShadowAttached = 1, ShadowTranslucent = 2, ShadowMask = 4, ShadowVolume = 8,
+-        ShadowFacing = 16, ShadowLine = 32, ShadowGame = 64;
++        ShadowFacing = 16, ShadowLine = 32, ShadowGame = 64, ShadowOffscreen = 128;
+     struct ShadowVert { s32 Clip[4]; s16 ST[2]; s32 Screen[2]; };
+     struct ShadowTex { u32 Width, Height, Offset; }; // Width x Height bytes from Alpha[Offset]
+     struct ShadowGeometry
+@@ -131,6 +131,9 @@
+     size_t CacheTexture(const GPU& gpu, u32 param, u32 palette);
+     std::vector<u8> HideList; // per polygon of this render: a game shadow left out
+     void KeepGeometry(const GPU& gpu, Polygon* const* polys, int count, bool vramChanged);
++    // GoldLink (UC13): one polygon into RenderedGeometry (KeepGeometry); `drawn` its index in this
++    // render's list, -1 for one past the picture's edges (GPU3D::OffscreenPoly).
++    void KeepPolygon(const GPU& gpu, Polygon* p, int drawn, std::vector<std::pair<u32, s32>>& used);
+     friend void GPU3D::DoSavestate(Savestate* file) noexcept;
+     // Notes on the interpolator:
+     //
+--- a/src/GPU3D_Soft.cpp	2026-11-15 12:32:18.462276039 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-15 12:33:00.680045624 -0500
+@@ -2184,10 +2184,42 @@
+     std::vector<std::pair<u32, s32>> used; // cache entry -> index in g.Texs
+     HideList.assign(count, 0);
+     for (int i = 0; i < count; i++)
++        KeepPolygon(gpu, polys[i], i, used);
++    // The polygons past the picture's edges (casters only), as polygons of their own.
++    for (const GPU3D::OffscreenPoly& o : *gpu.GPU3D.RenderOffscreen)
++    {
++        Vertex verts[4] {};
++        Polygon p {};
++        for (u32 v = 0; v < o.NumVerts; v++)
++        {
++            for (int k = 0; k < 4; k++) verts[v].Position[k] = o.Clip[v][k];
++            verts[v].TexCoords[0] = o.ST[v][0];
++            verts[v].TexCoords[1] = o.ST[v][1];
++            verts[v].FinalPosition[0] = o.Screen[v][0];
++            verts[v].FinalPosition[1] = o.Screen[v][1];
++            p.Vertices[v] = &verts[v];
++        }
++        p.NumVertices = o.NumVerts;
++        p.Attr = o.Attr;
++        p.TexParam = o.TexParam;
++        p.TexPalette = o.TexPalette;
++        p.FacingView = o.Facing;
++        p.Type = o.Line ? 1 : 0;
++        p.Object = -1;
++        const u32 texfmt = (o.TexParam >> 26) & 7, polyalpha = (o.Attr >> 16) & 0x1F;
++        p.Translucent = (texfmt == 1 || texfmt == 6) || (polyalpha > 0 && polyalpha < 31);
++        p.IsShadowMask = ((o.Attr & 0x3F000030) == 0x00000030);
++        p.IsShadow = ((o.Attr & 0x30) == 0x30) && !p.IsShadowMask;
++        KeepPolygon(gpu, &p, -1, used);
++    }
++}
++
++void SoftRenderer::KeepPolygon(const GPU& gpu, Polygon* p, int drawn, std::vector<std::pair<u32, s32>>& used)
++{
++    ShadowGeometry& g = RenderedGeometry;
+     {
+-        const Polygon* p = polys[i];
+         if (!p || p->NumVertices < 3 || p->Degenerate)
+-            continue;
++            return;
+         ShadowPoly sp {};
+         sp.FirstVert = (u32)g.Verts.size();
+         sp.NumVerts = p->NumVertices;
+@@ -2197,7 +2229,8 @@
+         sp.Object = p->Object; // GoldLink (UC13, patch 0029)
+         sp.Flags = (p->Attached ? ShadowAttached : 0) | (p->Translucent ? ShadowTranslucent : 0)
+             | (p->IsShadowMask ? ShadowMask : 0) | (p->IsShadow ? ShadowVolume : 0)
+-            | (p->FacingView ? ShadowFacing : 0) | (p->Type == 1 ? ShadowLine : 0);
++            | (p->FacingView ? ShadowFacing : 0) | (p->Type == 1 ? ShadowLine : 0)
++            | (drawn < 0 ? ShadowOffscreen : 0);
+         sp.Tex = -1;
+         for (u32 v = 0; v < p->NumVertices; v++)
+         {
+@@ -2229,8 +2262,8 @@
+             sp.Flags |= ShadowGame;
+         // GoldLink (UC13, patch 0029): a black painted shadow, softened (SoftenGameShadows). At
+         // most, so drawing a frame again leaves it as it is.
+-        if (game == 2 && SoftenGameShadows && ((polys[i]->Attr >> 16) & 0x1F) > softAlpha)
+-            polys[i]->Attr = (polys[i]->Attr & ~(0x1Fu << 16)) | ((u32)softAlpha << 16);
++        if (drawn >= 0 && game == 2 && SoftenGameShadows && ((p->Attr >> 16) & 0x1F) > softAlpha)
++            p->Attr = (p->Attr & ~(0x1Fu << 16)) | ((u32)softAlpha << 16);
+         if (small && clear && alpha == 31 && !p->IsShadow && !p->IsShadowMask && !(sp.Flags & ShadowGame))
+         {
+             const size_t e = CacheTexture(gpu, param, p->TexPalette);
+@@ -2246,7 +2279,8 @@
+             }
+             sp.Tex = index;
+         }
+-        HideList[i] = HideGameShadows && (sp.Flags & ShadowGame);
++        if (drawn >= 0)
++            HideList[drawn] = HideGameShadows && (sp.Flags & ShadowGame);
+         g.Polys.push_back(sp);
+     }
+ }
