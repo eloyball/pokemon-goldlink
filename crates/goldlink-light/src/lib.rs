@@ -500,6 +500,21 @@ pub struct Lighting {
     /// The GPU that lights the overworld (UC14); None: no usable GPU.
     gpu: Option<gpu::Gpu>,
     gpu_out: Vec<u32>,
+    /// The last overworld picture's lights, for the player's picture put together with it.
+    light_maps: LightMaps,
+}
+
+/// Each pixel's light in the overworld picture lit last (UC14), for putting the player's picture
+/// together with the world's on the window's GPU, each source lit as itself: per pixel, the light
+/// as the world (half floats: red, green; blue, glow) and as the player (red, green; blue, 0),
+/// multiplied with the pixel's linear colour, then the grade (`grade`: tint and saturation, the
+/// shadows' tint and exposure, the highlights' tint and the vignette's strength).
+#[derive(Debug, Clone, Default)]
+pub struct LightMaps {
+    pub width: usize,
+    pub data: Vec<[u32; 4]>,
+    pub grade: [f32; 12],
+    fresh: bool,
 }
 
 impl Default for Lighting {
@@ -614,6 +629,7 @@ impl Lighting {
             shadow: shadow::Shadows::default(),
             gpu: None,
             gpu_out: Vec::new(),
+            light_maps: LightMaps::default(),
         }
     }
 
@@ -677,6 +693,15 @@ impl Lighting {
         self.overworld_scene(px, w, x0, scene, place, phase);
         faded.put_back(px, w, x0, scene.fade, layer);
         true
+    }
+
+    /// The lights of the overworld picture lit since the last call, once (none when it wasn't).
+    pub fn take_light_maps(&mut self) -> Option<LightMaps> {
+        if !self.light_maps.fresh {
+            return None;
+        }
+        self.light_maps.fresh = false;
+        Some(self.light_maps.clone())
     }
 
     /// Whether the overworld is lit on a GPU (UC14); without one it's left unlit.
@@ -947,8 +972,24 @@ impl Lighting {
         let Some(gpu) = self.gpu.as_mut() else {
             return;
         };
-        if gpu.run(&input, &mut self.gpu_out) {
+        if gpu.run(&input, &mut self.gpu_out, &mut self.light_maps.data) {
             px[..n].copy_from_slice(&self.gpu_out[..n]);
+            self.light_maps.width = w;
+            self.light_maps.grade = [
+                g.tint[0],
+                g.tint[1],
+                g.tint[2],
+                g.saturation,
+                g.shadow[0],
+                g.shadow[1],
+                g.shadow[2],
+                g.exposure,
+                g.highlight[0],
+                g.highlight[1],
+                g.highlight[2],
+                g.vignette,
+            ];
+            self.light_maps.fresh = true;
         }
     }
 

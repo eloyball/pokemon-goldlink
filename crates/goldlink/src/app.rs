@@ -520,6 +520,7 @@ impl GameApp {
                         edge_rows(&frame.pixels[256 * 192..256 * 384]),
                     ],
                     unlit: None,
+                    light_maps: None,
                 })
             }
         };
@@ -562,6 +563,7 @@ impl GameApp {
             steady_origin,
             edge_fill,
             unlit,
+            light_maps,
             ..
         }) = shown
         else {
@@ -590,8 +592,15 @@ impl GameApp {
             };
             let fixed_mask = fit(&fixed, w);
             if let (Some(a), Some(world)) = (attached, self.steady_shift) {
-                self.attached
-                    .prepare(a, top, unlit.as_deref(), w, world, self.steady_origin);
+                self.attached.prepare(
+                    a,
+                    top,
+                    unlit.as_deref(),
+                    light_maps,
+                    w,
+                    world,
+                    self.steady_origin,
+                );
             }
             if !fixed.is_empty() {
                 let none = vec![0; w * 192];
@@ -1301,7 +1310,10 @@ impl GameApp {
 }
 
 impl eframe::App for GameApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some(rs) = frame.wgpu_render_state() {
+            crate::composite::install(rs);
+        }
         let _ = self.ui(ctx);
     }
 
@@ -1446,8 +1458,10 @@ struct AttachedView {
 
 struct AttachedData {
     a: goldlink_core::Attached,
-    /// The lighting's gain per DS pixel (`w` x 192; empty: none).
+    /// The lighting's gain per DS pixel (`w` x 192; empty: none), for the CPU's composite.
     gain: Vec<[f32; 3]>,
+    /// The crop the GPU's composite reads (UC14), when it's ready.
+    gpu: Option<Arc<crate::composite::Frame>>,
     w: usize,
     world: [f32; 2],
     world_origin: [f64; 2],
@@ -1456,11 +1470,13 @@ struct AttachedData {
 }
 
 impl AttachedView {
+    #[allow(clippy::too_many_arguments)]
     fn prepare(
         &mut self,
         a: goldlink_core::Attached,
         top: &[u32],
         unlit: Option<&[u32]>,
+        light_maps: Option<goldlink_light::LightMaps>,
         w: usize,
         world: [f32; 2],
         world_origin: [f64; 2],
@@ -1482,16 +1498,27 @@ impl AttachedView {
             return;
         }
         let ch = |p: u32, sh: u32| ((p >> sh) & 255) as f32;
-        let gain = match unlit {
+        // The CPU's composite's gain (the GPU's lights each source as itself).
+        let gain = match unlit.filter(|_| !crate::composite::ready()) {
             Some(u) => (0..w * 192)
                 .map(|k| [16, 8, 0].map(|sh| (ch(top[k], sh) + 1.0) / (ch(u[k], sh) + 1.0)))
                 .collect(),
             None => Vec::new(),
         };
         self.frames += 1;
+        let gpu = crate::composite::ready().then(|| {
+            Arc::new(gpu_frame(
+                &a,
+                w,
+                [x0, y0, x1, y1],
+                light_maps.as_ref(),
+                self.frames as u64,
+            ))
+        });
         self.data = Some(AttachedData {
             a,
             gain,
+            gpu,
             w,
             world,
             world_origin,
@@ -1550,6 +1577,27 @@ impl AttachedView {
             return;
         }
         let (pw, ph) = ((px1 - px0) as usize, (py1 - py0) as usize);
+        let to = egui::Rect::from_min_max(
+            egui::pos2(px0 as f32 / ppp, py0 as f32 / ppp),
+            egui::pos2(px1 as f32 / ppp, py1 as f32 / ppp),
+        );
+        // On the window's GPU (UC14): each screen pixel's world point is linear in its physical
+        // pixel (the image's `wx`, `wy` at the pixel's centre).
+        if let Some(frame) = d.gpu.clone().filter(|_| crate::composite::ready()) {
+            let cols_plain = d.a.plain.len() / 192;
+            let (ax, bx) = (wx(0.0), wx(1.0 / ppp) - wx(0.0));
+            let (ay, by) = (wy(0.0), wy(1.0 / ppp) - wy(0.0));
+            let draw = crate::composite::Draw {
+                frame,
+                map: [ax, bx, ay, by],
+                off,
+                w: d.w as i32,
+                o: ((cols_plain - d.w) / 2) as i32,
+                from: (goldlink_core::Nds::MAX_WIDE_SIDE - d.a.side) as i32,
+            };
+            p.add(draw.callback(to));
+            return;
+        }
         let key = (self.frames, [px0 as f32, py0 as f32, off[0], off[1]], ppp);
         if self.made != Some(key) || self.texture.is_none() {
             let img = d.image(
@@ -1569,10 +1617,6 @@ impl AttachedView {
             self.made = Some(key);
         }
         if let Some(t) = &self.texture {
-            let to = egui::Rect::from_min_max(
-                egui::pos2(px0 as f32 / ppp, py0 as f32 / ppp),
-                egui::pos2(px1 as f32 / ppp, py1 as f32 / ppp),
-            );
             p.image(t.id(), to, full, egui::Color32::WHITE);
         }
     }
@@ -2162,6 +2206,9 @@ struct Shown {
     /// The top picture before the lighting, with the attached picture: the two put together are
     /// lit as the top picture is (each DS pixel's gain).
     unlit: Option<Vec<u32>>,
+    /// Each pixel's light as the world and as the player (UC14): the two put together on the GPU
+    /// lit each as itself.
+    light_maps: Option<goldlink_light::LightMaps>,
 }
 
 /// A frame waiting to be lit, and whether the casters cast (the Shadows setting).
@@ -2229,6 +2276,7 @@ impl LightThread {
                             s.light.as_ref(),
                             s.attached.as_ref(),
                         );
+                        s.light_maps = lighting.take_light_maps();
                         if !lighting.has_gpu() {
                             no_gpu.store(true, Ordering::Relaxed);
                         }
@@ -2288,6 +2336,99 @@ impl Drop for LightThread {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+    }
+}
+
+/// The crop of the two pictures round the player (`bbox`: shown columns and rows) the GPU's
+/// composite reads (UC14, composite.wgsl's planes), with the lights and the plain mask on the
+/// arrays' columns.
+fn gpu_frame(
+    a: &goldlink_core::Attached,
+    w: usize,
+    bbox: [usize; 4],
+    lights: Option<&goldlink_light::LightMaps>,
+    seq: u64,
+) -> crate::composite::Frame {
+    use crate::composite::PLANES;
+    let p = &a.pictures;
+    let stride = p.stride().max(1) as usize;
+    let cols = a.plain.len() / 192;
+    let o = (cols - w) / 2;
+    let from = goldlink_core::Nds::MAX_WIDE_SIDE - a.side;
+    // A margin past the player: the glide (a pixel or two), the edges' neighbours.
+    const M: usize = 8;
+    let shift = o + from;
+    let x0 = (bbox[0] + shift).saturating_sub(M);
+    let y0 = bbox[1].saturating_sub(M);
+    let x1 = (bbox[2] + shift + M).min(stride);
+    let y1 = (bbox[3] + M).min(192);
+    let (cw, ch) = (x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
+    let cells = cw * ch;
+    let lights = lights.filter(|l| l.width == w && l.data.len() >= w * 192);
+    let mut words = Vec::with_capacity(cells * 26);
+    let mut offsets = [0u32; PLANES];
+    let at = |x: usize, y: usize| y * stride + x;
+    for (plane, start) in offsets.iter_mut().enumerate() {
+        *start = words.len() as u32;
+        for y in y0..y0 + ch {
+            for x in x0..x0 + cw {
+                let i = at(x, y);
+                let u = |k: usize| p.u32_plane(k).get(i).copied().unwrap_or(0);
+                let f = |k: usize| p.f32_plane(k).get(i).copied().unwrap_or(1.0).to_bits();
+                let f3 = |k: usize, c: usize| {
+                    p.f32_plane(k)
+                        .get(i * 3 + c)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .to_bits()
+                };
+                // The shown column of the arrays' column x.
+                let sx = x as isize - shift as isize;
+                let light = |half: usize| -> [u32; 2] {
+                    match lights {
+                        Some(l) if sx >= 0 && (sx as usize) < w => {
+                            let v = l.data[y * w + sx as usize];
+                            [v[half * 2], v[half * 2 + 1]]
+                        }
+                        _ => [0, 0],
+                    }
+                };
+                match plane {
+                    0..=10 => words.push(u(plane)),
+                    11 => words.push(f(0)),
+                    12 => words.extend([f3(1, 0), f3(1, 1), f3(1, 2)]),
+                    13 => words.push(u(11)),
+                    14 => words.push(u(12)),
+                    15 => words.push(f(2)),
+                    16 => words.extend([f3(3, 0), f3(3, 1), f3(3, 2)]),
+                    17 => words.extend(light(0)),
+                    18 => words.extend(light(1)),
+                    _ => {
+                        let px = x as isize - from as isize;
+                        let plain = if px >= 0 && (px as usize) < cols {
+                            a.plain[y * cols + px as usize]
+                        } else {
+                            0
+                        };
+                        words.push(u32::from(plain));
+                    }
+                }
+            }
+        }
+    }
+    let (disp_cnt, edges, left, right) = p.display();
+    crate::composite::Frame {
+        seq,
+        words,
+        offsets,
+        crop: [x0 as i32, y0 as i32, cw as i32, ch as i32],
+        disp_cnt,
+        edges,
+        left,
+        right,
+        render_width: goldlink_core::Nds::RENDER_WIDTH as u32,
+        lit: lights.is_some(),
+        grade: lights.map_or([1.0; 12], |l| l.grade),
     }
 }
 

@@ -39,6 +39,9 @@ flate2 = "1"
 sha2 = "0.10"
 hex = "0.4"
 goldlink-sign = { path = "../goldlink-sign" }
+# The player's picture put together on the window's GPU (UC14, composite.rs).
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
 
 # wgpu on every OS (UC14: the lighting and shadows run on the GPU, written once in WGSL): Vulkan
 # on Linux with wgpu's OpenGL fallback, Metal on macOS, Direct3D 12 on Windows (with Windows'

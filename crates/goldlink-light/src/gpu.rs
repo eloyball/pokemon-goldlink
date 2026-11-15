@@ -90,6 +90,8 @@ const ATLAS: [u32; 2] = [2048, 1024];
 const PICTURE: [u32; 2] = [384, 192];
 /// The textures' alpha, a row.
 const ALPHA_ROW: u32 = 4096;
+/// Words per pixel out of the light pass: its colour, its light as the world and as the player.
+const WORDS: usize = 5;
 
 /// A map's textures: how near the light (raw), the card, the depth test's.
 struct Target {
@@ -461,8 +463,9 @@ impl Gpu {
         self.failed.load(Ordering::Relaxed)
     }
 
-    /// Lights the frame: `out` gets each pixel (0x00RRGGBB); false when the GPU failed.
-    pub fn run(&mut self, input: &Input, out: &mut [u32]) -> bool {
+    /// Lights the frame: `out` gets each pixel (0x00RRGGBB), `lights` each pixel's light as the
+    /// world and as the player (light.wgsl `shade`); false when the GPU failed.
+    pub fn run(&mut self, input: &Input, out: &mut [u32], lights: &mut Vec<[u32; 4]>) -> bool {
         if self.failed() {
             return false;
         }
@@ -580,8 +583,8 @@ impl Gpu {
             .write(device, queue, bytemuck::cast_slice(&input.pixels[..n]));
         self.work0.fit(device, (n * 16) as u64);
         self.work1.fit(device, (n * 16) as u64);
-        self.outp.fit(device, (n * 4) as u64);
-        self.readback.fit(device, (n * 4) as u64);
+        self.outp.fit(device, (n * WORDS * 4) as u64);
+        self.readback.fit(device, (n * WORDS * 4) as u64);
         self.lights
             .write(device, queue, bytemuck::cast_slice(input.lights));
         self.faces
@@ -783,7 +786,13 @@ impl Gpu {
             pass.set_pipeline(&self.passes[4]);
             pass.dispatch_workgroups(gx, gy, 1);
         }
-        enc.copy_buffer_to_buffer(&self.outp.buf, 0, &self.readback.buf, 0, (n * 4) as u64);
+        enc.copy_buffer_to_buffer(
+            &self.outp.buf,
+            0,
+            &self.readback.buf,
+            0,
+            (n * WORDS * 4) as u64,
+        );
         queue.submit([enc.finish()]);
         if let Some(e) = pollster::block_on(device.pop_error_scope()) {
             eprintln!("[goldlink-light] GPU error, lighting off: {e}");
@@ -791,7 +800,7 @@ impl Gpu {
             return false;
         }
 
-        let slice = self.readback.buf.slice(..(n * 4) as u64);
+        let slice = self.readback.buf.slice(..(n * WORDS * 4) as u64);
         let (tx, rx) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
@@ -802,7 +811,12 @@ impl Gpu {
         }
         {
             let data = slice.get_mapped_range();
-            out[..n].copy_from_slice(bytemuck::cast_slice(&data));
+            let words: &[u32] = bytemuck::cast_slice(&data);
+            lights.clear();
+            for (k, p) in words.chunks_exact(WORDS).take(n).enumerate() {
+                out[k] = p[0];
+                lights.push([p[1], p[2], p[3], p[4]]);
+            }
         }
         self.readback.buf.unmap();
         true

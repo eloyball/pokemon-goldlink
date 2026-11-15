@@ -657,7 +657,10 @@ impl Shell {
 }
 
 impl eframe::App for Shell {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if let Some(rs) = frame.wgpu_render_state() {
+            crate::composite::install(rs);
+        }
         self.step(ctx);
     }
 

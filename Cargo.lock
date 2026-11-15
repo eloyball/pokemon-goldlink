@@ -1380,6 +1380,7 @@ dependencies = [
 name = "goldlink"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "chrono",
  "dirs",
  "eframe",
@@ -1394,6 +1395,7 @@ dependencies = [
  "goldlink-sign",
  "hex",
  "png 0.17.16",
+ "pollster",
  "rfd",
  "serde_json",
  "sha2",

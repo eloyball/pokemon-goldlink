@@ -494,6 +494,55 @@ fn grade(c0: vec3<f32>, v: f32) -> vec3<f32> {
     return max(c * v, vec3<f32>(0.0));
 }
 
+// A pixel's light (times its colour, over the normalisation): as the world there (`player`
+// false: its normal and occlusion, what the camera follows casting) or as the player.
+fn light_of(i: u32, player: bool, col: u32, row: u32) -> vec3<f32> {
+    let px = pix[i];
+    var n = work1[i].xyz;
+    var ao = work1[i].w;
+    if player {
+        n = vec3<f32>(0.0, 0.0, 1.0);
+        ao = 1.0;
+    }
+    let raw = work0[i].xyz;
+    let tp = true_place(px.pos.xyz);
+    let wrap = clamp((dot(n, F.key_dir.xyz) + 0.35) / 1.35, 0.0, 1.0);
+    let sun_strength = F.params.x;
+    var sun_vis = 1.0;
+    if sun_strength > 0.0 && tp.w > 0.5 {
+        sun_vis = light_at(-1, tp.xyz, raw, !player, col, row);
+    }
+    let shade_k = 1.0 - sun_strength * (1.0 - sun_vis);
+    var light = F.ambient.xyz * (AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * ao)
+        + F.key.xyz * (wrap * ao * shade_k);
+    for (var l = 0u; l < F.counts.x; l++) {
+        let li = lights[l];
+        let v = li.pos.xyz - px.pos.xyz;
+        let d2 = dot(v, v);
+        let range = li.pos.w;
+        if d2 >= range * range {
+            continue;
+        }
+        let d = max(sqrt(d2), 1e-3);
+        let fall = 1.0 - d / range;
+        let facing = max(dot(n, v) / d, 0.0);
+        let add = li.colour.xyz * (fall * fall * (0.3 + 0.7 * facing));
+        if lum(add) < 0.004 {
+            continue;
+        }
+        var reach = 1.0;
+        let slot = i32(li.colour.w);
+        if slot >= 0 && tp.w > 0.5 {
+            reach = light_at(slot, tp.xyz, raw, !player, col, row);
+        }
+        light += add * reach;
+    }
+    return light * (1.0 / F.params.y);
+}
+
+// Per pixel, five words: its colour (0x00RRGGBB), then the light as the world (half floats:
+// red, green; blue, glow) and as the player (the same; the world's where the player isn't), for
+// the player's picture put together with the world's on the window's GPU (each lit as itself).
 @compute @workgroup_size(8, 8)
 fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
     let w = F.dims.x;
@@ -504,8 +553,14 @@ fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
     let i = g.y * w + g.x;
     let px = pix[i];
     let packed = px.info.x;
+    let o = i * 5u;
     if px.pos.w < 0.5 {
-        outp[i] = packed;
+        outp[o] = packed;
+        let none = pack2x16float(vec2<f32>(0.0, 0.0));
+        outp[o + 1u] = none;
+        outp[o + 2u] = none;
+        outp[o + 3u] = none;
+        outp[o + 4u] = none;
         return;
     }
     let base = vec3<f32>(
@@ -514,52 +569,26 @@ fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
         to_linear(packed & 255u),
     );
     let glow = bitcast<f32>(px.info.y);
+    let player = px.info.z == 1u;
+    let col = F.dims.z + g.x;
+    let world = light_of(i, false, col, g.y);
+    var lit = world;
+    var as_player = world;
+    var world_glow = glow;
+    if player {
+        as_player = light_of(i, true, col, g.y);
+        lit = as_player;
+        // Under the player the picture's colour is the player's: the world there doesn't glow.
+        world_glow = 0.0;
+    }
     var out = base;
     if glow < 1.0 {
-        let player = px.info.z == 1u;
-        var n = work1[i].xyz;
-        var ao = work1[i].w;
-        if player {
-            n = vec3<f32>(0.0, 0.0, 1.0);
-            ao = 1.0;
-        }
-        let raw = work0[i].xyz;
-        let col = F.dims.z + g.x;
-        let tp = true_place(px.pos.xyz);
-        let wrap = clamp((dot(n, F.key_dir.xyz) + 0.35) / 1.35, 0.0, 1.0);
-        let sun_strength = F.params.x;
-        var sun_vis = 1.0;
-        if sun_strength > 0.0 && tp.w > 0.5 {
-            sun_vis = light_at(-1, tp.xyz, raw, !player, col, g.y);
-        }
-        let shade_k = 1.0 - sun_strength * (1.0 - sun_vis);
-        var light = F.ambient.xyz * (AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * ao)
-            + F.key.xyz * (wrap * ao * shade_k);
-        for (var l = 0u; l < F.counts.x; l++) {
-            let li = lights[l];
-            let v = li.pos.xyz - px.pos.xyz;
-            let d2 = dot(v, v);
-            let range = li.pos.w;
-            if d2 >= range * range {
-                continue;
-            }
-            let d = max(sqrt(d2), 1e-3);
-            let fall = 1.0 - d / range;
-            let facing = max(dot(n, v) / d, 0.0);
-            let add = li.colour.xyz * (fall * fall * (0.3 + 0.7 * facing));
-            if lum(add) < 0.004 {
-                continue;
-            }
-            var reach = 1.0;
-            let slot = i32(li.colour.w);
-            if slot >= 0 && tp.w > 0.5 {
-                reach = light_at(slot, tp.xyz, raw, !player, col, g.y);
-            }
-            light += add * reach;
-        }
-        let lit = base * light * (1.0 / F.params.y);
-        out = lit * (1.0 - glow) + base * glow;
+        out = base * lit * (1.0 - glow) + base * glow;
     }
     let c = grade(out, vignette(g.x, g.y));
-    outp[i] = (to_byte(c.x) << 16u) | (to_byte(c.y) << 8u) | to_byte(c.z);
+    outp[o] = (to_byte(c.x) << 16u) | (to_byte(c.y) << 8u) | to_byte(c.z);
+    outp[o + 1u] = pack2x16float(world.xy);
+    outp[o + 2u] = pack2x16float(vec2<f32>(world.z, world_glow));
+    outp[o + 3u] = pack2x16float(as_player.xy);
+    outp[o + 4u] = pack2x16float(vec2<f32>(as_player.z, 0.0));
 }

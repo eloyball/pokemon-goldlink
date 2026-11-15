@@ -220,6 +220,28 @@ pub struct Pictures {
 }
 
 impl Pictures {
+    /// One of the u32 arrays, in `GlPictures`' order (world top, its depth, its attributes, world
+    /// bottom, its depth, world opaque, attached top, its depth, its translucent depth, its
+    /// attributes, attached bottom, late early, late depth), `stride` x 192.
+    pub fn u32_plane(&self, i: usize) -> &[u32] {
+        &self.u32s[i]
+    }
+
+    /// One of the f32 arrays: attached k, attached b (three a pixel), late k, late b (three).
+    pub fn f32_plane(&self, i: usize) -> &[f32] {
+        &self.f32s[i]
+    }
+
+    /// The arrays' row length (the renderer's scanline).
+    pub fn stride(&self) -> i32 {
+        self.stride
+    }
+
+    /// DISP3DCNT, the edge colours, the picture's left and right columns.
+    pub fn display(&self) -> (u32, [u16; 8], i32, i32) {
+        (self.disp_cnt, self.edge_table, self.left, self.right)
+    }
+
     /// The arrays sized for the renderer's (`gl_pictures_size`).
     fn sized(&mut self) {
         // SAFETY: a size query.
@@ -513,6 +535,8 @@ impl Nds {
         }
     }
 
+    /// The renderer's picture width (its arrays' columns, `RenderWidth`).
+    pub const RENDER_WIDTH: usize = SCREEN_WIDTH + 2 * Self::MAX_WIDE_SIDE;
     /// The most the picture can be widened on each side (UC9 §4).
     pub const MAX_WIDE_SIDE: usize = 64;
 

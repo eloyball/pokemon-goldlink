@@ -2,6 +2,7 @@
 //! `goldlink-dev` opens the same window with its dev tools added as [`FrameHook`]s (D2).
 
 pub mod app;
+mod composite;
 pub mod crash;
 pub mod hud;
 pub mod import;
