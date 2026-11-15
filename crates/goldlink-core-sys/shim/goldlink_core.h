@@ -153,6 +153,30 @@ int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);
 // 3D scene (the main engine on the touch screen, a display mode other than the regular one, BG0
 // not 3D), 1 for Z depth, 2 for W depth.
 int gl_core_light_buffers(GlCore *core, uint32_t *depth, uint8_t *layer, uint8_t *ids, int32_t proj[16]);
+// The polygons of the 3D picture on screen (UC13, patch 0028), for the cast shadows: counts[0..4]
+// = polygons, vertices, textures, transparency bytes; then gl_core_shadow_geometry copies them
+// into arrays that big (call both on the same frame).
+typedef struct GlShadowPoly
+{
+    uint32_t first_vert, num_verts, attr, tex_param, tex_palette;
+    int32_t tex; // index into the textures, -1: none (untextured or opaque)
+    uint32_t flags; // 1 attached, 2 translucent, 4 shadow mask, 8 shadow volume, 16 facing, 32 line,
+                    // 64 the game's own shadow
+} GlShadowPoly;
+typedef struct GlShadowVert
+{
+    int32_t clip[4];
+    int16_t st[2]; // texture coordinates, 12.4 texels
+    int32_t screen[2];
+} GlShadowVert;
+typedef struct GlShadowTex
+{
+    uint32_t width, height, offset; // width x height bytes (0..31 alpha) from offset
+} GlShadowTex;
+void gl_core_shadow_counts(GlCore *core, uint32_t counts[4]);
+// Leave the game's own shadows out of the 3D picture (UC13, patch 0028), from the next render.
+void gl_core_set_hide_game_shadows(GlCore *core, int on);
+void gl_core_shadow_geometry(GlCore *core, GlShadowPoly *polys, GlShadowVert *verts, GlShadowTex *texs, uint8_t *alpha);
 // Each top-screen line's fades (UC11, patch 0008), 4 bytes a line: the master brightness's mode
 // (0 none, 1 toward white, 2 toward black) and factor (0..16), then the same for the colour
 // effect's brightness on the 3D layer (where the 3D scene shows on top).

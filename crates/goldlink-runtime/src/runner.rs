@@ -82,6 +82,8 @@ pub struct LightFrame {
     pub map: u16,
     /// The DS clock's hour (the game's time of day).
     pub hour: u32,
+    /// And its minute (the sun's place, UC13).
+    pub minute: u32,
 }
 
 /// Interleaved stereo i16 samples waiting for the sound card.
@@ -279,6 +281,7 @@ fn light_frame(emu: &Emulator, spare: Option<LightFrame>) -> Option<LightFrame> 
         activity: 0,
         map: 0,
         hour: 12,
+        minute: 0,
     });
     if !emu.nds.light_buffers(&mut f.buffers) {
         return None;
@@ -291,7 +294,9 @@ fn light_frame(emu: &Emulator, spare: Option<LightFrame>) -> Option<LightFrame> 
     });
     f.activity = activity;
     f.map = map;
-    f.hour = chrono::Timelike::hour(&emu.clock());
+    let clock = emu.clock();
+    f.hour = chrono::Timelike::hour(&clock);
+    f.minute = chrono::Timelike::minute(&clock);
     Some(f)
 }
 
@@ -376,6 +381,12 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
+        // Outdoors the lighting casts shadows (UC13): the game's own are left out from the next
+        // frame, or they'd show twice.
+        let outdoors = light_now.as_ref().is_some_and(|l| {
+            l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
+        });
+        emu.nds.set_hide_game_shadows(outdoors);
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);

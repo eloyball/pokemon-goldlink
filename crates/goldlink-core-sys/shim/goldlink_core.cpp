@@ -498,3 +498,38 @@ int gl_core_loadstate(GlCore *core, const uint8_t *data, uint32_t len)
 }
 
 } // extern "C"
+
+void gl_core_shadow_counts(GlCore *core, uint32_t counts[4])
+{
+    auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
+    const auto &g = soft.GetShownGeometry();
+    counts[0] = (uint32_t)g.Polys.size();
+    counts[1] = (uint32_t)g.Verts.size();
+    counts[2] = (uint32_t)g.Texs.size();
+    counts[3] = (uint32_t)g.Alpha.size();
+}
+
+void gl_core_shadow_geometry(GlCore *core, GlShadowPoly *polys, GlShadowVert *verts, GlShadowTex *texs, uint8_t *alpha)
+{
+    auto &soft = static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer());
+    const auto &g = soft.GetShownGeometry();
+    for (size_t i = 0; i < g.Polys.size(); i++)
+    {
+        const auto &p = g.Polys[i];
+        polys[i] = {p.FirstVert, p.NumVerts, p.Attr, p.TexParam, p.TexPalette, p.Tex, p.Flags};
+    }
+    for (size_t i = 0; i < g.Verts.size(); i++)
+    {
+        const auto &v = g.Verts[i];
+        verts[i] = {{v.Clip[0], v.Clip[1], v.Clip[2], v.Clip[3]}, {v.ST[0], v.ST[1]}, {v.Screen[0], v.Screen[1]}};
+    }
+    for (size_t i = 0; i < g.Texs.size(); i++)
+        texs[i] = {g.Texs[i].Width, g.Texs[i].Height, g.Texs[i].Offset};
+    if (!g.Alpha.empty())
+        std::memcpy(alpha, g.Alpha.data(), g.Alpha.size());
+}
+
+void gl_core_set_hide_game_shadows(GlCore *core, int on)
+{
+    static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer()).HideGameShadows = on != 0;
+}

@@ -1504,6 +1504,7 @@ dependencies = [
  "cpal",
  "goldlink-abi",
  "goldlink-core",
+ "goldlink-light",
  "goldlink-rom",
  "serde",
  "toml",

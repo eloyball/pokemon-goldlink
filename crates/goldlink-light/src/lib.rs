@@ -22,6 +22,9 @@
 //! Battles and menus get [`Lighting::grade`] only: a small grade, no lighting.
 
 mod places;
+mod shadow;
+
+pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert};
 
 /// The DS screen's height.
 pub const HEIGHT: usize = 192;
@@ -79,6 +82,14 @@ pub struct Scene<'a> {
     pub width: usize,
     /// Each line's fades (192, or empty: none).
     pub fade: &'a [Fade],
+    /// The picture's polygons, for the cast shadows (UC13).
+    pub geometry: Geometry<'a>,
+    /// The DS clock: hours, with minutes as a fraction (the sun's place).
+    pub hours: f32,
+    /// 1 where the steady overworld's attached picture (the player, a follower) shows opaque
+    /// (`width` x 192, or empty): lit there as the player, so their own shadow on the ground
+    /// under them doesn't darken them.
+    pub attached: &'a [u8],
 }
 
 /// A line's screen-wide fades as the DS applies them after composing (goldlink-core `Fade`):
@@ -401,6 +412,11 @@ fn small_grade(phase: Phase) -> Grade {
     }
 }
 
+/// Sunlit patches smaller than this (pixels) inside shadow are shadowed; shadow specks smaller
+/// than `SHADOW_SPECK` in the sun are lit (UC13).
+const LIT_ISLAND: usize = 48;
+const SHADOW_SPECK: usize = 6;
+
 /// Ambient occlusion's reach, in view units (a tile is 16).
 const AO_RANGE: f32 = 20.0;
 /// A window light's reach.
@@ -478,6 +494,9 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
+    /// The sun's depth map (UC13), and how much of the sun reaches each pixel.
+    shadow: shadow::ShadowMap,
+    sun_vis: Vec<f32>,
     /// The picture's mean brightness, followed slowly (the light sources' threshold): taken
     /// frame by frame it changed as the view moved, and window panes near it flickered between
     /// lit and glowing (the user's play test, walking up past houses).
@@ -594,6 +613,8 @@ impl Lighting {
             tracked: Vec::new(),
             tracked_at: None,
             mean: None,
+            shadow: shadow::ShadowMap::default(),
+            sun_vis: Vec::new(),
         }
     }
 
@@ -677,7 +698,25 @@ impl Lighting {
         let Some(rows) = unprojection(&scene.proj) else {
             return self.grade(px, w, h, phase);
         };
-        let p = preset(place, phase);
+        let mut p = preset(place, phase);
+        // The sun (UC13): outdoors by day the key light comes from where it stands, and what
+        // stands in its way casts a shadow.
+        let mut sun_strength = 0.0;
+        self.shadow.ready = false;
+        if place == Place::Outdoor
+            && let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours)
+            && !scene.geometry.polys.is_empty()
+        {
+            let up = shadow::ShadowMap::find_up(&scene.geometry, &rows);
+            let dir = shadow::ShadowMap::sun_dir(up, azimuth, elevation);
+            let fwd: [[f32; 4]; 4] = std::array::from_fn(|r| {
+                std::array::from_fn(|c| scene.proj[r * 4 + c] as f32 / 4096.0)
+            });
+            self.shadow
+                .build(&scene.geometry, &fwd, &rows, up, dir, self.pool.as_ref());
+            p.key_dir = dir;
+            sun_strength = strength;
+        }
         self.cells.resize(n, Cell::default());
         for v in [&mut self.nrm, &mut self.tmp3, &mut self.out] {
             v.resize(n, [0.0; 3]);
@@ -742,11 +781,30 @@ impl Lighting {
             });
         }
 
+        // The sun's reach per pixel (UC13), small islands cleaned up.
+        self.sun_vis.clear();
+        self.sun_vis.resize(n, 1.0);
+        if sun_strength > 0.0 {
+            let (cells, nrm, sun) = (&self.cells, &self.nrm, &self.shadow);
+            par_rows(self.pool.as_ref(), &mut self.sun_vis, w, |y, row| {
+                for (x, out) in row.iter_mut().enumerate() {
+                    let c = cells[y * w + x];
+                    if c.layer == 0 {
+                        continue;
+                    }
+                    let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
+                    *out = sun.light(c.pos, nrm[y * w + x], !player, x0 + x, y);
+                }
+            });
+            self.clean_islands(w, h);
+        }
+
         // 3. Ambient, key light and point lights, on each pixel's own colour.
         {
             let norm = lum(p.ambient) + lum(p.key) * 0.85 + lum(p.player_light) * 0.45;
             let (cells, nrm, ao) = (&self.cells, &self.nrm, &self.ao);
             let lights = &lights;
+            let sun_vis = &self.sun_vis;
             par_rows(self.pool.as_ref(), &mut self.out, w, |y, row| {
                 for (x, out) in row.iter_mut().enumerate() {
                     let i = y * w + x;
@@ -757,9 +815,10 @@ impl Lighting {
                     }
                     let (n, ao) = (nrm[i], ao[i]);
                     let wrap = ((dot(n, p.key_dir) + 0.35) / 1.35).clamp(0.0, 1.0);
+                    let shade = 1.0 - sun_strength * (1.0 - sun_vis[i]);
                     let mut light = add(
                         scale(p.ambient, AMBIENT_FLOOR + (1.0 - AMBIENT_FLOOR) * ao),
-                        scale(p.key, wrap * ao),
+                        scale(p.key, wrap * ao * shade),
                     );
                     for l in lights {
                         let v = sub(l.pos, c.pos);
@@ -792,6 +851,55 @@ impl Lighting {
                     *px = pack(srgb, apply_grade(out[i], &p.grade, v));
                 }
             });
+        }
+    }
+
+    /// Small islands in the sun's reach: a patch of sunlit ground smaller than [`LIT_ISLAND`]
+    /// pixels inside shadow (a sliver between two trees' shadows, seen as a stray rectangle: the
+    /// user's look) is shadowed, and a speck of shadow under [`SHADOW_SPECK`] pixels in the sun is
+    /// lit. Islands are 4-connected runs of the 3D scene's pixels.
+    fn clean_islands(&mut self, w: usize, h: usize) {
+        let n = w * h;
+        for (lit, limit) in [(true, LIT_ISLAND), (false, SHADOW_SPECK)] {
+            let side = |i: usize| (self.sun_vis[i] >= 0.5) == lit;
+            self.label[..n].fill(0);
+            let mut region = Vec::new();
+            let mut flip = Vec::new();
+            for start in 0..n {
+                if self.label[start] != 0 || self.cells[start].layer == 0 || !side(start) {
+                    continue;
+                }
+                self.label[start] = 1;
+                self.stack.clear();
+                self.stack.push(start as u32);
+                region.clear();
+                // Touching the picture's edge: it may go on past it, left as it is.
+                let mut edge = false;
+                while let Some(i) = self.stack.pop() {
+                    let i = i as usize;
+                    region.push(i);
+                    let (x, y) = (i % w, i / w);
+                    edge |= x == 0 || y == 0 || x + 1 == w || y + 1 == h;
+                    let next = [
+                        (x > 0).then(|| i - 1),
+                        (x + 1 < w).then(|| i + 1),
+                        (y > 0).then(|| i - w),
+                        (y + 1 < h).then(|| i + w),
+                    ];
+                    for j in next.into_iter().flatten() {
+                        if self.label[j] == 0 && self.cells[j].layer != 0 && side(j) {
+                            self.label[j] = 1;
+                            self.stack.push(j as u32);
+                        }
+                    }
+                }
+                if !edge && region.len() < limit {
+                    flip.extend_from_slice(&region);
+                }
+            }
+            for i in flip {
+                self.sun_vis[i] = if lit { 0.0 } else { 1.0 };
+            }
         }
     }
 
@@ -1329,6 +1437,9 @@ mod tests {
             proj: PROJ,
             fade: &[],
             width,
+            geometry: Geometry::default(),
+            hours: 12.0,
+            attached: &[],
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
         let mut lighting = Lighting::new();
@@ -1352,6 +1463,9 @@ mod tests {
             proj: PROJ,
             fade: &[],
             width,
+            geometry: Geometry::default(),
+            hours: 12.0,
+            attached: &[],
         };
         let dark = 0x0050_5060u32;
         let mut plain = vec![dark; 256 * HEIGHT];

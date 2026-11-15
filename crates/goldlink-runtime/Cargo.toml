@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 goldlink-core = { path = "../goldlink-core" }
 goldlink-abi = { path = "../goldlink-abi" }
+goldlink-light = { path = "../goldlink-light" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.9"

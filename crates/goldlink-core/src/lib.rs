@@ -12,6 +12,20 @@ use chrono::{Datelike, Local, NaiveDateTime, Timelike};
 use goldlink_core_sys as sys;
 
 pub use sys::{GL_SCREEN_HEIGHT as SCREEN_HEIGHT, GL_SCREEN_WIDTH as SCREEN_WIDTH};
+pub use sys::{GlShadowPoly as ShadowPoly, GlShadowTex as ShadowTex, GlShadowVert as ShadowVert};
+
+/// The polygons of the 3D picture on screen (UC13), for the cast shadows: each vertex's clip
+/// coordinates (20.12: the projection places them in 3D), texture coordinates and screen
+/// position; each polygon's attributes and kind ([`ShadowPoly::flags`]: 1 attached, 2
+/// translucent, 4 and 8 the DS's shadow volumes, 16 facing, 32 a line); the transparency of
+/// textures that can have transparent texels (0..31 a texel, `ShadowTex` places each in `alpha`).
+#[derive(Debug, Clone, Default)]
+pub struct ShadowGeometry {
+    pub polys: Vec<ShadowPoly>,
+    pub verts: Vec<ShadowVert>,
+    pub texs: Vec<ShadowTex>,
+    pub alpha: Vec<u8>,
+}
 
 /// The ARM9 address main RAM starts at.
 pub const MAIN_RAM_BASE: u32 = 0x0200_0000;
@@ -300,6 +314,8 @@ pub struct LightBuffers {
     pub w_depth: bool,
     /// Each line's fades (192): see [`Fade`].
     pub fade: Vec<Fade>,
+    /// The picture's polygons (UC13).
+    pub geometry: ShadowGeometry,
 }
 
 /// The polygon ID the ROM draws a neighbouring area's map blocks with (their graphics aren't
@@ -602,6 +618,13 @@ impl Nds {
         out
     }
 
+    /// Leaves the game's own shadows (the blobs under people, painted shadows) out of the 3D
+    /// picture from the next render, while GoldLink casts its own (UC13).
+    pub fn set_hide_game_shadows(&mut self, on: bool) {
+        // SAFETY: the core is live; the shim only sets a flag.
+        unsafe { sys::gl_core_set_hide_game_shadows(self.ptr(), c_int::from(on)) }
+    }
+
     /// What the lighting needs from the top screen (UC11) into `out`; false when the top screen
     /// can't show the 3D scene (then `out` is left as it was).
     pub fn light_buffers(&self, out: &mut LightBuffers) -> bool {
@@ -623,6 +646,24 @@ impl Nds {
         out.fade.resize(SCREEN_HEIGHT, [0; 4]);
         // SAFETY: fade holds 192 four-byte lines, what the shim writes.
         unsafe { sys::gl_core_light_fades(self.ptr(), out.fade.as_mut_ptr().cast()) };
+        let mut counts = [0u32; 4];
+        // SAFETY: counts holds 4, what the shim writes.
+        unsafe { sys::gl_core_shadow_counts(self.ptr(), counts.as_mut_ptr()) };
+        let g = &mut out.geometry;
+        g.polys.resize(counts[0] as usize, ShadowPoly::default());
+        g.verts.resize(counts[1] as usize, ShadowVert::default());
+        g.texs.resize(counts[2] as usize, ShadowTex::default());
+        g.alpha.resize(counts[3] as usize, 0);
+        // SAFETY: each array is as long as the counts just given for the same frame.
+        unsafe {
+            sys::gl_core_shadow_geometry(
+                self.ptr(),
+                g.polys.as_mut_ptr(),
+                g.verts.as_mut_ptr(),
+                g.texs.as_mut_ptr(),
+                g.alpha.as_mut_ptr(),
+            )
+        };
         kind != 0
     }
 

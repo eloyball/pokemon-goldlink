@@ -520,7 +520,13 @@ impl GameApp {
                 None => pixels[..256 * 192].to_vec(),
             });
         if lit {
-            self.light(&mut pixels, wide.as_deref_mut(), side, light.as_ref());
+            self.light(
+                &mut pixels,
+                wide.as_deref_mut(),
+                side,
+                light.as_ref(),
+                attached.as_ref(),
+            );
         }
         let image = |px: &[u32], w: usize, h: usize| enlarged(px, w, h, k);
         // The steady overworld's layers (UC11, UC12): the player and the world put together at
@@ -569,14 +575,65 @@ impl GameApp {
         wide: Option<&mut [u32]>,
         side: usize,
         light: Option<&goldlink_runtime::LightFrame>,
+        attached: Option<&goldlink_core::Attached>,
     ) {
         use goldlink_light::{Phase, Place, Scene};
+        // Where the attached picture shows opaque, on the lighting's columns (UC13).
+        let width = goldlink_core::LightBuffers::WIDTH;
+        let player: Vec<u8> = attached.map_or_else(Vec::new, |a| {
+            let cols = a.plain.len() / 192;
+            let off = cols as isize - width as isize;
+            (0..width * 192)
+                .map(|i| {
+                    let (x, y) = ((i % width) as isize + off / 2, i / width);
+                    let at = (x >= 0 && (x as usize) < cols).then(|| a.att[y * cols + x as usize]);
+                    u8::from(at.is_some_and(|c| c >> 24 >= 0xF0))
+                })
+                .collect()
+        });
         let lighting = self
             .lighting
             .get_or_insert_with(goldlink_light::Lighting::new);
         let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
         let phase = Phase::of_hour(hour);
         let world = light.filter(|l| l.overworld());
+        // The picture's polygons for the cast shadows (UC13), as the lighting takes them.
+        let (polys, verts): (Vec<_>, Vec<_>) = world.map_or_else(Default::default, |l| {
+            let g = &l.buffers.geometry;
+            (
+                g.polys
+                    .iter()
+                    .map(|p| goldlink_light::ShadowPoly {
+                        first_vert: p.first_vert,
+                        num_verts: p.num_verts,
+                        attr: p.attr,
+                        tex_param: p.tex_param,
+                        tex: p.tex,
+                        flags: p.flags,
+                    })
+                    .collect(),
+                g.verts
+                    .iter()
+                    .map(|v| goldlink_light::ShadowVert {
+                        clip: v.clip,
+                        st: v.st,
+                        screen: v.screen,
+                    })
+                    .collect(),
+            )
+        });
+        let texs: Vec<_> = world.map_or_else(Vec::new, |l| {
+            l.buffers
+                .geometry
+                .texs
+                .iter()
+                .map(|t| goldlink_light::ShadowTex {
+                    width: t.width,
+                    height: t.height,
+                    offset: t.offset,
+                })
+                .collect()
+        });
         let scene = world.map(|l| {
             (
                 Scene {
@@ -585,6 +642,14 @@ impl GameApp {
                     proj: l.buffers.proj,
                     width: goldlink_core::LightBuffers::WIDTH,
                     fade: &l.buffers.fade,
+                    geometry: goldlink_light::Geometry {
+                        polys: &polys,
+                        verts: &verts,
+                        texs: &texs,
+                        alpha: &l.buffers.geometry.alpha,
+                    },
+                    hours: l.hour as f32 + l.minute as f32 / 60.0,
+                    attached: &player,
                 },
                 Place::of_map(l.map),
             )

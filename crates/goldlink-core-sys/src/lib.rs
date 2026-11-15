@@ -37,6 +37,37 @@ pub struct GlCoreConfig {
 pub const GL_SCREEN_WIDTH: usize = 256;
 pub const GL_SCREEN_HEIGHT: usize = 192;
 
+/// `goldlink_core.h`'s `GlShadowPoly` (UC13): a polygon of the picture on screen.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlShadowPoly {
+    pub first_vert: u32,
+    pub num_verts: u32,
+    pub attr: u32,
+    pub tex_param: u32,
+    pub tex_palette: u32,
+    pub tex: i32,
+    pub flags: u32,
+}
+
+/// `goldlink_core.h`'s `GlShadowVert`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlShadowVert {
+    pub clip: [i32; 4],
+    pub st: [i16; 2],
+    pub screen: [i32; 2],
+}
+
+/// `goldlink_core.h`'s `GlShadowTex`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GlShadowTex {
+    pub width: u32,
+    pub height: u32,
+    pub offset: u32,
+}
+
 /// `goldlink_core.h`'s `GlPictures`: where `gl_core_copy_pictures` copies the two pictures.
 #[repr(C)]
 pub struct GlPictures {
@@ -124,6 +155,15 @@ unsafe extern "C" {
         out: *mut u32,
     ) -> c_int;
     pub fn gl_core_light_fades(core: *mut GlCore, out: *mut u8);
+    pub fn gl_core_shadow_counts(core: *mut GlCore, counts: *mut u32);
+    pub fn gl_core_set_hide_game_shadows(core: *mut GlCore, on: c_int);
+    pub fn gl_core_shadow_geometry(
+        core: *mut GlCore,
+        polys: *mut GlShadowPoly,
+        verts: *mut GlShadowVert,
+        texs: *mut GlShadowTex,
+        alpha: *mut u8,
+    );
     pub fn gl_core_light_buffers(
         core: *mut GlCore,
         depth: *mut u32,
