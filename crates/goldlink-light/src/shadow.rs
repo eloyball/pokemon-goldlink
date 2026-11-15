@@ -967,9 +967,10 @@ impl Shadows {
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
             // A lantern or a lamp (a light shining from a small object: its glowing face, its
-            // housing, its cap) casts no shadows: it lights all round it, and left out of its own
-            // maps its parts still shadowed above it (the user's look, Violet City; as before
-            // shadows, they asked). A lit window casts them: its building's walls and eaves.
+            // housing, its cap): only people, Pokémon and the player cast its shadows. It lights
+            // all round it, and left out of its own maps its parts still shadowed above it (the
+            // user's look, Violet City). A lit window's light: everything (its building's walls
+            // and eaves).
             let lamp = self.casters.iter().any(|c| {
                 c.object >= 0
                     && distance_to(&c.corners, pos) < FIXTURE_REACH
@@ -982,7 +983,7 @@ impl Shadows {
             let near: Vec<&Caster> = self
                 .casters
                 .iter()
-                .filter(|c| reaches(&c.corners, pos, range))
+                .filter(|c| !lamp && reaches(&c.corners, pos, range))
                 .collect();
             let mut used = [false; 6];
             for r in receivers {
@@ -1003,8 +1004,7 @@ impl Shadows {
                 };
                 let right = normalize(cross(helper, forward));
                 let upward = cross(forward, right);
-                // A lamp's faces stay empty: nothing shadows its light.
-                let side = if used[f] && !lamp { size } else { 0 };
+                let side = if used[f] { size } else { 0 };
                 faces.push((
                     k,
                     DepthMap::new(
