@@ -7,9 +7,10 @@ its object.
   out but for the player's sprite (the user's play test). Each object's extent on screen is kept
   as its vertices come (MidTrackVertex), and one wider or taller than AttachMaxSize (72 pixels)
   isn't attached (MidClassify).
-- By night the game's black painted shadows (a building's, a sign's, a post's) can be softened
-  (SoftenGameShadows: their alpha at most 1 of 31, just visible); the grey blobs under people are faint as
-  they are.
+- By night the game's painted shadows (a building's, a sign's, the windmill post's: black ones,
+  or ones made faint by their texels on a polygon drawn whole) can be softened
+  (SoftenGameShadows: their alpha lowered until they darken by about 3%, just visible); the grey
+  blobs under people (faint by the polygon's alpha) are faint as they are.
 - Each polygon keeps its object (Polygon::Object: MidObjects' index, a model or a sprite), and
   the shadow geometry (patch 0028) gives it, so a light's own fixture (a lantern) can be told
   apart from what stands round it.
@@ -97,7 +98,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          auto [from, to] = before.equal_range(key(c));
          for (auto it = from; it != to; ++it)
 --- a/src/GPU3D_Soft.h	2026-11-15 00:26:38.655202130 -0500
-+++ b/src/GPU3D_Soft.h	2026-11-15 00:42:07.197415048 -0500
++++ b/src/GPU3D_Soft.h	2026-11-15 00:48:05.147939153 -0500
 @@ -86,7 +86,7 @@
      // clip coordinates (the lighting places it in 3D with the projection, as it does pixels), its
      // texture coordinates and screen position; each textured polygon's texture as transparency
@@ -107,32 +108,37 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      // Flags: what kind of polygon (Polygon's fields).
      static constexpr u32 ShadowAttached = 1, ShadowTranslucent = 2, ShadowMask = 4, ShadowVolume = 8,
          ShadowFacing = 16, ShadowLine = 32, ShadowGame = 64;
-@@ -104,6 +104,11 @@
+@@ -104,6 +104,14 @@
      // texture shows, GameShadow: the blobs under people, a house's or the windmill's painted
      // shadow) left out of the picture while GoldLink casts its own.
      bool HideGameShadows = false;
-+    // GoldLink (UC13): the game's black painted shadows (a building's, a sign's, a post's) drawn
-+    // at most SoftShadowAlpha (of 31) strong: by night they stay, but at the game's strength they
-+    // looked too dark beside the lighting (the user). The blobs under people (grey) are faint.
++    // GoldLink (UC13): the game's painted shadows (a building's, a sign's, the windmill post's)
++    // drawn just visible (darkening at most SoftShadowDark): by night they stay, but at the game's
++    // strength they looked too dark beside the lighting (the user). Painted: black ones, or ones
++    // made faint by their texels on a polygon drawn whole (the windmill's, on the sheet with its
++    // blades). The blobs under people (grey, made faint by the polygon's alpha) are faint as they
++    // are.
 +    bool SoftenGameShadows = false;
-+    static constexpr u32 SoftShadowAlpha = 1;
++    static constexpr float SoftShadowDark = 0.03f;
  
      void SetupRenderThread(GPU& gpu);
      void EnableRenderThread();
-@@ -114,9 +119,9 @@
+@@ -114,9 +122,11 @@
      // without its wrapping bits, and the palette).
      ShadowGeometry ShownGeometry, RenderedGeometry;
      struct TexCacheEntry { u32 Param, Palette; std::vector<u8> Alpha; u32 Width, Height; };
 -    struct ShadowCacheEntry { u32 Key[6]; bool Shadow; };
-+    struct ShadowCacheEntry { u32 Key[6]; u8 Shadow; };
++    struct ShadowCacheEntry { u32 Key[6]; u8 Shadow; u8 SoftAlpha; };
++    u8 GameShadow(const GPU& gpu, const Polygon* p, u8* softAlpha);
      std::vector<ShadowCacheEntry> ShadowCache;
 -    bool GameShadow(const GPU& gpu, const Polygon* p);
-+    u8 GameShadow(const GPU& gpu, const Polygon* p); // 0 not one, 1 the game's shadow, 2 a black one
++    // 0 not one, 1 the game's shadow, 2 a painted one (and the polygon alpha that leaves it just
++    // visible into *softAlpha).
      std::vector<TexCacheEntry> TexCache;
      size_t CacheTexture(const GPU& gpu, u32 param, u32 palette);
      std::vector<u8> HideList; // per polygon of this render: a game shadow left out
 --- a/src/GPU3D_Soft.cpp	2026-11-15 00:26:38.656785218 -0500
-+++ b/src/GPU3D_Soft.cpp	2026-11-15 00:36:46.929169264 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-15 00:48:05.148959992 -0500
 @@ -2194,6 +2194,7 @@
          sp.Attr = p->Attr;
          sp.TexParam = p->TexParam;
@@ -141,36 +147,48 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          sp.Flags = (p->Attached ? ShadowAttached : 0) | (p->Translucent ? ShadowTranslucent : 0)
              | (p->IsShadowMask ? ShadowMask : 0) | (p->IsShadow ? ShadowVolume : 0)
              | (p->FacingView ? ShadowFacing : 0) | (p->Type == 1 ? ShadowLine : 0);
-@@ -2222,8 +2223,13 @@
+@@ -2222,8 +2223,14 @@
              || (format >= 2 && format <= 4 && (p->TexParam & (1 << 29)));
          const bool translucent = p->Translucent || (alpha > 0 && alpha < 31);
          // The game's own shadows: translucent, dark where its texture shows.
 -        if (small && translucent && !p->IsShadow && !p->IsShadowMask && GameShadow(gpu, p))
-+        const u8 game = small && translucent && !p->IsShadow && !p->IsShadowMask ? GameShadow(gpu, p) : 0;
++        u8 softAlpha = 31;
++        const u8 game = small && translucent && !p->IsShadow && !p->IsShadowMask ? GameShadow(gpu, p, &softAlpha) : 0;
 +        if (game)
              sp.Flags |= ShadowGame;
 +        // GoldLink (UC13, patch 0029): a black painted shadow, softened (SoftenGameShadows). At
 +        // most, so drawing a frame again leaves it as it is.
-+        if (game == 2 && SoftenGameShadows && ((polys[i]->Attr >> 16) & 0x1F) > SoftShadowAlpha)
-+            polys[i]->Attr = (polys[i]->Attr & ~(0x1Fu << 16)) | (SoftShadowAlpha << 16);
++        if (game == 2 && SoftenGameShadows && ((polys[i]->Attr >> 16) & 0x1F) > softAlpha)
++            polys[i]->Attr = (polys[i]->Attr & ~(0x1Fu << 16)) | ((u32)softAlpha << 16);
          if (small && clear && alpha == 31 && !p->IsShadow && !p->IsShadowMask && !(sp.Flags & ShadowGame))
          {
              const size_t e = CacheTexture(gpu, param, p->TexPalette);
-@@ -2272,7 +2278,7 @@
+@@ -2272,7 +2279,7 @@
  // alpha) or a dark blue-grey of faint texels (the windmill's post, on the sheet with its blades);
  // water is coloured, sparkles white, the windmill's blades pale and its hub opaque. Kept until
  // texture memory changes (ShadowCache).
 -bool SoftRenderer::GameShadow(const GPU& gpu, const Polygon* p)
-+u8 SoftRenderer::GameShadow(const GPU& gpu, const Polygon* p)
++u8 SoftRenderer::GameShadow(const GPU& gpu, const Polygon* p, u8* softAlpha)
  {
      s32 s0 = INT32_MAX, s1 = INT32_MIN, t0 = INT32_MAX, t1 = INT32_MIN;
      for (u32 v = 0; v < p->NumVertices; v++)
-@@ -2302,14 +2308,15 @@
+@@ -2287,7 +2294,10 @@
+     const u32 key[6] = {p->TexParam, p->TexPalette, (u32)s0, (u32)s1, (u32)t0, (u32)t1};
+     for (const auto& e : ShadowCache)
+         if (memcmp(e.Key, key, sizeof(key)) == 0)
++        {
++            *softAlpha = e.SoftAlpha;
+             return e.Shadow;
++        }
+     u32 sum[3] = {}, alpha = 0, shown = 0;
+     for (s32 t = t0; t < t1 && t < t0 + 256; t++)
+         for (s32 s = s0; s < s1 && s < s0 + 256; s++)
+@@ -2302,19 +2312,31 @@
              alpha += a;
              shown++;
          }
 -    bool shadow = false;
-+    u8 shadow = 0;
++    u8 shadow = 0, soft = 31;
      if (shown > 0)
      {
          const float r = sum[0] / (31.0f * shown), g = sum[1] / (31.0f * shown), b = sum[2] / (31.0f * shown);
@@ -179,7 +197,23 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
          const float opacity = (((p->Attr >> 16) & 0x1F) / 31.0f) * (alpha / (31.0f * shown));
 -        shadow = lum < 0.45f && hi - lo <= std::max(0.3f * hi, 0.15f) && opacity < 0.8f;
 +        if (lum < 0.45f && hi - lo <= std::max(0.3f * hi, 0.15f) && opacity < 0.8f)
-+            shadow = lum < 0.1f ? 2 : 1; // GoldLink (UC13): black (painted) or grey (a blob)
++        {
++            // GoldLink (UC13): painted (black, or faint by its texels on a polygon drawn whole)
++            // or a blob (grey, faint by the polygon's alpha); a painted one's alpha that darkens
++            // by SoftShadowDark.
++            const float texels = alpha / (31.0f * shown);
++            const bool painted = lum < 0.1f || ((p->Attr >> 16) & 0x1F) == 31;
++            shadow = painted ? 2 : 1;
++            const float dark = std::max(texels * (1 - lum), 0.01f);
++            soft = (u8)std::clamp((int)std::lround(31 * SoftShadowDark / dark), 1, 31);
++        }
      }
      ShadowCacheEntry e {};
      memcpy(e.Key, key, sizeof(key));
+     e.Shadow = shadow;
++    e.SoftAlpha = soft;
+     ShadowCache.push_back(e);
++    *softAlpha = soft;
+     return shadow;
+ }
+ 
