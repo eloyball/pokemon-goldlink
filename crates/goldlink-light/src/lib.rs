@@ -27,12 +27,6 @@ mod shadow;
 
 pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert};
 
-/// Whether the sun is up at `hours` (the DS clock) and casts shadows (UC13): by day the game's
-/// own shadows are left out (they'd show twice); by night they stay, faint, and ground the scene.
-pub fn sun_casts(hours: f32) -> bool {
-    shadow::sun(hours).is_some()
-}
-
 /// The DS screen's height.
 pub const HEIGHT: usize = 192;
 

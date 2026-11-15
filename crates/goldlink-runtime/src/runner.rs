@@ -385,19 +385,14 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
-        // Outdoors by day the sun casts shadows (UC13): the game's own are left out from the
-        // next frame, or they'd show twice. By night they stay (they ground the scene: the user),
-        // its black painted ones softened (too dark beside the lighting); indoors and in caves
-        // they're the game's (the user: vanilla there).
-        let (outdoors, sun) = light_now.as_ref().map_or((false, false), |l| {
-            (
-                l.overworld()
-                    && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor,
-                goldlink_light::sun_casts(l.hour as f32 + l.minute as f32 / 60.0),
-            )
+        // Outdoors with dynamic shadows the game's own are left out from the next frame, by day
+        // (the sun's) and by night (the lit windows' and lamps'): the user, after the GPU's
+        // shadows (UC14), had them gone by night too. Indoors, in caves and with dynamic shadows
+        // off they're the game's (the user: vanilla there).
+        let outdoors = light_now.as_ref().is_some_and(|l| {
+            l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
         });
-        emu.nds.set_hide_game_shadows(outdoors && sun && shadows);
-        emu.nds.set_soften_game_shadows(outdoors && !sun && shadows);
+        emu.nds.set_hide_game_shadows(outdoors && shadows);
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);
