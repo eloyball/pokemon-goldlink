@@ -699,24 +699,6 @@ impl Lighting {
             return self.grade(px, w, h, phase);
         };
         let mut p = preset(place, phase);
-        // The sun (UC13): outdoors by day the key light comes from where it stands, and what
-        // stands in its way casts a shadow.
-        let mut sun_strength = 0.0;
-        self.shadow.ready = false;
-        if place == Place::Outdoor
-            && let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours)
-            && !scene.geometry.polys.is_empty()
-        {
-            let up = shadow::ShadowMap::find_up(&scene.geometry, &rows);
-            let dir = shadow::ShadowMap::sun_dir(up, azimuth, elevation);
-            let fwd: [[f32; 4]; 4] = std::array::from_fn(|r| {
-                std::array::from_fn(|c| scene.proj[r * 4 + c] as f32 / 4096.0)
-            });
-            self.shadow
-                .build(&scene.geometry, &fwd, &rows, up, dir, self.pool.as_ref());
-            p.key_dir = dir;
-            sun_strength = strength;
-        }
         self.cells.resize(n, Cell::default());
         for v in [&mut self.nrm, &mut self.tmp3, &mut self.out] {
             v.resize(n, [0.0; 3]);
@@ -761,6 +743,42 @@ impl Lighting {
         self.layer.clear();
         self.layer.extend(self.cells.iter().map(|c| c.layer));
 
+        // The sun (UC13): outdoors by day the key light comes from where it stands, and what
+        // stands in its way casts a shadow.
+        let mut sun_strength = 0.0;
+        self.shadow.ready = false;
+        if place == Place::Outdoor
+            && let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours)
+            && !scene.geometry.polys.is_empty()
+        {
+            let up = shadow::ShadowMap::find_up(&scene.geometry, &rows);
+            let dir = shadow::ShadowMap::sun_dir(up, azimuth, elevation);
+            let fwd: [[f32; 4]; 4] = std::array::from_fn(|r| {
+                std::array::from_fn(|c| scene.proj[r * 4 + c] as f32 / 4096.0)
+            });
+            // What the picture shows at a place (the scene's columns, rows): the ground under a
+            // sprite's feet.
+            let cells = &self.cells;
+            let seen = |col: f32, row: f32| -> Option<V3> {
+                let (x, y) = (col.floor() as isize - x0 as isize, row.floor() as isize);
+                if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+                    return None;
+                }
+                let c = cells[y as usize * w + x as usize];
+                (c.layer != 0).then_some(c.pos)
+            };
+            self.shadow.build(
+                &scene.geometry,
+                &fwd,
+                &rows,
+                up,
+                dir,
+                self.pool.as_ref(),
+                &seen,
+            );
+            p.key_dir = dir;
+            sun_strength = strength;
+        }
         self.normals(w, h);
         self.occlusion(w, h, p.ao);
         let found = if p.points > 0.0 {

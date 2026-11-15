@@ -72,6 +72,8 @@ const MAX_SIDE: usize = 1536;
 /// test, so a surface doesn't shadow itself.
 const NORMAL_OFFSET: f32 = 1.0;
 const BIAS: f32 = 1.0;
+/// How far a standing card goes into the ground when it casts (view units): the test's margin.
+const SINK: f32 = 2.5;
 
 /// Where the sun is at `hours` (0..24, the DS clock): its azimuth (from north toward east), its
 /// elevation, and how strong its shadows are (0 at night). It crosses the northern sky, so every
@@ -229,6 +231,7 @@ impl ShadowMap {
         up: V3,
         dir: V3,
         pool: Option<&rayon::ThreadPool>,
+        seen: &dyn Fn(f32, f32) -> Option<V3>,
     ) {
         self.ready = false;
         self.up = up;
@@ -351,11 +354,40 @@ impl ShadowMap {
                         a = [a[0].min(ca), a[1].max(ca)];
                         b = [b[0].min(cb), b[1].max(cb)];
                     }
-                    // The foot: the middle of its bottom edge, on the ground.
-                    let foot = ground(add(
+                    // Where the sprite's feet are: its lowest row of texels that show (a sprite has
+                    // empty rows under its feet), up from the card's bottom edge.
+                    let tex = (p.tex >= 0)
+                        .then(|| g.texs.get(p.tex as usize))
+                        .flatten()
+                        .copied();
+                    let lift = tex.map_or(0.0, |t| {
+                        sprite_lift(&corners, o, card_up, b, t, p.tex_param, g.alpha)
+                    });
+                    let b = [b[0] + lift, b[1]];
+                    // The foot: the middle of the feet, on the ground there. The ground is what
+                    // the picture shows just under them (the depth behind the sprite's empty
+                    // texels); else along the camera's ray onto the polygons behind.
+                    let bottom = add(
                         o,
                         add(scale(across, (a[0] + a[1]) / 2.0), scale(card_up, b[0])),
-                    ));
+                    );
+                    let at = screen_at(&corners, o, across, card_up, (a[0] + a[1]) / 2.0, b[0]);
+                    // The first two rows of ground under the feet, and back half a row from the
+                    // first: the ground at the feet's bottom edge (the first row is a pixel
+                    // nearer the camera than where they stand).
+                    let below: Vec<V3> = (0..5)
+                        .filter_map(|r| seen(at[0], at[1] + r as f32))
+                        .filter_map(|q| self.true_place(q))
+                        .filter(|q| dot(sub(*q, bottom), n) < -2.0)
+                        .take(2)
+                        .collect();
+                    let foot = match below[..] {
+                        [p1, p2] if dot(sub(p1, p2), sub(p1, p2)) < 16.0 => {
+                            add(p1, scale(sub(p1, p2), 0.5))
+                        }
+                        [p1, ..] => p1,
+                        [] => ground(bottom),
+                    };
                     let card = Card {
                         origin: o,
                         normal: n,
@@ -387,7 +419,10 @@ impl ShadowMap {
                         let d = sub(c.p, o);
                         let ca = dot(d, across) - (a[0] + a[1]) / 2.0;
                         let cb = dot(d, card_up) - b[0];
-                        c.p = add(foot, add(scale(turned_across, ca), scale(up, cb)));
+                        // Sunk into the ground by the test's margin (a surface's own offset and
+                        // bias), so the shadow starts where the feet touch it: by the margin it
+                        // started a pixel or two short (the user's look).
+                        c.p = add(foot, add(scale(turned_across, ca), scale(up, cb - SINK)));
                     }
                     self.cards.push(card);
                     self.attached.push(p.flags & FLAG_ATTACHED != 0);
@@ -754,6 +789,91 @@ fn inside(c: &[Corner], n: V3, p: V3) -> bool {
         neg &= d < 1.0;
     }
     pos || neg
+}
+
+/// How far up a card (along `up`, from its bottom edge `b[0]`) its sprite's lowest row of texels
+/// that show is: the texture rows read from the bottom edge's texture coordinates toward the top's.
+fn sprite_lift(
+    c: &[Corner],
+    o: V3,
+    up: V3,
+    b: [f32; 2],
+    t: ShadowTex,
+    param: u32,
+    alpha: &[u8],
+) -> f32 {
+    let height = b[1] - b[0];
+    if height <= 0.0 {
+        return 0.0;
+    }
+    // The texture coordinates at the bottom and the top edge, and across.
+    let (mut bot, mut top, mut nb, mut nt) = ([0f32; 2], [0f32; 2], 0.0, 0.0);
+    let (mut s0, mut s1) = (f32::MAX, f32::MIN);
+    for k in c {
+        let h = dot(sub(k.p, o), up);
+        if h - b[0] < 0.5 {
+            bot = [bot[0] + k.st[0], bot[1] + k.st[1]];
+            nb += 1.0;
+        } else if b[1] - h < 0.5 {
+            top = [top[0] + k.st[0], top[1] + k.st[1]];
+            nt += 1.0;
+        }
+        s0 = s0.min(k.st[0]);
+        s1 = s1.max(k.st[0]);
+    }
+    if nb == 0.0 || nt == 0.0 {
+        return 0.0;
+    }
+    let (tb, tt) = (bot[1] / nb, top[1] / nt);
+    let rows = (tt - tb).abs().round() as i32;
+    let step = if tt > tb { 1 } else { -1 };
+    for r in 0..rows.max(0) {
+        let tex_row = (tb + step as f32 * (r as f32 + 0.5)).floor() as i32;
+        let tr = wrap(tex_row, t.height as i32, param, 17, 19);
+        let shows = (s0.floor() as i32..s1.ceil() as i32).any(|s| {
+            let s = wrap(s, t.width as i32, param, 16, 18);
+            alpha
+                .get(t.offset as usize + tr as usize * t.width as usize + s as usize)
+                .is_some_and(|&a| a >= 16)
+        });
+        if shows {
+            return height * r as f32 / rows as f32;
+        }
+    }
+    0.0
+}
+
+/// Where a point of a card (`a` across, `b` up from `o`) lands on the picture, from its corners'
+/// places there.
+fn screen_at(c: &[Corner], o: V3, across: V3, up: V3, a: f32, b: f32) -> [f32; 2] {
+    // The card's corners on its own axes and on the picture: a plane's affine map, fitted from
+    // three corners that span it.
+    let ab: Vec<[f32; 2]> = c
+        .iter()
+        .map(|k| {
+            let d = sub(k.p, o);
+            [dot(d, across), dot(d, up)]
+        })
+        .collect();
+    for i in 0..c.len() {
+        for j in i + 1..c.len() {
+            for k in j + 1..c.len() {
+                let (p, q, r) = (ab[i], ab[j], ab[k]);
+                let det = (q[0] - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (q[1] - p[1]);
+                if det.abs() < 1.0 {
+                    continue;
+                }
+                let u = ((a - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (b - p[1])) / det;
+                let v = ((q[0] - p[0]) * (b - p[1]) - (a - p[0]) * (q[1] - p[1])) / det;
+                let (sp, sq, sr) = (c[i].scr, c[j].scr, c[k].scr);
+                return [
+                    sp[0] + u * (sq[0] - sp[0]) + v * (sr[0] - sp[0]),
+                    sp[1] + u * (sq[1] - sp[1]) + v * (sr[1] - sp[1]),
+                ];
+            }
+        }
+    }
+    c[0].scr
 }
 
 /// The polygon's normal times twice its area (toward the camera for a front face).
