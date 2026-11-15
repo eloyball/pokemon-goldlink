@@ -520,6 +520,7 @@ impl Shadows {
         rows: &[[f32; 4]; 4],
         up: V3,
         seen: &dyn Fn(f32, f32) -> Option<V3>,
+        pool: Option<&rayon::ThreadPool>,
     ) {
         self.ready = false;
         self.sun = None;
@@ -838,6 +839,7 @@ impl Shadows {
         self.card_px.clear();
         self.card_px.resize(PICTURE_WIDTH * PICTURE_HEIGHT, 0);
         let mut near = vec![f32::MIN; PICTURE_WIDTH * PICTURE_HEIGHT];
+        let mut tris = Vec::new();
         for (k, (c, tex, param)) in shapes.iter().enumerate() {
             let z = c.iter().map(|c| c.p[2]).sum::<f32>() / c.len() as f32;
             for j in 1..c.len().saturating_sub(1) {
@@ -856,26 +858,51 @@ impl Shadows {
                 let y1 = t.m.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
                 let y0 = y0.floor().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
                 let y1 = y1.ceil().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
+                if y0 < y1 {
+                    tris.push((y0, y1, t));
+                }
+            }
+        }
+        // In bands of rows on the pool's threads (a forest's cards cost milliseconds on one).
+        let draw = |band: usize, near: &mut [f32], card: &mut [u32]| {
+            let (r0, r1) = (band * BAND, band * BAND + near.len() / PICTURE_WIDTH);
+            for (y0, y1, t) in &tris {
+                if *y1 <= r0 || *y0 >= r1 {
+                    continue;
+                }
                 t.draw(
-                    y0,
-                    y1,
-                    0,
+                    (*y0).max(r0),
+                    (*y1).min(r1),
+                    r0,
                     PICTURE_WIDTH,
-                    &mut near,
-                    &mut self.card_px,
+                    near,
+                    card,
                     g.alpha,
                 );
             }
+        };
+        let bands = near
+            .chunks_mut(BAND * PICTURE_WIDTH)
+            .zip(self.card_px.chunks_mut(BAND * PICTURE_WIDTH))
+            .enumerate();
+        match pool {
+            Some(pool) => {
+                use rayon::prelude::*;
+                let mut bands: Vec<_> = bands.collect();
+                pool.install(|| bands.par_iter_mut().for_each(|(b, (n, c))| draw(*b, n, c)));
+            }
+            None => bands.for_each(|(b, (n, c))| draw(b, n, c)),
         }
         self.ready = true;
     }
 
     /// The cards standing at their feet turned toward a light (`toward(foot)`: the horizontal
     /// direction to it from there).
-    fn standing_cards(&self, toward: impl Fn(V3) -> V3) -> Vec<Caster> {
+    fn standing_cards(&self, toward: impl Fn(V3) -> V3, trees: bool) -> Vec<Caster> {
         self.cards
             .iter()
             .enumerate()
+            .filter(|(_, c)| trees || c.b[1] - c.b[0] <= TREE_HEIGHT)
             .map(|(k, c)| Caster {
                 corners: c.standing(self.up, toward(c.foot)),
                 tex: c.tex,
@@ -896,7 +923,10 @@ impl Shadows {
         }
         let v = cross(dir, u);
         let flat = normalize(sub(dir, scale(up, dot(dir, up))));
-        let cards = self.standing_cards(|_| flat);
+        // Trees cast no sun shadows: their sprites have one painted under them, and stood up
+        // along the sun a forest's were many, costly, and never quite the tree's shape (the
+        // user).
+        let cards = self.standing_cards(|_| flat, false);
         let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
         for c in self.casters.iter().chain(&cards) {
             for k in &c.corners {
@@ -995,10 +1025,13 @@ impl Shadows {
             };
             let k = self.points.len();
             let cards: Vec<Caster> = self
-                .standing_cards(|foot| {
-                    let d = sub(pos, foot);
-                    normalize(sub(d, scale(up, dot(d, up))))
-                })
+                .standing_cards(
+                    |foot| {
+                        let d = sub(pos, foot);
+                        normalize(sub(d, scale(up, dot(d, up))))
+                    },
+                    true,
+                )
                 .into_iter()
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();

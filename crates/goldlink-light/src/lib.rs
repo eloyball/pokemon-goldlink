@@ -599,9 +599,11 @@ impl Lighting {
                 )
             })
             .collect();
-        // The emulation and the window have a core each; up to four more share this.
+        // The emulation and the window have a core each; up to eight more share this (the cast
+        // shadows' maps are drawn in bands across them: 8 rather than 4 took the lighting from
+        // 8.4 to 6.8 ms a frame, SAVE02 by a morning sun).
         let threads = std::thread::available_parallelism()
-            .map_or(1, |n| n.get().saturating_sub(2).clamp(1, 4));
+            .map_or(1, |n| n.get().saturating_sub(2).clamp(1, 8));
         let pool = make_pool(threads);
         Self {
             to_linear,
@@ -775,7 +777,8 @@ impl Lighting {
                 let c = cells[y as usize * w + x as usize];
                 (c.layer != 0).then_some(c.pos)
             };
-            self.shadow.prepare(&scene.geometry, &fwd, &rows, up, &seen);
+            self.shadow
+                .prepare(&scene.geometry, &fwd, &rows, up, &seen, self.pool.as_ref());
             if let Some((azimuth, elevation, strength)) = shadow::sun(scene.hours) {
                 let dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
                 self.shadow
