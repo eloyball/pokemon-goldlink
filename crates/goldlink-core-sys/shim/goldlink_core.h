@@ -162,6 +162,7 @@ typedef struct GlShadowPoly
     int32_t tex; // index into the textures, -1: none (untextured or opaque)
     uint32_t flags; // 1 attached, 2 translucent, 4 shadow mask, 8 shadow volume, 16 facing, 32 line,
                     // 64 the game's own shadow
+    int32_t object; // the object it belongs to (a model, a sprite; -1 none), within the frame
 } GlShadowPoly;
 typedef struct GlShadowVert
 {

@@ -636,6 +636,7 @@ impl GameApp {
                         tex_param: p.tex_param,
                         tex: p.tex,
                         flags: p.flags,
+                        object: p.object,
                     })
                     .collect(),
                 g.verts

@@ -1,17 +1,29 @@
-GoldLink's change to melonDS (UC13): only sprite-sized objects are attached.
+GoldLink's change to melonDS (UC13): only sprite-sized objects are attached; each polygon knows
+its object.
 
-Patch 0022 attaches the objects that stay put on screen while the camera moves (the player, a
-follower, a mount, a shadow). Dark Cave's darkness, a ring of soft-edged polygons round the
-player as big as the picture, stays put too: drawn in the attached picture it blacked the cave
-out but for the player's sprite (the user's play test). Each object's extent on screen is kept as
-its vertices come (MidTrackVertex), and one wider or taller than AttachMaxSize (72 pixels) isn't
-attached (MidClassify).
+- Patch 0022 attaches the objects that stay put on screen while the camera moves (the player, a
+  follower, a mount, a shadow). Dark Cave's darkness, a ring of soft-edged polygons round the
+  player as big as the picture, stays put too: drawn in the attached picture it blacked the cave
+  out but for the player's sprite (the user's play test). Each object's extent on screen is kept
+  as its vertices come (MidTrackVertex), and one wider or taller than AttachMaxSize (72 pixels)
+  isn't attached (MidClassify).
+- Each polygon keeps its object (Polygon::Object: MidObjects' index, a model or a sprite), and
+  the shadow geometry (patch 0028) gives it, so a light's own fixture (a lantern) can be told
+  apart from what stands round it.
 
 Applied by build.rs to a copy of the submodule (which stays at upstream).
 
 --- a/src/GPU3D.h	2026-11-14 23:36:35.440076568 -0500
-+++ b/src/GPU3D.h	2026-11-14 23:37:05.860635300 -0500
-@@ -428,7 +428,8 @@
++++ b/src/GPU3D.h	2026-11-15 00:26:38.665575309 -0500
+@@ -75,6 +75,7 @@
+     int Type; // 0=regular 1=line
+ 
+     bool Attached; // GoldLink (UC11): drawn by an object the camera follows (GPU3D::AttachedKeys)
++    s32 Object; // GoldLink (UC13): the object (MidObjects' index: a model, a sprite) it belongs to
+ 
+     u32 VTop, VBottom; // vertex indices
+     s32 YTop, YBottom; // Y coords
+@@ -428,7 +429,8 @@
      // in whole pixels, so the shift splits the difference (each 1/8 of a pixel off at most).
      // Attached: drawn by the attached layer's rule (GPU3D.h, AttachedKeys), its origin moved by
      // (DX, DY) clip units to the target (TX, TY).
@@ -21,7 +33,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      bool MidWanted = false;
      bool MidReplaying = false;   // this engine is the shadow, replaying a scene
      bool MidLogOk = false;       // the scene being built is fully logged from its start
-@@ -439,6 +440,8 @@
+@@ -439,6 +441,8 @@
      std::vector<MidObject> MidObjects, MidRenderObjects; // the scene being built's, the rendered one's
      s32 MidLastClip[16] {};
      int MidCurObject = -1;
@@ -31,8 +43,16 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
      static constexpr s32 MidUnit = 256;
      float MidOrthoShift[2] {};   // the steady overworld's shift for the picture in between
 --- a/src/GPU3D.cpp	2026-11-14 23:36:35.442125462 -0500
-+++ b/src/GPU3D.cpp	2026-11-14 23:37:05.860531424 -0500
-@@ -3505,7 +3505,27 @@
++++ b/src/GPU3D.cpp	2026-11-15 00:26:38.665800721 -0500
+@@ -1341,6 +1341,7 @@
+     poly->Degenerate = false;
+     poly->Type = 0;
+     poly->Attached = MidCurObject >= 0 && (size_t)MidCurObject < MidObjects.size() && MidObjects[MidCurObject].Attached;
++    poly->Object = MidCurObject; // GoldLink (UC13)
+ 
+     poly->FacingView = facingview;
+ 
+@@ -3505,7 +3506,27 @@
              MidObjects.push_back(o);
          MidCurObject = (int)MidObjects.size() - 1;
      }
@@ -61,7 +81,7 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
  }
  
  // A new scene starts (its predecessor was just swapped in): its objects and commands are kept
-@@ -3814,7 +3834,10 @@
+@@ -3814,7 +3835,10 @@
      double ref[2] = {0, 0};
      for (const MidObject& c : MidObjects)
      {
@@ -73,3 +93,24 @@ Applied by build.rs to a copy of the submodule (which stays at upstream).
              continue;
          auto [from, to] = before.equal_range(key(c));
          for (auto it = from; it != to; ++it)
+--- a/src/GPU3D_Soft.h	2026-11-15 00:26:38.655202130 -0500
++++ b/src/GPU3D_Soft.h	2026-11-15 00:26:38.665874009 -0500
+@@ -86,7 +86,7 @@
+     // clip coordinates (the lighting places it in 3D with the projection, as it does pixels), its
+     // texture coordinates and screen position; each textured polygon's texture as transparency
+     // (0..31 a texel, the DS's alpha; 31 opaque), when its format can have transparent texels.
+-    struct ShadowPoly { u32 FirstVert, NumVerts, Attr, TexParam, TexPalette; s32 Tex; u32 Flags; };
++    struct ShadowPoly { u32 FirstVert, NumVerts, Attr, TexParam, TexPalette; s32 Tex; u32 Flags; s32 Object; };
+     // Flags: what kind of polygon (Polygon's fields).
+     static constexpr u32 ShadowAttached = 1, ShadowTranslucent = 2, ShadowMask = 4, ShadowVolume = 8,
+         ShadowFacing = 16, ShadowLine = 32, ShadowGame = 64;
+--- a/src/GPU3D_Soft.cpp	2026-11-15 00:26:38.656785218 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-15 00:26:38.665987361 -0500
+@@ -2194,6 +2194,7 @@
+         sp.Attr = p->Attr;
+         sp.TexParam = p->TexParam;
+         sp.TexPalette = p->TexPalette;
++        sp.Object = p->Object; // GoldLink (UC13, patch 0029)
+         sp.Flags = (p->Attached ? ShadowAttached : 0) | (p->Translucent ? ShadowTranslucent : 0)
+             | (p->IsShadowMask ? ShadowMask : 0) | (p->IsShadow ? ShadowVolume : 0)
+             | (p->FacingView ? ShadowFacing : 0) | (p->Type == 1 ? ShadowLine : 0);

@@ -516,7 +516,7 @@ void gl_core_shadow_geometry(GlCore *core, GlShadowPoly *polys, GlShadowVert *ve
     for (size_t i = 0; i < g.Polys.size(); i++)
     {
         const auto &p = g.Polys[i];
-        polys[i] = {p.FirstVert, p.NumVerts, p.Attr, p.TexParam, p.TexPalette, p.Tex, p.Flags};
+        polys[i] = {p.FirstVert, p.NumVerts, p.Attr, p.TexParam, p.TexPalette, p.Tex, p.Flags, p.Object};
     }
     for (size_t i = 0; i < g.Verts.size(); i++)
     {

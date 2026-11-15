@@ -385,10 +385,13 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
-        // Outdoors the lighting casts shadows (UC13): the game's own are left out from the next
-        // frame, or they'd show twice. Indoors and in caves the game's own stay (the user).
+        // Outdoors by day the sun casts shadows (UC13): the game's own are left out from the
+        // next frame, or they'd show twice. By night they stay (faint, they ground the scene: the
+        // user), and indoors and in caves (the user: vanilla there).
         let outdoors = light_now.as_ref().is_some_and(|l| {
-            l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
+            l.overworld()
+                && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
+                && goldlink_light::sun_casts(l.hour as f32 + l.minute as f32 / 60.0)
         });
         emu.nds.set_hide_game_shadows(outdoors && shadows);
         {

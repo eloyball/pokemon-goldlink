@@ -48,6 +48,7 @@ pub struct GlShadowPoly {
     pub tex_palette: u32,
     pub tex: i32,
     pub flags: u32,
+    pub object: i32,
 }
 
 /// `goldlink_core.h`'s `GlShadowVert`.

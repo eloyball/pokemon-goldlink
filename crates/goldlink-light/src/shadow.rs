@@ -27,6 +27,8 @@ pub struct ShadowPoly {
     /// 1 attached, 2 translucent, 4 and 8 the DS's shadow volumes, 16 facing, 32 a line, 64 the
     /// game's own shadow.
     pub flags: u32,
+    /// The object it belongs to (a model, a sprite; -1 none), within the frame.
+    pub object: i32,
 }
 
 /// A vertex: clip coordinates (20.12), texture coordinates (12.4 texels) and where it lands on
@@ -183,6 +185,8 @@ struct Caster {
     tex: Option<ShadowTex>,
     param: u32,
     card: u32,
+    /// The object (model) it belongs to; -1 none.
+    object: i32,
 }
 
 /// How a depth map sees the scene: along the sun (orthographic: axes `u`, `v`, the map's origin
@@ -434,6 +438,8 @@ pub struct Shadows {
     /// The sun's map and its direction (toward it); the point lights' maps.
     sun: Option<(DepthMap, V3)>,
     points: Vec<PointMaps>,
+    /// Each object's extent on the picture (columns, rows: least and most of each).
+    object_extent: std::collections::HashMap<i32, [f32; 4]>,
     /// A corner of the drawn ground (view space), for laying the sun's texels on the world.
     anchor: Option<[f64; 3]>,
     pub ready: bool,
@@ -752,6 +758,7 @@ impl Shadows {
                         tex: None,
                         param: 0,
                         card: 0,
+                        object: p.object,
                     });
                 }
                 let slab = corners
@@ -769,6 +776,7 @@ impl Shadows {
                     tex,
                     param: p.tex_param,
                     card: 0,
+                    object: p.object,
                 });
             }
             let ground_level = dot(*n, up) > 0.97
@@ -779,7 +787,29 @@ impl Shadows {
                     tex,
                     param: p.tex_param,
                     card: 0,
+                    object: p.object,
                 });
+            }
+        }
+        // Each object's extent on the picture (for a light's own fixture, build_points).
+        self.object_extent.clear();
+        for (c, _, p) in &placed {
+            if p.object < 0 {
+                continue;
+            }
+            let e = self.object_extent.entry(p.object).or_insert([
+                f32::MAX,
+                f32::MIN,
+                f32::MAX,
+                f32::MIN,
+            ]);
+            for k in c {
+                *e = [
+                    e[0].min(k.scr[0]),
+                    e[1].max(k.scr[0]),
+                    e[2].min(k.scr[1]),
+                    e[3].max(k.scr[1]),
+                ];
             }
         }
         // Which card each pixel of the picture shows (the nearest, its transparent texels left
@@ -830,6 +860,7 @@ impl Shadows {
                 tex: c.tex,
                 param: c.param,
                 card: k as u32 + 1,
+                object: -1,
             })
             .collect()
     }
@@ -935,11 +966,27 @@ impl Shadows {
                 .into_iter()
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
+            // Its own fixture casts nothing for it: the object it shines from (the nearest to it),
+            // when that's small (a lantern, a lamp: it lights all round it, but its cap shadowed
+            // above it, the user's look, Violet City). A building's walls and eaves still do.
+            let fixture = self
+                .casters
+                .iter()
+                .filter(|c| c.object >= 0)
+                .map(|c| (distance_to(&c.corners, pos), c.object))
+                .filter(|&(d, _)| d < FIXTURE_REACH)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, o)| o)
+                .filter(|o| {
+                    self.object_extent
+                        .get(o)
+                        .is_some_and(|e| e[1] - e[0] <= FIXTURE_SIZE && e[3] - e[2] <= FIXTURE_SIZE)
+                });
             // Only what's within its reach casts (what's beyond it lies in the dark anyway).
             let near: Vec<&Caster> = self
                 .casters
                 .iter()
-                .filter(|c| reaches(&c.corners, pos, range))
+                .filter(|c| Some(c.object) != fixture && reaches(&c.corners, pos, range))
                 .collect();
             let mut used = [false; 6];
             for r in receivers {
@@ -1268,6 +1315,25 @@ fn place(g: &Geometry, p: &ShadowPoly, rows: &[[f32; 4]; 4], out: &mut Vec<Corne
         });
     }
     out.len() >= 3
+}
+
+/// How near a light its fixture is (the object it shines from: the lighting places a light a few
+/// units off the bright surface it found), and the most a fixture is across or down the picture
+/// (a lantern, a lamp; a building is bigger).
+const FIXTURE_REACH: f32 = 10.0;
+const FIXTURE_SIZE: f32 = 40.0;
+
+/// How far `pos` is from a polygon's corners' box.
+fn distance_to(c: &[Corner], pos: V3) -> f32 {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for k in c {
+        for i in 0..3 {
+            lo[i] = lo[i].min(k.p[i]);
+            hi[i] = hi[i].max(k.p[i]);
+        }
+    }
+    let d: V3 = std::array::from_fn(|i| (lo[i] - pos[i]).max(pos[i] - hi[i]).max(0.0));
+    dot(d, d).sqrt()
 }
 
 /// Whether a polygon comes within `range` of `pos` (its corners' box does).
