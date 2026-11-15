@@ -966,27 +966,23 @@ impl Shadows {
                 .into_iter()
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
-            // Its own fixture casts nothing for it: the object it shines from (the nearest to it),
-            // when that's small (a lantern, a lamp: it lights all round it, but its cap shadowed
-            // above it, the user's look, Violet City). A building's walls and eaves still do.
-            let fixture = self
-                .casters
-                .iter()
-                .filter(|c| c.object >= 0)
-                .map(|c| (distance_to(&c.corners, pos), c.object))
-                .filter(|&(d, _)| d < FIXTURE_REACH)
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, o)| o)
-                .filter(|o| {
-                    self.object_extent
-                        .get(o)
+            // A lantern or a lamp (a light shining from a small object: its glowing face, its
+            // housing, its cap) casts no shadows: it lights all round it, and left out of its own
+            // maps its parts still shadowed above it (the user's look, Violet City; as before
+            // shadows, they asked). A lit window casts them: its building's walls and eaves.
+            let lamp = self.casters.iter().any(|c| {
+                c.object >= 0
+                    && distance_to(&c.corners, pos) < FIXTURE_REACH
+                    && self
+                        .object_extent
+                        .get(&c.object)
                         .is_some_and(|e| e[1] - e[0] <= FIXTURE_SIZE && e[3] - e[2] <= FIXTURE_SIZE)
-                });
+            });
             // Only what's within its reach casts (what's beyond it lies in the dark anyway).
             let near: Vec<&Caster> = self
                 .casters
                 .iter()
-                .filter(|c| Some(c.object) != fixture && reaches(&c.corners, pos, range))
+                .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
             let mut used = [false; 6];
             for r in receivers {
@@ -1007,7 +1003,8 @@ impl Shadows {
                 };
                 let right = normalize(cross(helper, forward));
                 let upward = cross(forward, right);
-                let side = if used[f] { size } else { 0 };
+                // A lamp's faces stay empty: nothing shadows its light.
+                let side = if used[f] && !lamp { size } else { 0 };
                 faces.push((
                     k,
                     DepthMap::new(
@@ -1320,7 +1317,7 @@ fn place(g: &Geometry, p: &ShadowPoly, rows: &[[f32; 4]; 4], out: &mut Vec<Corne
 /// How near a light its fixture is (the object it shines from: the lighting places a light a few
 /// units off the bright surface it found), and the most a fixture is across or down the picture
 /// (a lantern, a lamp; a building is bigger).
-const FIXTURE_REACH: f32 = 10.0;
+const FIXTURE_REACH: f32 = 16.0;
 const FIXTURE_SIZE: f32 = 40.0;
 
 /// How far `pos` is from a polygon's corners' box.
