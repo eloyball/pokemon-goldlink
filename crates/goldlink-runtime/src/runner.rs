@@ -382,7 +382,7 @@ fn run(
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
         // Outdoors the lighting casts shadows (UC13): the game's own are left out from the next
-        // frame, or they'd show twice.
+        // frame, or they'd show twice. Indoors and in caves the game's own stay (the user).
         let outdoors = light_now.as_ref().is_some_and(|l| {
             l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
         });
