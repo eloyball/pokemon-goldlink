@@ -143,8 +143,6 @@ struct Card {
     tex: Option<ShadowTex>,
     param: u32,
     attached: bool,
-    /// The object it belongs to (a person's sprite, or a part of a lantern drawn as a card).
-    object: i32,
     /// How much of each light reaches it (the sun's, then each point light's): the whole card
     /// is lit as one (another card's shadow across a flat sprite cut it in blocks: the user's
     /// look, 2026-11-14): a person as their foot, a tree (taller than a person) as the mean along
@@ -438,10 +436,6 @@ pub struct Shadows {
     /// The sun's map and its direction (toward it); the point lights' maps.
     sun: Option<(DepthMap, V3)>,
     points: Vec<PointMaps>,
-    /// Per pixel of the picture: the object it shows (index + 1; 0 none).
-    object_px: Vec<u32>,
-    /// Each object's extent on the picture (columns, rows: least and most of each).
-    object_extent: std::collections::HashMap<i32, [f32; 4]>,
     /// A corner of the drawn ground (view space), for laying the sun's texels on the world.
     anchor: Option<[f64; 3]>,
     pub ready: bool,
@@ -726,7 +720,6 @@ impl Shadows {
                         tex,
                         param: p.tex_param,
                         attached: p.flags & FLAG_ATTACHED != 0,
-                        object: p.object,
                         sun: 1.0,
                         points: Vec::new(),
                     });
@@ -789,69 +782,6 @@ impl Shadows {
                     param: p.tex_param,
                     card: 0,
                 });
-            }
-        }
-        // Each object's extent on the picture (for a light's own fixture, build_points).
-        self.object_extent.clear();
-        for (c, _, p) in &placed {
-            if p.object < 0 {
-                continue;
-            }
-            let e = self.object_extent.entry(p.object).or_insert([
-                f32::MAX,
-                f32::MIN,
-                f32::MAX,
-                f32::MIN,
-            ]);
-            for k in c {
-                *e = [
-                    e[0].min(k.scr[0]),
-                    e[1].max(k.scr[0]),
-                    e[2].min(k.scr[1]),
-                    e[3].max(k.scr[1]),
-                ];
-            }
-        }
-        // Which object each pixel of the picture shows (index + 1; 0 none): the nearest polygon
-        // there, its transparent texels left out (a light's fixture is what its glow is drawn
-        // on, build_points).
-        self.object_px.clear();
-        self.object_px.resize(PICTURE_WIDTH * PICTURE_HEIGHT, 0);
-        {
-            let mut near = vec![f32::MIN; PICTURE_WIDTH * PICTURE_HEIGHT];
-            for (c, _, p) in &placed {
-                if p.object < 0 {
-                    continue;
-                }
-                let tex = (p.tex >= 0)
-                    .then(|| g.texs.get(p.tex as usize))
-                    .flatten()
-                    .copied();
-                for j in 1..c.len().saturating_sub(1) {
-                    let t = Tri {
-                        m: [&c[0], &c[j], &c[j + 1]].map(|c| [c.scr[0], c.scr[1], c.p[2]]),
-                        st: [c[0].st, c[j].st, c[j + 1].st],
-                        tex,
-                        param: p.tex_param,
-                        card: p.object as u32 + 1,
-                    };
-                    if t.area().abs() < 1e-6 {
-                        continue;
-                    }
-                    let y0 = t.m.iter().map(|q| q[1]).fold(f32::MAX, f32::min);
-                    let y1 = t.m.iter().map(|q| q[1]).fold(f32::MIN, f32::max);
-                    let y0 = y0.floor().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
-                    let y1 = y1.ceil().clamp(0.0, PICTURE_HEIGHT as f32) as usize;
-                    t.draw(
-                        y0,
-                        y1,
-                        0,
-                        PICTURE_WIDTH,
-                        &mut near,
-                        &mut self.object_px,
-                        g.alpha,
-                    );
-                }
             }
         }
         // Which card each pixel of the picture shows (the nearest, its transparent texels left
@@ -1007,54 +937,11 @@ impl Shadows {
                 .into_iter()
                 .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
-            // A lantern or a lamp (a light shining from a small object: its glowing face, its
-            // housing, its cap): only people, Pokémon and the player cast its shadows. It lights
-            // all round it, and left out of its own maps its parts still shadowed above it (the
-            // user's look, Violet City). A lit window's light: everything (its building's walls
-            // and eaves).
-            // The object it shines from: the one its glow is drawn on (where it lands on the
-            // picture, the most common round there). A lamp when that's small (a lantern's part);
-            // a lit window's glow is drawn on its building. By distance, a sign or an ornament
-            // near a building took its windows' lights for a lamp's (the gym cast no shadows from
-            // its own windows), and the ground's blocks were nearer a lantern than the lantern.
-            let source = self.on_picture(pos).and_then(|[col, row]| {
-                let mut seen: Vec<(u32, u32)> = Vec::new();
-                for dy in -2i32..=2 {
-                    for dx in -2i32..=2 {
-                        let (x, y) = (col as i32 + dx, row as i32 + dy);
-                        if x < 0 || y < 0 || x >= PICTURE_WIDTH as i32 || y >= PICTURE_HEIGHT as i32
-                        {
-                            continue;
-                        }
-                        let o = self.object_px[y as usize * PICTURE_WIDTH + x as usize];
-                        if o == 0 {
-                            continue;
-                        }
-                        match seen.iter_mut().find(|s| s.0 == o) {
-                            Some(s) => s.1 += 1,
-                            None => seen.push((o, 1)),
-                        }
-                    }
-                }
-                seen.iter().max_by_key(|s| s.1).map(|s| s.0 as i32 - 1)
-            });
-            // What the light shines from casts nothing for it, if it's drawn as cards (a lantern's
-            // glowing face and cap are: they shadowed the ground beside and above it, the user's
-            // look); people, Pokemon and the player still do.
-            let cards: Vec<Caster> = cards
-                .into_iter()
-                .filter(|c| c.card == 0 || Some(self.cards[c.card as usize - 1].object) != source)
-                .collect();
-            let lamp = source.is_some_and(|o| {
-                self.object_extent
-                    .get(&o)
-                    .is_some_and(|e| e[1] - e[0] <= FIXTURE_SIZE && e[3] - e[2] <= FIXTURE_SIZE)
-            });
             // Only what's within its reach casts (what's beyond it lies in the dark anyway).
             let near: Vec<&Caster> = self
                 .casters
                 .iter()
-                .filter(|c| SCENERY_SHADOWS && !lamp && reaches(&c.corners, pos, range))
+                .filter(|c| reaches(&c.corners, pos, range))
                 .collect();
             let mut used = [false; 6];
             for r in receivers {
@@ -1231,21 +1118,6 @@ impl Shadows {
         }
     }
 
-    /// Where a point (where the polygons put it) lands on the picture: its column and row.
-    fn on_picture(&self, p: V3) -> Option<[f32; 2]> {
-        let m = &self.proj;
-        let mut c = [0f32; 4];
-        for (k, out) in c.iter_mut().enumerate() {
-            *out = p[0] * m[0][k] + p[1] * m[1][k] + p[2] * m[2][k] + m[3][k];
-        }
-        (c[3].abs() > 1e-9).then(|| {
-            [
-                self.fit[0] + self.fit[1] * c[0] / c[3],
-                self.fit[2] + self.fit[3] * c[1] / c[3],
-            ]
-        })
-    }
-
     /// A pixel's place as the lighting found it, where the polygons put it (for
     /// [`Shadows::light`]).
     pub fn place(&self, p: V3) -> Option<V3> {
@@ -1399,14 +1271,6 @@ fn place(g: &Geometry, p: &ShadowPoly, rows: &[[f32; 4]; 4], out: &mut Vec<Corne
     }
     out.len() >= 3
 }
-
-/// The most a lamp's fixture (the object its glow is drawn on) is across or down the picture: a
-/// lantern, a lamp; a building is bigger.
-const FIXTURE_SIZE: f32 = 40.0;
-/// Whether the scenery casts the point lights' shadows (a lit window's: its building's walls and
-/// eaves; never a lamp's own fixture). Off: only people, Pokémon and the player cast them, from
-/// every light (the user's trial, Violet City).
-const SCENERY_SHADOWS: bool = false;
 
 /// Whether a polygon comes within `range` of `pos` (its corners' box does).
 fn reaches(c: &[Corner], pos: V3, range: f32) -> bool {
