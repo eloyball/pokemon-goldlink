@@ -1092,6 +1092,46 @@ fn place(g: &Geometry, p: &ShadowPoly, rows: &[[f32; 4]; 4], out: &mut Vec<Corne
     out.len() >= 3
 }
 
+/// A card on the picture (a sprite turned to the camera: a person, the follower, an emote
+/// bubble): its corners' box (the picture's columns and rows) and its depth (view space).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct CardSpan {
+    pub(crate) lo: [f32; 2],
+    pub(crate) hi: [f32; 2],
+    pub(crate) z: f32,
+}
+
+/// The picture's cards, as [`Shadows::prepare`] finds them (textured, turned to the camera), for
+/// the lighting with or without the cast shadows: what shows on one is a sprite, never a light
+/// source (a white "!" bubble or shirt glowed at night like a lit sign, the user's look).
+pub(crate) fn card_spans(g: &Geometry, rows: &[[f32; 4]; 4], out: &mut Vec<CardSpan>) {
+    out.clear();
+    let mut corners = Vec::new();
+    for p in g.polys {
+        if p.flags & SKIP != 0 || p.tex < 0 || !place(g, p, rows, &mut corners) {
+            continue;
+        }
+        let n = area_normal(&corners);
+        let area = dot(n, n).sqrt();
+        if area < 1e-3 || n[2] / area <= 0.9 {
+            continue;
+        }
+        let (mut lo, mut hi, mut z) = ([f32::MAX; 2], [f32::MIN; 2], 0.0);
+        for c in &corners {
+            for k in 0..2 {
+                lo[k] = lo[k].min(c.scr[k]);
+                hi[k] = hi[k].max(c.scr[k]);
+            }
+            z += c.p[2];
+        }
+        out.push(CardSpan {
+            lo,
+            hi,
+            z: z / corners.len() as f32,
+        });
+    }
+}
+
 /// Whether a polygon comes within `range` of `pos` (its corners' box does).
 fn reaches(c: &[Corner], pos: V3, range: f32) -> bool {
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);

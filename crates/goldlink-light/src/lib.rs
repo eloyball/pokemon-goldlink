@@ -94,6 +94,9 @@ pub struct Scene<'a> {
     /// (`width` x 192, or empty): lit there as the player, so their own shadow on the ground
     /// under them doesn't darken them.
     pub attached: &'a [u8],
+    /// Whether the picture's polygons cast shadows (the Shadows setting); they're given either
+    /// way (the cards: what shows on a sprite is never a light source).
+    pub shadows: bool,
 }
 
 /// A line's screen-wide fades as the DS applies them after composing (goldlink-core `Fade`):
@@ -444,6 +447,10 @@ fn small_grade(phase: Phase) -> Grade {
     }
 }
 
+/// How near a card's depth a pixel lies to show it (view units; what's behind a sprite, a wall or
+/// a window, is further).
+const CARD_DEPTH: f32 = 2.0;
+
 /// The point lights nearest the player with the finer shadow maps (UC13).
 const MAX_FINE_LIGHTS: usize = 3;
 /// A window light's reach.
@@ -516,6 +523,9 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
+    /// The picture's cards (sprites), and which pixels show one (never a light source).
+    cards: Vec<shadow::CardSpan>,
+    on_card: Vec<bool>,
     /// Per bright patch (its label): how much of it blooms (its light source's weight: it fades
     /// in and out as the light does).
     patch_weight: Vec<f32>,
@@ -657,6 +667,8 @@ impl Lighting {
             tracked: Vec::new(),
             tracked_at: None,
             patch_weight: Vec::new(),
+            cards: Vec::new(),
+            on_card: Vec::new(),
             mean: None,
             shadow: shadow::Shadows::default(),
             gpu: None,
@@ -814,12 +826,33 @@ impl Lighting {
         self.layer.clear();
         self.layer.extend(self.cells.iter().map(|c| c.layer));
 
+        // What shows on a card (a sprite: a person, the follower, an emote bubble): never a light
+        // source, and no bloom from it (a white "!" bubble glowed at night like a lit sign).
+        shadow::card_spans(&scene.geometry, &rows, &mut self.cards);
+        self.on_card.clear();
+        self.on_card.resize(n, false);
+        for c in &self.cards {
+            let x_lo = (c.lo[0].floor() as isize - x0 as isize).max(0) as usize;
+            let x_hi = (c.hi[0].ceil() as isize - x0 as isize).clamp(0, w as isize) as usize;
+            let y_lo = (c.lo[1].floor().max(0.0) as usize).min(h);
+            let y_hi = (c.hi[1].ceil().max(0.0) as usize).min(h);
+            for y in y_lo..y_hi {
+                for x in x_lo..x_hi {
+                    let i = y * w + x;
+                    let cell = &self.cells[i];
+                    if cell.layer == 1 && (cell.pos[2] - c.z).abs() < CARD_DEPTH {
+                        self.on_card[i] = true;
+                    }
+                }
+            }
+        }
+
         // Cast shadows (UC13): the picture's polygons as casters; outdoors the sun by day, the
         // moon by night: the key light comes from where it stands, and what stands in its way
         // casts a shadow.
         let mut sun_strength = 0.0;
         self.shadow.ready = false;
-        if place == Place::Outdoor && !scene.geometry.polys.is_empty() {
+        if place == Place::Outdoor && scene.shadows && !scene.geometry.polys.is_empty() {
             let up = shadow::Shadows::find_up(&scene.geometry, &rows);
             let fwd: [[f32; 4]; 4] = std::array::from_fn(|r| {
                 std::array::from_fn(|c| scene.proj[r * 4 + c] as f32 / 4096.0)
@@ -946,10 +979,13 @@ impl Lighting {
                 let c = self.cells[i];
                 let (x, y) = (i % w, i / w);
                 let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
-                // A light source's pixel blooms as much as its light shows (-1: not one).
+                // A light source's pixel blooms as much as its light shows (-1: not one; -2: a
+                // card's, which doesn't bloom at all).
                 let bloom = if c.emissive {
                     let id = self.label.get(i).copied().unwrap_or(0) as usize;
                     self.patch_weight.get(id).copied().unwrap_or(1.0)
+                } else if self.on_card.get(i).copied().unwrap_or(false) {
+                    -2.0
                 } else {
                     -1.0f32
                 };
@@ -1139,7 +1175,8 @@ impl Lighting {
             ((mean * 1.1).max(0.18), (mean * 2.4).max(0.4))
         };
         let ease = |l: f32, at: f32| ((l / at - 0.9) / 0.2).clamp(0.0, 1.0);
-        for c in &mut self.cells[..n] {
+        let on_card = &self.on_card;
+        for (i, c) in self.cells[..n].iter_mut().enumerate() {
             let b = c.base;
             let l = lum(b);
             let warm = b[0] >= b[2] * 1.6;
@@ -1147,7 +1184,7 @@ impl Lighting {
             // shade (174, 121, 85: its red 0.42; orange, not the Mart's awning's yellow-brown).
             let peak = b[0].max(b[1]).max(b[2]);
             let shown = peak > 0.45 || (warm && peak > 0.4 && b[1] >= b[0] * 0.4);
-            c.glow = if c.layer == 1 && shown {
+            c.glow = if c.layer == 1 && shown && !on_card[i] {
                 let g = ease(l, if warm { warm_at } else { cool_at });
                 g * g * (3.0 - 2.0 * g)
             } else {
@@ -1523,6 +1560,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            shadows: false,
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
         let mut lighting = Lighting::new();
@@ -1553,6 +1591,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            shadows: false,
         };
         let dark = 0x0050_5060u32;
         let mut plain = vec![dark; 256 * HEIGHT];
@@ -1604,6 +1643,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            shadows: false,
         };
         if !Lighting::new().use_gpu() {
             eprintln!("no GPU here: the overworld's lighting isn't tested");

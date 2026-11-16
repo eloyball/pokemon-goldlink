@@ -51,7 +51,7 @@ struct Frame {
 
 // One pixel: its place (view space; w: 1 the 3D scene), its colour (0x00RRGGBB, unfaded), its
 // glow (bits of a float), 1 where the player shows, how much it blooms as a light source (bits of
-// a float; -1: not one).
+// a float; -1: not one; -2: a card's, a sprite's, which doesn't bloom).
 struct Pixel {
     pos: vec4<f32>,
     info: vec4<u32>,
@@ -640,8 +640,12 @@ fn bright(x: u32, y: u32) -> vec3<f32> {
     let c = vec3<f32>(rg.x, rg.y, bt.x) + glow_at(i);
     let start = F.bloom.y;
     let over = clamp((lum(c) - start) / max(1.0 - start, 0.05), 0.0, 1.0);
-    // A light source blooms as much as its light shows (it fades in and out with it).
+    // A light source blooms as much as its light shows (it fades in and out with it); a card
+    // (a sprite: -2) not at all.
     let source = bitcast<f32>(pix[i].info.w);
+    if source < -1.5 {
+        return vec3<f32>(0.0);
+    }
     return c * select(over, source, source >= 0.0);
 }
 

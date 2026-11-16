@@ -2132,35 +2132,33 @@ fn light(
     let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
     let phase = Phase::of_hour(hour);
     let world = light.filter(|l| l.overworld());
-    // The picture's polygons for the cast shadows (UC13), as the lighting takes them.
-    let (polys, verts): (Vec<_>, Vec<_>) =
-        world
-            .filter(|_| shadows)
-            .map_or_else(Default::default, |l| {
-                let g = &l.buffers.geometry;
-                (
-                    g.polys
-                        .iter()
-                        .map(|p| goldlink_light::ShadowPoly {
-                            first_vert: p.first_vert,
-                            num_verts: p.num_verts,
-                            attr: p.attr,
-                            tex_param: p.tex_param,
-                            tex: p.tex,
-                            flags: p.flags,
-                            object: p.object,
-                        })
-                        .collect(),
-                    g.verts
-                        .iter()
-                        .map(|v| goldlink_light::ShadowVert {
-                            clip: v.clip,
-                            st: v.st,
-                            screen: v.screen,
-                        })
-                        .collect(),
-                )
-            });
+    // The picture's polygons, as the lighting takes them: the cast shadows' (UC13, with the
+    // Shadows setting) and the cards' (sprites aren't light sources).
+    let (polys, verts): (Vec<_>, Vec<_>) = world.map_or_else(Default::default, |l| {
+        let g = &l.buffers.geometry;
+        (
+            g.polys
+                .iter()
+                .map(|p| goldlink_light::ShadowPoly {
+                    first_vert: p.first_vert,
+                    num_verts: p.num_verts,
+                    attr: p.attr,
+                    tex_param: p.tex_param,
+                    tex: p.tex,
+                    flags: p.flags,
+                    object: p.object,
+                })
+                .collect(),
+            g.verts
+                .iter()
+                .map(|v| goldlink_light::ShadowVert {
+                    clip: v.clip,
+                    st: v.st,
+                    screen: v.screen,
+                })
+                .collect(),
+        )
+    });
     let texs: Vec<_> = world.map_or_else(Vec::new, |l| {
         l.buffers
             .geometry
@@ -2189,6 +2187,7 @@ fn light(
                 },
                 hours: l.hour as f32 + l.minute as f32 / 60.0,
                 attached: &player,
+                shadows,
             },
             Place::of_map(l.map),
         )
