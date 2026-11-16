@@ -69,6 +69,7 @@ pub(crate) struct Frame {
     pub sun_view: [f32; 4],
     pub sun_side: [u32; 4],
     pub taps: [[i32; 4]; 8],
+    pub bloom: [f32; 4],
 }
 
 /// A triangle's corner on a map (maps.wgsl `In`).
@@ -90,8 +91,9 @@ const ATLAS: [u32; 2] = [2048, 1024];
 const PICTURE: [u32; 2] = [384, 192];
 /// The textures' alpha, a row.
 const ALPHA_ROW: u32 = 4096;
-/// Words per pixel out of the light pass: its colour, its light as the world and as the player.
-const WORDS: usize = 5;
+/// Words per pixel out of the light pass: its colour, its light as the world and as the player,
+/// the bloom there (light.wgsl `WORDS`).
+const WORDS: usize = 6;
 
 /// A map's textures: how near the light (raw), the card, the depth test's.
 struct Target {
@@ -189,6 +191,9 @@ pub(crate) struct Gpu {
     light_layout: wgpu::BindGroupLayout,
     passes: [wgpu::ComputePipeline; 5],
     cards_lit: wgpu::ComputePipeline,
+    bloom_layout: wgpu::BindGroupLayout,
+    /// The bloom's passes: down to half size, across, down, the finish (light.wgsl).
+    bloom_passes: [wgpu::ComputePipeline; 4],
     sun: Target,
     atlas: Target,
     card_px: Target,
@@ -204,6 +209,8 @@ pub(crate) struct Gpu {
     cards: Grow,
     card_light: Grow,
     verts: Grow,
+    bloom_a: Grow,
+    bloom_b: Grow,
 }
 
 /// What the lighting hands the GPU for a frame.
@@ -394,6 +401,49 @@ impl Gpu {
             compute("shade"),
         ];
         let cards_lit = compute("cards_lit");
+        // The bloom's passes have a bind group of their own: the light pass's has the most
+        // storage buffers a stage may have (eight, wgpu's default limits).
+        let bloom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bloom"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage(1, true),
+                storage(4, false),
+                storage(14, false),
+                storage(15, false),
+            ],
+        });
+        let bloom_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bloom"),
+                bind_group_layouts: &[&bloom_layout],
+                push_constant_ranges: &[],
+            });
+        let bloom_pass = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&bloom_pipeline_layout),
+                module: &light_src,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let bloom_passes = [
+            bloom_pass("bloom_down"),
+            bloom_pass("bloom_across"),
+            bloom_pass("bloom_down_blur"),
+            bloom_pass("finish"),
+        ];
 
         let alpha = Self::alpha_texture(&device, 1);
         let storage_rw = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
@@ -430,6 +480,8 @@ impl Gpu {
                 wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 "verts",
             ),
+            bloom_a: Grow::new(&device, wgpu::BufferUsages::STORAGE, "bloom_a"),
+            bloom_b: Grow::new(&device, wgpu::BufferUsages::STORAGE, "bloom_b"),
             device,
             queue,
             failed,
@@ -438,6 +490,8 @@ impl Gpu {
             light_layout,
             passes,
             cards_lit,
+            bloom_layout,
+            bloom_passes,
         }
     }
 
@@ -464,8 +518,9 @@ impl Gpu {
     }
 
     /// Lights the frame: `out` gets each pixel (0x00RRGGBB), `lights` each pixel's light as the
-    /// world and as the player (light.wgsl `shade`); false when the GPU failed.
-    pub fn run(&mut self, input: &Input, out: &mut [u32], lights: &mut Vec<[u32; 4]>) -> bool {
+    /// world and as the player and the bloom there (light.wgsl `shade`, `finish`); false when the
+    /// GPU failed.
+    pub fn run(&mut self, input: &Input, out: &mut [u32], lights: &mut Vec<[u32; 5]>) -> bool {
         if self.failed() {
             return false;
         }
@@ -585,6 +640,9 @@ impl Gpu {
         self.work1.fit(device, (n * 16) as u64);
         self.outp.fit(device, (n * WORDS * 4) as u64);
         self.readback.fit(device, (n * WORDS * 4) as u64);
+        let half = (w.div_ceil(2) * h.div_ceil(2)) as u64 * 16;
+        self.bloom_a.fit(device, half);
+        self.bloom_b.fit(device, half);
         self.lights
             .write(device, queue, bytemuck::cast_slice(input.lights));
         self.faces
@@ -786,6 +844,51 @@ impl Gpu {
             pass.set_pipeline(&self.passes[4]);
             pass.dispatch_workgroups(gx, gy, 1);
         }
+        let bloom_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("bloom"),
+            layout: &self.bloom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.frame.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.pix.buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.outp.buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 14,
+                    resource: self.bloom_a.buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 15,
+                    resource: self.bloom_b.buf.as_entire_binding(),
+                },
+            ],
+        });
+        {
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_bind_group(0, &bloom_group, &[]);
+            let (gx, gy) = (w.div_ceil(8), h.div_ceil(8));
+            if frame.bloom[0] > 0.0 {
+                let (hx, hy) = (w.div_ceil(2).div_ceil(8), h.div_ceil(2).div_ceil(8));
+                let [down, across, down_blur, _] = &self.bloom_passes;
+                pass.set_pipeline(down);
+                pass.dispatch_workgroups(hx, hy, 1);
+                for _ in 0..2 {
+                    pass.set_pipeline(across);
+                    pass.dispatch_workgroups(hx, hy, 1);
+                    pass.set_pipeline(down_blur);
+                    pass.dispatch_workgroups(hx, hy, 1);
+                }
+            }
+            pass.set_pipeline(&self.bloom_passes[3]);
+            pass.dispatch_workgroups(gx, gy, 1);
+        }
         enc.copy_buffer_to_buffer(
             &self.outp.buf,
             0,
@@ -815,7 +918,7 @@ impl Gpu {
             lights.clear();
             for (k, p) in words.chunks_exact(WORDS).take(n).enumerate() {
                 out[k] = p[0];
-                lights.push([p[1], p[2], p[3], p[4]]);
+                lights.push([p[1], p[2], p[3], p[4], p[5]]);
             }
         }
         self.readback.buf.unmap();

@@ -130,20 +130,27 @@ fn vignette(x: f32, y: f32) -> f32 {
     return 1.0 - strength * t * sqrt(t);
 }
 
+// Words a cell in a light plane: the world's light and the bloom there (three), the player's
+// light (two).
+fn light_words(p: u32) -> u32 {
+    return select(2u, 3u, p == LIGHT_WORLD);
+}
+
 // A colour (0..255 a channel, as shown unlit) lit by the light at (x, y) of `p` (the world's or
 // the player's map).
 fn lit(c: vec3<f32>, p: u32, x: i32, y: i32) -> vec3<f32> {
     if u.off.z < 0.5 {
         return c;
     }
-    let i = plane_start(p) + cell(x, y) * 2u;
+    let i = plane_start(p) + cell(x, y) * light_words(p);
     let rg = unpack2x16float(planes[i]);
     let bg = unpack2x16float(planes[i + 1u]);
     var light = vec3<f32>(rg.x, rg.y, bg.x);
     var glow = bg.y;
+    let world = plane_start(LIGHT_WORLD) + cell(x, y) * 3u;
     if p == LIGHT_PLAYER && all(light == vec3<f32>(0.0)) {
         // Where the player wasn't at rest: the world's light there.
-        let j = plane_start(LIGHT_WORLD) + cell(x, y) * 2u;
+        let j = world;
         let rg2 = unpack2x16float(planes[j]);
         let bg2 = unpack2x16float(planes[j + 1u]);
         light = vec3<f32>(rg2.x, rg2.y, bg2.x);
@@ -154,6 +161,10 @@ fn lit(c: vec3<f32>, p: u32, x: i32, y: i32) -> vec3<f32> {
     if glow < 1.0 {
         out = base * light * (1.0 - glow) + base * glow;
     }
+    // The bloom there, as much as this colour takes (light.wgsl `takes`).
+    let q = planes[world + 2u];
+    let bloom = vec3<f32>(f32(q & 1023u), f32((q >> 10u) & 1023u), f32((q >> 20u) & 1023u)) / 1023.0;
+    out += bloom * bloom * min(lum(base) / 0.04, 1.0);
     let g = grade(out, vig);
     return vec3<f32>(to_byte(g.x), to_byte(g.y), to_byte(g.z));
 }

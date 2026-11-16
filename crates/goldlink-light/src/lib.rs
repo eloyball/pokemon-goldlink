@@ -15,8 +15,11 @@
 //!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
 //!    become point lights placed in 3D, casting warm pools on the ground;
-//! 5. the time of day's colour grade and a vignette. No blur anywhere: blurs look out of place
-//!    on the game's pixels (the user, 2026-11-13).
+//! 5. a soft bloom: what's brightest, and the light sources, spread at half size and added
+//!    back (the user, 2026-11-15: "it should be soft"; taken out with the blurs on 2026-11-13 by
+//!    a misunderstanding);
+//! 6. the time of day's colour grade and a vignette. No other blur: the far blur and the haze's
+//!    looked out of place on the game's pixels (the user, 2026-11-13).
 //!
 //! Pixels where the 3D scene doesn't show (a text box, menus) are left exactly as they are.
 //! Battles and menus get [`Lighting::grade`] only: a small grade, no lighting.
@@ -252,6 +255,10 @@ struct Preset {
     player_light: V3,
     player_height: f32,
     player_range: f32,
+    /// Bloom: what's brighter than `bloom_from` (linear luminance, lit), and the light sources,
+    /// spread at half size and added back, times `bloom` (soft: the user, 2026-11-15).
+    bloom: f32,
+    bloom_from: f32,
     grade: Grade,
 }
 
@@ -316,6 +323,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
         player_light: [0.0; 3],
         player_height: 0.0,
         player_range: 1.0,
+        bloom: 0.075,
+        bloom_from: 0.65,
         grade: phase_grade(phase),
     };
     match place {
@@ -338,6 +347,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.84, 0.62], 0.16),
                 player_height: 40.0,
                 player_range: 110.0,
+                bloom: 0.135,
+                bloom_from: 0.4,
                 ..outdoor
             },
             Phase::Night => Preset {
@@ -349,6 +360,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.86, 0.66], 0.30),
                 player_height: 40.0,
                 player_range: 110.0,
+                bloom: 0.2,
+                bloom_from: 0.22,
                 ..outdoor
             },
         },
@@ -368,6 +381,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.82, 0.58], 0.85),
                 player_height: 70.0,
                 player_range: 210.0,
+                bloom: 0.15,
+                bloom_from: 0.6,
                 grade: Grade {
                     tint: [1.05, 1.0, 0.93],
                     shadow: [0.94, 0.94, 1.08],
@@ -387,6 +402,8 @@ fn preset(place: Place, phase: Phase) -> Preset {
             player_light: scale([1.0, 0.84, 0.62], 0.75),
             player_height: 60.0,
             player_range: 190.0,
+            bloom: 0.165,
+            bloom_from: 0.45,
             grade: Grade {
                 tint: [0.97, 0.98, 1.04],
                 shadow: [0.92, 0.95, 1.10],
@@ -485,6 +502,9 @@ pub struct Lighting {
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
     tracked_at: Option<std::time::Instant>,
+    /// Per bright patch (its label): how much of it blooms (its light source's weight: it fades
+    /// in and out as the light does).
+    patch_weight: Vec<f32>,
     /// The cast shadows' casters and maps (UC13).
     shadow: shadow::Shadows,
     /// The picture's mean brightness, followed slowly (the light sources' threshold): taken
@@ -501,12 +521,14 @@ pub struct Lighting {
 /// Each pixel's light in the overworld picture lit last (UC14), for putting the player's picture
 /// together with the world's on the window's GPU, each source lit as itself: per pixel, the light
 /// as the world (half floats: red, green; blue, glow) and as the player (red, green; blue, 0),
-/// multiplied with the pixel's linear colour, then the grade (`grade`: tint and saturation, the
+/// multiplied with the pixel's linear colour, then the bloom there added (the square root of each
+/// channel, ten bits each, red lowest; times how much the colour takes, light.wgsl `takes`), then
+/// the grade (`grade`: tint and saturation, the
 /// shadows' tint and exposure, the highlights' tint and the vignette's strength).
 #[derive(Debug, Clone, Default)]
 pub struct LightMaps {
     pub width: usize,
-    pub data: Vec<[u32; 4]>,
+    pub data: Vec<[u32; 5]>,
     pub grade: [f32; 12],
     fresh: bool,
 }
@@ -619,6 +641,7 @@ impl Lighting {
             focus: None,
             tracked: Vec::new(),
             tracked_at: None,
+            patch_weight: Vec::new(),
             mean: None,
             shadow: shadow::Shadows::default(),
             gpu: None,
@@ -908,6 +931,13 @@ impl Lighting {
                 let c = self.cells[i];
                 let (x, y) = (i % w, i / w);
                 let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
+                // A light source's pixel blooms as much as its light shows (-1: not one).
+                let bloom = if c.emissive {
+                    let id = self.label.get(i).copied().unwrap_or(0) as usize;
+                    self.patch_weight.get(id).copied().unwrap_or(1.0)
+                } else {
+                    -1.0f32
+                };
                 gpu::Pixel {
                     pos: [
                         c.pos[0],
@@ -915,7 +945,7 @@ impl Lighting {
                         c.pos[2],
                         f32::from(u8::from(c.layer != 0)),
                     ],
-                    info: [px[i], c.glow.to_bits(), u32::from(player), 0],
+                    info: [px[i], c.glow.to_bits(), u32::from(player), bloom.to_bits()],
                 }
             })
             .collect();
@@ -954,6 +984,7 @@ impl Lighting {
             shadow: v4(g.shadow, g.exposure),
             high: v4(g.highlight, 0.0),
             taps,
+            bloom: [p.bloom, p.bloom_from, 0.0, 0.0],
             ..Default::default()
         };
         self.gpu_out.resize(n, 0);
@@ -1170,9 +1201,12 @@ impl Lighting {
             self.tracked.clear();
         }
         self.tracked_at = Some(now);
+        let max_id = found.iter().map(|(id, _)| *id).max().unwrap_or(0) as usize;
+        self.patch_weight.clear();
+        self.patch_weight.resize(max_id + 1, 1.0);
         let mut seen = vec![false; self.tracked.len()];
         let mut next = Vec::with_capacity(found.len() + self.tracked.len());
-        for &(_, light) in found {
+        for &(id, light) in found {
             let near = self
                 .tracked
                 .iter()
@@ -1191,6 +1225,7 @@ impl Lighting {
                 }
                 None => FADE_IN,
             };
+            self.patch_weight[id as usize] = weight;
             next.push(Tracked { light, weight });
         }
         for (t, seen) in self.tracked.iter().zip(&seen) {

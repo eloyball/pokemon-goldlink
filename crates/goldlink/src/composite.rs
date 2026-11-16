@@ -21,7 +21,7 @@ pub const PLANES: usize = 20;
 
 /// A frame's crop of the two pictures (and the lights, the plain mask) round the player, as the
 /// shader reads them: each plane `crop[2]` x `crop[3]` cells (the f32 `b` planes three words a
-/// cell, the light planes two), one after the other.
+/// cell, the world's light three: its light and the bloom; the player's two), one after the other.
 pub struct Frame {
     pub seq: u64,
     pub words: Vec<u32>,
