@@ -2392,7 +2392,7 @@ fn gpu_frame(
     let (cw, ch) = (x1.saturating_sub(x0).max(1), y1.saturating_sub(y0).max(1));
     let cells = cw * ch;
     let lights = lights.filter(|l| l.width == w && l.data.len() >= w * 192);
-    let mut words = Vec::with_capacity(cells * 27);
+    let mut words = Vec::with_capacity(cells * 28);
     let mut offsets = [0u32; PLANES];
     let at = |x: usize, y: usize| y * stride + x;
     for (plane, start) in offsets.iter_mut().enumerate() {
@@ -2412,10 +2412,10 @@ fn gpu_frame(
                 // The shown column of the arrays' column x.
                 let sx = x as isize - shift as isize;
                 // The pixel's lights and bloom (zeros off the picture).
-                let light = || -> [u32; 5] {
+                let light = || -> [u32; 6] {
                     match lights {
                         Some(l) if sx >= 0 && (sx as usize) < w => l.data[y * w + sx as usize],
-                        _ => [0; 5],
+                        _ => [0; 6],
                     }
                 };
                 match plane {
@@ -2428,7 +2428,7 @@ fn gpu_frame(
                     16 => words.extend([f3(3, 0), f3(3, 1), f3(3, 2)]),
                     17 => {
                         let v = light();
-                        words.extend([v[0], v[1], v[4]]);
+                        words.extend([v[0], v[1], v[4], v[5]]);
                     }
                     18 => {
                         let v = light();

@@ -15,9 +15,9 @@
 //!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
 //!    become point lights placed in 3D, casting warm pools on the ground;
-//! 5. a soft bloom: what's brightest, and the light sources, spread at half size and added
-//!    back (the user, 2026-11-15: "it should be soft"; taken out with the blurs on 2026-11-13 by
-//!    a misunderstanding);
+//! 5. the light sources' own small glow (evening, night) and a soft bloom: what's brightest, and
+//!    the light sources, spread at half size and added back (the user, 2026-11-15: "it should be
+//!    soft", as before; both taken out with the blurs on 2026-11-13 by a misunderstanding);
 //! 6. the time of day's colour grade and a vignette. No other blur: the far blur and the haze's
 //!    looked out of place on the game's pixels (the user, 2026-11-13).
 //!
@@ -256,9 +256,13 @@ struct Preset {
     player_height: f32,
     player_range: f32,
     /// Bloom: what's brighter than `bloom_from` (linear luminance, lit), and the light sources,
-    /// spread at half size and added back, times `bloom` (soft: the user, 2026-11-15).
+    /// spread at half size and added back, times `bloom` (the user, 2026-11-15).
     bloom: f32,
     bloom_from: f32,
+    /// The light sources' own small glow: their colour spread two or three pixels.
+    glow: f32,
+    /// How much brighter than their colour the light sources shine (1: as they are).
+    shine: f32,
     grade: Grade,
 }
 
@@ -323,8 +327,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
         player_light: [0.0; 3],
         player_height: 0.0,
         player_range: 1.0,
-        bloom: 0.075,
+        bloom: 0.10,
         bloom_from: 0.65,
+        glow: 0.0,
+        shine: 1.0,
         grade: phase_grade(phase),
     };
     match place {
@@ -347,8 +353,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.84, 0.62], 0.16),
                 player_height: 40.0,
                 player_range: 110.0,
-                bloom: 0.135,
+                bloom: 0.18,
                 bloom_from: 0.4,
+                glow: 0.16,
+                shine: 1.5,
                 ..outdoor
             },
             Phase::Night => Preset {
@@ -360,8 +368,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.86, 0.66], 0.30),
                 player_height: 40.0,
                 player_range: 110.0,
-                bloom: 0.2,
+                bloom: 0.26,
                 bloom_from: 0.22,
+                glow: 0.3,
+                shine: 2.2,
                 ..outdoor
             },
         },
@@ -381,8 +391,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 player_light: scale([1.0, 0.82, 0.58], 0.85),
                 player_height: 70.0,
                 player_range: 210.0,
-                bloom: 0.15,
+                bloom: 0.2,
                 bloom_from: 0.6,
+                glow: 0.0,
+                shine: 1.0,
                 grade: Grade {
                     tint: [1.05, 1.0, 0.93],
                     shadow: [0.94, 0.94, 1.08],
@@ -402,8 +414,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
             player_light: scale([1.0, 0.84, 0.62], 0.75),
             player_height: 60.0,
             player_range: 190.0,
-            bloom: 0.165,
+            bloom: 0.22,
             bloom_from: 0.45,
+            glow: 0.0,
+            shine: 1.0,
             grade: Grade {
                 tint: [0.97, 0.98, 1.04],
                 shadow: [0.92, 0.95, 1.10],
@@ -520,15 +534,16 @@ pub struct Lighting {
 
 /// Each pixel's light in the overworld picture lit last (UC14), for putting the player's picture
 /// together with the world's on the window's GPU, each source lit as itself: per pixel, the light
-/// as the world (half floats: red, green; blue, glow) and as the player (red, green; blue, 0),
+/// as the world (half floats: red, green; blue, 0: a light source's own shine in it) and as the
+/// player (red, green; blue, 0),
 /// multiplied with the pixel's linear colour, then the bloom there added (the square root of each
-/// channel, ten bits each, red lowest; times how much the colour takes, light.wgsl `takes`), then
-/// the grade (`grade`: tint and saturation, the
+/// channel, ten bits each, red lowest; times how much the colour takes, light.wgsl `takes`) and
+/// the light sources' glow (the same encoding, added as it is), then the grade (`grade`: tint and saturation, the
 /// shadows' tint and exposure, the highlights' tint and the vignette's strength).
 #[derive(Debug, Clone, Default)]
 pub struct LightMaps {
     pub width: usize,
-    pub data: Vec<[u32; 5]>,
+    pub data: Vec<[u32; 6]>,
     pub grade: [f32; 12],
     fresh: bool,
 }
@@ -841,7 +856,7 @@ impl Lighting {
             self.normals(w, h);
         }
         let found = if p.points > 0.0 {
-            self.find_lights(w, h, p.points)
+            self.find_lights(w, h, p.points, phase == Phase::Night)
         } else {
             Vec::new()
         };
@@ -984,7 +999,7 @@ impl Lighting {
             shadow: v4(g.shadow, g.exposure),
             high: v4(g.highlight, 0.0),
             taps,
-            bloom: [p.bloom, p.bloom_from, 0.0, 0.0],
+            bloom: [p.bloom, p.bloom_from, p.glow * 1.5, p.shine],
             ..Default::default()
         };
         self.gpu_out.resize(n, 0);
@@ -1084,7 +1099,13 @@ impl Lighting {
     /// The light sources: pixels far brighter than the scene (lit windows, lamps, signs) that
     /// are warm or very bright (the night's ordinary pale surfaces lean blue). Each patch of
     /// them becomes a point light, placed in 3D just off its surface.
-    fn find_lights(&mut self, w: usize, h: usize, strength: f32) -> Vec<(u32, PointLight)> {
+    fn find_lights(
+        &mut self,
+        w: usize,
+        h: usize,
+        strength: f32,
+        night: bool,
+    ) -> Vec<(u32, PointLight)> {
         let n = w * h;
         let (mut total, mut count) = (0.0f32, 0u32);
         for c in &self.cells[..n] {
@@ -1103,16 +1124,31 @@ impl Lighting {
             _ => now_mean,
         };
         self.mean = Some(mean);
-        let threshold = (mean * 2.2).max(0.25);
+        // A lit window is orange (red well over blue) or, a shop's or the Pokémon Centre's, cyan
+        // and bright. The game draws its windows at night in two shades, the dimmer under the
+        // picture's mean doubled (Cherrygrove's houses), and its shops' cyan windows at about
+        // half brightness: the bar is low for orange, higher for anything else; sand, roofs and
+        // flowers stay under both (the user, 2026-11-15: Cherrygrove's Mart and Centre unlit).
+        // At night the bars are fixed: following the picture's mean, the windows of Cherrygrove's
+        // houses (just at the bar) turned off and on as the player walked toward and away from
+        // them (the user, 2026-11-15). In the evening (no windows lit yet, a brighter picture)
+        // they follow the mean, so the low sun's warm colours don't count as lights.
+        let (warm_at, cool_at) = if night {
+            (0.18, 0.4)
+        } else {
+            ((mean * 1.1).max(0.18), (mean * 2.4).max(0.4))
+        };
         let ease = |l: f32, at: f32| ((l / at - 0.9) / 0.2).clamp(0.0, 1.0);
         for c in &mut self.cells[..n] {
             let b = c.base;
             let l = lum(b);
-            let warm = b[0] >= b[2] * 1.15;
-            c.glow = if c.layer == 1 && b[0].max(b[1]).max(b[2]) > 0.45 {
-                let bright = ease(l, threshold);
-                let s = if warm { 1.0 } else { ease(l, threshold * 1.8) };
-                let g = bright * s;
+            let warm = b[0] >= b[2] * 1.6;
+            // Bright enough to be a light: a channel over 0.45, or the game's dimmer window
+            // shade (174, 121, 85: its red 0.42; orange, not the Mart's awning's yellow-brown).
+            let peak = b[0].max(b[1]).max(b[2]);
+            let shown = peak > 0.45 || (warm && peak > 0.4 && b[1] >= b[0] * 0.4);
+            c.glow = if c.layer == 1 && shown {
+                let g = ease(l, if warm { warm_at } else { cool_at });
                 g * g * (3.0 - 2.0 * g)
             } else {
                 0.0
@@ -1551,6 +1587,50 @@ mod tests {
         assert!(r(shown[70 * 256 + 128]) > r(plain_lit[70 * 256 + 128]) + 8);
         assert_eq!(shown[140 * 256 + 10], plain_lit[140 * 256 + 10]);
         plain.clear();
+    }
+
+    #[test]
+    fn a_window_shines_at_night_whatever_the_picture_around_it() {
+        // Cherrygrove's houses' dimmer window shade (the game's), on a dark picture and a
+        // brighter one: following the picture's mean, it went out as the view changed.
+        let width = 384;
+        let (depth, layer) = floor(width);
+        let scene = Scene {
+            depth: &depth,
+            layer: &layer,
+            proj: PROJ,
+            fade: &[],
+            width,
+            geometry: Geometry::default(),
+            hours: 12.0,
+            attached: &[],
+        };
+        if !Lighting::new().use_gpu() {
+            eprintln!("no GPU here: the overworld's lighting isn't tested");
+            return;
+        }
+        let window = 0x00AE_7955u32;
+        let r = |p: u32| (p >> 16) & 0xFF;
+        for around in [0x0030_3040u32, 0x0080_80A0] {
+            let mut px = vec![around; 256 * HEIGHT];
+            for y in 60..64 {
+                for x in 126..130 {
+                    px[y * 256 + x] = window;
+                }
+            }
+            let mut lighting = Lighting::new();
+            lighting.use_gpu();
+            let mut out = px.clone();
+            for _ in 0..14 {
+                out = px.clone();
+                lighting.overworld(&mut out, 256, 64, &scene, Place::Outdoor, Phase::Night);
+            }
+            assert!(
+                r(out[62 * 256 + 128]) > r(window) + 40,
+                "around {around:06x}: the window shows {:06x}",
+                out[62 * 256 + 128]
+            );
+        }
     }
 
     #[test]

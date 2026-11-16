@@ -12,7 +12,7 @@ const BIAS: f32 = 0.4;
 const NEAR: f32 = 0.5;
 const TREE_HEIGHT: f32 = 44.0;
 // Words per pixel out of the light pass (gpu.rs `WORDS`).
-const WORDS: u32 = 6u;
+const WORDS: u32 = 7u;
 
 struct Frame {
     // The picture's width and height, its column 0's column in the scene's picture (the card
@@ -44,7 +44,8 @@ struct Frame {
     sun_side: vec4<u32>,
     // The occlusion's taps (x, y).
     taps: array<vec4<i32>, 8>,
-    // The bloom: its strength, the brightness (linear luminance) it starts from.
+    // The bloom: its strength, the brightness (linear luminance) it starts from; the light
+    // sources' own glow's strength, how much brighter than their colour they shine.
     bloom: vec4<f32>,
 }
 
@@ -103,6 +104,9 @@ struct Card {
 // stage may have), blurred from one to the other and back.
 @group(0) @binding(14) var<storage, read_write> bloom_a: array<vec4<f32>>;
 @group(0) @binding(15) var<storage, read_write> bloom_b: array<vec4<f32>>;
+// The light sources' own glow at full size, blurred from one to the other and back.
+@group(0) @binding(16) var<storage, read_write> glow_a: array<vec4<f32>>;
+@group(0) @binding(17) var<storage, read_write> glow_b: array<vec4<f32>>;
 
 fn is3d(i: u32) -> bool {
     return pix[i].pos.w > 0.5;
@@ -549,10 +553,10 @@ fn light_of(i: u32, player: bool, col: u32, row: u32) -> vec3<f32> {
     return light * (1.0 / F.params.y);
 }
 
-// Per pixel, six words: its colour (0x00RRGGBB, `finish`'s), then the light as the world (half
-// floats: red, green; blue, glow) and as the player (the same; the world's where the player
+// Per pixel, seven words: its colour (0x00RRGGBB, `finish`'s), then the light as the world
+// (half floats: red, green; blue, 0: a glowing colour's own light in it) and as the player (the same; the world's where the player
 // isn't), for the player's picture put together with the world's on the window's GPU (each lit
-// as itself), then the bloom there (`finish`). Until `finish` the first and last hold the lit
+// as itself), then the bloom there and the light sources' glow there (`finish`). Until `finish` the first and last hold the lit
 // colour before the grade (half floats: red, green; blue, how much bloom it takes).
 @compute @workgroup_size(8, 8)
 fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -573,6 +577,7 @@ fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
         outp[o + 3u] = none;
         outp[o + 4u] = none;
         outp[o + 5u] = 0u;
+        outp[o + 6u] = 0u;
         return;
     }
     let base = vec3<f32>(
@@ -582,24 +587,28 @@ fn shade(@builtin(global_invocation_id) g: vec3<u32>) {
     );
     let glow = bitcast<f32>(px.info.y);
     let player = px.info.z == 1u;
+    // A light source shines brighter than its colour, as much as its light shows (it fades in).
+    let boost = 1.0 + (F.bloom.w - 1.0) * max(bitcast<f32>(px.info.w), 0.0);
     let col = F.dims.z + g.x;
     let world = light_of(i, false, col, g.y);
     var lit = world;
     var as_player = world;
-    var world_glow = glow;
+    // The world's light with its glow in it (the colour's own light where it glows), for the
+    // player's picture: base * light.
+    var world_out = world * (1.0 - glow) + vec3<f32>(glow * boost);
     if player {
         as_player = light_of(i, true, col, g.y);
         lit = as_player;
         // Under the player the picture's colour is the player's: the world there doesn't glow.
-        world_glow = 0.0;
+        world_out = world;
     }
     var out = base;
-    if glow < 1.0 {
-        out = base * lit * (1.0 - glow) + base * glow;
+    if glow < 1.0 || boost != 1.0 {
+        out = base * lit * (1.0 - glow) + base * (glow * boost);
     }
     outp[o] = pack2x16float(out.xy);
-    outp[o + 1u] = pack2x16float(world.xy);
-    outp[o + 2u] = pack2x16float(vec2<f32>(world.z, world_glow));
+    outp[o + 1u] = pack2x16float(world_out.xy);
+    outp[o + 2u] = pack2x16float(vec2<f32>(world_out.z, 0.0));
     outp[o + 3u] = pack2x16float(as_player.xy);
     outp[o + 4u] = pack2x16float(vec2<f32>(as_player.z, 0.0));
     outp[o + 5u] = pack2x16float(vec2<f32>(out.z, takes(base)));
@@ -628,7 +637,7 @@ fn bright(x: u32, y: u32) -> vec3<f32> {
     let o = i * WORDS;
     let rg = unpack2x16float(outp[o]);
     let bt = unpack2x16float(outp[o + 5u]);
-    let c = vec3<f32>(rg.x, rg.y, bt.x);
+    let c = vec3<f32>(rg.x, rg.y, bt.x) + glow_at(i);
     let start = F.bloom.y;
     let over = clamp((lum(c) - start) / max(1.0 - start, 0.05), 0.0, 1.0);
     // A light source blooms as much as its light shows (it fades in and out with it).
@@ -646,6 +655,68 @@ fn bloom_down(@builtin(global_invocation_id) g: vec3<u32>) {
     let y = g.y * 2u;
     let sum = bright(x, y) + bright(x + 1u, y) + bright(x, y + 1u) + bright(x + 1u, y + 1u);
     bloom_a[g.y * hd.x + g.x] = vec4<f32>(sum * 0.25, 0.0);
+}
+
+// ---- The light sources' own glow: their colour (as much as their light shows) spread two or
+// three pixels and added, dark surroundings included ----
+
+@compute @workgroup_size(8, 8)
+fn glow_seed(@builtin(global_invocation_id) g: vec3<u32>) {
+    if g.x >= F.dims.x || g.y >= F.dims.y {
+        return;
+    }
+    let i = g.y * F.dims.x + g.x;
+    let px = pix[i];
+    let source = bitcast<f32>(px.info.w);
+    var c = vec3<f32>(0.0);
+    if px.pos.w > 0.5 && source >= 0.0 {
+        let packed = px.info.x;
+        c = vec3<f32>(
+            to_linear((packed >> 16u) & 255u),
+            to_linear((packed >> 8u) & 255u),
+            to_linear(packed & 255u),
+        ) * source;
+    }
+    glow_a[i] = vec4<f32>(c, 0.0);
+}
+
+const GLOW_RADIUS: i32 = 2;
+
+@compute @workgroup_size(8, 8)
+fn glow_across(@builtin(global_invocation_id) g: vec3<u32>) {
+    let w = F.dims.x;
+    if g.x >= w || g.y >= F.dims.y {
+        return;
+    }
+    var s = vec4<f32>(0.0);
+    for (var d = -GLOW_RADIUS; d <= GLOW_RADIUS; d++) {
+        let x = u32(clamp(i32(g.x) + d, 0, i32(w) - 1));
+        s += glow_a[g.y * w + x];
+    }
+    glow_b[g.y * w + g.x] = s / f32(2 * GLOW_RADIUS + 1);
+}
+
+@compute @workgroup_size(8, 8)
+fn glow_down(@builtin(global_invocation_id) g: vec3<u32>) {
+    let w = F.dims.x;
+    let h = F.dims.y;
+    if g.x >= w || g.y >= h {
+        return;
+    }
+    var s = vec4<f32>(0.0);
+    for (var d = -GLOW_RADIUS; d <= GLOW_RADIUS; d++) {
+        let y = u32(clamp(i32(g.y) + d, 0, i32(h) - 1));
+        s += glow_b[y * w + g.x];
+    }
+    glow_a[g.y * w + g.x] = s / f32(2 * GLOW_RADIUS + 1);
+}
+
+// The glow (times its strength) at pixel `i`.
+fn glow_at(i: u32) -> vec3<f32> {
+    if F.bloom.z <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    return glow_a[i].xyz * F.bloom.z;
 }
 
 const BLOOM_RADIUS: i32 = 3;
@@ -695,15 +766,15 @@ fn bloom_at(x: u32, y: u32) -> vec3<f32> {
     return mix(top, bottom, ty) * F.bloom.x;
 }
 
-// The bloom as one word: the square root of each channel (fine steps where it's faint), ten
-// bits each (composite.wgsl reads it back).
+// The bloom (or the glow) as one word: the square root of each channel (fine steps where it's
+// faint), ten bits each (composite.wgsl reads it back).
 fn pack_bloom(b: vec3<f32>) -> u32 {
     let q = vec3<u32>(sqrt(clamp(b, vec3<f32>(0.0), vec3<f32>(1.0))) * 1023.0 + 0.5);
     return q.x | (q.y << 10u) | (q.z << 20u);
 }
 
-// The lit colour, the bloom added, the grade and the vignette: the pixel's colour; the bloom
-// there for the player's picture.
+// The lit colour, the glow and the bloom added, the grade and the vignette: the pixel's colour;
+// the bloom and the glow there for the player's picture.
 @compute @workgroup_size(8, 8)
 fn finish(@builtin(global_invocation_id) g: vec3<u32>) {
     let w = F.dims.x;
@@ -718,7 +789,8 @@ fn finish(@builtin(global_invocation_id) g: vec3<u32>) {
     let o = i * WORDS;
     let rg = unpack2x16float(outp[o]);
     let bt = unpack2x16float(outp[o + 5u]);
-    var c = vec3<f32>(rg.x, rg.y, bt.x);
+    let gl = glow_at(i);
+    var c = vec3<f32>(rg.x, rg.y, bt.x) + gl;
     var b = vec3<f32>(0.0);
     if F.bloom.x > 0.0 {
         b = bloom_at(g.x, g.y);
@@ -727,4 +799,5 @@ fn finish(@builtin(global_invocation_id) g: vec3<u32>) {
     let graded = grade(c, vignette(g.x, g.y));
     outp[o] = (to_byte(graded.x) << 16u) | (to_byte(graded.y) << 8u) | to_byte(graded.z);
     outp[o + 5u] = pack_bloom(b);
+    outp[o + 6u] = pack_bloom(gl);
 }
