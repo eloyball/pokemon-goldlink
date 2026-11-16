@@ -642,8 +642,9 @@ impl Nds {
         out
     }
 
-    /// Leaves the game's own shadows (the blobs under people, painted shadows) out of the 3D
-    /// picture from the next render, while GoldLink casts its own (UC13).
+    /// Leaves the game's painted shadows (a building's, a sign's) out of the 3D picture from the
+    /// next render, while GoldLink casts its own (UC13); the blobs under people stay (patch
+    /// 0031).
     pub fn set_hide_game_shadows(&mut self, on: bool) {
         // SAFETY: the core is live; the shim only sets a flag.
         unsafe { sys::gl_core_set_hide_game_shadows(self.ptr(), c_int::from(on)) }

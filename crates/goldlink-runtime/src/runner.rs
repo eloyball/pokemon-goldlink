@@ -385,10 +385,12 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
-        // Outdoors with dynamic shadows the game's own are left out from the next frame, by day
-        // (the sun's) and by night (the lit windows' and lamps'): the user, after the GPU's
-        // shadows (UC14), had them gone by night too. Indoors, in caves and with dynamic shadows
-        // off they're the game's (the user: vanilla there).
+        // Outdoors with dynamic shadows the game's painted ones (a building's, a sign's) are left
+        // out from the next frame, by day (the sun's) and by night (the lit windows' and lamps'):
+        // the user, after the GPU's shadows (UC14), had them gone by night too. The blobs under
+        // people, the follower and NPCs stay (patch 0031: the user, the characters look odd
+        // without them). Indoors, in caves and with dynamic shadows off they're all the game's
+        // (the user: vanilla there).
         let outdoors = light_now.as_ref().is_some_and(|l| {
             l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
         });

@@ -1,0 +1,33 @@
+GoldLink's change to melonDS (UC13): with HideGameShadows, only the game's painted shadows (a
+building's, a sign's, the windmill's: GameShadow 2) are left out; the blobs under people, the
+follower and NPCs (GameShadow 1) stay. The user: the buildings' painted shadows look bad on top of
+GoldLink's cast shadows, but the characters look odd without theirs.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D_Soft.h	2026-11-15 20:46:14.867299311 -0500
++++ b/src/GPU3D_Soft.h	2026-11-15 20:46:23.393251075 -0500
+@@ -102,7 +102,8 @@
+     const ShadowGeometry& GetShownGeometry() const { return ShownGeometry; }
+     // GoldLink (UC13): the game's own shadows (ShadowGame: translucent polygons dark where their
+     // texture shows, GameShadow: the blobs under people, a house's or the windmill's painted
+-    // shadow) left out of the picture while GoldLink casts its own.
++    // shadow) left out of the picture while GoldLink casts its own. Patch 0031: only the painted
++    // ones (GameShadow 2); the blobs under people (1) stay.
+     bool HideGameShadows = false;
+     // GoldLink (UC13): the game's painted shadows (a building's, a sign's, the windmill post's)
+     // drawn just visible (darkening at most SoftShadowDark): by night they stay, but at the game's
+--- a/src/GPU3D_Soft.cpp	2026-11-15 20:46:14.867367679 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-15 20:46:23.393430833 -0500
+@@ -2279,8 +2279,10 @@
+             }
+             sp.Tex = index;
+         }
++        // GoldLink (patch 0031): the painted shadows left out, the blobs under people kept (the
++        // user: the characters look odd without them).
+         if (drawn >= 0)
+-            HideList[drawn] = HideGameShadows && (sp.Flags & ShadowGame);
++            HideList[drawn] = HideGameShadows && game == 2;
+         g.Polys.push_back(sp);
+     }
+ }
