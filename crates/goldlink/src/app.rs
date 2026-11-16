@@ -23,6 +23,57 @@ use goldlink_bridge::{Scene, SharedBridge};
 /// The release program's bar above the screens (UC8 §2.1): the world, who's online, Leave.
 pub const BAR: f32 = 38.0;
 
+/// The first Pokémon's choice in the one-screen layout: the Pokémon as the top screen shows it
+/// (whatever the ball holds, a randomised world's too), in a round bubble over the top middle of
+/// the touch screen `r`, at the touch screen's scale (the user: the Poké Balls and the Pokémon at
+/// once; the middle holds the ball's button). Its middle and radius (points).
+fn starter_bubble(
+    p: &egui::Painter,
+    t: &egui::TextureHandle,
+    prescale: usize,
+    r: egui::Rect,
+) -> (egui::Pos2, f32) {
+    let k = r.height() / 192.0;
+    let (sx, sy, sr) = STARTER_SPOT;
+    let radius = sr * k;
+    // Over the touch screen's top 14 rows, between the balls.
+    let centre = egui::pos2(r.center().x, r.top() + 14.0 * k - radius);
+    let uv = screen_uvs(prescale).0;
+    let at = |x: f32, y: f32| {
+        egui::pos2(
+            uv.min.x + x / 256.0 * uv.width(),
+            uv.min.y + y / 192.0 * uv.height(),
+        )
+    };
+    p.circle_filled(centre, radius + 6.0, egui::Color32::from_black_alpha(120));
+    let mut mesh = egui::Mesh::with_texture(t.id());
+    const SIDES: u32 = 72;
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: centre,
+        uv: at(sx, sy),
+        color: egui::Color32::WHITE,
+    });
+    for i in 0..=SIDES {
+        let a = i as f32 / SIDES as f32 * std::f32::consts::TAU;
+        let (c, s) = (a.cos(), a.sin());
+        mesh.vertices.push(egui::epaint::Vertex {
+            pos: centre + egui::vec2(c, s) * radius,
+            uv: at(sx + c * sr, sy + s * sr),
+            color: egui::Color32::WHITE,
+        });
+        if i > 0 {
+            mesh.add_triangle(0, i, i + 1);
+        }
+    }
+    p.add(egui::Shape::mesh(mesh));
+    p.circle_stroke(
+        centre,
+        radius + 1.5,
+        egui::Stroke::new(3.0_f32, theme::EDGE),
+    );
+    (centre, radius)
+}
+
 /// The halves of the screens texture: the top screen, the touch screen.
 const TOP_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 0.5));
 const BOTTOM_UV: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.5), egui::pos2(1.0, 1.0));
@@ -104,6 +155,13 @@ struct OneScreen {
     by_hand: Option<bool>,
     /// The scene the last frame showed.
     scene: Option<Scene>,
+    /// The scene the shown application was opened from (the start menu's, or a script's).
+    app_from: Option<Scene>,
+    /// The game shows the choice of the first Pokémon (the bridge's `choosing_starter`).
+    starter: bool,
+    /// The starter's bubble over the touch screen (its middle and radius, points): clicks there
+    /// aren't touches.
+    bubble: Option<(egui::Pos2, f32)>,
     /// A touch the HUD is making for the player: the DS point and when it began.
     tap: Option<((u16, u16), Instant)>,
 }
@@ -111,11 +169,24 @@ struct OneScreen {
 impl OneScreen {
     fn follow(&mut self, scene: Scene) {
         if scene != Scene::Changing && self.scene != Some(scene) {
+            if scene == Scene::App {
+                self.app_from = self.scene;
+            }
             self.scene = Some(scene);
             self.by_hand = None;
         }
     }
+
+    /// Whether the touch screen shows Elm's Poké Balls (the first Pokémon's choice, from the
+    /// lab's script, not an application of the start menu there).
+    fn choosing_starter(&self, scene: Scene) -> bool {
+        self.starter && scene == Scene::App && self.app_from != Some(Scene::StartMenu)
+    }
 }
+
+/// Where the first Pokémon's choice shows the Pokémon on the top screen (DS pixels): its 80 x 80
+/// sprite stands in the middle of its round stage, above Elm's text box.
+const STARTER_SPOT: (f32, f32, f32) = (128.0, 82.0, 46.0);
 
 struct Message {
     text: String,
@@ -405,8 +476,11 @@ impl GameApp {
                 keys |= self.controls.gamepads(g);
             }
         }
+        let on_bubble = |p: egui::Pos2| self.one.bubble.is_some_and(|(c, r)| p.distance(c) <= r);
         let mut touch = match (down, pos) {
-            (true, Some(p)) if !self.blocked() && !over_panel => touch_at(self.bottom, p),
+            (true, Some(p)) if !self.blocked() && !over_panel && !on_bubble(p) => {
+                touch_at(self.bottom, p)
+            }
             _ => None,
         };
         // A typed character's key on the naming screen.
@@ -1138,10 +1212,26 @@ impl GameApp {
             || battle.is_some_and(|b| b.bag_or_party || (b.waiting && !hud_draws));
         let modal = self.one.by_hand.unwrap_or(wanted);
         self.bottom = egui::Rect::NOTHING;
+        self.one.bubble = None;
         if modal {
-            // The touch screen over the dimmed picture, leaving the picture's edges showing.
-            p.rect_filled(frame, 0.0, egui::Color32::from_black_alpha(150));
-            let r = egui::Rect::from_center_size(frame.center(), middle.size() * 0.86);
+            // The touch screen over the dimmed picture, leaving the picture's edges showing (the
+            // first Pokémon's choice: darker, as the smaller touch screen leaves more of it).
+            let starter = self.one.choosing_starter(scene);
+            let dim = if starter { 200 } else { 150 };
+            p.rect_filled(frame, 0.0, egui::Color32::from_black_alpha(dim));
+            let r = if starter {
+                // Smaller and lower, under the Pokémon's bubble.
+                let size = middle.size() * 0.66;
+                egui::Rect::from_min_size(
+                    egui::pos2(
+                        frame.center().x - size.x / 2.0,
+                        frame.bottom() - frame.height() * 0.03 - size.y,
+                    ),
+                    size,
+                )
+            } else {
+                egui::Rect::from_center_size(frame.center(), middle.size() * 0.86)
+            };
             p.rect_filled(r.expand(6.0), 6.0, egui::Color32::from_black_alpha(120));
             p.image(t.id(), r, screen_uvs(self.prescale).1, egui::Color32::WHITE);
             p.rect_stroke(
@@ -1151,6 +1241,9 @@ impl GameApp {
                 egui::StrokeKind::Outside,
             );
             self.bottom = r;
+            if starter {
+                self.one.bubble = Some(starter_bubble(&p, &t, self.prescale, r));
+            }
             if scene == Scene::StartMenu
                 && let Some(on) = self.running_shoes
             {
@@ -1191,6 +1284,7 @@ impl GameApp {
                 let mut b = goldlink_bridge::hook::lock(b);
                 let naming = b.naming();
                 let one = self.config.video.layout == Layout::OneScreen;
+                self.one.starter = one && naming.is_none() && b.choosing_starter();
                 // The wider picture moves the game's HP boxes out toward its edges.
                 b.box_shift = if one && self.config.video.wide {
                     layout::WIDE_SIDE as i32

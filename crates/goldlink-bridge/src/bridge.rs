@@ -106,6 +106,19 @@ pub fn scene_of(mailbox: &[u8]) -> Scene {
     }
 }
 
+/// Whether the game shows Elm's choice of the first Pokémon (the Poké Balls on the touch screen,
+/// the Pokémon on the top screen): an application in Elm's lab while the player has no Pokémon
+/// yet (no follower). The start menu's applications there are told apart by the window (what
+/// opened it).
+pub fn choosing_starter_of(mailbox: &[u8]) -> bool {
+    let Some(ps) = mailbox.get(LOCAL_PLAYER..LOCAL_PLAYER + PLAYER_STATE_SIZE) else {
+        return false;
+    };
+    scene_of(mailbox) == Scene::App
+        && u32::from(u16_at(ps, PS_MAP_ID)) == goldlink_abi::COOP_MAP_ELMS_LAB
+        && u16_at(ps, PS_FOLLOWER_SPECIES) == 0
+}
+
 /// A snapshot for the window's world panel.
 #[derive(Debug, Clone)]
 pub struct View {
@@ -446,6 +459,13 @@ impl Bridge {
         self.mailbox_copy
             .as_deref()
             .map_or(Scene::Unknown, scene_of)
+    }
+
+    /// Whether the game shows the choice of the first Pokémon ([`choosing_starter_of`]).
+    pub fn choosing_starter(&self) -> bool {
+        self.mailbox_copy
+            .as_deref()
+            .is_some_and(choosing_starter_of)
     }
 
     fn set_status(&mut self, message: impl Into<String>, is_error: bool) {
@@ -1477,6 +1497,41 @@ mod tests {
         mb[ps + PS_IS_ACTIVE] = active;
         mb[ps + PS_ACTIVITY] = activity as u8;
         mb
+    }
+
+    #[test]
+    fn the_starter_choice_is_an_application_in_elms_lab_without_a_pokemon() {
+        let at = |map: u32, follower: u16, activity: u32, active: u8| {
+            let mut mb = mailbox(7, active, activity);
+            let ps = LOCAL_PLAYER;
+            mb[ps + PS_MAP_ID..ps + PS_MAP_ID + 2].copy_from_slice(&(map as u16).to_le_bytes());
+            mb[ps + PS_FOLLOWER_SPECIES..ps + PS_FOLLOWER_SPECIES + 2]
+                .copy_from_slice(&follower.to_le_bytes());
+            mb
+        };
+        let lab = goldlink_abi::COOP_MAP_ELMS_LAB;
+        assert!(choosing_starter_of(&at(lab, 0, A::COOP_ACTIVITY_MENU, 0)));
+        // With a Pokémon (its follower), elsewhere, or in the field: not the choice.
+        assert!(!choosing_starter_of(&at(
+            lab,
+            152,
+            A::COOP_ACTIVITY_MENU,
+            0
+        )));
+        assert!(!choosing_starter_of(&at(
+            lab + 1,
+            0,
+            A::COOP_ACTIVITY_MENU,
+            0
+        )));
+        assert!(!choosing_starter_of(&at(lab, 0, A::COOP_ACTIVITY_MENU, 1)));
+        assert!(!choosing_starter_of(&at(
+            lab,
+            0,
+            A::COOP_ACTIVITY_BATTLE,
+            0
+        )));
+        assert!(!choosing_starter_of(&[]));
     }
 
     #[test]

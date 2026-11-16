@@ -515,6 +515,94 @@ const MOM_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=starter: from the user's SAVE02 save facing Elm's Poké Balls, A and
+/// what each screen shows after it, several times (the starter's choice in the one-screen layout).
+const STARTER_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Shot("before"),
+    Step::Press(Keys::A),
+    Step::Wait(30),
+    Step::Shot("a1"),
+    Step::Wait(60),
+    Step::Shot("a1-late"),
+    Step::Raw("a1"),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("a2"),
+    Step::Raw("a2"),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("a3"),
+    Step::Raw("a3"),
+    Step::Press(Keys::A),
+    Step::Wait(90),
+    Step::Shot("a4"),
+    Step::Raw("a4"),
+    Step::Touch(128, 85),
+    Step::Wait(90),
+    Step::Shot("b1"),
+    Step::Wait(90),
+    Step::Shot("b2"),
+    Step::Press(Keys::A),
+    Step::Wait(90),
+    Step::Shot("b3"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=mailbox: a step right and A (New Bark's mailbox beside Elm's house in
+/// the user's SAVE02 save outside): a field message's box over the lit overworld.
+const MAILBOX_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 20, ""),
+    Step::Wait(20),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("m1"),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("m2"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=talk-right: right toward the NPC beside the user's SAVE03 save's spot
+/// in Cherrygrove and A: a person's message box over the lit overworld.
+const TALK_RIGHT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 56, ""),
+    Step::Wait(20),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("t1"),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Shot("t2"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=follower: as talk-right, then a turn up to the person there and A: a
+/// person's message over the lit overworld.
+const FOLLOWER_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Walk(Keys::RIGHT, 56, ""),
+    Step::Wait(30),
+    Step::Walk(Keys::UP, 3, ""),
+    Step::Wait(20),
+    Step::Press(Keys::A),
+    Step::Wait(15),
+    Step::Shot("f1"),
+    Step::Wait(15),
+    Step::Shot("f2"),
+    Step::Wait(30),
+    Step::Shot("f3"),
+    Step::Wait(60),
+    Step::Shot("f4"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=lyra (UC11's wider picture): from the user's SAVE02 save, down out of
 /// the house into the New Bark Town scene, A every 40 frames for its text (GOLDLINK_DEV_TOUR_FILM).
 const LYRA_STEPS: &[Step] = &[
@@ -988,6 +1076,10 @@ fn steps() -> &'static [Step] {
         Ok("down1-left2") => DOWN1_LEFT2_STEPS,
         Ok("cave-steps") => CAVE_STEPS_IN,
         Ok("mom") => MOM_STEPS,
+        Ok("starter") => STARTER_STEPS,
+        Ok("mailbox") => MAILBOX_STEPS,
+        Ok("talk-right") => TALK_RIGHT_STEPS,
+        Ok("follower") => FOLLOWER_STEPS,
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,
         Ok("run-lock") => RUN_LOCK_STEPS,
