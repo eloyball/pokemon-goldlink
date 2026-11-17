@@ -237,15 +237,18 @@ _Static_assert(sizeof(struct CoopChallengeSync) == 0x78, "CoopChallengeSync size
 #define COOP_POOL_LEGEND_B 0x08 // box legends and mythicals
 #define COOP_POOL_LEGENDS  (COOP_POOL_LEGEND_A | COOP_POOL_LEGEND_B)
 
+// Six bytes (UC15: Overlay 131's room; was eight): the generator's order.
 struct CoopPoolEntry
 {
-    u16 value;  // species | form << 11 (the encounter tables' encoding)
-    u16 family; // index into the family list
-    u8  type1;
-    u8  type2;
-    u8  flags;  // COOP_POOL_*
-    u8  tier;   // BST tier 1-4: < 340, < 450, < 540, the rest
+    u16 value;      // species | form << 11 (the encounter tables' encoding)
+    u16 family : 10; // index into the family list (< 1024)
+    u16 tier : 3;   // BST tier 1-4: < 340, < 450, < 540, the rest
+    u16 : 3;
+    u16 type1 : 5;
+    u16 type2 : 5;
+    u16 flags : 6;  // COOP_POOL_*
 };
+_Static_assert(sizeof(struct CoopPoolEntry) == 6, "CoopPoolEntry: six bytes");
 
 extern const struct CoopPoolEntry gCoopPool[];
 extern const u16 gCoopPoolCount;

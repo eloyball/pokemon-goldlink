@@ -177,7 +177,8 @@ def render(rows, abilities, family_count):
         'const struct CoopPoolEntry gCoopPool[] = {',
     ]
     for name, family, t1, t2, flags, t, value in rows:
-        lines.append(f'    {{ 0x{value:04X}, {family}, {t1}, {t2}, 0x{flags:02X}, {t} }}, // {name}')
+        # struct CoopPoolEntry's order: value, family, tier, type1, type2, flags (six bytes).
+        lines.append(f'    {{ 0x{value:04X}, {family}, {t}, {t1}, {t2}, 0x{flags:02X} }}, // {name}')
     lines += [
         '};',
         '',
@@ -192,6 +193,9 @@ def render(rows, abilities, family_count):
 
 def main():
     rows, abilities, family_count, problems = build()
+    for name, family, t1, t2, flags, t, value in rows:
+        if family >= 1 << 10 or t1 >= 1 << 5 or t2 >= 1 << 5 or flags >= 1 << 6 or t >= 1 << 3:
+            problems.append(f'{name} outgrows struct CoopPoolEntry\'s bit fields')
     text = render(rows, abilities, family_count)
     pickable = sum(1 for r in rows if r[4] & 0x01 and not r[4] & 0x0C)
     pool_a = sum(1 for r in rows if r[4] & 0x04)
