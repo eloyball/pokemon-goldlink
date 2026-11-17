@@ -984,6 +984,10 @@ EnemyTrainerSet_Init = 0x020733C0 | 1;
    the name is the address): fade, load the map, set the player walking.
    Debug warps, and since Milestone 5 Phase 5 the spirit's warps (keep it). */
 sub_020538C0 = 0x020538C0 | 1;
+/* The same warp from inside a running field task (pret src/field_warp_tasks.c
+   sub_02053908, the name is the address): TaskManager_Jump to the warp task
+   sub_02053950, as script warps do. UC15: a spirit's doors and "go there". */
+sub_02053908 = 0x02053908 | 1;
 /* Milestone 5 Phase 5, the spirit walk and the team menu (docs/MILESTONE5_PLAN.md
    §11.1). Source: pret asm labels sub_020549A8 (asm/unk_02054648.s) and
    sub_02060BFC (asm/unk_0205FD20.s); history labels MapObject_GetPositionVec

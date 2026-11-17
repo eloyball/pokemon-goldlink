@@ -29,3 +29,19 @@ bl Coop_CutInTrainerGraphics
 ldr r1, =0x02249470 | 1
 bx r1
 .pool
+
+// UC15, roaming spirits (src/field/coop_spirit.c, Coop_SpiritFilterInput): the hook replaces the
+// first four instructions of pret FieldInput_Process (ov01_021E6AF4, the label before
+// 07b9c4fd0 in asm/overlay_01_021E6880.s), done here around the filter:
+//   push {r3-r7, lr}; add r5, r0, #0; ldrh r0, [r5]; add r4, r1, #0
+// r0 = the FieldInput, r1 = the FieldSystem; r2 is free (the hook's register).
+.global Coop_FieldInputProcess_hook
+Coop_FieldInputProcess_hook:
+push {r3-r7, lr}
+add r5, r0, #0
+add r4, r1, #0
+bl Coop_SpiritFilterInput
+ldrh r0, [r5]
+ldr r2, =0x021E6AFC | 1
+bx r2
+.pool

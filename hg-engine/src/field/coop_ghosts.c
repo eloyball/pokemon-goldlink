@@ -867,12 +867,13 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
             u16 words[7];
             u8 living = 0;
 
-            words[0] = (u16)save->anchor_x;
-            words[1] = (u16)save->anchor_z;
+            // UC15: words 0, 1 and 5 are the kept fly points (were the anchor), mon[18..22] the live ones.
+            words[0] = (u16)(save->fly_saved[0] | (save->fly_saved[1] << 8));
+            words[1] = (u16)(save->fly_saved[2] | (save->fly_saved[3] << 8));
             words[2] = save->return_map;
             words[3] = (u16)save->return_x;
             words[4] = (u16)save->return_z;
-            words[5] = save->prebattle_map;
+            words[5] = (u16)(save->fly_saved[4] | (save->fly_saved[5] << 8));
             words[6] = save->deaths;
             for (i = 0; i < (u32)party->count; i++)
             {
@@ -881,12 +882,17 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
                     living++;
             }
             gCoopDebugMonBuffer.species = (u16)(save->state | (save->spirit_flags << 8));
-            gCoopDebugMonBuffer.held_item = save->anchor_map;
+            gCoopDebugMonBuffer.held_item = 0;
             gCoopDebugMonBuffer.level = living;
             __builtin_memcpy(gCoopDebugMonBuffer.mon, words, sizeof(words));
             gCoopDebugMonBuffer.mon[14] = gCoopCommBlock.local_player.challenge_flags;
             gCoopDebugMonBuffer.mon[15] = gCoopCommBlock.local_player.field_busy;
             gCoopDebugMonBuffer.mon[16] = (u8)Coop_SpiritIsRoaming(fsys);
+            for (i = 0; i < 5; i++)
+                gCoopDebugMonBuffer.mon[18 + i] = 0;
+            for (i = 0; i < 38; i++)
+                if (CheckScriptFlag((u16)(0x9B0 + i))) // FLAG_SYS_FLYPOINT_PALLET + i
+                    gCoopDebugMonBuffer.mon[18 + i / 8] |= (u8)(1 << (i % 8));
         }
         gCoopDebugMonBuffer.party_count = (u8)party->count;
         return COOP_DEBUG_RESULT_OK;

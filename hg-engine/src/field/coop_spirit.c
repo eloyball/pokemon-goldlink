@@ -21,16 +21,20 @@
 
 // ---------------------------------------------------------------------------
 // Milestone 5 Phase 5: Ghost Mode, the spirit state (docs/MILESTONE5_PLAN.md
-// §5.5), Overlay 131. "Spirit" in code, "Ghost" on screen: "ghost" already
-// means a remote player's map object everywhere else.
+// §5.5), reworked by UC15 (dev/docs/unified-client/UC15_ROAMING_SPIRITS.md):
+// the spirit roams freely and triggers nothing. Overlay 131. "Spirit" in code,
+// "Ghost" on screen: "ghost" already means a remote player's map object.
 //
 //   the sweep finds no living Pokemon (coop_challenge_nuzlocke.c)
-//     -> Coop_SpiritEnter: "NAME has no Pokemon left...", the blackout spot
-//        becomes return_*, the tile before the battle the anchor
-//     -> warp to the anchor -> the spirit task (owns the input: one tile per
-//        step, no warps, objects or zone changes; START: the spirit menu)
+//     -> Coop_SpiritEnter: "NAME has no Pokemon left...", the white-out spot
+//        (the last Pokemon Center) becomes return_*, the fly points are kept
+//     -> the spirit task, started as soon as nothing else runs (it owns the
+//        input: scenes, trainers, the start menu never get a frame): one tile
+//        per step across zones, doors, ladders, stairs and mats as vanilla;
+//        X: the spirit menu (go to a teammate, save)
 //     -> a teammate gives a Pokemon (coop_session.c, coop_trade.c: a
-//        one-sided trade) -> Coop_SpiritRevived -> warp to return_*
+//        one-sided trade) -> Coop_SpiritRevived: the fly points back, warp to
+//        return_*
 //   every roster player a spirit -> the relay's "run lost" -> the summary,
 //   a save, the title screen.
 // ---------------------------------------------------------------------------
@@ -38,6 +42,8 @@
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
+// The same warp from inside a task (the task becomes the warp; rom.ld).
+void LONG_CALL sub_02053908(TaskManager *taskman, u32 mapId, int warpId, int x, int y, int direction);
 // pret (rom.ld, docs/MILESTONE5_PLAN.md §11.1): vanilla's "can the follower
 // step there" test in ScrCmd_FollowMonFacePlayer.
 BOOL LONG_CALL sub_020549A8(FieldSystem *fsys, VecFx32 *pos, int x, int z, int unused); // TRUE: blocked
@@ -68,31 +74,34 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_SE_SELECT           1500
 #define COOP_NAME_GLYPHS         12
 
-// pret MapMatrix: u8 width, height, matrix_id, then MapMatrixData (u8 height,
-// width, u16 headers[]) aligned to 2: the map of each 32x32 block at +6.
-#define COOP_MATRIX_WIDTH   0
-#define COOP_MATRIX_HEIGHT  1
-#define COOP_MATRIX_HEADERS 6
-#define COOP_BLOCK_TILES    32
+// The fly points (pret constants/flags.h FLAG_SYS_FLYPOINT_PALLET + 0..37):
+// entering a town sets its own (sub_02053038 -> FlypointFlagAction), so a
+// spirit's are kept when it falls and put back on revival.
+#define COOP_FLAG_FLYPOINT_FIRST 0x9B0
+#define COOP_FLYPOINTS           38
 
-// pret constants/maps.h: where a spirit can't stay (E27).
-static const u16 sLeagueMaps[] = {
-    301, 302, 303, 304, 305, 306, // the Elite Four, Lance, the Hall of Fame
-    465,                          // the Mt. Silver summit
-};
-static const u16 sGymMaps[] = {
-    80, 135, 136, 137, 138, 139, 140, 141, 180, 365, 395, 396, 397, 410, 427, 457, 473, 480, 496,
-};
-
-static BOOL Coop_MapIn(u32 map, const u16 *list, u32 count)
-{
-    u32 i;
-
-    for (i = 0; i < count; i++)
-        if (list[i] == map)
-            return TRUE;
-    return FALSE;
-}
+// pret constants/metatile_behavior.h (enum TILE_BEHAVIOR) for the warps of
+// pret src/field/field_control.c: FieldSystem_CheckMapTransition (pushed:
+// ladders, doors, side and south exits, stairs) and FieldSystem_CheckTransition
+// (stepped onto: north entrances, warp panels, a ladder down, escalators).
+#define COOP_TILE_LADDER_NORTH        0x3C
+#define COOP_TILE_LADDER_SOUTH        0x3D
+#define COOP_TILE_LADDER_DOWN         0x3E
+#define COOP_TILE_WARP_STAIRS_EAST    0x5E
+#define COOP_TILE_WARP_STAIRS_WEST    0x5F
+#define COOP_TILE_WARP_ENTRANCE_EAST  0x62
+#define COOP_TILE_WARP_ENTRANCE_WEST  0x63
+#define COOP_TILE_WARP_ENTRANCE_NORTH 0x64
+#define COOP_TILE_WARP_ENTRANCE_SOUTH 0x65
+#define COOP_TILE_WARP_PANEL          0x67
+#define COOP_TILE_DOOR                0x69
+#define COOP_TILE_ESCALATOR_FLIP_FACE 0x6A
+#define COOP_TILE_ESCALATOR           0x6B
+#define COOP_TILE_WARP_EAST           0x6C
+#define COOP_TILE_WARP_WEST           0x6D
+#define COOP_TILE_WARP_NORTH          0x6E
+#define COOP_TILE_WARP_SOUTH          0x6F
+#define COOP_WARP_DYNAMIC_HEADER      0xFFF // pret FieldSystem_MapConnection: "back where you came from"
 
 static LocalMapObject *Coop_Player(FieldSystem *fsys)
 {
@@ -122,38 +131,67 @@ BOOL Coop_IsSpirit(void)
     return save != NULL && (save->rules & COOP_RULE_NUZLOCKE) && (save->state & COOP_CHALLENGE_SPIRIT);
 }
 
-// ---------------------------------------------------------------------------
-// Anchors (§5.5.1)
-// ---------------------------------------------------------------------------
-
-void Coop_ChallengeRecordPrebattle(FieldSystem *fsys)
+// pret include/field_system.h FieldInput, as FieldInput_Process reads it.
+struct CoopFieldInput
 {
-    struct CoopChallengeSave *save = Coop_ChallengeSave();
-    LocalMapObject *player;
-    u32 map;
+    u16 flags; // interact, endMovement, menu, registeredItem (2), sign, mapTransition, movement, unk0_8 (the
+               // phone), unk0_9, unk0_A..C, unk0_D (bit 13: no scenes, no trainers' eyes)
+    u16 unk2;
+    u8 playerDir;
+    s8 transitionDir;
+    u16 newKeys;
+    u16 heldKeys;
+    u16 unkA;
+};
+_Static_assert(sizeof(struct CoopFieldInput) == 0x0C, "pret FieldInput");
+#define COOP_FIELD_INPUT_NO_SCENES 0x2000 // unk0_D
+#define COOP_DIR_NONE              (-1)   // pret DIR_NONE
 
-    if (save == NULL || !(save->rules & COOP_RULE_NUZLOCKE) || fsys == NULL || fsys->location == NULL
-        || (player = Coop_Player(fsys)) == NULL)
+// UC15 (hooks: FieldInput_Process, asm/field/field_hooks.s): vanilla's field
+// input runs only in frames the spirit task doesn't hold (right after a load,
+// before the bridge connects, a revive handing over). For a spirit it reads as
+// nothing pressed and no scene to check: no step, talk, menu, sign, phone
+// call, trainer's eyes or scene. Anyone else's input is untouched.
+void Coop_SpiritFilterInput(struct CoopFieldInput *input, FieldSystem *fsys)
+{
+    (void)fsys;
+    if (!Coop_IsSpirit())
         return;
-    map = fsys->location->mapId;
-    save->prebattle_map = 0; // none: a spirit stays where it blacked out
-    if (fsys->playerAvatar->state == COOP_PLAYER_STATE_SURFING || Coop_MapIn(map, sLeagueMaps, NELEMS(sLeagueMaps)))
+    input->flags = COOP_FIELD_INPUT_NO_SCENES;
+    input->transitionDir = COOP_DIR_NONE;
+    input->newKeys = 0;
+    input->heldKeys = 0;
+}
+
+// ---------------------------------------------------------------------------
+// The fly points (UC15)
+// ---------------------------------------------------------------------------
+
+static void Coop_SpiritKeepFly(struct CoopChallengeSave *save)
+{
+    u32 i;
+
+    for (i = 0; i < sizeof(save->fly_saved); i++)
+        save->fly_saved[i] = 0;
+    for (i = 0; i < COOP_FLYPOINTS; i++)
+        if (CheckScriptFlag((u16)(COOP_FLAG_FLYPOINT_FIRST + i)))
+            save->fly_saved[i / 8] |= (u8)(1 << (i % 8));
+    save->spirit_flags |= COOP_SPIRIT_FLY_SAVED;
+}
+
+static void Coop_SpiritRestoreFly(struct CoopChallengeSave *save)
+{
+    u32 i;
+
+    if (!(save->spirit_flags & COOP_SPIRIT_FLY_SAVED))
         return;
-    if (Coop_MapIn(map, sGymMaps, NELEMS(sGymMaps)))
+    for (i = 0; i < COOP_FLYPOINTS; i++)
     {
-        // A gym's puzzle and trainers: the spirit waits at its entrance.
-        MAP_EVENTS *events = fsys->map_events;
-        if (events == NULL || events->num_warp_events == 0 || events->warp_events == NULL)
-            return;
-        save->prebattle_x = (s16)events->warp_events[0].x;
-        save->prebattle_z = (s16)events->warp_events[0].y;
+        if (save->fly_saved[i / 8] & (1 << (i % 8)))
+            SetScriptFlag((u16)(COOP_FLAG_FLYPOINT_FIRST + i));
+        else
+            ClearScriptFlag((u16)(COOP_FLAG_FLYPOINT_FIRST + i));
     }
-    else
-    {
-        save->prebattle_x = (s16)player->xCurr;
-        save->prebattle_z = (s16)player->yCurr;
-    }
-    save->prebattle_map = (u16)map;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,40 +264,30 @@ static void Coop_PlayerName(FieldSystem *fsys, u16 *out)
 }
 
 // ---------------------------------------------------------------------------
-// Entering (§5.5.2)
+// Entering (§5.5.2, UC15)
 // ---------------------------------------------------------------------------
 
 void Coop_SpiritEnter(FieldSystem *fsys, struct CoopChallengeSave *save)
 {
     LocalMapObject *player = Coop_Player(fsys);
     u16 name[COOP_NAME_GLYPHS];
+    u32 i;
 
     if (player == NULL || (save->state & COOP_CHALLENGE_SPIRIT))
         return;
     // After a lost battle the blackout already brought the player to the
-    // last Pokemon Center: the way back on revival.
+    // last Pokemon Center: the spirit starts there, and comes back there.
     save->return_map = (u16)fsys->location->mapId;
     save->return_x = (s16)player->xCurr;
     save->return_z = (s16)player->yCurr;
-    if (save->prebattle_map != 0)
-    {
-        save->anchor_map = save->prebattle_map;
-        save->anchor_x = save->prebattle_x;
-        save->anchor_z = save->prebattle_z;
-    }
-    else
-    {
-        // A wipe outside a battle (Soul-Link), or an unsafe place: stay here.
-        save->anchor_map = save->return_map;
-        save->anchor_x = save->return_x;
-        save->anchor_z = save->return_z;
-    }
-    save->prebattle_map = 0;
-    save->state |= COOP_CHALLENGE_SPIRIT | COOP_CHALLENGE_ANCHOR_WARP;
+    for (i = 0; i < NELEMS(save->unused7C); i++)
+        save->unused7C[i] = 0;
+    Coop_SpiritKeepFly(save);
+    save->state |= COOP_CHALLENGE_SPIRIT;
+    save->state &= ~COOP_CHALLENGE_ANCHOR_WARP;
     save->spirit_flags |= COOP_SPIRIT_INTRO;
     Coop_PlayerName(fsys, name);
-    Coop_StartSpiritMessage(fsys, name, "@ has no Pokémon left...",
-                            "@'s spirit returns to\nwhere they fell.");
+    Coop_StartSpiritMessage(fsys, name, "@ has no Pokémon left...", NULL);
 }
 
 void Coop_SpiritRevived(FieldSystem *fsys)
@@ -269,6 +297,7 @@ void Coop_SpiritRevived(FieldSystem *fsys)
     (void)fsys;
     if (save == NULL)
         return;
+    Coop_SpiritRestoreFly(save); // a spirit's visits unlock no fly points
     save->state &= ~(COOP_CHALLENGE_SPIRIT | COOP_CHALLENGE_ANCHOR_WARP);
     save->state |= COOP_CHALLENGE_RETURN_WARP;
     save->spirit_flags = 0;
@@ -305,7 +334,7 @@ static u32 Coop_BoxLiving(FieldSystem *fsys, const struct CoopChallengeSave *sav
 static const char *Coop_DonationRule(const struct CoopChallengeSave *save, struct PartyPokemon *mon)
 {
     if (GetMonData(mon, MON_DATA_IS_EGG, NULL))
-        return "An Egg can't revive\nanyone.";
+        return "An Egg can't rescue\nanyone.";
     if (GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD)
         return "It has fallen. It can't\nbe given.";
     if (IS_ITEM_MAIL(GetMonData(mon, MON_DATA_HELD_ITEM, NULL)))
@@ -347,27 +376,29 @@ const char *Coop_SpiritDonorRule(struct Party *party, u32 slot)
 }
 
 // ---------------------------------------------------------------------------
-// The spirit task (§5.5.3)
+// The spirit task (§5.5.3, UC15)
 // ---------------------------------------------------------------------------
 
 enum CoopSpiritTaskState
 {
     COOP_SPIRIT_WAIT_STILL,
-    COOP_SPIRIT_INTRO_TEXT,   // first time at the anchor: two pages, then a save
+    COOP_SPIRIT_INTRO_TEXT,   // first time: two pages, then a save
     COOP_SPIRIT_INTRO_PAGE2,
     COOP_SPIRIT_INTRO_SAVE,
     COOP_SPIRIT_INTRO_CLOSE,  // the spinner's hide reaches the screen before the window goes
     COOP_SPIRIT_ROAM,
-    COOP_SPIRIT_MENU,
-    COOP_SPIRIT_TEAM_PAGE,    // one page per teammate
+    COOP_SPIRIT_MENU,         // X: the teammates, SAVE, CANCEL
+    COOP_SPIRIT_GO_TEXT,      // "Go to NAME in PLACE?"
+    COOP_SPIRIT_GO_CHOICE,    // YES / NO
+    COOP_SPIRIT_WARP,         // a warp waits for the map name banner to go
     COOP_SPIRIT_SAVE_TEXT,
     COOP_SPIRIT_SAVE,
     COOP_SPIRIT_CLOSE_TEXT,   // a last page, then back to roaming
 };
 
-#define COOP_SPIRIT_MENU_TEAM   1
-#define COOP_SPIRIT_MENU_SAVE   2
-#define COOP_SPIRIT_MENU_CANCEL 3
+#define COOP_SPIRIT_MENU_SAVE   0x10 // teammates are their remote slot + 1
+#define COOP_SPIRIT_MENU_CANCEL 0x11
+#define COOP_SPIRIT_MENU_WIDTH  9    // tiles: a seven-glyph name
 
 struct CoopSpiritEnv
 {
@@ -378,8 +409,13 @@ struct CoopSpiritEnv
     u16 name[COOP_NAME_GLYPHS];
     u16 place1[COOP_NAME_GLYPHS]; // a landmark name, split for the 11-glyph arguments
     u16 place2[COOP_NAME_GLYPHS];
+    s16 warpX, warpZ;             // COOP_SPIRIT_WARP: where to
+    u16 warpMap;
+    s16 warpId;                   // -1: (warpX, warpZ)
     u16 frames;
-    u8 teamSlot; // next remote slot for the team pages
+    u8 warpDir;
+    u8 stepped;  // the last movement was a step (not a turn): check a warp underfoot
+    u8 menuAsked; // X pressed under the map name banner: the menu opens once it's gone
     u8 open;     // the dialog is open
 };
 
@@ -412,7 +448,7 @@ static BOOL Coop_SpiritMustYield(void)
     const struct CoopChallengeSave *save = Coop_ChallengeSave();
     const struct CoopChallengeDown *in = Coop_ChallengeIn();
 
-    if (save == NULL || !(save->state & COOP_CHALLENGE_SPIRIT) || (save->state & COOP_CHALLENGE_ANCHOR_WARP))
+    if (save == NULL || !(save->state & COOP_CHALLENGE_SPIRIT))
         return TRUE;
     if (gCoopCommBlock.disconnect_state != COOP_DISCONNECT_NONE || gCoopCommBlock.room_rejection != 0)
         return TRUE;
@@ -421,43 +457,76 @@ static BOOL Coop_SpiritMustYield(void)
     return in != NULL && (in->room_state & COOP_ROOM_RUN_LOST);
 }
 
-// The map of the 32x32 block holding a tile, from the loaded matrix.
-static BOOL Coop_TileZone(FieldSystem *fsys, s32 x, s32 z, u16 *map)
-{
-    const u8 *matrix = fsys->map_matrix;
-    u32 width, height, index;
-
-    if (matrix == NULL || x < 0 || z < 0)
-        return FALSE;
-    width = matrix[COOP_MATRIX_WIDTH];
-    height = matrix[COOP_MATRIX_HEIGHT];
-    if ((u32)x / COOP_BLOCK_TILES >= width || (u32)z / COOP_BLOCK_TILES >= height)
-        return FALSE;
-    index = ((u32)z / COOP_BLOCK_TILES) * width + (u32)x / COOP_BLOCK_TILES;
-    __builtin_memcpy(map, matrix + COOP_MATRIX_HEADERS + index * sizeof(u16), sizeof(u16));
-    return TRUE;
-}
-
-// A spirit may step onto a tile that vanilla's follower could step onto, in
-// the same map zone, with no warp on it (Q2: no warps, no zone changes).
-static BOOL Coop_SpiritCanStep(FieldSystem *fsys, LocalMapObject *player, s32 x, s32 z)
+// The map's warp at a tile (not one leading "back where you came from": a
+// spirit writes no entrance, UC15), else NULL.
+static const WARP_EVENT *Coop_SpiritWarpAt(FieldSystem *fsys, s32 x, s32 z)
 {
     MAP_EVENTS *events = fsys->map_events;
-    VecFx32 pos;
-    u16 zone;
     u32 i;
 
-    if (!Coop_TileZone(fsys, x, z, &zone) || zone != (u16)fsys->location->mapId)
+    if (events == NULL || events->warp_events == NULL)
+        return NULL;
+    for (i = 0; i < events->num_warp_events; i++)
+    {
+        const WARP_EVENT *warp = &events->warp_events[i];
+        if (warp->x == x && warp->y == z)
+            return warp->header == COOP_WARP_DYNAMIC_HEADER ? NULL : warp;
+    }
+    return NULL;
+}
+
+// The direction a tile's warp is taken by pushing (vanilla's
+// FieldSystem_CheckMapTransition), 0xFF if none.
+static u32 Coop_PushWarpDir(u8 behavior)
+{
+    switch (behavior)
+    {
+    case COOP_TILE_LADDER_NORTH:
+        return COOP_DIR_UP;
+    case COOP_TILE_LADDER_SOUTH:
+    case COOP_TILE_WARP_ENTRANCE_SOUTH:
+    case COOP_TILE_WARP_SOUTH:
+        return COOP_DIR_DOWN;
+    case COOP_TILE_WARP_STAIRS_EAST:
+    case COOP_TILE_WARP_ENTRANCE_EAST:
+    case COOP_TILE_WARP_EAST:
+        return COOP_DIR_RIGHT;
+    case COOP_TILE_WARP_STAIRS_WEST:
+    case COOP_TILE_WARP_ENTRANCE_WEST:
+    case COOP_TILE_WARP_WEST:
+        return COOP_DIR_LEFT;
+    }
+    return 0xFF;
+}
+
+// A tile whose warp is taken by stepping onto it (FieldSystem_CheckTransition).
+static BOOL Coop_StepWarp(u8 behavior)
+{
+    return behavior == COOP_TILE_WARP_ENTRANCE_NORTH || behavior == COOP_TILE_WARP_NORTH
+        || behavior == COOP_TILE_WARP_PANEL || behavior == COOP_TILE_LADDER_DOWN
+        || behavior == COOP_TILE_ESCALATOR || behavior == COOP_TILE_ESCALATOR_FLIP_FACE;
+}
+
+static void Coop_SpiritAimWarp(struct CoopSpiritEnv *env, u32 map, s32 warpId, s32 x, s32 z, u32 dir)
+{
+    env->warpMap = (u16)map;
+    env->warpId = (s16)warpId;
+    env->warpX = (s16)x;
+    env->warpZ = (s16)z;
+    env->warpDir = (u8)dir;
+}
+
+// A spirit may step onto a tile that vanilla's follower could step onto: no
+// water, no object (UC15: other zones and warp tiles too).
+static BOOL Coop_SpiritCanStep(FieldSystem *fsys, LocalMapObject *player, s32 x, s32 z)
+{
+    VecFx32 pos;
+
+    if (x < 0 || z < 0)
         return FALSE;
     MapObject_CopyPositionVector(player, &pos);
-    if (sub_020549A8(fsys, &pos, x, z, 0) || MetatileBehavior_IsSurfableWater(GetMetatileBehaviorAt(fsys, x, z))
-        || sub_02060BFC(player, x, player->hCurr, z))
-        return FALSE;
-    if (events != NULL && events->warp_events != NULL)
-        for (i = 0; i < events->num_warp_events; i++)
-            if (events->warp_events[i].x == x && events->warp_events[i].y == z)
-                return FALSE;
-    return TRUE;
+    return !sub_020549A8(fsys, &pos, x, z, 0) && !MetatileBehavior_IsSurfableWater(GetMetatileBehaviorAt(fsys, x, z))
+        && !sub_02060BFC(player, x, player->hCurr, z);
 }
 
 static void Coop_SpiritMove(struct CoopSpiritEnv *env, LocalMapObject *player, u32 command)
@@ -469,12 +538,15 @@ static void Coop_SpiritMove(struct CoopSpiritEnv *env, LocalMapObject *player, u
     env->movement = EventObjectMovementMan_Create(player, env->moves);
 }
 
-// The D-pad: a step, or a turn toward a tile the spirit can't enter.
-static void Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalMapObject *player)
+// The D-pad: a warp (a pushed one underfoot, a door ahead), a step, or a turn.
+// TRUE: a warp is aimed.
+static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalMapObject *player)
 {
     static const s8 sDx[4] = { 0, 0, -1, 1 };
     static const s8 sDz[4] = { -1, 1, 0, 0 };
     u32 held = gSystem.heldKeys, dir;
+    s32 x = (s32)player->xCurr, z = (s32)player->yCurr, nx, nz;
+    const WARP_EVENT *warp;
 
     if (held & PAD_KEY_UP)
         dir = COOP_DIR_UP;
@@ -485,11 +557,46 @@ static void Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
     else if (held & PAD_KEY_RIGHT)
         dir = COOP_DIR_RIGHT;
     else
-        return;
-    if (Coop_SpiritCanStep(fsys, player, (s32)player->xCurr + sDx[dir], (s32)player->yCurr + sDz[dir]))
+        return FALSE;
+    nx = x + sDx[dir];
+    nz = z + sDz[dir];
+    warp = Coop_SpiritWarpAt(fsys, x, z);
+    if (warp != NULL && Coop_PushWarpDir(GetMetatileBehaviorAt(fsys, x, z)) == dir)
+    {
+        Coop_SpiritAimWarp(env, warp->header, warp->anchor, 0, 0, dir);
+        return TRUE;
+    }
+    warp = Coop_SpiritWarpAt(fsys, nx, nz);
+    if (warp != NULL && GetMetatileBehaviorAt(fsys, nx, nz) == COOP_TILE_DOOR)
+    {
+        Coop_SpiritAimWarp(env, warp->header, warp->anchor, 0, 0, dir);
+        return TRUE;
+    }
+    env->stepped = FALSE;
+    if (Coop_SpiritCanStep(fsys, player, nx, nz))
+    {
         Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + dir);
+        env->stepped = TRUE;
+    }
     else if ((u32)player->curFacing != dir)
         Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
+    return FALSE;
+}
+
+// After a step: a warp taken by stepping onto its tile.
+static BOOL Coop_SpiritSteppedWarp(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalMapObject *player)
+{
+    s32 x = (s32)player->xCurr, z = (s32)player->yCurr;
+    const WARP_EVENT *warp;
+
+    if (!env->stepped)
+        return FALSE;
+    env->stepped = FALSE;
+    warp = Coop_SpiritWarpAt(fsys, x, z);
+    if (warp == NULL || !Coop_StepWarp(GetMetatileBehaviorAt(fsys, x, z)))
+        return FALSE;
+    Coop_SpiritAimWarp(env, warp->header, warp->anchor, 0, 0, (u32)player->curFacing);
+    return TRUE;
 }
 
 // One HG glyph string (0xFFFF-terminated) split in two 11-glyph halves.
@@ -505,40 +612,82 @@ static void Coop_SplitName(const u16 *src, u32 max, u16 *a, u16 *b)
     b[i] = 0xFFFF;
 }
 
-// The next teammate's page: "NAME is at PLACE." and what they are doing.
-static BOOL Coop_SpiritTeamPage(struct CoopSpiritEnv *env)
+static void Coop_CopyName(const u16 *src, u16 *dst)
+{
+    u32 i;
+
+    for (i = 0; i < 8 && src[i] != 0xFFFF; i++)
+        dst[i] = src[i];
+    dst[i] = 0xFFFF;
+}
+
+// X: each online teammate, SAVE, CANCEL.
+static void Coop_SpiritOpenMenu(FieldSystem *fsys, struct CoopSpiritEnv *env)
+{
+    struct CoopPlayerState remote;
+    u16 names[COOP_REMOTE_SLOTS][COOP_NAME_GLYPHS];
+    const u16 *args[1];
+    u8 values[COOP_CHOICE_MAX];
+    u32 slot, count = 0, i;
+
+    for (slot = 0; slot < COOP_REMOTE_SLOTS && count < COOP_CHOICE_MAX - 2; slot++)
+    {
+        if (!Coop_ReadRemotePlayer(slot, &remote) || remote.trainer_id == 0)
+            continue;
+        Coop_CopyName(remote.name, names[count]);
+        values[count++] = (u8)(slot + 1);
+    }
+    values[count] = COOP_SPIRIT_MENU_SAVE;
+    values[count + 1] = COOP_SPIRIT_MENU_CANCEL;
+    Coop_ChoiceOpenWindow(fsys, &env->choice, values, count + 2, COOP_SPIRIT_MENU_WIDTH);
+    for (i = 0; i < count; i++)
+    {
+        args[0] = names[i];
+        Coop_ChoicePrint(&env->choice, i, COOP_CHOICE_TEXT_X, "@", args);
+    }
+    Coop_ChoicePrint(&env->choice, count, COOP_CHOICE_TEXT_X, "SAVE", NULL);
+    Coop_ChoicePrint(&env->choice, count + 1, COOP_CHOICE_TEXT_X, "CANCEL", NULL);
+    Coop_ChoiceShow(&env->choice);
+}
+
+// A teammate picked in the menu: "Go to NAME in PLACE?" (TRUE: asked), or
+// why not. The warp is aimed at their tile.
+static BOOL Coop_SpiritAskGo(FieldSystem *fsys, struct CoopSpiritEnv *env, u32 slot)
 {
     struct CoopPlayerState remote;
     String *place;
-    u32 i;
 
-    for (; env->teamSlot < COOP_REMOTE_SLOTS; env->teamSlot++)
+    Coop_SpiritOpenDialog(fsys, env);
+    if (!Coop_ReadRemotePlayer(slot, &remote) || remote.trainer_id == 0)
     {
-        if (!Coop_ReadRemotePlayer(env->teamSlot, &remote) || remote.trainer_id == 0)
-            continue;
-        env->teamSlot++;
-        for (i = 0; i < 8 && remote.name[i] != 0xFFFF; i++)
-            env->name[i] = remote.name[i];
-        env->name[i] = 0xFFFF;
-        env->place1[0] = env->place2[0] = 0xFFFF;
-        place = String_New(24, COOP_HEAP_FIELD);
-        if (place != NULL)
-        {
-            MapID_GetLandmarkName(remote.map_id, COOP_HEAP_FIELD, place);
-            Coop_SplitName(place->data, place->size < place->maxsize ? place->size : place->maxsize, env->place1, env->place2);
-            String_Delete(place);
-        }
-        if (remote.challenge_flags & COOP_PLAYER_FLAG_SPIRIT)
-            Coop_DialogPrint(&env->dialog, "@'s spirit lingers\nat $&.");
-        else if (!remote.is_active && remote.activity == COOP_ACTIVITY_BATTLE)
-            Coop_DialogPrint(&env->dialog, "@ is in a battle\nnear $&.");
-        else if (!remote.is_active)
-            Coop_DialogPrint(&env->dialog, "@ is busy\nnear $&.");
-        else
-            Coop_DialogPrint(&env->dialog, "@ is exploring\n$&.");
-        return TRUE;
+        Coop_DialogPrint(&env->dialog, "That teammate isn't online\nanymore.");
+        return FALSE;
     }
-    return FALSE;
+    Coop_CopyName(remote.name, env->name);
+    if (remote.map_id == 0)
+    {
+        Coop_DialogPrint(&env->dialog, "@ can't be reached\nright now.");
+        return FALSE;
+    }
+    if (remote.avatar_state == COOP_PLAYER_STATE_SURFING)
+    {
+        Coop_DialogPrint(&env->dialog, "@ is out on the water.\nTry again later.");
+        return FALSE;
+    }
+    env->place1[0] = env->place2[0] = 0xFFFF;
+    place = String_New(24, COOP_HEAP_FIELD);
+    if (place != NULL)
+    {
+        MapID_GetLandmarkName(remote.map_id, COOP_HEAP_FIELD, place);
+        Coop_SplitName(place->data, place->size < place->maxsize ? place->size : place->maxsize, env->place1, env->place2);
+        String_Delete(place);
+    }
+    Coop_SpiritAimWarp(env, remote.map_id, -1, remote.x, remote.z, COOP_DIR_DOWN);
+    if (remote.challenge_flags & COOP_PLAYER_FLAG_SPIRIT)
+        Coop_DialogPrint(&env->dialog, "Go to @'s spirit\nin $&?");
+    else
+        Coop_DialogPrint(&env->dialog, "Go to @\nin $&?");
+    return TRUE;
 }
 
 static BOOL Coop_Task_Spirit(TaskManager *taskman)
@@ -547,9 +696,8 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     struct CoopSpiritEnv *env = taskman->env;
     struct CoopChallengeSave *save = Coop_ChallengeSave();
     LocalMapObject *player = Coop_Player(fsys);
-    const char *labels[3];
-    u8 values[3];
-    u32 value;
+    u32 map, value;
+    s32 warpId, x, z, dir;
 
     // A step finishes before anything else happens.
     if (env->movement != NULL)
@@ -578,9 +726,14 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
             break;
         if (save != NULL && (save->spirit_flags & COOP_SPIRIT_INTRO))
         {
+            // The task may start under the map name banner (UC15); our windows
+            // wait for it (it scrolls BG3, where they draw: KNOWN_RISKS #14).
+            // Walking needn't.
+            if (Coop_IsMapNameBannerShowing(fsys))
+                break;
             Coop_PlayerName(fsys, env->name);
             Coop_SpiritOpenDialog(fsys, env);
-            Coop_DialogPrint(&env->dialog, "@'s spirit lingers here.\nTeammates can revive @.");
+            Coop_DialogPrint(&env->dialog, "@'s spirit lingers here.\nTeammates can rescue @.");
             taskman->state = COOP_SPIRIT_INTRO_TEXT;
             break;
         }
@@ -590,7 +743,7 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     case COOP_SPIRIT_INTRO_TEXT:
         if (Coop_DialogIsPrinting(&env->dialog) || !Coop_DialogButtonPressed())
             break;
-        Coop_DialogPrint(&env->dialog, "Walk with the + Control Pad.\nSTART opens the spirit menu.");
+        Coop_DialogPrint(&env->dialog, "Walk with the + Control Pad.\nX opens the spirit menu.");
         taskman->state = COOP_SPIRIT_INTRO_PAGE2;
         break;
 
@@ -630,27 +783,30 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
             sys_FreeMemoryEz(env);
             return TRUE;
         }
-        if (gSystem.newKeys & (PAD_BUTTON_START | PAD_BUTTON_SELECT))
+        if (Coop_SpiritSteppedWarp(fsys, env, player))
         {
+            taskman->state = COOP_SPIRIT_WARP;
+            break;
+        }
+        if (gSystem.newKeys & PAD_BUTTON_X)
+            env->menuAsked = TRUE;
+        if (env->menuAsked && !Coop_IsMapNameBannerShowing(fsys))
+        {
+            env->menuAsked = FALSE;
             PlaySE(COOP_SE_SELECT);
-            labels[0] = "TEAM";
-            values[0] = COOP_SPIRIT_MENU_TEAM;
-            labels[1] = "SAVE";
-            values[1] = COOP_SPIRIT_MENU_SAVE;
-            labels[2] = "CANCEL";
-            values[2] = COOP_SPIRIT_MENU_CANCEL;
-            Coop_ChoiceOpen(fsys, &env->choice, labels, values, 3, 8);
+            Coop_SpiritOpenMenu(fsys, env);
             taskman->state = COOP_SPIRIT_MENU;
             break;
         }
-        Coop_SpiritWalk(fsys, env, player);
+        if (Coop_SpiritWalk(fsys, env, player))
+            taskman->state = COOP_SPIRIT_WARP;
         break;
 
     case COOP_SPIRIT_MENU:
         value = Coop_ChoiceInput(&env->choice);
         if (value == COOP_CHOICE_NONE)
         {
-            if (gSystem.newKeys & (PAD_BUTTON_START | PAD_BUTTON_SELECT))
+            if (gSystem.newKeys & PAD_BUTTON_X)
             {
                 Coop_ChoiceClose(&env->choice);
                 taskman->state = COOP_SPIRIT_ROAM;
@@ -658,37 +814,49 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
             break;
         }
         Coop_ChoiceClose(&env->choice);
-        if (value == COOP_SPIRIT_MENU_TEAM)
-        {
-            Coop_SpiritOpenDialog(fsys, env);
-            env->teamSlot = 0;
-            if (Coop_SpiritTeamPage(env))
-                taskman->state = COOP_SPIRIT_TEAM_PAGE;
-            else
-            {
-                Coop_DialogPrint(&env->dialog, "None of your teammates\nare online.");
-                taskman->state = COOP_SPIRIT_CLOSE_TEXT;
-            }
-        }
-        else if (value == COOP_SPIRIT_MENU_SAVE)
+        if (value == COOP_SPIRIT_MENU_SAVE)
         {
             Coop_SpiritOpenDialog(fsys, env);
             Coop_DialogPrint(&env->dialog, "Saving. Don't turn off\nthe power.");
             taskman->state = COOP_SPIRIT_SAVE_TEXT;
         }
-        else
+        else if (value == COOP_SPIRIT_MENU_CANCEL)
             taskman->state = COOP_SPIRIT_ROAM;
+        else
+            taskman->state = Coop_SpiritAskGo(fsys, env, value - 1) ? COOP_SPIRIT_GO_TEXT : COOP_SPIRIT_CLOSE_TEXT;
         break;
 
-    case COOP_SPIRIT_TEAM_PAGE:
-        if (Coop_DialogIsPrinting(&env->dialog) || !Coop_DialogButtonPressed())
+    case COOP_SPIRIT_GO_TEXT:
+        if (Coop_DialogIsPrinting(&env->dialog))
             break;
-        if (!Coop_SpiritTeamPage(env))
-        {
-            Coop_SpiritCloseDialog(fsys, env);
-            taskman->state = COOP_SPIRIT_ROAM;
-        }
+        Coop_ChoiceOpenYesNo(fsys, &env->choice);
+        taskman->state = COOP_SPIRIT_GO_CHOICE;
         break;
+
+    case COOP_SPIRIT_GO_CHOICE:
+        value = Coop_ChoiceInput(&env->choice);
+        if (value == COOP_CHOICE_NONE)
+            break;
+        Coop_SpiritCloseDialog(fsys, env);
+        taskman->state = value == COOP_CHOICE_YES ? COOP_SPIRIT_WARP : COOP_SPIRIT_ROAM;
+        break;
+
+    case COOP_SPIRIT_WARP:
+        // A warp under the map name banner crashed in window code
+        // (KNOWN_RISKS #14): it waits. Then the task becomes the warp (as a
+        // script's warp does); this task starts again on the other side.
+        if (Coop_IsMapNameBannerShowing(fsys))
+            break;
+        map = env->warpMap;
+        warpId = env->warpId;
+        x = env->warpX;
+        z = env->warpZ;
+        dir = env->warpDir;
+        Coop_SpiritCloseDialog(fsys, env);
+        sys_FreeMemoryEz(env);
+        PlaySE(COOP_SE_SELECT);
+        sub_02053908(taskman, map, warpId, x, z, dir);
+        return FALSE;
 
     case COOP_SPIRIT_SAVE_TEXT:
         if (Coop_DialogIsPrinting(&env->dialog))
@@ -855,6 +1023,27 @@ static void Coop_SpiritWarp(FieldSystem *fsys, u32 map, s32 x, s32 z)
     sub_020538C0(fsys, map, -1, x, z, COOP_DIR_DOWN);
 }
 
+BOOL Coop_SpiritKeepTask(FieldSystem *fsys, struct CoopChallengeSave *save)
+{
+    if (!(save->state & COOP_CHALLENGE_SPIRIT))
+        return FALSE;
+    // Saves from before UC15: no anchor any more, roam from here; the fly
+    // points as they are now (the spirit couldn't leave its stretch of map).
+    save->state &= ~COOP_CHALLENGE_ANCHOR_WARP;
+    if (!(save->spirit_flags & COOP_SPIRIT_FLY_SAVED))
+        Coop_SpiritKeepFly(save);
+    if (fsys->taskman != NULL)
+        return ((TaskManager *)fsys->taskman)->func == Coop_Task_Spirit;
+    // Anything else goes through the sweep: a living Pokemon (a restored
+    // backup), a revive, a disconnect, the run's end.
+    if (fsys->textbox_open || Coop_PartyLiving(SaveArray_Party_Get(fsys->savedata)) != 0 || Coop_SpiritMustYield()
+        || Coop_BoxLiving(fsys, save, 1) != 0)
+        return FALSE;
+    // At once, even under the map name banner: vanilla's controls (scenes,
+    // trainers' eyes, the start menu, talking) never get a frame.
+    return Coop_StartFieldTask(fsys, Coop_Task_Spirit, sizeof(struct CoopSpiritEnv));
+}
+
 void Coop_SpiritFieldFrame(FieldSystem *fsys, struct CoopChallengeSave *save)
 {
     const struct CoopChallengeDown *in = Coop_ChallengeIn();
@@ -880,15 +1069,9 @@ void Coop_SpiritFieldFrame(FieldSystem *fsys, struct CoopChallengeSave *save)
     // Re-derived (§4.3): a spirit with a living Pokemon (a restored backup) isn't one.
     if (Coop_PartyLiving(party) != 0)
     {
+        Coop_SpiritRestoreFly(save);
         save->state &= ~(COOP_CHALLENGE_SPIRIT | COOP_CHALLENGE_ANCHOR_WARP);
         save->spirit_flags = 0;
-        return;
-    }
-    if (save->state & COOP_CHALLENGE_ANCHOR_WARP)
-    {
-        save->state &= ~COOP_CHALLENGE_ANCHOR_WARP;
-        if (save->anchor_map != 0)
-            Coop_SpiritWarp(fsys, save->anchor_map, save->anchor_x, save->anchor_z);
         return;
     }
     if (Coop_SpiritMustYield())

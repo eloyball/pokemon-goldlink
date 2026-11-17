@@ -242,7 +242,6 @@ void Coop_ChallengeWildMon(struct PartyPokemon *pp, struct BATTLE_PARAM *bp)
     BOOL forceShiny = FALSE, forceOriginal = FALSE;
     u16 ability = 0;
 
-    Coop_ChallengeRecordPrebattle(fsys); // Phase 5: the spirit's anchor if this battle wipes the party
     species = GetMonData(pp, MON_DATA_SPECIES, NULL);
     original = species | (space_for_setmondata << 11);
 #if COOP_DEBUG_TOOLS

@@ -600,6 +600,8 @@ void Coop_ChallengeNuzlockeFrame(FieldSystem *fsys, struct CoopChallengeSave *sa
         }
     }
 
+    if (Coop_SpiritKeepTask(fsys, save))
+        return; // UC15: a spirit's task owns the field
     if (!Coop_IsSafeOverworldWindow(fsys))
         return;
     if (!(save->state & COOP_CHALLENGE_GRAVE_NAMED))
@@ -609,16 +611,6 @@ void Coop_ChallengeNuzlockeFrame(FieldSystem *fsys, struct CoopChallengeSave *sa
     Coop_ApplySoulLink(fsys, save); // Phase 6
     if (Coop_BuryFromParty(fsys, save))
         return; // its message runs now
-    for (i = 0; i < (u32)party->count; i++)
-    {
-        // The battle didn't wipe the party: its anchor is no longer needed.
-        struct PartyPokemon *mon = Party_GetMonByIndex(party, i);
-        if (!GetMonData(mon, MON_DATA_IS_EGG, NULL) && !(GetMonData(mon, MON_DATA_RESERVED_114, NULL) & COOP_MON_DEAD))
-        {
-            save->prebattle_map = 0;
-            break;
-        }
-    }
     if (sSweepBox < NUM_PC_BOXES)
     {
         Coop_SweepBox(fsys, save, sSweepBox++);

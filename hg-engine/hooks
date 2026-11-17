@@ -655,6 +655,10 @@ arm9 Coop_PlayerAvatar_GetSprite 0205C898 2
 0001 Coop_MapObject_GetBillboard 021F72DC 2
 # ... and the HM / Fly / Sweet Scent cut-in's trainer (KNOWN_RISKS #82; pret ov02_02249458 + 0x10, asm/field/field_hooks.s)
 0002 Coop_CutInStart_hook 02249468 1
+# UC15 (roaming spirits): vanilla's field input does nothing for a spirit (no scene, trainer's
+# eyes, step, talk, menu, call), whatever frame it gets: pret FieldInput_Process (ov01_021E6AF4,
+# asm/field/field_hooks.s, src/field/coop_spirit.c). r2: not an argument (two arguments).
+0001 Coop_FieldInputProcess_hook 021E6AF4 2
 # Custom avatars in battle (Phase 5): the trainer pictures (src/battle/coop_avatar_battle.c)
 0012 Coop_GetVersionTrainerClass 02261EF0 3
 0012 Coop_CreateTrainerSprite 02261B2C

@@ -58,11 +58,12 @@
 #define COOP_CHALLENGE_HAD_POKEMON 0x08
 #define COOP_CHALLENGE_GRAVE_NAMED 0x10 // box 30 renamed GRAVEYARD
 #define COOP_CHALLENGE_GRAVE2      0x20 // box 29 is the second Graveyard box (Q11)
-#define COOP_CHALLENGE_ANCHOR_WARP 0x40 // Phase 5: a new spirit still has to reach its anchor
+#define COOP_CHALLENGE_ANCHOR_WARP 0x40 // Phase 5 until UC15: a new spirit still had to reach its anchor (cleared)
 #define COOP_CHALLENGE_RETURN_WARP 0x80 // Phase 5: revived, still has to return to return_*
 
 // CoopChallengeSave.spirit_flags (Phase 5).
-#define COOP_SPIRIT_INTRO 0x01 // the spirit task's first page (and save) is still to come
+#define COOP_SPIRIT_INTRO     0x01 // the spirit task's first page (and save) is still to come
+#define COOP_SPIRIT_FLY_SAVED 0x02 // fly_saved holds the fly points (UC15)
 
 // CoopChallengeSave.pending_flags: the wild Pokemon of the battle in progress
 // (docs/MILESTONE5_PLAN.md §5.4.2). Resolved on the first quiet field frame after it.
@@ -133,16 +134,12 @@ struct CoopChallengeSave
     u8  pending_loc;                   // 0x6C its location, 0xFF none
     u8  pending_flags;                 // 0x6D
     u16 deaths;                        // 0x6E
-    u16 anchor_map;                    // 0x70 where the spirit fell
-    s16 anchor_x;
-    s16 anchor_z;
+    u8  fly_saved[6];                  // 0x70 a spirit's fly points (FLAG_SYS_FLYPOINT_*, 38 bits) when it fell,
+                                       //      put back on revival (UC15); was the anchor (map, x, z)
     u16 return_map;                    // 0x76 the blackout spot to return to on revival
     s16 return_x;
     s16 return_z;
-    u16 prebattle_map;                 // 0x7C the last field tile before the current battle (0: none)
-    s16 prebattle_x;
-    s16 prebattle_z;
-    u16 pad82;
+    u16 unused7C[4];                   // 0x7C was the tile before the battle (the anchor), zeroed
     u32 starter_pid;                   // 0x84 Milestone 6: valid with COOP_FLAG_STARTER_DONE
 };                                     // 0x88
 
@@ -150,7 +147,7 @@ _Static_assert(__builtin_offsetof(struct CoopChallengeSave, seed) == 0x08, "Coop
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, spent) == 0x12, "CoopChallengeSave.spent");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, safari_pid) == 0x34, "CoopChallengeSave.safari_pid");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, pending_pid) == 0x68, "CoopChallengeSave.pending_pid");
-_Static_assert(__builtin_offsetof(struct CoopChallengeSave, prebattle_z) == 0x80, "CoopChallengeSave.prebattle_z");
+_Static_assert(__builtin_offsetof(struct CoopChallengeSave, return_map) == 0x76, "CoopChallengeSave.return_map");
 _Static_assert(__builtin_offsetof(struct CoopChallengeSave, starter_pid) == 0x84, "CoopChallengeSave.starter_pid");
 _Static_assert(sizeof(struct CoopChallengeSave) == 0x88, "CoopChallengeSave size");
 _Static_assert(COOP_CHALLENGE_SAVE_OFFSET + sizeof(struct CoopChallengeSave) <= COOP_CHALLENGE_SAVE_END,
@@ -428,16 +425,17 @@ BOOL LONG_CALL Coop_ChallengeForceNickname(void);
 // docs/MILESTONE5_PLAN.md §5.5)
 // ---------------------------------------------------------------------------
 
-// A battle is being built (the wild hook, the trainer party): where the
-// player stands now is the spirit's anchor if the battle wipes the party.
-void Coop_ChallengeRecordPrebattle(struct FieldSystem *fsys);
-
 // The sweep found no living Pokemon anywhere (§5.4.5 step 6): become a spirit.
 void Coop_SpiritEnter(struct FieldSystem *fsys, struct CoopChallengeSave *save);
 
-// Once per field frame of a Nuzlocke run, after the sweep: the warps to the
-// anchor and back, the spirit task, the "Run lost" ending.
+// Once per field frame of a Nuzlocke run, after the sweep: the warp back, the
+// spirit task, the "Run lost" ending.
 void Coop_SpiritFieldFrame(struct FieldSystem *fsys, struct CoopChallengeSave *save);
+
+// Once per field frame, before the sweep (UC15): a spirit's task starts as soon
+// as nothing else runs, even under the map name banner, so vanilla's controls
+// (scenes, trainers, the start menu) never get a frame. TRUE: started or running.
+BOOL Coop_SpiritKeepTask(struct FieldSystem *fsys, struct CoopChallengeSave *save);
 
 // The spirit task is running and only roaming (not in its menu): teammates
 // can talk to this player.
