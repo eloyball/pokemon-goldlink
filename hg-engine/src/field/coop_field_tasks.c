@@ -847,7 +847,7 @@ void LONG_CALL Coop_UpdateFieldConnection(FieldSystem *fsys)
         if (Coop_ShouldBlockBedroomStairs(fsys))
             // Facing west on the stairs: stepping back east always returns
             // the player to (4, 4), the tile they came from or an open one.
-            (void)Coop_StartFieldBlock(fsys, "Oops! Looks like some trainers\nare still asleep.",
+            (void)Coop_StartFieldBlock(fsys, "Oops! Looks like some trainers\nare not ready yet.",
                                        "Please wait until everyone is\nready to start your adventure.",
                                        COOP_MOVEMENT_STEP_RIGHT);
         else if (Coop_ShouldBlockGatedBoss(fsys))

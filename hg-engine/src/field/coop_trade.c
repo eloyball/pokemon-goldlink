@@ -326,7 +326,7 @@ static void Coop_TradeApplyRevive(FieldSystem *fsys, TaskManager *taskman, struc
         for (i = 0; i < (u32)party->count; i++)
             if (GetMonData(Party_GetMonByIndex(party, i), MON_DATA_PERSONALITY, NULL) == pid)
             {
-                Coop_TradeDoneAlready(taskman, env, "You were revived by @!");
+                Coop_TradeDoneAlready(taskman, env, "You were rescued by @!");
                 return;
             }
         if (!PokeParty_Add(party, &env->incoming))
@@ -609,7 +609,7 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             if (env->flags & COOP_TRADE_FLAG_RECEIVER)
             {
                 // A spirit asks for nothing: it waits for the donor's Pokemon.
-                Coop_DialogPrint(&env->dialog, "@ is choosing a Pokémon\nto revive you...");
+                Coop_DialogPrint(&env->dialog, "@ is choosing a Pokémon\nto rescue you...");
                 taskman->state = COOP_TRADE_REVIVE_WAIT;
                 break;
             }
@@ -891,8 +891,8 @@ static BOOL Coop_Task_Trade(TaskManager *taskman)
             break;
         }
         if (env->flags & COOP_TRADE_FLAG_REVIVE)
-            Coop_TradeFinal(taskman, env, (env->flags & COOP_TRADE_FLAG_RECEIVER) ? "You were revived by @!"
-                                                                                : "@ was revived\nwith your ^!");
+            Coop_TradeFinal(taskman, env, (env->flags & COOP_TRADE_FLAG_RECEIVER) ? "You were rescued by @!"
+                                                                                : "@ was rescued\nwith your ^!");
         else
             Coop_TradeFinal(taskman, env, "Your trade with @\nis complete!");
         break;

@@ -216,7 +216,7 @@ static const char *Coop_ResultText(struct CoopSessionTaskEnv *env, u32 state, u3
             if (env->kind == COOP_SESSION_KIND_LEAVE_TEAM)
                 return "You aren't on a team\nanymore.";
             if (env->kind == COOP_SESSION_KIND_REVIVE)
-                return "@ can't be revived\nright now.";
+                return "@ can't be rescued\nright now.";
             return "That isn't possible\nright now.";
         default:                                 return "That isn't possible\nright now.";
         }
@@ -370,7 +370,7 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
         {
             if (env->kind == COOP_SESSION_KIND_REVIVE)
             {
-                static const char *const labels[] = { "REVIVE", "CANCEL" };
+                static const char *const labels[] = { "RESCUE", "CANCEL" };
                 static const u8 values[] = { COOP_CHOICE_REVIVE, COOP_CHOICE_CANCEL };
                 Coop_ChoiceOpen(fsys, &env->choice, labels, values, 2, 9);
             }
@@ -416,7 +416,7 @@ static BOOL Coop_Task_Session(TaskManager *taskman)
                 Coop_SessionFinal(taskman, env, msg);
                 break;
             }
-            Coop_DialogPrint(&env->dialog, "Give one of your Pokémon\nto revive @?");
+            Coop_DialogPrint(&env->dialog, "Give one of your Pokémon\nto rescue @?");
             taskman->state = COOP_SESSION_CONFIRM_TEXT;
             break;
         }
