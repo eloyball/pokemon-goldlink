@@ -893,6 +893,32 @@ static u8 Coop_DebugChallenge(FieldSystem *fsys, u8 what)
             for (i = 0; i < 38; i++)
                 if (CheckScriptFlag((u16)(0x9B0 + i))) // FLAG_SYS_FLYPOINT_PALLET + i
                     gCoopDebugMonBuffer.mon[18 + i / 8] |= (u8)(1 << (i % 8));
+            // UC15 probes: the tile behaviour one step up, down, left, right (ledges).
+            if (fsys->playerAvatar != NULL && fsys->playerAvatar->mapObject != NULL)
+            {
+                const LocalMapObject *me = fsys->playerAvatar->mapObject;
+                gCoopDebugMonBuffer.mon[24] = GetMetatileBehaviorAt(fsys, me->xCurr, me->yCurr - 1);
+                gCoopDebugMonBuffer.mon[25] = GetMetatileBehaviorAt(fsys, me->xCurr, me->yCurr + 1);
+                gCoopDebugMonBuffer.mon[26] = GetMetatileBehaviorAt(fsys, me->xCurr - 1, me->yCurr);
+                gCoopDebugMonBuffer.mon[27] = GetMetatileBehaviorAt(fsys, me->xCurr + 1, me->yCurr);
+                // ... and the first ledge jumped south (pret TILE_BEHAVIOR_JUMP_SOUTH) within
+                // 24 tiles, row by row: mon[28..31] its x, z (0xFFFF: none).
+                {
+                    s32 lx, lz, fx = -1, fz = -1;
+                    for (lz = (s32)me->yCurr - 24; lz <= (s32)me->yCurr + 24 && fx < 0; lz++)
+                        for (lx = (s32)me->xCurr - 24; lx <= (s32)me->xCurr + 24 && fx < 0; lx++)
+                            if (lx > 0 && lz > 0 && GetMetatileBehaviorAt(fsys, lx, lz) == 0x3B
+                                && GetMetatileBehaviorAt(fsys, lx, lz - 1) != 0x3B && GetMetatileBehaviorAt(fsys, lx, lz + 1) != 0x3B)
+                            {
+                                fx = lx;
+                                fz = lz;
+                            }
+                    gCoopDebugMonBuffer.mon[28] = (u8)fx;
+                    gCoopDebugMonBuffer.mon[29] = (u8)(fx >> 8);
+                    gCoopDebugMonBuffer.mon[30] = (u8)fz;
+                    gCoopDebugMonBuffer.mon[31] = (u8)(fz >> 8);
+                }
+            }
         }
         gCoopDebugMonBuffer.party_count = (u8)party->count;
         return COOP_DEBUG_RESULT_OK;

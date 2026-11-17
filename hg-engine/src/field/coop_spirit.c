@@ -69,6 +69,7 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_DIR_RIGHT           3
 #define COOP_MOVEMENT_FACE_UP    0  // + direction (pret constants/movements.h)
 #define COOP_MOVEMENT_STEP_UP    12 // + direction
+#define COOP_MOVEMENT_JUMP_FAR_UP 56 // + direction: two tiles, a ledge's jump (pret asm/macros/movement.inc JumpFar*)
 #define COOP_MOVEMENT_STEP_END   254
 #define COOP_PLAYER_STATE_SURFING 2 // pret PLAYER_STATE_SURFING
 #define COOP_SE_SELECT           1500
@@ -101,6 +102,10 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_TILE_WARP_WEST           0x6D
 #define COOP_TILE_WARP_NORTH          0x6E
 #define COOP_TILE_WARP_SOUTH          0x6F
+#define COOP_TILE_JUMP_EAST           0x38 // ledges, jumped in their own direction (pret sub_0205DB68)
+#define COOP_TILE_JUMP_WEST           0x39
+#define COOP_TILE_JUMP_NORTH          0x3A
+#define COOP_TILE_JUMP_SOUTH          0x3B
 #define COOP_WARP_DYNAMIC_HEADER      0xFFF // pret FieldSystem_MapConnection: "back where you came from"
 
 static LocalMapObject *Coop_Player(FieldSystem *fsys)
@@ -573,6 +578,21 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
         return TRUE;
     }
     env->stepped = FALSE;
+    {
+        // A ledge ahead, jumped the way it faces: two tiles, onto a free one.
+        static const u8 sLedge[4] = { COOP_TILE_JUMP_NORTH, COOP_TILE_JUMP_SOUTH, COOP_TILE_JUMP_WEST, COOP_TILE_JUMP_EAST };
+        if (GetMetatileBehaviorAt(fsys, nx, nz) == sLedge[dir])
+        {
+            if (Coop_SpiritCanStep(fsys, player, nx + sDx[dir], nz + sDz[dir]))
+            {
+                Coop_SpiritMove(env, player, COOP_MOVEMENT_JUMP_FAR_UP + dir);
+                env->stepped = TRUE;
+            }
+            else if ((u32)player->curFacing != dir)
+                Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
+            return FALSE;
+        }
+    }
     if (Coop_SpiritCanStep(fsys, player, nx, nz))
     {
         Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + dir);
