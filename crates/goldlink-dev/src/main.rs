@@ -24,6 +24,7 @@ mod lua;
 mod machine;
 mod offline;
 mod tour;
+mod wide;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

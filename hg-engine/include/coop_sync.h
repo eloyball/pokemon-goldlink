@@ -270,6 +270,13 @@ enum CoopWarpPreset
     COOP_WARP_COUNT
 };
 
+// DEVELOPMENT ONLY (UC16's emulator pass, dev/docs/unified-client/UC16_WIDE_NEIGHBOURS.md): the
+// warp's preset that reads gCoopDebugMonBuffer: mon[0..7] the map, x, z, facing (u16 each; map 0:
+// no warp), and writes mon[8..15]: the save's flags and variables (SaveVarsFlags, pret
+// include/save_vars_flags.h) and the FieldSystem, for the tour to set the
+// story and watch the people (fsys->mapObjectMan: the field recreates the manager on each warp).
+#define COOP_WARP_FROM_BUFFER 0xFF
+
 // Why Coop_MainSysTask did or did not call the Overlay 131 entry this frame.
 enum CoopFieldEntryStatus
 {

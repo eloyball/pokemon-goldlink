@@ -71,8 +71,18 @@ enum Step {
     Type(&'static str),
     /// Logs the naming screen's entry (its character codes) and what naming::read sees.
     NamingLog,
+    /// UC16's emulator pass: every case of GOLDLINK_DEV_TOUR_WIDE_CASES (crate::wide).
+    Wide,
     Close,
 }
+
+/// GOLDLINK_DEV_TOUR_ROUTE=wide (UC16): the widened screen's cases, one after another.
+const WIDE_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Wide,
+    Step::Close,
+];
 
 /// GOLDLINK_DEV_TOUR_ROUTE=naming (a new world): Oak's speech up to the name keyboard; the
 /// keyboard's addresses; then a name typed on the window's keyboard across the three pages,
@@ -1238,6 +1248,7 @@ fn steps() -> &'static [Step] {
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
+        Ok("wide") => WIDE_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
@@ -1374,6 +1385,7 @@ struct State {
     published: u64,
     filmed: u64,
     film_requested: bool,
+    wide: Option<crate::wide::Pass>,
 }
 
 fn filming() -> bool {
@@ -1891,6 +1903,25 @@ impl FrameHook for TourHook {
                     s.log.push(line);
                 }
                 true
+            }
+            Step::Wide => {
+                let root = PathBuf::from(
+                    std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()),
+                );
+                let found = (
+                    engine_symbol(&root, "gCoopDebugMonBuffer"),
+                    engine_symbol(&root, "gFieldSysPtr"),
+                );
+                if let (Some(buffer), Some(fsys)) = found {
+                    let busy = field_task(emu.nds.main_ram());
+                    let dir = self.0.dir.clone();
+                    s.wide
+                        .get_or_insert_with(crate::wide::Pass::load)
+                        .frame(emu, input, &dir, buffer, fsys, busy)
+                } else {
+                    eprintln!("tour: wide: symbols not found ({found:?})");
+                    true
+                }
             }
             Step::Close => false,
         };

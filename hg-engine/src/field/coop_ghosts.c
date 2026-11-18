@@ -377,6 +377,17 @@ static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
 {
     const struct CoopWarpTarget *target;
 
+    if (preset == COOP_WARP_FROM_BUFFER)
+    {
+        u16 *in = (u16 *)gCoopDebugMonBuffer.mon;
+        u32 *out = (u32 *)&gCoopDebugMonBuffer.mon[8];
+
+        out[0] = (u32)SavArray_Flags_get(fsys->savedata);
+        out[1] = (u32)fsys;
+        if (in[0] != 0)
+            sub_020538C0(fsys, in[0], -1, in[1], in[2], in[3]);
+        return COOP_DEBUG_RESULT_OK;
+    }
     if (preset >= COOP_WARP_COUNT)
         return COOP_DEBUG_RESULT_BAD_ARG;
     target = &sCoopWarpTargets[preset];
