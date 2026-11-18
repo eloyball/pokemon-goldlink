@@ -232,6 +232,8 @@ pub struct GameApp {
     steady_shift: Option<[f32; 2]>,
     /// The running shoes (`Frame::running_shoes`): None until the player has them.
     running_shoes: Option<bool>,
+    /// The touch screen shows the start menu's panel (`hud::start_menu_panel`).
+    start_panel: bool,
     /// And where the world's origin truly is in it (DS screen columns and rows): see `pixel_lock`.
     steady_origin: [f64; 2],
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
@@ -329,6 +331,7 @@ impl GameApp {
             prescale: 1,
             steady_shift: None,
             running_shoes: None,
+            start_panel: false,
             steady_origin: [0.0; 2],
             attached: AttachedView::default(),
             fixed: Layer::default(),
@@ -534,6 +537,7 @@ impl GameApp {
                 // What the HUD reads, from the game's own pixels.
                 if self.config.video.layout == Layout::OneScreen {
                     self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
+                    self.start_panel = hud::start_menu_panel(&frame.pixels[256 * 192..]);
                     if frame.running_shoes.is_some()
                         && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
                     {
@@ -1244,7 +1248,10 @@ impl GameApp {
             if starter {
                 self.one.bubble = Some(starter_bubble(&p, &t, self.prescale, r));
             }
+            // Only over the start menu's own panel: its Save screen takes the touch screen (the
+            // user, 2026-11-18: the button sat on top of it).
             if scene == Scene::StartMenu
+                && self.start_panel
                 && let Some(on) = self.running_shoes
             {
                 self.running_toggle(ui.ctx(), r, on);

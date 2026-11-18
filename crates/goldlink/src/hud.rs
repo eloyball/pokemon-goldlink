@@ -783,6 +783,19 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
     );
 }
 
+/// Whether the touch screen shows the start menu's green panel (DS pixels 256 x 192,
+/// 0x00RRGGBB): five points inside it, (24, 203, 113). Not while its Save screen (or another
+/// application) has taken the touch screen: the running shoes' button goes with the panel.
+pub fn start_menu_panel(bottom: &[u32]) -> bool {
+    const POINTS: [(usize, usize); 5] = [(12, 30), (20, 60), (90, 60), (155, 100), (12, 150)];
+    POINTS.iter().all(|&(x, y)| {
+        bottom.get(y * 256 + x).is_some_and(|&p| {
+            let (r, g, b) = ((p >> 16) & 255, (p >> 8) & 255, p & 255);
+            r.abs_diff(24) <= 10 && g.abs_diff(203) <= 10 && b.abs_diff(113) <= 10
+        })
+    })
+}
+
 /// Whether the band belongs over the game's text box rows (144 to 191 of the top screen) in a
 /// battle: yes, but for a screen the game draws there itself, as a link battle's VS screen with
 /// the bottom player's party on a light ground (58% of rows 150 to 184 light, the text box's own
