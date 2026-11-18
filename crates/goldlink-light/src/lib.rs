@@ -15,7 +15,7 @@
 //!    fall darker), and a faint one at night;
 //! 4. outdoors at night: bright warm pixels (the lit windows the game draws at night, lamps)
 //!    become point lights placed in 3D, casting warm pools on the ground;
-//! 5. the light sources' own small glow (evening, night) and a soft bloom: what's brightest, and
+//! 5. the light sources' own small glow (night) and a soft bloom: what's brightest, and
 //!    the light sources, spread at half size and added back (the user, 2026-11-15: "it should be
 //!    soft", as before; both taken out with the blurs on 2026-11-13 by a misunderstanding);
 //! 6. the time of day's colour grade and a vignette. No other blur: the far blur and the haze's
@@ -300,13 +300,15 @@ fn phase_grade(phase: Phase) -> Grade {
             vignette: 0.16,
         },
         Phase::Evening => Grade {
-            // The game's own evening is already orange: little more.
-            tint: [1.01, 0.995, 0.985],
+            // The game's own evening is already orange, and much darker than its day (its path
+            // 185, 140, 85 against noon's 248, 218, 141): brighter, toward the day's look in
+            // the sunset's colours (the user, 2026-11-18).
+            tint: [1.02, 0.995, 0.97],
             shadow: [0.95, 0.96, 1.06],
-            highlight: [1.02, 1.0, 0.98],
-            saturation: 0.97,
-            exposure: 0.98,
-            vignette: 0.2,
+            highlight: [1.03, 1.0, 0.96],
+            saturation: 1.06,
+            exposure: 1.18,
+            vignette: 0.16,
         },
         Phase::Night => Grade {
             tint: [0.93, 0.96, 1.08],
@@ -344,22 +346,16 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 ..outdoor
             },
             Phase::Day => outdoor,
-            // Half way between day and night. The game doesn't light its windows until night, so
-            // the light is the low sun's: golden, stronger against a cooler, dimmer sky than by
-            // day, so sunlit sides stand out; bloom between the day's and the night's; a faint warm
-            // light around the player; lamps the game does light still count as light sources.
+            // The day's look in the low sun's colours (the user, 2026-11-18: "almost the same as
+            // daytime but with sunset colors and sun shadows at their highest stretch"; the
+            // night's effects not yet). No light sources: the game already draws its windows
+            // orange in the evening, and found as lights (with the flowers, the same warm orange)
+            // they glowed, cast shadows and, picked anew each frame as the player walked, turned
+            // on and off. No glow, no light around the player, the day's bloom.
             Phase::Evening => Preset {
-                ambient: scale([0.70, 0.72, 0.96], 0.62),
-                key: scale([1.0, 0.78, 0.52], 0.78),
+                ambient: scale([0.80, 0.80, 0.96], 0.64),
+                key: scale([1.0, 0.80, 0.58], 0.80),
                 key_dir: normalize([-0.8, 0.35, 0.48]),
-                points: 0.8,
-                player_light: scale([1.0, 0.84, 0.62], 0.16),
-                player_height: 40.0,
-                player_range: 110.0,
-                bloom: 0.18,
-                bloom_from: 0.4,
-                glow: 0.16,
-                shine: 1.5,
                 ..outdoor
             },
             Phase::Night => Preset {
@@ -873,7 +869,15 @@ impl Lighting {
                 let dir = shadow::Shadows::sun_dir(up, azimuth, elevation);
                 self.shadow.build_sun(dir, shadow::TEXELS);
                 if self.shadow.has_sun() {
-                    p.key_dir = dir;
+                    // In the evening the shadows keep the low sun's length, but the light on the
+                    // ground is a higher sun's: at 20 degrees flat ground got a third of noon's
+                    // light and the town went dark and muddy (the user, 2026-11-18: "almost the
+                    // same as daytime but with sunset colors").
+                    p.key_dir = if phase == Phase::Evening {
+                        shadow::Shadows::sun_dir(up, azimuth, elevation.max(40f32.to_radians()))
+                    } else {
+                        dir
+                    };
                     sun_strength = strength;
                 }
             } else if let Some((azimuth, elevation, _)) = shadow::moon(scene.hours) {

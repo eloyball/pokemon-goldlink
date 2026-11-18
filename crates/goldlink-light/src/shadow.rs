@@ -95,7 +95,9 @@ pub fn sun(hours: f32) -> Option<(f32, f32, f32)> {
     }
     let arc = std::f32::consts::PI * t;
     let elevation = 58f32.to_radians() * arc.sin();
-    let strength = (elevation.to_degrees() / 10.0).clamp(0.0, 1.0);
+    // Full strength until the last minutes before sunset (from 19:52) and after sunrise (to
+    // 5:08): the evening keeps its long shadows to the end (the user, 2026-11-18).
+    let strength = (elevation.to_degrees() / 2.0).clamp(0.0, 1.0);
     if strength <= 0.0 {
         return None;
     }
