@@ -76,6 +76,18 @@ enum Step {
     Close,
 }
 
+/// GOLDLINK_DEV_TOUR_ROUTE=walk-right: a picture where the save stands, then four seconds walking
+/// right (with GOLDLINK_DEV_TOUR_FILM=1, every frame: the lighting at a time of day).
+const WALK_RIGHT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(180),
+    Step::Shot("standing"),
+    Step::Walk(Keys::RIGHT, 240, ""),
+    Step::Wait(30),
+    Step::Shot("walked"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=wide (UC16): the widened screen's cases, one after another.
 const WIDE_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -1249,6 +1261,7 @@ fn steps() -> &'static [Step] {
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
         Ok("wide") => WIDE_STEPS,
+        Ok("walk-right") => WALK_RIGHT_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
