@@ -369,6 +369,9 @@ pub struct Shadows {
     /// Everything that casts but the cards (with their skirts and slabs).
     casters: Vec<Caster>,
     pub(crate) cards: Vec<Card>,
+    /// The textures of the cards that are rows of scenery (their texture repeats across them):
+    /// they cast nothing.
+    strips: Vec<u32>,
     pub(crate) alpha: Vec<u8>,
     /// The sun's map and its direction (toward it); the point lights' maps.
     pub(crate) sun: Option<(DepthMap, V3)>,
@@ -830,6 +833,29 @@ impl Shadows {
                 }
             }
         }
+        // A card whose texture repeats across it is a row of scenery, not a person: a flower
+        // bed's tulips (one 32 x 32 texture across 72 units in Cherrygrove), a fence's pieces.
+        // Stood up toward the sun each cast its own block, its gaps a comb across the grass
+        // under the bed's fence (the user, 2026-11-18: "doesn't look good as joint objects,
+        // same as trees"). It and every card with its texture (the row's ends) cast nothing.
+        self.strips.clear();
+        for c in &self.cards {
+            if let Some(t) = c.tex {
+                let (lo, hi) = c
+                    .local
+                    .iter()
+                    .fold((f32::MAX, f32::MIN), |(lo, hi), (_, st)| {
+                        (lo.min(st[0]), hi.max(st[0]))
+                    });
+                // Not the trees (the night's lamps let theirs cast: they keep that).
+                if hi - lo > t.width as f32 * 1.25
+                    && c.b[1] - c.b[0] <= TREE_HEIGHT
+                    && !self.strips.contains(&t.offset)
+                {
+                    self.strips.push(t.offset);
+                }
+            }
+        }
         // What the picture shows just under a card's feet may be another card (the user,
         // 2026-11-18): an NPC's "!" bubble over their head, or the player passing their follower
         // behind them (the player lit there dimmed for a moment). Well above that card's feet the
@@ -885,7 +911,12 @@ impl Shadows {
         self.cards
             .iter()
             .enumerate()
-            .filter(|(_, c)| !c.floating && (trees || c.b[1] - c.b[0] <= TREE_HEIGHT))
+            .filter(|(_, c)| {
+                let height = c.b[1] - c.b[0];
+                !c.floating
+                    && !c.tex.is_some_and(|t| self.strips.contains(&t.offset))
+                    && (trees || height <= TREE_HEIGHT)
+            })
             .map(|(k, c)| Caster {
                 corners: c.standing(self.up, toward(c.foot)),
                 tex: c.tex,
@@ -1121,9 +1152,10 @@ const LEVEL_SPREAD: f32 = 3.0;
 const LEVEL_MIN_AREA: f32 = 64.0;
 
 /// A fence's faces: no taller than this (view units; the game's are 4.8, a windmill's blades 8),
-/// a picket face at least this see-through, and its rails within this of one.
+/// a picket face at least this see-through (Cherrygrove's white pickets: 0.375 to 0.39 of their
+/// texels clear; their rails are opaque), and its rails within this of one.
 const FENCE_HEIGHT: f32 = 6.0;
-const FENCE_SEE_THROUGH: f32 = 0.4;
+const FENCE_SEE_THROUGH: f32 = 0.25;
 const FENCE_TOUCH: f32 = 1.0;
 
 /// How near another card's plane a point must be to be on it, and how far above the feet of the
