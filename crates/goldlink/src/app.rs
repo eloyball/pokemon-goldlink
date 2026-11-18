@@ -242,6 +242,11 @@ pub struct GameApp {
     /// (the user, 2026-11-18).
     choices: Vec<hud::TouchChoice>,
     choice_tex: Vec<egui::TextureHandle>,
+    /// The open menu's words as the ROM has them (`menu_text`), the words the textures show, and
+    /// the text boxes' font they're written in.
+    menu_words: Vec<Vec<u16>>,
+    choice_words: Vec<Vec<u16>>,
+    game_font: Option<std::sync::Arc<goldlink_bridge::menu_text::GameFont>>,
     /// And where the world's origin truly is in it (DS screen columns and rows): see `pixel_lock`.
     steady_origin: [f64; 2],
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
@@ -343,6 +348,9 @@ impl GameApp {
             pokegear_hold: 0,
             choices: Vec::new(),
             choice_tex: Vec::new(),
+            menu_words: Vec::new(),
+            choice_words: Vec::new(),
+            game_font: None,
             steady_origin: [0.0; 2],
             attached: AttachedView::default(),
             fixed: Layer::default(),
@@ -557,20 +565,7 @@ impl GameApp {
                     } else {
                         self.pokegear_hold = self.pokegear_hold.saturating_sub(1);
                     }
-                    let choices = hud::touch_choices(bottom);
-                    for (k, c) in choices.iter().enumerate() {
-                        let img = hud::choice_label(bottom, c);
-                        let nearest = egui::TextureOptions::NEAREST;
-                        match self.choice_tex.get_mut(k) {
-                            Some(t) => t.set(img, nearest),
-                            None => self.choice_tex.push(ctx.load_texture(
-                                format!("choice-{k}"),
-                                img,
-                                nearest,
-                            )),
-                        }
-                    }
-                    self.choices = choices;
+                    self.choices = hud::touch_choices(bottom);
                     if frame.running_shoes.is_some()
                         && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
                     {
@@ -1294,20 +1289,48 @@ impl GameApp {
         }
     }
 
-    /// The touch screen's choices (`self.choices`) in a white box at the right of the top screen
-    /// (`top`), over the game's text box: their words, a ▶ at the selected one. A click taps that
-    /// choice's button.
+    /// The open menu's choices in a white box at the right of the top screen (`top`), over the
+    /// game's text box: the ROM's words (`self.menu_words`) in the text boxes' font and colours,
+    /// a ▶ at the one the touch screen shows selected (`self.choices`). Only when the two agree
+    /// on how many there are. A click taps that choice's button.
     fn draw_choices(&mut self, ui: &egui::Ui, top: egui::Rect) {
-        let s = top.height() / 192.0;
-        let sizes: Vec<egui::Vec2> = self.choice_tex.iter().map(|t| t.size_vec2()).collect();
-        let n = self.choices.len().min(sizes.len());
-        if n == 0 {
+        let n = self.choices.len();
+        let Some(font) = self.game_font.clone() else {
+            return;
+        };
+        if n == 0 || self.menu_words.len() != n {
             return;
         }
-        let (pad, cursor, gap) = (6.0, 11.0, 6.0);
-        let line = sizes[..n].iter().map(|v| v.y).fold(0.0, f32::max) + gap;
-        let text = sizes[..n].iter().map(|v| v.x).fold(0.0, f32::max);
-        let size = egui::vec2(2.0 * pad + cursor + text, 2.0 * pad + line * n as f32 - gap) * s;
+        if self.choice_words != self.menu_words || self.choice_tex.len() < n {
+            for (k, words) in self.menu_words.iter().enumerate() {
+                let (w, px) = font.draw(words);
+                let mut img = egui::ColorImage::new([w, font.height], egui::Color32::TRANSPARENT);
+                for (out, v) in img.pixels.iter_mut().zip(px) {
+                    *out = match v {
+                        1 => hud::TEXT_INK,
+                        2 => hud::TEXT_SHADOW,
+                        _ => egui::Color32::TRANSPARENT,
+                    };
+                }
+                let nearest = egui::TextureOptions::NEAREST;
+                match self.choice_tex.get_mut(k) {
+                    Some(t) => t.set(img, nearest),
+                    None => self.choice_tex.push(ui.ctx().load_texture(
+                        format!("choice-{k}"),
+                        img,
+                        nearest,
+                    )),
+                }
+            }
+            self.choice_words = self.menu_words.clone();
+        }
+        let s = top.height() / 192.0;
+        let sizes: Vec<egui::Vec2> = self.choice_tex[..n].iter().map(|t| t.size_vec2()).collect();
+        // As the game's own menu windows: 8 pixels in from the frame, a line per choice.
+        let (pad, cursor) = (8.0, 10.0);
+        let line = font.height as f32;
+        let text = sizes.iter().map(|v| v.x).fold(0.0, f32::max);
+        let size = egui::vec2(2.0 * pad + cursor + text, 2.0 * pad - 4.0 + line * n as f32) * s;
         let rect = egui::Rect::from_min_size(
             egui::pos2(
                 top.right() - 6.0 * s - size.x,
@@ -1316,7 +1339,7 @@ impl GameApp {
             size,
         );
         let p = ui.painter();
-        p.rect_filled(rect, 3.0 * s, egui::Color32::WHITE);
+        p.rect_filled(rect, 3.0 * s, egui::Color32::from_rgb(251, 251, 251));
         p.rect_stroke(
             rect,
             3.0 * s,
@@ -1326,30 +1349,27 @@ impl GameApp {
         let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
         for k in 0..n {
             let c = self.choices[k];
-            let y = rect.top() + (pad + line * k as f32) * s;
+            let y = rect.top() + (pad - 2.0 + line * k as f32) * s;
             let label = egui::Rect::from_min_size(
-                egui::pos2(
-                    rect.left() + (pad + cursor) * s,
-                    y + (line - gap - sizes[k].y) / 2.0 * s,
-                ),
+                egui::pos2(rect.left() + (pad + cursor) * s, y),
                 sizes[k] * s,
             );
             p.image(self.choice_tex[k].id(), label, full, egui::Color32::WHITE);
             if c.selected {
-                let (x, m) = (rect.left() + pad * s, label.center().y);
+                let (x, m) = (rect.left() + pad * s, y + (line / 2.0 - 1.0) * s);
                 p.add(egui::Shape::convex_polygon(
                     vec![
                         egui::pos2(x, m - 4.0 * s),
                         egui::pos2(x + 6.0 * s, m),
                         egui::pos2(x, m + 4.0 * s),
                     ],
-                    egui::Color32::from_rgb(24, 24, 24),
+                    hud::TEXT_INK,
                     egui::Stroke::NONE,
                 ));
             }
             let row = egui::Rect::from_min_max(
-                egui::pos2(rect.left(), y - gap / 2.0 * s),
-                egui::pos2(rect.right(), y + (line - gap / 2.0) * s),
+                egui::pos2(rect.left(), y),
+                egui::pos2(rect.right(), y + line * s),
             );
             if ui
                 .interact(
@@ -1396,6 +1416,14 @@ impl GameApp {
             Some(b) => {
                 let mut b = goldlink_bridge::hook::lock(b);
                 let naming = b.naming();
+                if self.config.video.layout == Layout::OneScreen {
+                    if b.menu_words() != self.menu_words.as_slice() {
+                        self.menu_words = b.menu_words().to_vec();
+                    }
+                    if self.game_font.is_none() {
+                        self.game_font = b.game_font();
+                    }
+                }
                 let one = self.config.video.layout == Layout::OneScreen;
                 self.one.starter = one && naming.is_none() && b.choosing_starter();
                 // The wider picture moves the game's HP boxes out toward its edges.

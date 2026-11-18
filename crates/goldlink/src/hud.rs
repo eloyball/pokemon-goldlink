@@ -869,80 +869,10 @@ fn touch_choices_at(bottom: &[u32], column: usize) -> Vec<TouchChoice> {
     }
 }
 
-/// The words on a choice's button, as their own picture: the pixels that differ from their row's
-/// face (white to grey), dark on clear (outlines black, fills dark grey), trimmed to them.
-pub fn choice_label(bottom: &[u32], c: &TouchChoice) -> egui::ColorImage {
-    let (w, h) = (c.x1 - c.x0, c.y1 - c.y0);
-    let mut ink = vec![None; w * h];
-    let (mut lx, mut ly, mut hx, mut hy) = (usize::MAX, usize::MAX, 0, 0);
-    for y in 0..h {
-        let row: Vec<u32> = (0..w)
-            .map(|x| {
-                bottom
-                    .get((c.y0 + y) * 256 + c.x0 + x)
-                    .copied()
-                    .unwrap_or(0)
-            })
-            .collect();
-        // The face's own colour on this row: the most common one.
-        let mut counts: Vec<(u32, usize)> = Vec::new();
-        for &p in &row {
-            match counts.iter_mut().find(|c| c.0 == p) {
-                Some(c) => c.1 += 1,
-                None => counts.push((p, 1)),
-            }
-        }
-        let face = counts.iter().max_by_key(|c| c.1).map_or(0, |c| c.0);
-        let (fr, fg, fb) = channels(face);
-        // Two columns in from each end: the face's rounded corners and shading.
-        let end = w.saturating_sub(2);
-        for x in 2..end {
-            let (r, g, b) = channels(row[x]);
-            if r.abs_diff(fr) > 30 || g.abs_diff(fg) > 30 || b.abs_diff(fb) > 30 {
-                ink[y * w + x] = Some(r + g + b < 3 * 128);
-            }
-        }
-        // White letters outlined in dark (the PC's list): on the face's white rows their fill is
-        // the face's colour; a pixel with the outline within two on both sides is a letter's (a
-        // stroke is that thin, the space between two words wider).
-        let dark: Vec<bool> = (0..w).map(|x| ink[y * w + x] == Some(true)).collect();
-        for x in 2..end {
-            if ink[y * w + x].is_none()
-                && (x.saturating_sub(2)..x).any(|k| dark[k])
-                && (x + 1..(x + 3).min(end)).any(|k| dark[k])
-            {
-                ink[y * w + x] = Some(false);
-            }
-        }
-        for x in 2..end {
-            if ink[y * w + x].is_some() {
-                lx = lx.min(x);
-                ly = ly.min(y);
-                hx = hx.max(x);
-                hy = hy.max(y);
-            }
-        }
-    }
-    if lx > hx || ly > hy {
-        return egui::ColorImage::new([1, 1], Color32::TRANSPARENT);
-    }
-    let (iw, ih) = (hx - lx + 1, hy - ly + 1);
-    let mut pixels = vec![Color32::TRANSPARENT; iw * ih];
-    for y in 0..ih {
-        for x in 0..iw {
-            if let Some(dark) = ink[(ly + y) * w + lx + x] {
-                pixels[y * iw + x] = if dark {
-                    Color32::from_rgb(24, 24, 24)
-                } else {
-                    Color32::from_rgb(104, 104, 104)
-                };
-            }
-        }
-    }
-    let mut img = egui::ColorImage::new([iw, ih], Color32::TRANSPARENT);
-    img.pixels = pixels;
-    img
-}
+/// The game's text boxes' ink and its shadow (a message's letters, pret's TEXT_COLOR 1 and 2 in
+/// the field's palette).
+pub const TEXT_INK: Color32 = Color32::from_rgb(81, 81, 89);
+pub const TEXT_SHADOW: Color32 = Color32::from_rgb(162, 162, 170);
 
 /// Whether the touch screen shows the Pokégear (its map, radio or phone, a call included): the
 /// frame over its tab bar, white, black, white lines across the screen (rows 158, 160, 162) and

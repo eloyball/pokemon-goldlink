@@ -99,6 +99,9 @@ fn generate(root: &Path) -> Result<String, String> {
         // game structs behind pointers) is dropped below.
         .allowlist_type("Coop.*")
         .allowlist_var("COOP_.*")
+        // The randomizer's pool entry packs its fields in bits (coop_challenge.h); the ROM alone
+        // reads it, and bindgen's bitfield helper is dropped with the prelude's types below.
+        .blocklist_type("CoopPoolEntry")
         // Values read from RAM can be anything: plain integer constants, never Rust enums.
         .constified_enum_module("Coop.*")
         .derive_copy(true)

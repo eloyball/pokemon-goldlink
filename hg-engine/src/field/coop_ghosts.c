@@ -135,6 +135,8 @@ _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, sequenceIds) == 0x
 _Static_assert(__builtin_offsetof(struct CoopMapObjectRender, textureIds) == 0x60, "textureIds");
 
 static void Coop_FieldEntry(FieldSystem *fsys);
+extern struct CoopMenuMirror gCoopMenuMirror;
+void Coop_UpdateMenuMirror(FieldSystem *fsys);
 static u32 Coop_LocalPlayerSprite(u32 state, u32 gender);
 static u32 Coop_AvatarBase(u32 sprite);
 
@@ -150,6 +152,7 @@ const struct CoopFieldEntryHeader gCoopFieldEntryHeader = {
     .stampAvatar = Coop_StampBattleAvatar,
     .ballItem = Coop_ChallengeBallItem,
     .linkScan = Coop_LinkScanReport,
+    .menu = &gCoopMenuMirror,
 };
 
 // ---------------------------------------------------------------------------
@@ -2818,5 +2821,6 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_ProcessDebugCommand(fsys, manager, player);
     Coop_ReportTestGhost(manager, player);
     Coop_ChallengeFieldFrame(fsys); // Milestone 5 rules and ledgers (src/field/coop_challenge.c)
+    Coop_UpdateMenuMirror(fsys);     // the open choice menu's words, for the window
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry
 }

@@ -956,6 +956,19 @@ BattleSetup_InitForLinkBattle = 0x020522F0 | 1;
    and SetupAndStartTrainerBattle (0x02051370) are hooked (`hooks`). */
 QueueScript = 0x0203FED4 | 1;
 Task_RunScripts = 0x0203FF44 | 1;
+/* The native callbacks a script waits in while a choice menu is up (pret src/scrcmd_c.c; the
+   names are their addresses there): ScrCmd_YesNo's (sub_020416E4), the multichoice's
+   (sub_020418B4, sub_02041900: ScrCmd_067 / 071 / 585 / 677 / 695) and ScrCmd_MenuExec's
+   touch-screen list (sub_020478D0); and the touch list's menu slot, Overlay 1
+   (asm/overlay_01_021F6830.s ov01_021F6B20). The one-screen menu box
+   (src/field/coop_menu_mirror.c). */
+ScrNative_YesNo = 0x020416E4 | 1;
+ScrNative_Multichoice = 0x020418B4 | 1;
+ScrNative_MultichoiceWireless = 0x02041900 | 1;
+ScrNative_MenuExec = 0x020478D0 | 1;
+/* ScrCmd_GetMenuChoice's (sub_020477C0): the touch screen's YES and NO (the nurse's). */
+ScrNative_GetMenuChoice = 0x020477C0 | 1;
+ov01_021F6B20 = 0x021F6B20 | 1;
 /* Milestone 6 §6.1: the Start menu's task (pret src/start_menu.c; history label sub_0203BEF0,
    commit 6755c241b "start menu documentation, 1"). */
 Task_StartMenu = 0x0203BEF0 | 1;

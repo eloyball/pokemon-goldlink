@@ -12,6 +12,7 @@ pub mod config;
 pub mod hook;
 pub mod layout;
 pub mod link;
+pub mod menu_text;
 pub mod naming;
 pub mod net;
 pub mod quic;

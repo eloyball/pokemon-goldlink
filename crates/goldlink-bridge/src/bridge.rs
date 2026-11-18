@@ -271,6 +271,10 @@ pub struct Bridge {
     battle_ui: Option<crate::battle_ui::BattleUi>,
     naming: Option<crate::naming::Naming>,
     game_text: Option<crate::battle_ui::GameText>,
+    /// The field's open choice menu's words, and the text boxes' font (`menu_text`).
+    menu_words: Vec<Vec<u16>>,
+    game_font: Option<std::sync::Arc<crate::menu_text::GameFont>>,
+    font_read: bool,
     /// The wider picture's side when the window shows it: the game's HP boxes are moved out
     /// toward its edges by that much (0: left where the game puts them).
     pub box_shift: i32,
@@ -356,6 +360,9 @@ impl Bridge {
             battle_ui: None,
             naming: None,
             game_text: None,
+            menu_words: Vec::new(),
+            game_font: None,
+            font_read: false,
             box_shift: 0,
             wide_side: 0,
             backups: Backups::new(dir.join("coop_backups")),
@@ -448,6 +455,25 @@ impl Bridge {
     /// The ROM's words for the HUD; read once, from the emulation thread (`BridgeHook`).
     pub fn has_game_text(&self) -> bool {
         self.game_text.is_some()
+    }
+
+    /// The field's open choice menu, in the game's character codes (`menu_text::read_menu`).
+    pub fn menu_words(&self) -> &[Vec<u16>] {
+        &self.menu_words
+    }
+
+    /// The text boxes' font, once read from the ROM (`BridgeHook`).
+    pub fn game_font(&self) -> Option<std::sync::Arc<crate::menu_text::GameFont>> {
+        self.game_font.clone()
+    }
+
+    pub fn set_game_font(&mut self, font: Option<crate::menu_text::GameFont>) {
+        self.game_font = font.map(std::sync::Arc::new);
+        self.font_read = true;
+    }
+
+    pub fn has_game_font(&self) -> bool {
+        self.font_read
     }
 
     pub fn set_game_text(&mut self, text: crate::battle_ui::GameText) {
@@ -1008,6 +1034,7 @@ impl Bridge {
         self.session_out
             .copy_from_slice(&ram[mb + SESSION_OUT..mb + SESSION_OUT + SESSION_OUT_SIZE]);
         self.read_challenge_out(ram);
+        self.menu_words = crate::menu_text::read_menu(ram, &self.local_player);
         self.trade_out = find_exchange(ram, mb).map(|ex| {
             let mut t = [0u8; TRADE_OUT_SIZE];
             t.copy_from_slice(&ram[ex + EXCHANGE_OUT..ex + EXCHANGE_OUT + TRADE_OUT_SIZE]);

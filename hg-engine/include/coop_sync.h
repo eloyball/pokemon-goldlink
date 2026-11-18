@@ -77,6 +77,22 @@ struct CoopFieldEntryHeader
     void (*stampAvatar)(struct BattleSetup *setup); // 0x1C: Coop_StampBattleAvatar; unused since the boss setup moved to Overlay 131 (2026-11-06), kept for the layout
     u32 (*ballItem)(struct FieldSystem *fsys, u32 item); // 0x20: Milestone 6 random items (Coop_ScrCmd_CopyVar)
     void (*linkScan)(struct CoopWirelessWork *work, struct CoopLinkBlock *blk); // 0x24: the virtual link's scan report (src/field/coop_link_field.c)
+    struct CoopMenuMirror *menu;             // 0x28: the open choice menu's words, read by the window (src/field/coop_menu_mirror.c)
+};
+
+// The one-screen layout (the user, 2026-11-18): the field's open choice menu (a yes / no, a
+// script's multichoice, a touch-screen list) as its words, for the window to write them in the
+// text boxes' font. Overlay 131 writes it every field frame; count 0 while no menu waits.
+#define COOP_MENU_MIRROR_MAGIC 0x31434843 // "CHC1"
+#define COOP_MENU_ITEMS        8
+#define COOP_MENU_GLYPHS       20
+struct CoopMenuMirror
+{
+    u32 magic;
+    u8 count;
+    u8 kind; // 1 yes / no, 2 multichoice, 3 touch-screen list
+    u8 pad[2];
+    u16 text[COOP_MENU_ITEMS][COOP_MENU_GLYPHS]; // HG characters, 0xFFFF after the last
 };
 
 // Custom avatars in battle (docs/CUSTOM_SPRITES_PLAN.md Phase 5): a player's
@@ -89,6 +105,8 @@ struct CoopFieldEntryHeader
 void Coop_StampBattleAvatar(struct BattleSetup *setup);
 _Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, challenge) == 0x0C,
                "the bridge reads the challenge pointer at 0x0C (Mailbox.FieldEntryChallenge)");
+_Static_assert(__builtin_offsetof(struct CoopFieldEntryHeader, menu) == 0x28,
+               "the window reads the menu mirror's pointer at 0x28");
 
 // DEVELOPMENT ONLY (docs/DEBUG_TOOLS.md): the bridge's debug commands below
 // (test ghost, warp, bike / surf / fishing). Set to 0 before shipping: the

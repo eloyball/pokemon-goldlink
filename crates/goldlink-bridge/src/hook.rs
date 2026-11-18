@@ -78,6 +78,10 @@ impl FrameHook for BridgeHook {
 
     fn post_frame(&mut self, emu: &mut Emulator) {
         let mailbox = emu.mailbox_offset();
+        if !lock(&self.bridge).has_game_font() {
+            let font = crate::menu_text::GameFont::read(emu.rom());
+            lock(&self.bridge).set_game_font(font);
+        }
         if !lock(&self.bridge).has_game_text() {
             let text = crate::battle_ui::GameText::read(emu.rom());
             lock(&self.bridge).set_game_text(text);
