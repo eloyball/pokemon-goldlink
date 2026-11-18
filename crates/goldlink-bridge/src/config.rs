@@ -64,7 +64,12 @@ impl NetConfig {
                 && a.bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
             {
-                c.avatar = a.to_owned();
+                // v0.7 renamed the sheet rapha.png to rafa.png (same avatar ID): keep the choice.
+                c.avatar = if a == "rapha" {
+                    "rafa".to_owned()
+                } else {
+                    a.to_owned()
+                };
             }
             if let Some(s) = v["player_secret"].as_str() {
                 c.player_secret = u64::from_str_radix(s, 16).unwrap_or(0);
@@ -126,6 +131,20 @@ mod tests {
             NetConfig::load_or_create(&dir).player_secret,
             c.player_secret
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rapha_became_rafa() {
+        let dir = std::env::temp_dir().join(format!("goldlink-netcfg-rafa-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(FILE),
+            "{\"avatar\": \"rapha\", \"player_secret\": \"1\"}",
+        )
+        .unwrap();
+        assert_eq!(NetConfig::load_or_create(&dir).avatar, "rafa");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
