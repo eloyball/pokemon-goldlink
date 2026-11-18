@@ -982,12 +982,22 @@ BattleSetup_SetAllySideBattlersToPlayer = 0x02052580 | 1;
 EnemyTrainerSet_Init = 0x020733C0 | 1;
 /* Warp task of script command 180 (pret src/field_warp_tasks.c sub_020538C0,
    the name is the address): fade, load the map, set the player walking.
-   Debug warps, and since Milestone 5 Phase 5 the spirit's warps (keep it). */
+   Debug warps and the trade's reload (UC15: no longer the spirit's, which landed as from Fly). */
 sub_020538C0 = 0x020538C0 | 1;
 /* The same warp from inside a running field task (pret src/field_warp_tasks.c
    sub_02053908, the name is the address): TaskManager_Jump to the warp task
-   sub_02053950, as script warps do. UC15: a spirit's doors and "go there". */
+   sub_02053950 (the Fly warp: it ends in the Fly arrival). Unused since 2026-11-18. */
 sub_02053908 = 0x02053908 | 1;
+/* The script warp (ScrCmd_Warp): fade out, load the map, fade in, no Fly landing
+   (sub_02053950 ends in the Fly arrival's animation). pret src/field_warp_tasks.c
+   Task_ScriptWarp, labelled sub_0205380C before commit dfb82bbc7; its env is pret
+   overlay_01.h ErrorContinueEnv. TaskManager_Jump: pret src/task.c, NowRunTask
+   0x02050510 in asm/unk_020504C0.s before commit b5bc963f7. A spirit's warps (UC15). */
+Task_ScriptWarp = 0x0205380C | 1;
+TaskManager_Jump = 0x02050510 | 1;
+/* pret src/player_avatar.c (sub_0205CB38 before commit 5daf3f928): the running
+   shoes' lock (the touch button): vanilla then counts B as held. */
+PlayerAvatar_CheckRunningShoesLock = 0x0205CB38 | 1;
 /* Milestone 5 Phase 5, the spirit walk and the team menu (docs/MILESTONE5_PLAN.md
    §11.1). Source: pret asm labels sub_020549A8 (asm/unk_02054648.s) and
    sub_02060BFC (asm/unk_0205FD20.s); history labels MapObject_GetPositionVec

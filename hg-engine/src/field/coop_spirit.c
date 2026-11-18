@@ -41,9 +41,11 @@
 
 struct Party *LONG_CALL SaveArray_Party_Get(void *saveData);
 BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
-void *LONG_CALL sub_020538C0(FieldSystem *fsys, u32 mapId, int warpId, int x, int y, int direction);
-// The same warp from inside a task (the task becomes the warp; rom.ld).
-void LONG_CALL sub_02053908(TaskManager *taskman, u32 mapId, int warpId, int x, int y, int direction);
+// The script warp (rom.ld): a fade, no Fly landing. From inside a task it becomes the task
+// (TaskManager_Jump, as sub_02053908 does for the Fly warp); from outside, a new task.
+BOOL LONG_CALL Task_ScriptWarp(TaskManager *taskman);
+void LONG_CALL TaskManager_Jump(TaskManager *taskman, BOOL (*func)(TaskManager *), void *env);
+u16 LONG_CALL PlayerAvatar_CheckRunningShoesLock(void *avatar);
 // pret (rom.ld, docs/MILESTONE5_PLAN.md §11.1): vanilla's "can the follower
 // step there" test in ScrCmd_FollowMonFacePlayer.
 BOOL LONG_CALL sub_020549A8(FieldSystem *fsys, VecFx32 *pos, int x, int z, int unused); // TRUE: blocked
@@ -70,6 +72,7 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_MOVEMENT_FACE_UP    0  // + direction (pret constants/movements.h)
 #define COOP_MOVEMENT_STEP_UP    12 // + direction
 #define COOP_MOVEMENT_JUMP_FAR_UP 56 // + direction: two tiles, a ledge's jump (pret asm/macros/movement.inc JumpFar*)
+#define COOP_MOVEMENT_RUN_UP     88 // + direction: the running shoes' step (pret asm/macros/movement.inc RunNorth)
 #define COOP_MOVEMENT_STEP_END   254
 #define COOP_PLAYER_STATE_SURFING 2 // pret PLAYER_STATE_SURFING
 #define COOP_SE_SELECT           1500
@@ -521,6 +524,35 @@ static void Coop_SpiritAimWarp(struct CoopSpiritEnv *env, u32 map, s32 warpId, s
     env->warpDir = (u8)dir;
 }
 
+// pret overlay_01.h ErrorContinueEnv: Task_ScriptWarp's state and its Location.
+struct CoopScriptWarpEnv
+{
+    int state;
+    u32 mapId;
+    int warpId;
+    int x;
+    int z;
+    int direction;
+};
+
+// The script warp's env (FIELD2, as vanilla's warps: it outlives the map; Task_ScriptWarp
+// frees it).
+static struct CoopScriptWarpEnv *Coop_ScriptWarpEnv(u32 map, s32 warpId, s32 x, s32 z, s32 dir)
+{
+    struct CoopScriptWarpEnv *warp = sys_AllocMemoryLo(COOP_HEAP_FIELD, sizeof(*warp));
+
+    if (warp != NULL)
+    {
+        warp->state = 0;
+        warp->mapId = map;
+        warp->warpId = warpId;
+        warp->x = x;
+        warp->z = z;
+        warp->direction = dir;
+    }
+    return warp;
+}
+
 // A spirit may step onto a tile that vanilla's follower could step onto: no
 // water, no object (UC15: other zones and warp tiles too).
 static BOOL Coop_SpiritCanStep(FieldSystem *fsys, LocalMapObject *player, s32 x, s32 z)
@@ -563,6 +595,14 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
         dir = COOP_DIR_RIGHT;
     else
         return FALSE;
+    // A new direction turns first (vanilla's FACE movement); still held when it ends, the
+    // spirit walks that way: a tap turns in place, as vanilla's player.
+    if ((u32)player->curFacing != dir)
+    {
+        env->stepped = FALSE;
+        Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
+        return FALSE;
+    }
     nx = x + sDx[dir];
     nz = z + sDz[dir];
     warp = Coop_SpiritWarpAt(fsys, x, z);
@@ -588,18 +628,17 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
                 Coop_SpiritMove(env, player, COOP_MOVEMENT_JUMP_FAR_UP + dir);
                 env->stepped = TRUE;
             }
-            else if ((u32)player->curFacing != dir)
-                Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
             return FALSE;
         }
     }
     if (Coop_SpiritCanStep(fsys, player, nx, nz))
     {
-        Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + dir);
+        // B runs (vanilla counts it held while the running shoes' lock is on).
+        BOOL run = (held & PAD_BUTTON_B) || PlayerAvatar_CheckRunningShoesLock(fsys->playerAvatar);
+
+        Coop_SpiritMove(env, player, (run ? COOP_MOVEMENT_RUN_UP : COOP_MOVEMENT_STEP_UP) + dir);
         env->stepped = TRUE;
     }
-    else if ((u32)player->curFacing != dir)
-        Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
     return FALSE;
 }
 
@@ -763,7 +802,7 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     case COOP_SPIRIT_INTRO_TEXT:
         if (Coop_DialogIsPrinting(&env->dialog) || !Coop_DialogButtonPressed())
             break;
-        Coop_DialogPrint(&env->dialog, "Walk with the + Control Pad.\nX opens the spirit menu.");
+        Coop_DialogPrint(&env->dialog, "Hold B to run.\nX opens the spirit menu.");
         taskman->state = COOP_SPIRIT_INTRO_PAGE2;
         break;
 
@@ -875,7 +914,14 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
         Coop_SpiritCloseDialog(fsys, env);
         sys_FreeMemoryEz(env);
         PlaySE(COOP_SE_SELECT);
-        sub_02053908(taskman, map, warpId, x, z, dir);
+        // The script warp, not the Fly warp: a fade, no Fly landing (the user, 2026-11-18).
+        {
+            struct CoopScriptWarpEnv *warp = Coop_ScriptWarpEnv(map, warpId, x, z, dir);
+
+            if (warp == NULL)
+                return TRUE; // this task starts again where it is
+            TaskManager_Jump(taskman, Task_ScriptWarp, warp);
+        }
         return FALSE;
 
     case COOP_SPIRIT_SAVE_TEXT:
@@ -1039,8 +1085,14 @@ static void Coop_SpiritWarp(FieldSystem *fsys, u32 map, s32 x, s32 z)
 
     if (map == (u32)fsys->location->mapId && player != NULL && player->xCurr == x && player->yCurr == z)
         return; // already there
-    // Fades out, unloads the field (and this overlay) and loads the map.
-    sub_020538C0(fsys, map, -1, x, z, COOP_DIR_DOWN);
+    // Fades out, unloads the field (and this overlay) and loads the map: the script warp, no
+    // Fly landing.
+    {
+        struct CoopScriptWarpEnv *warp = Coop_ScriptWarpEnv(map, -1, x, z, COOP_DIR_DOWN);
+
+        if (warp != NULL && Coop_FieldSystem_CreateTask(fsys, Task_ScriptWarp, warp) == NULL)
+            sys_FreeMemoryEz(warp);
+    }
 }
 
 BOOL Coop_SpiritKeepTask(FieldSystem *fsys, struct CoopChallengeSave *save)
