@@ -234,6 +234,14 @@ pub struct GameApp {
     running_shoes: Option<bool>,
     /// The touch screen shows the start menu's panel (`hud::start_menu_panel`).
     start_panel: bool,
+    /// Frames left to show both screens in the one-screen layout: the Pokégear is up (a phone
+    /// call's words are on the top screen, its choices on the touch screen; the user, 2026-11-18).
+    pokegear_hold: u8,
+    /// The touch screen's choice buttons the game waits on (the nurse's YES and NO, the PC's
+    /// list) and their words: the one-screen layout lists them in a white box over the picture
+    /// (the user, 2026-11-18).
+    choices: Vec<hud::TouchChoice>,
+    choice_tex: Vec<egui::TextureHandle>,
     /// And where the world's origin truly is in it (DS screen columns and rows): see `pixel_lock`.
     steady_origin: [f64; 2],
     /// With it, over the slid picture (split_layer): what the camera follows (the player, their
@@ -332,6 +340,9 @@ impl GameApp {
             steady_shift: None,
             running_shoes: None,
             start_panel: false,
+            pokegear_hold: 0,
+            choices: Vec::new(),
+            choice_tex: Vec::new(),
             steady_origin: [0.0; 2],
             attached: AttachedView::default(),
             fixed: Layer::default(),
@@ -538,6 +549,28 @@ impl GameApp {
                 if self.config.video.layout == Layout::OneScreen {
                     self.mega = hud::mega_state(&frame.pixels[256 * 192..]);
                     self.start_panel = hud::start_menu_panel(&frame.pixels[256 * 192..]);
+                    // The Pokégear (a phone call among it) shows both screens for a while after
+                    // its frame was last seen (its fades don't flip the layout).
+                    let bottom = &frame.pixels[256 * 192..];
+                    if hud::pokegear_shown(bottom) || hud::phone_call_shown(bottom) {
+                        self.pokegear_hold = 15;
+                    } else {
+                        self.pokegear_hold = self.pokegear_hold.saturating_sub(1);
+                    }
+                    let choices = hud::touch_choices(bottom);
+                    for (k, c) in choices.iter().enumerate() {
+                        let img = hud::choice_label(bottom, c);
+                        let nearest = egui::TextureOptions::NEAREST;
+                        match self.choice_tex.get_mut(k) {
+                            Some(t) => t.set(img, nearest),
+                            None => self.choice_tex.push(ctx.load_texture(
+                                format!("choice-{k}"),
+                                img,
+                                nearest,
+                            )),
+                        }
+                    }
+                    self.choices = choices;
                     if frame.running_shoes.is_some()
                         && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
                     {
@@ -1256,6 +1289,79 @@ impl GameApp {
             {
                 self.running_toggle(ui.ctx(), r, on);
             }
+        } else if scene == Scene::Overworld && self.game_textbox && !self.choices.is_empty() {
+            self.draw_choices(ui, middle);
+        }
+    }
+
+    /// The touch screen's choices (`self.choices`) in a white box at the right of the top screen
+    /// (`top`), over the game's text box: their words, a ▶ at the selected one. A click taps that
+    /// choice's button.
+    fn draw_choices(&mut self, ui: &egui::Ui, top: egui::Rect) {
+        let s = top.height() / 192.0;
+        let sizes: Vec<egui::Vec2> = self.choice_tex.iter().map(|t| t.size_vec2()).collect();
+        let n = self.choices.len().min(sizes.len());
+        if n == 0 {
+            return;
+        }
+        let (pad, cursor, gap) = (6.0, 11.0, 6.0);
+        let line = sizes[..n].iter().map(|v| v.y).fold(0.0, f32::max) + gap;
+        let text = sizes[..n].iter().map(|v| v.x).fold(0.0, f32::max);
+        let size = egui::vec2(2.0 * pad + cursor + text, 2.0 * pad + line * n as f32 - gap) * s;
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(
+                top.right() - 6.0 * s - size.x,
+                top.top() + 142.0 * s - size.y,
+            ),
+            size,
+        );
+        let p = ui.painter();
+        p.rect_filled(rect, 3.0 * s, egui::Color32::WHITE);
+        p.rect_stroke(
+            rect,
+            3.0 * s,
+            egui::Stroke::new(2.0 * s, egui::Color32::from_rgb(72, 72, 80)),
+            egui::StrokeKind::Inside,
+        );
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        for k in 0..n {
+            let c = self.choices[k];
+            let y = rect.top() + (pad + line * k as f32) * s;
+            let label = egui::Rect::from_min_size(
+                egui::pos2(
+                    rect.left() + (pad + cursor) * s,
+                    y + (line - gap - sizes[k].y) / 2.0 * s,
+                ),
+                sizes[k] * s,
+            );
+            p.image(self.choice_tex[k].id(), label, full, egui::Color32::WHITE);
+            if c.selected {
+                let (x, m) = (rect.left() + pad * s, label.center().y);
+                p.add(egui::Shape::convex_polygon(
+                    vec![
+                        egui::pos2(x, m - 4.0 * s),
+                        egui::pos2(x + 6.0 * s, m),
+                        egui::pos2(x, m + 4.0 * s),
+                    ],
+                    egui::Color32::from_rgb(24, 24, 24),
+                    egui::Stroke::NONE,
+                ));
+            }
+            let row = egui::Rect::from_min_max(
+                egui::pos2(rect.left(), y - gap / 2.0 * s),
+                egui::pos2(rect.right(), y + (line - gap / 2.0) * s),
+            );
+            if ui
+                .interact(
+                    row,
+                    egui::Id::new(("touch-choice", k)),
+                    egui::Sense::click(),
+                )
+                .clicked()
+            {
+                let at = (((c.x0 + c.x1) / 2) as u16, ((c.y0 + c.y1) / 2) as u16);
+                self.one.tap = Some((at, Instant::now()));
+            }
         }
     }
 
@@ -1335,7 +1441,8 @@ impl GameApp {
             .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
             .show(ctx, |ui| {
                 let area = ui.max_rect();
-                if self.config.video.layout == Layout::OneScreen {
+                let both = self.pokegear_hold > 0;
+                if self.config.video.layout == Layout::OneScreen && !both {
                     self.draw_one_screen(ui, area, scene, battle.as_ref());
                 } else {
                     let (top, bottom) = layout::screens(area, &self.config.video);

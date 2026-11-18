@@ -680,7 +680,7 @@ const PROMPTS_STEPS: &[Step] = &[
     Step::Wait(60),
     Step::Settle(60 * 20),
     // The PC, right of the counter.
-    Step::Walk(Keys::RIGHT, 64, ""),
+    Step::Walk(Keys::RIGHT, 48, ""),
     Step::Walk(Keys::UP, 16, ""),
     Step::Wait(20),
     Step::Press(Keys::A),
@@ -711,6 +711,37 @@ const PROMPTS_STEPS: &[Step] = &[
     Step::Wait(90),
     Step::Shot("save2"),
     Step::Raw("save2"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=gear: the Pokégear from the start menu, its phone, a call to the first
+/// contact (the one-screen layout shows both screens while it's up).
+const GEAR_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Press(Keys::X),
+    Step::Wait(60),
+    Step::Touch(40, 160),
+    Step::Wait(150),
+    Step::Shot("gear"),
+    Step::Touch(172, 178),
+    Step::Wait(90),
+    Step::Shot("phone"),
+    Step::Touch(60, 20),
+    Step::Wait(60),
+    Step::Shot("contact"),
+    Step::Raw("contact"),
+    Step::Press(Keys::A),
+    Step::Wait(90),
+    Step::Shot("call1"),
+    Step::Raw("call1"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("call2"),
+    Step::Raw("call2"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("call3"),
     Step::Close,
 ];
 
@@ -1230,6 +1261,7 @@ fn steps() -> &'static [Step] {
         Ok("through") => THROUGH_STEPS,
         Ok("grass") => GRASS_STEPS,
         Ok("prompts") => PROMPTS_STEPS,
+        Ok("gear") => GEAR_STEPS,
         Ok("follower") => FOLLOWER_STEPS,
         Ok("stand") => STAND_STEPS,
         Ok("step-down") => STEP_DOWN_STEPS,

@@ -783,6 +783,212 @@ pub fn draw_text_band(ui: &mut egui::Ui, frame: Rect, textbox: &egui::TextureHan
     );
 }
 
+/// A choice the game waits on, drawn as a button on the touch screen (the nurse's YES and NO, the
+/// PC's list): its face (DS pixels, x1 and y1 past the end) and whether it's the selected one (a
+/// red outline).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TouchChoice {
+    pub x0: usize,
+    pub y0: usize,
+    pub x1: usize,
+    pub y1: usize,
+    pub selected: bool,
+}
+
+fn channels(p: u32) -> (u32, u32, u32) {
+    ((p >> 16) & 255, (p >> 8) & 255, p & 255)
+}
+
+/// The touch screen's choice buttons (DS pixels 256 x 192, 0x00RRGGBB), 2 to 6 of them, or none.
+/// A button's face, down a column inside it clear of its words (x 40, or 236 for the PC's list,
+/// whose words start at the left): white (251) for at least 10 rows, then light grey (211, 170)
+/// and grey (130) for at least 10; its outline above it dark grey, or red when it's the selected
+/// one. Its width is the white run across its first white row.
+pub fn touch_choices(bottom: &[u32]) -> Vec<TouchChoice> {
+    [40, 236]
+        .iter()
+        .map(|&x| touch_choices_at(bottom, x))
+        .find(|c| !c.is_empty())
+        .unwrap_or_default()
+}
+
+fn touch_choices_at(bottom: &[u32], column: usize) -> Vec<TouchChoice> {
+    let x_at = column;
+    let px = |x: usize, y: usize| bottom.get(y * 256 + x).copied().unwrap_or(0);
+    let is = |p: u32, v: u32| {
+        let (r, g, b) = channels(p);
+        r.abs_diff(v) <= 6 && g.abs_diff(v) <= 6 && b.abs_diff(v) <= 6
+    };
+    let mut out = Vec::new();
+    let mut y = 0;
+    while y < 192 {
+        if !is(px(x_at, y), 251) {
+            y += 1;
+            continue;
+        }
+        let start = y;
+        while y < 192 && is(px(x_at, y), 251) {
+            y += 1;
+        }
+        if y - start < 10 || y >= 192 || !is(px(x_at, y), 211) {
+            continue;
+        }
+        let mut end = y;
+        while end < 192
+            && (is(px(x_at, end), 211) || is(px(x_at, end), 170) || is(px(x_at, end), 130))
+        {
+            end += 1;
+        }
+        if end - y >= 10 {
+            let row = start + 1;
+            let (mut x0, mut x1) = (x_at, x_at);
+            while x0 > 0 && is(px(x0 - 1, row), 251) {
+                x0 -= 1;
+            }
+            while x1 < 256 && is(px(x1, row), 251) {
+                x1 += 1;
+            }
+            let y0 = start.saturating_sub(2);
+            let (r, g, _) = channels(px(x_at, y0.saturating_sub(2)));
+            if x1 - x0 >= 40 {
+                out.push(TouchChoice {
+                    x0,
+                    y0,
+                    x1,
+                    y1: end,
+                    selected: r > 180 && g < 110,
+                });
+            }
+        }
+        y = end;
+    }
+    if (2..=6).contains(&out.len()) {
+        out
+    } else {
+        Vec::new()
+    }
+}
+
+/// The words on a choice's button, as their own picture: the pixels that differ from their row's
+/// face (white to grey), dark on clear (outlines black, fills dark grey), trimmed to them.
+pub fn choice_label(bottom: &[u32], c: &TouchChoice) -> egui::ColorImage {
+    let (w, h) = (c.x1 - c.x0, c.y1 - c.y0);
+    let mut ink = vec![None; w * h];
+    let (mut lx, mut ly, mut hx, mut hy) = (usize::MAX, usize::MAX, 0, 0);
+    for y in 0..h {
+        let row: Vec<u32> = (0..w)
+            .map(|x| {
+                bottom
+                    .get((c.y0 + y) * 256 + c.x0 + x)
+                    .copied()
+                    .unwrap_or(0)
+            })
+            .collect();
+        // The face's own colour on this row: the most common one.
+        let mut counts: Vec<(u32, usize)> = Vec::new();
+        for &p in &row {
+            match counts.iter_mut().find(|c| c.0 == p) {
+                Some(c) => c.1 += 1,
+                None => counts.push((p, 1)),
+            }
+        }
+        let face = counts.iter().max_by_key(|c| c.1).map_or(0, |c| c.0);
+        let (fr, fg, fb) = channels(face);
+        // Two columns in from each end: the face's rounded corners and shading.
+        let end = w.saturating_sub(2);
+        for x in 2..end {
+            let (r, g, b) = channels(row[x]);
+            if r.abs_diff(fr) > 30 || g.abs_diff(fg) > 30 || b.abs_diff(fb) > 30 {
+                ink[y * w + x] = Some(r + g + b < 3 * 128);
+            }
+        }
+        // White letters outlined in dark (the PC's list): on the face's white rows their fill is
+        // the face's colour; a pixel with the outline within two on both sides is a letter's (a
+        // stroke is that thin, the space between two words wider).
+        let dark: Vec<bool> = (0..w).map(|x| ink[y * w + x] == Some(true)).collect();
+        for x in 2..end {
+            if ink[y * w + x].is_none()
+                && (x.saturating_sub(2)..x).any(|k| dark[k])
+                && (x + 1..(x + 3).min(end)).any(|k| dark[k])
+            {
+                ink[y * w + x] = Some(false);
+            }
+        }
+        for x in 2..end {
+            if ink[y * w + x].is_some() {
+                lx = lx.min(x);
+                ly = ly.min(y);
+                hx = hx.max(x);
+                hy = hy.max(y);
+            }
+        }
+    }
+    if lx > hx || ly > hy {
+        return egui::ColorImage::new([1, 1], Color32::TRANSPARENT);
+    }
+    let (iw, ih) = (hx - lx + 1, hy - ly + 1);
+    let mut pixels = vec![Color32::TRANSPARENT; iw * ih];
+    for y in 0..ih {
+        for x in 0..iw {
+            if let Some(dark) = ink[(ly + y) * w + lx + x] {
+                pixels[y * iw + x] = if dark {
+                    Color32::from_rgb(24, 24, 24)
+                } else {
+                    Color32::from_rgb(104, 104, 104)
+                };
+            }
+        }
+    }
+    let mut img = egui::ColorImage::new([iw, ih], Color32::TRANSPARENT);
+    img.pixels = pixels;
+    img
+}
+
+/// Whether the touch screen shows the Pokégear (its map, radio or phone, a call included): the
+/// frame over its tab bar, white, black, white lines across the screen (rows 158, 160, 162) and
+/// the white one under it (row 190), at four places off the tabs (DS pixels 256 x 192,
+/// 0x00RRGGBB).
+pub fn pokegear_shown(bottom: &[u32]) -> bool {
+    const XS: [usize; 4] = [3, 60, 200, 252];
+    let level = |x: usize, y: usize| {
+        bottom.get(y * 256 + x).map(|&p| {
+            let (r, g, b) = ((p >> 16) & 255, (p >> 8) & 255, p & 255);
+            if r > 230 && g > 230 && b > 230 {
+                1
+            } else if r < 20 && g < 20 && b < 20 {
+                0
+            } else {
+                2
+            }
+        })
+    };
+    XS.iter().all(|&x| {
+        level(x, 158) == Some(1)
+            && level(x, 160) == Some(0)
+            && level(x, 162) == Some(1)
+            && level(x, 190) == Some(1)
+    })
+}
+
+/// Whether the touch screen shows a phone call (the Pokégear's): the list dimmed behind the
+/// call's wide grey button with its arrow (rows 145 and 172 grey across the screen, 227 and 138,
+/// the arrow at its middle). The call's words are on the top screen.
+pub fn phone_call_shown(bottom: &[u32]) -> bool {
+    let grey = |x: usize, y: usize, v: u32| {
+        bottom.get(y * 256 + x).is_some_and(|&p| {
+            let (r, g, b) = ((p >> 16) & 255, (p >> 8) & 255, p & 255);
+            r.abs_diff(v) <= 10 && g.abs_diff(v) <= 10 && b.abs_diff(v) <= 10
+        })
+    };
+    let arrow = bottom.get(160 * 256 + 128).is_some_and(|&p| {
+        let (r, g, b) = ((p >> 16) & 255, (p >> 8) & 255, p & 255);
+        r < 130 && g < 130 && b < 150 && b >= r
+    });
+    [20, 128, 236].iter().all(|&x| grey(x, 145, 227))
+        && [20, 236].iter().all(|&x| grey(x, 172, 138))
+        && arrow
+}
+
 /// Whether the touch screen shows the start menu's green panel (DS pixels 256 x 192,
 /// 0x00RRGGBB): five points inside it, (24, 203, 113). Not while its Save screen (or another
 /// application) has taken the touch screen: the running shoes' button goes with the panel.
