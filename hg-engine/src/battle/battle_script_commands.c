@@ -941,6 +941,8 @@ BOOL LONG_CALL Link_QueueIsDrained(struct BattleStruct *sp)
 // past the check, each at most 259 bytes. Not a link battle: only ServerQue[0] is used, as
 // before. The end waits for every game (BattleContext_Main, Link_QueueIsDrained).
 #define COOP_RUN_AHEAD 8
+// The FreePartyGaugeGraphics script command (asm/include/battle_commands.inc).
+#define COOP_BSCRIPT_FREE_PARTY_GAUGE_GRAPHICS 194
 
 /**
  *  @brief check if waitmessage battle script command should end
@@ -980,7 +982,14 @@ BOOL LONG_CALL Link_QueueIsEmpty(struct BattleStruct *sp)
  */
 BOOL btl_scr_cmd_0E_waitmessage(void *bw UNUSED, struct BattleStruct *sp)
 {
-    BOOL empty = Link_QueueIsEmpty(sp);
+    // KNOWN_RISKS #130: a game's HidePartyGauge empties its command slot at once and frees the
+    // gauge only when the hide animation ends; FreePartyGaugeGraphics (to another battler's
+    // slot) frees the gauge's graphics at once. Vanilla's Wait kept the two apart on every game;
+    // run ahead, a lagging game could take both together and draw the gauge from freed graphics
+    // (a data abort in NNS DrawCellToSurface2D_). Every FreePartyGaugeGraphics follows a Wait:
+    // there, wait for every game (not a link battle: the same as Link_QueueIsEmpty).
+    BOOL empty = sp->SkillSeqWork[sp->skill_seq_no + 1] == COOP_BSCRIPT_FREE_PARTY_GAUGE_GRAPHICS
+        ? Link_QueueIsDrained(sp) : Link_QueueIsEmpty(sp);
 
 #if COOP_DEBUG_TOOLS
     // Link battle rework phase 0: how many waits, and how long, per link battle.
