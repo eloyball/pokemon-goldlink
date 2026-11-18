@@ -534,6 +534,11 @@ void gl_core_set_hide_game_shadows(GlCore *core, int on)
     static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer()).HideGameShadows = on != 0;
 }
 
+void gl_core_set_hide_blob_shadows(GlCore *core, int on)
+{
+    static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer()).HideBlobShadows = on != 0;
+}
+
 void gl_core_set_soften_game_shadows(GlCore *core, int on)
 {
     static_cast<melonDS::SoftRenderer &>(core->nds->GPU.GPU3D.GetCurrentRenderer()).SoftenGameShadows = on != 0;

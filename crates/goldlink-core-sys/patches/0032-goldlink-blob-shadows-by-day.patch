@@ -1,0 +1,29 @@
+GoldLink's change to melonDS (UC14): HideBlobShadows leaves the blobs under people, the follower
+and NPCs (GameShadow 1) out too while GoldLink's sun casts shadows. The user (2026-11-18): the
+game's shadows under characters only by night with dynamic shadows on, to mimic moonlight.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+--- a/src/GPU3D_Soft.h	2026-11-18 13:23:31.813851941 -0500
++++ b/src/GPU3D_Soft.h	2026-11-18 13:23:40.880788339 -0500
+@@ -105,6 +105,9 @@
+     // shadow) left out of the picture while GoldLink casts its own. Patch 0031: only the painted
+     // ones (GameShadow 2); the blobs under people (1) stay.
+     bool HideGameShadows = false;
++    // GoldLink (patch 0032): with HideGameShadows, the blobs under people (GameShadow 1) left out
++    // too, while the sun casts (the user: the game's blobs only by night, as moonlight).
++    bool HideBlobShadows = false;
+     // GoldLink (UC13): the game's painted shadows (a building's, a sign's, the windmill post's)
+     // drawn just visible (darkening at most SoftShadowDark): by night they stay, but at the game's
+     // strength they looked too dark beside the lighting (the user). Painted: black ones, or ones
+--- a/src/GPU3D_Soft.cpp	2026-11-18 13:23:31.813085839 -0500
++++ b/src/GPU3D_Soft.cpp	2026-11-18 13:23:40.881030257 -0500
+@@ -2282,7 +2282,7 @@
+         // GoldLink (patch 0031): the painted shadows left out, the blobs under people kept (the
+         // user: the characters look odd without them).
+         if (drawn >= 0)
+-            HideList[drawn] = HideGameShadows && game == 2;
++            HideList[drawn] = HideGameShadows && (game == 2 || (game == 1 && HideBlobShadows));
+         g.Polys.push_back(sp);
+     }
+ }

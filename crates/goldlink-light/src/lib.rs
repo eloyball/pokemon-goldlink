@@ -28,7 +28,7 @@ mod gpu;
 mod places;
 mod shadow;
 
-pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert};
+pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert, sun_casts};
 
 /// The DS screen's height.
 pub const HEIGHT: usize = 192;

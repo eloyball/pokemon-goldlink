@@ -650,6 +650,13 @@ impl Nds {
         unsafe { sys::gl_core_set_hide_game_shadows(self.ptr(), c_int::from(on)) }
     }
 
+    /// With the game's shadows hidden, the blobs under people left out too (patch 0032): while
+    /// GoldLink's sun casts (the user: the game's blobs by night only, as moonlight).
+    pub fn set_hide_blob_shadows(&mut self, on: bool) {
+        // SAFETY: the core is live; the shim only sets a flag.
+        unsafe { sys::gl_core_set_hide_blob_shadows(self.ptr(), c_int::from(on)) }
+    }
+
     /// What the lighting needs from the top screen (UC11) into `out`; false when the top screen
     /// can't show the 3D scene (then `out` is left as it was).
     pub fn light_buffers(&self, out: &mut LightBuffers) -> bool {

@@ -104,6 +104,11 @@ pub fn sun(hours: f32) -> Option<(f32, f32, f32)> {
     Some((azimuth, elevation.max(20f32.to_radians()), strength))
 }
 
+/// Whether the sun casts shadows at `hours` (by day; not from dusk to dawn, under the moon).
+pub fn sun_casts(hours: f32) -> bool {
+    sun(hours).is_some()
+}
+
 /// The moon at `hours` (its azimuth, elevation and how strong its shadows are): it crosses the
 /// northern sky by night as the sun does by day (rising at 20, setting at 5, 45 degrees at its
 /// highest), its shadows half the sun's strength (the night's key light is faint as it is).
@@ -146,6 +151,10 @@ pub(crate) struct Card {
     /// (taller than a person) as the mean along its middle (by its foot alone a forest came out
     /// patchy).
     pub(crate) attached: bool,
+    /// Its foot is on another card: a sprite drawn over one (an NPC's "!" emote bubble over their
+    /// head), not standing on the ground. It casts nothing (the user, 2026-11-18: the bubble's
+    /// silhouette lengthened its owner's shadow).
+    pub(crate) floating: bool,
 }
 
 impl Card {
@@ -621,8 +630,49 @@ impl Shadows {
                 sum / area
             })
         };
+        // Fences cast nothing (the user, 2026-11-18: side by side their shadows looked like
+        // separate blocks, as the trees' did): a fence is a short upright face whose texture is
+        // largely see-through (the gaps between its pickets), and any short upright face that
+        // touches one (its rails and caps).
+        let upright_box = |corners: &[Corner]| -> Option<([f32; 3], [f32; 3])> {
+            let hs = corners.iter().map(|c| dot(c.p, up));
+            let h = hs.clone().fold(f32::MIN, f32::max) - hs.fold(f32::MAX, f32::min);
+            (h <= FENCE_HEIGHT).then(|| {
+                let mut lo = [f32::MAX; 3];
+                let mut hi = [f32::MIN; 3];
+                for c in corners {
+                    for i in 0..3 {
+                        lo[i] = lo[i].min(c.p[i]);
+                        hi[i] = hi[i].max(c.p[i]);
+                    }
+                }
+                (lo, hi)
+            })
+        };
+        let fences: Vec<([f32; 3], [f32; 3])> = placed
+            .iter()
+            .filter(|(_, n, p)| p.tex >= 0 && dot(*n, up).abs() < 0.3)
+            .filter_map(|(corners, _, p)| {
+                let t = g.texs.get(p.tex as usize)?;
+                let b = upright_box(corners)?;
+                (see_through(corners, *t, p.tex_param, g.alpha) >= FENCE_SEE_THROUGH).then_some(b)
+            })
+            .collect();
+        let in_fence = |corners: &[Corner]| {
+            upright_box(corners).is_some_and(|(lo, hi)| {
+                fences.iter().any(|(flo, fhi)| {
+                    (0..3).all(|i| lo[i] <= fhi[i] + FENCE_TOUCH && hi[i] >= flo[i] - FENCE_TOUCH)
+                })
+            })
+        };
         let mut shapes: Vec<(Vec<Corner>, Option<ShadowTex>, u32)> = Vec::new();
+        // Each card's feet (where they are and on the picture) and the place the picture shows
+        // just under them: a second look once every card is known.
+        let mut under: Vec<(V3, Option<V3>)> = Vec::new();
         for (corners, n, p) in &placed {
+            if !fences.is_empty() && dot(*n, up).abs() < 0.3 && in_fence(corners) {
+                continue;
+            }
             let tex = (p.tex >= 0)
                 .then(|| g.texs.get(p.tex as usize))
                 .flatten()
@@ -666,6 +716,7 @@ impl Shadows {
                         .filter(|q| dot(sub(*q, bottom), n) < -2.0)
                         .take(2)
                         .collect();
+                    under.push((bottom, below.first().copied()));
                     let foot = match below[..] {
                         [p1, p2] if dot(sub(p1, p2), sub(p1, p2)) < 16.0 => {
                             add(p1, scale(sub(p1, p2), 0.5))
@@ -692,6 +743,7 @@ impl Shadows {
                         tex,
                         param: p.tex_param,
                         attached: p.flags & FLAG_ATTACHED != 0,
+                        floating: false,
                     });
                     shapes.push((corners.clone(), tex, p.tex_param));
                     continue;
@@ -778,6 +830,52 @@ impl Shadows {
                 }
             }
         }
+        // What the picture shows just under a card's feet may be another card (the user,
+        // 2026-11-18): an NPC's "!" bubble over their head, or the player passing their follower
+        // behind them (the player lit there dimmed for a moment). Well above that card's feet the
+        // card floats (the bubble: it casts nothing); else its foot goes back along the camera's
+        // ray to the height of the other card's feet.
+        // The feet of the card a point is on (other than card k).
+        let on_card = |cards: &[Card], k: usize, q: V3| -> Option<V3> {
+            cards
+                .iter()
+                .enumerate()
+                .find(|&(j, o)| {
+                    let d = sub(q, o.origin);
+                    let (x, y) = (dot(d, o.across), dot(d, o.up));
+                    j != k
+                        && dot(d, o.normal).abs() < FLOAT_PLANE
+                        && x >= o.a[0] - 1.0
+                        && x <= o.a[1] + 1.0
+                        && y >= o.b[0] - 1.0
+                        && y <= o.b[1] + 1.0
+                })
+                .map(|(_, o)| o.foot)
+        };
+        let fixes: Vec<Option<(V3, bool)>> = (0..self.cards.len())
+            .map(|k| {
+                let (bottom, first) = under.get(k).copied()?;
+                let feet = on_card(&self.cards, k, first?)?;
+                let above = dot(sub(bottom, feet), up);
+                if above > FLOAT_HEIGHT {
+                    return Some((self.cards[k].foot, true));
+                }
+                let d = back(bottom);
+                let du = dot(d, up);
+                let foot = if du.abs() > 1e-4 {
+                    add(bottom, scale(d, -above / du))
+                } else {
+                    bottom
+                };
+                Some((foot, false))
+            })
+            .collect();
+        for (c, fix) in self.cards.iter_mut().zip(fixes) {
+            if let Some((foot, floating)) = fix {
+                c.foot = foot;
+                c.floating = floating;
+            }
+        }
         self.ready = true;
     }
 
@@ -787,7 +885,7 @@ impl Shadows {
         self.cards
             .iter()
             .enumerate()
-            .filter(|(_, c)| trees || c.b[1] - c.b[0] <= TREE_HEIGHT)
+            .filter(|(_, c)| !c.floating && (trees || c.b[1] - c.b[0] <= TREE_HEIGHT))
             .map(|(k, c)| Caster {
                 corners: c.standing(self.up, toward(c.foot)),
                 tex: c.tex,
@@ -1022,6 +1120,19 @@ const LEVEL_SPREAD: f32 = 3.0;
 /// picture's edge, a step's top, aren't one).
 const LEVEL_MIN_AREA: f32 = 64.0;
 
+/// A fence's faces: no taller than this (view units; the game's are 4.8, a windmill's blades 8),
+/// a picket face at least this see-through, and its rails within this of one.
+const FENCE_HEIGHT: f32 = 6.0;
+const FENCE_SEE_THROUGH: f32 = 0.4;
+const FENCE_TOUCH: f32 = 1.0;
+
+/// How near another card's plane a point must be to be on it, and how far above the feet of the
+/// card under it a card's feet must be to float over it (view units: the bubble over a person's
+/// head is about 30 up).
+const FLOAT_HEIGHT: f32 = 8.0;
+/// How near another card's plane a point must be to be on it (view units).
+const FLOAT_PLANE: f32 = 3.0;
+
 /// Cards taller than this (view units) are scenery (trees): lit by their middle, not their foot.
 const TREE_HEIGHT: f32 = 44.0;
 
@@ -1048,6 +1159,37 @@ impl Tri {
 
 /// A texel coordinate wrapped as the DS does: repeat (bit `rep`), mirrored (bit `flip`), else
 /// clamped (maps.wgsl `wrap` too).
+/// The share of a polygon's texels (within its texture coordinates' box) that don't show: a
+/// fence's gaps between its pickets.
+fn see_through(c: &[Corner], t: ShadowTex, param: u32, alpha: &[u8]) -> f32 {
+    let (mut s0, mut s1, mut t0, mut t1) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for k in c {
+        s0 = s0.min(k.st[0]);
+        s1 = s1.max(k.st[0]);
+        t0 = t0.min(k.st[1]);
+        t1 = t1.max(k.st[1]);
+    }
+    let (mut all, mut clear) = (0u32, 0u32);
+    for tr in t0.floor() as i32..t1.ceil() as i32 {
+        let tr = wrap(tr, t.height as i32, param, 17, 19);
+        for sc in s0.floor() as i32..s1.ceil() as i32 {
+            let sc = wrap(sc, t.width as i32, param, 16, 18);
+            match alpha.get(t.offset as usize + tr as usize * t.width as usize + sc as usize) {
+                Some(&a) => {
+                    all += 1;
+                    clear += u32::from(a < 16);
+                }
+                None => return 0.0,
+            }
+        }
+    }
+    if all == 0 {
+        0.0
+    } else {
+        clear as f32 / all as f32
+    }
+}
+
 fn wrap(v: i32, size: i32, param: u32, rep: u32, flip: u32) -> i32 {
     if param & (1 << rep) != 0 {
         if param & (1 << flip) != 0 && v & size != 0 {

@@ -388,13 +388,18 @@ fn run(
         // Outdoors with dynamic shadows the game's painted ones (a building's, a sign's) are left
         // out from the next frame, by day (the sun's) and by night (the lit windows' and lamps'):
         // the user, after the GPU's shadows (UC14), had them gone by night too. The blobs under
-        // people, the follower and NPCs stay (patch 0031: the user, the characters look odd
-        // without them). Indoors, in caves and with dynamic shadows off they're all the game's
-        // (the user: vanilla there).
+        // people, the follower and NPCs stay by night (patch 0031: the user, the characters look
+        // odd without them) and go while the sun casts (patch 0032: the user, 2026-11-18, the
+        // blobs only by night, as moonlight). Indoors, in caves and with dynamic shadows off
+        // they're all the game's (the user: vanilla there).
         let outdoors = light_now.as_ref().is_some_and(|l| {
             l.overworld() && goldlink_light::Place::of_map(l.map) == goldlink_light::Place::Outdoor
         });
         emu.nds.set_hide_game_shadows(outdoors && shadows);
+        let sunlit = light_now
+            .as_ref()
+            .is_some_and(|l| goldlink_light::sun_casts(l.hour as f32 + l.minute as f32 / 60.0));
+        emu.nds.set_hide_blob_shadows(outdoors && shadows && sunlit);
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);

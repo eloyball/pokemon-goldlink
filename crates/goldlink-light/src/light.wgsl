@@ -11,6 +11,8 @@ const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
 const NEAR: f32 = 0.5;
 const TREE_HEIGHT: f32 = 44.0;
+// Cards whose feet are nearer than this (view units; a tile is 16) don't shadow each other's light.
+const CARD_NEAR: f32 = 12.0;
 // Words per pixel out of the light pass (gpu.rs `WORDS`).
 const WORDS: u32 = 7u;
 
@@ -400,6 +402,12 @@ fn visible(point: i32, p: vec3<f32>, n: vec3<f32>, attached: bool, card: i32) ->
     }
     let k = u32(o - 1);
     if i32(k) == card || holds(k, p) || (!attached && cards[k].origin.w > 0.5) {
+        return 1.0;
+    }
+    // A card lit as one isn't shadowed by a card standing where it stands (the player passing
+    // their follower: lit at its feet in the follower's shadow, the player dimmed for a moment;
+    // the user, 2026-11-18).
+    if card >= 0 && length(cards[k].foot.xyz - cards[u32(card)].foot.xyz) < CARD_NEAR {
         return 1.0;
     }
     return 0.0;
