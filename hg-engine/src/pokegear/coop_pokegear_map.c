@@ -161,6 +161,8 @@ struct CoopPgMapState
     u8 customOk;                  // the custom heads' VRAM was empty at load
     u8 custom[COOP_PGMAP_HEADS];  // the avatar whose head is drawn there (0: vanilla frame)
     u32 vanillaBase[COOP_PGMAP_HEADS]; // each head's own image proxy base, to put back
+    u8 ownAvatar;                 // the avatar the map's own player icon shows (0: the save's look, vanilla)
+    u8 ownCustom;                 // its custom head is in the spot after the heads'
 };
 __attribute__((section(".coop_pgmap_state"), used)) struct CoopPgMapState gCoopPgMap = { .magic = COOP_PGMAP_MAGIC };
 
@@ -248,6 +250,39 @@ static void Coop_PgSetCustom(struct CoopPgSprite *head, u32 i, u32 avatar, int r
 #endif
 }
 
+// The map's own player icon in this player's avatar (the user, 2026-11-18): its custom head (in
+// the spot after the others' heads), or Ethan's or Lyra's for avatars 1 and 2. Vanilla draws the
+// save's gender; nothing changes for avatar 0.
+static void Coop_PgOwnHead(struct CoopPgSprite *icon)
+{
+    u32 avatar = gCoopCommBlock.local_avatar, k, base;
+    int row;
+
+    if (icon == NULL || avatar == gCoopPgMap.ownAvatar)
+        return;
+    row = gCoopPgMap.customOk ? Coop_PgHeadRow(avatar) : -1;
+    gCoopPgMap.ownAvatar = (u8)avatar;
+#ifdef COOP_AVATAR_MAP_HEAD_TILES
+    if (row >= 0)
+    {
+        for (k = 0; k < COOP_PGMAP_HEAD_BYTES; k += 2) // VRAM takes 16-bit writes
+            *(vu16 *)(Coop_PgSpotAddr(COOP_PGMAP_HEADS) + k)
+                = (u16)(sCoopHeadTiles[row][k] | (sCoopHeadTiles[row][k + 1] << 8));
+        base = COOP_PGMAP_HEAD_VRAM + COOP_PGMAP_HEADS * COOP_PGMAP_HEAD_BYTES - COOP_PGMAP_HEAD_CHAR * 32;
+        __builtin_memcpy((u8 *)icon + COOP_SPRITE_VRAM_MAIN, &base, sizeof(u32));
+        CLACT_AnmFrameSet(icon, 0); // Ethan's cell: characters 8-11
+        gCoopPgMap.ownCustom = TRUE;
+        return;
+    }
+#else
+    (void)k;
+    (void)base;
+    (void)row;
+#endif
+    if (avatar == 1 || avatar == 2)
+        CLACT_AnmFrameSet(icon, (int)avatar - 1);
+}
+
 static void Coop_PgMapUpdate(SysTask *task, void *data)
 {
     struct CoopPgMapApp *mapApp = gCoopPgMap.mapApp;
@@ -261,6 +296,7 @@ static void Coop_PgMapUpdate(SysTask *task, void *data)
     if (mapApp == NULL || mapApp->objManager == NULL)
         return;
     player = &mapApp->objManager->objects[PGMAP_SPRITE_PLAYER];
+    Coop_PgOwnHead(player->sprite);
     grid = 8 * (1 + (mapApp->flags138 & 1));
     shown = Coop_PgRegion(mapApp->matrixX, mapApp->matrixY - 2);
     gCoopPgMap.frames++;
@@ -329,6 +365,11 @@ static void Coop_PgMapRemoveHeads(void)
                 *(vu16 *)(Coop_PgSpotAddr(i) + k) = 0;
         gCoopPgMap.custom[i] = 0;
     }
+    if (gCoopPgMap.ownCustom) // the icon goes with vanilla's sprites; its spot is left empty
+        for (k = 0; k < COOP_PGMAP_HEAD_BYTES; k += 2)
+            *(vu16 *)(Coop_PgSpotAddr(COOP_PGMAP_HEADS) + k) = 0;
+    gCoopPgMap.ownCustom = FALSE;
+    gCoopPgMap.ownAvatar = 0;
     gCoopPgMap.mapApp = NULL;
 }
 
@@ -342,7 +383,7 @@ void LONG_CALL Coop_PgMap_LoadSprites(struct CoopPgMapApp *mapApp)
     gCoopPgMap.mapApp = mapApp;
     // Custom heads only when their VRAM is free (nothing of the map's own is there).
     gCoopPgMap.customOk = TRUE;
-    for (i = 0; i < COOP_PGMAP_HEADS * COOP_PGMAP_HEAD_BYTES; i += 4)
+    for (i = 0; i < (COOP_PGMAP_HEADS + 1) * COOP_PGMAP_HEAD_BYTES; i += 4) // the heads' and our icon's
         if (*(vu32 *)(Coop_PgSpotAddr(0) + i) != 0)
             gCoopPgMap.customOk = FALSE;
     for (i = 0; i < COOP_PGMAP_HEADS; i++)
