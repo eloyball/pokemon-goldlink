@@ -180,9 +180,11 @@ const WALK_RIGHT_STEPS: &[Step] = &[
 const WIDE_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(120),
-    // A level 100 Mewtwo alone in the party: the scenes' battles end with A alone (a lead that
-    // faints asks for another, and A on the party screen went round in circles).
-    Step::Lead("MEWTWO", "NONE", 100),
+    // A level 100 Giratina alone in the party: the scenes' battles end with A alone (a lead that
+    // faints asks for another, and A on the party screen went round in circles). A takes the
+    // first move: Giratina's is Dragon Claw (Mewtwo's was Mist, and Rocket HQ's battles never
+    // ended).
+    Step::Lead("GIRATINA", "NONE", 100),
     Step::Wait(120),
     Step::Wide,
     Step::Close,
@@ -466,6 +468,14 @@ pub(crate) fn capture_prompt(emu: &Emulator, dir: &std::path::Path, name: &str) 
     };
     let _ = write_png(&dir.join(format!("{name}.png")), &img);
     let top: Vec<u32> = emu.nds.framebuffer(0).to_vec();
+    let top_img = egui::ColorImage {
+        size: [256, 192],
+        pixels: top
+            .iter()
+            .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+            .collect(),
+    };
+    let _ = write_png(&dir.join(format!("{name}-top.png")), &top_img);
     let rows = &top[256 * goldlink::hud::SCENE_ROWS as usize..256 * 192];
     let scene = scene_of(&ram[at..at + MAILBOX_SIZE]);
     format!(

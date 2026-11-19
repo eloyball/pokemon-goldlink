@@ -167,6 +167,9 @@ pub struct Pass {
     player: Option<(i32, i32)>,
     key_from: Option<(i32, i32)>,
     alt: usize,
+    /// The game as it was before the first case: a case that stays stuck (a battle that never
+    /// ends) is left by loading it, so the cases after it still run.
+    base: Option<Vec<u8>>,
 }
 
 fn u32_at(ram: &[u8], addr: u32) -> Option<u32> {
@@ -401,6 +404,10 @@ impl Pass {
                     self.index + 1,
                     self.cases.len()
                 );
+                if self.base.is_none() {
+                    self.base = emu.nds.savestate();
+                    eprintln!("tour: wide: base state kept: {}", self.base.is_some());
+                }
                 // First the pointers (no warp), then the story, then the warp.
                 self.debug(emu, buffer, [0, 0, 0, 0]);
                 self.phase = Phase::Ack(self.seq, 0, 0);
@@ -445,7 +452,10 @@ impl Pass {
                 if n > 3600 {
                     // Never free after the warp (a scene that won't end, a screen that stays
                     // dark): the case is skipped, as the run would wait forever.
-                    eprintln!("tour: wide {}: never settled (scene {scene:?}, busy {field_busy})", case.id);
+                    eprintln!(
+                        "tour: wide {}: never settled (scene {scene:?}, busy {field_busy})",
+                        case.id
+                    );
                     self.line(format_args!("K {n} never settled"));
                     self.index += 1;
                     self.phase = Phase::Recover(0);
@@ -606,8 +616,17 @@ impl Pass {
                     self.line(format_args!("K {n} recovered"));
                     self.phase = Phase::Next;
                 } else if n > 3600 {
-                    eprintln!("tour: wide: stuck after {}", self.cases[self.index - 1].id);
-                    self.line(format_args!("K {n} still stuck"));
+                    let loaded = self
+                        .base
+                        .as_ref()
+                        .is_some_and(|b| emu.nds.load_savestate(b).is_ok());
+                    eprintln!(
+                        "tour: wide: stuck after {}; base state loaded: {loaded}",
+                        self.cases[self.index - 1].id
+                    );
+                    self.line(format_args!(
+                        "K {n} still stuck; base state loaded: {loaded}"
+                    ));
                     self.phase = Phase::Next;
                 } else {
                     if n % 20 < 3 {
