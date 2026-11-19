@@ -1284,6 +1284,50 @@ const FLY_LANDING_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=cutin-lit (TOUR_SAVE=build/fixtures/saves/test02.sav TOUR_TID=3351149459):
+/// avatar 3 on Cherrygrove's shore facing the sea (cutin_probe.lua's tile), vanilla's Surf from
+/// party slot 0: the HM cut-in's banner stays unlit, as the game draws it (KNOWN_RISKS #135).
+const CUTIN_LIT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Press(Keys::B),
+    Step::Wait(20),
+    Step::Avatar(3),
+    Step::WarpTo(67, 538, 406, 2),
+    Step::Wait(300),
+    Step::Shot("shore"),
+    Step::Debug(C::COOP_DEBUG_SURF as u8, 0),
+    Step::Wait(10),
+    Step::Shot("cutin-00"),
+    Step::Wait(10),
+    Step::Shot("cutin-01"),
+    Step::Wait(10),
+    Step::Shot("cutin-02"),
+    Step::Wait(10),
+    Step::Shot("cutin-03"),
+    Step::Wait(10),
+    Step::Shot("cutin-04"),
+    Step::Wait(10),
+    Step::Shot("cutin-05"),
+    Step::Wait(10),
+    Step::Shot("cutin-06"),
+    Step::Wait(10),
+    Step::Shot("cutin-07"),
+    Step::Wait(10),
+    Step::Shot("cutin-08"),
+    Step::Wait(10),
+    Step::Shot("cutin-09"),
+    Step::Wait(10),
+    Step::Shot("cutin-10"),
+    Step::Wait(10),
+    Step::Shot("cutin-11"),
+    Step::Wait(10),
+    Step::Shot("cutin-12"),
+    Step::Wait(10),
+    Step::Shot("cutin-13"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=link-a / link-b (dev/run_visual_pair.sh link): two windows in one
 /// room, a link battle between them (debug command 12, 6 on A and 7 on B, as
 /// link_e2e_probe.lua), A every 40 frames through it.
@@ -1498,6 +1542,12 @@ fn record_frame(emu: &mut Emulator, path: &std::path::Path) -> std::io::Result<(
     // palOffset +0x2A, the palette proxy +0xD8..+0xEC); then the main engine's sprite pieces
     // (OAM) whose centre lies in a box, as the sprite move (patch 0002) sees them.
     let mut line = line;
+    // The layer mask's values over the frame (0 2D, 1 3D on top, 2 under 2D, 3 a sprite on it).
+    let mut hist = [0usize; 4];
+    for v in &b.layer {
+        hist[usize::from(*v).min(3)] += 1;
+    }
+    line += &format!("layers {hist:?} tint {:?}\n", b.sprite_tint);
     let moves: Vec<[i32; 7]> = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram())
         .map(|b| goldlink::goldlink_bridge::battle_ui::box_moves(&b, 1))
         .unwrap_or_default();
@@ -1639,6 +1689,7 @@ fn steps() -> &'static [Step] {
         Ok("battle-growl") => BATTLE_GROWL_STEPS,
         Ok("warp-twice") => WARP_TWICE_STEPS,
         Ok("fly-landing") => FLY_LANDING_STEPS,
+        Ok("cutin-lit") => CUTIN_LIT_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
         Ok("boss-a") => BOSS_STEPS[0],

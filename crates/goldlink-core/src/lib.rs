@@ -338,6 +338,9 @@ pub struct LightBuffers {
     pub fade: Vec<Fade>,
     /// The picture's polygons (UC13).
     pub geometry: ShadowGeometry,
+    /// The game's own tint on the player's sprite (melonDS patch 0036): per channel, what the DS
+    /// multiplies its texture by (1: none). KNOWN_RISKS #135.
+    pub sprite_tint: [f32; 3],
 }
 
 /// The polygon ID the ROM draws a neighbouring area's map blocks with (their graphics aren't
@@ -671,6 +674,8 @@ impl Nds {
         out.depth.resize(n, 0);
         out.layer.resize(n, 0);
         out.ids.resize(n, 0);
+        // SAFETY: sprite_tint holds 3 floats, what the shim writes.
+        unsafe { sys::gl_core_sprite_tint(self.ptr(), out.sprite_tint.as_mut_ptr()) };
         // SAFETY: depth, layer and ids hold 384 * 192 each, what the shim writes; proj holds 16.
         let kind = unsafe {
             sys::gl_core_light_buffers(

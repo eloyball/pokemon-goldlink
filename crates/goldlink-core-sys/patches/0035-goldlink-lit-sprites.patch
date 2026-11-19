@@ -1,0 +1,30 @@
+GoldLink's change to melonDS (UC14, KNOWN_RISKS #135): the light buffers' layer mask tells a sprite
+straight on the 3D scene (3) from other 2D over it (2).
+
+GoldLink's lighting lights the 3D scene and the player's 3D sprite but left every 2D layer as the
+game drew it: Fly's landing trainer, a 2D sprite, landed at full brightness and darkened as the
+player's sprite took over (the user's play test, 2026-11-19). The lighting lights layer 3 as the
+player. A sprite over a background (the HM cut-in's banner, a menu's cursor) stays 2.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
+diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
+index b0c8768..2d2510e 100644
+--- a/src/GPU2D_Soft.cpp
++++ b/src/GPU2D_Soft.cpp
+@@ -1006,7 +1006,13 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+                 int col = i + SideShift + MaxSide;
+                 if (col >= 0 && col < 256 + 2 * MaxSide)
+                 {
+-                    mask[col] = ((val1 >> 24) & 0xC0) == 0x40 ? 1 : ((val2 >> 24) & 0xC0) == 0x40 ? 2 : 0;
++                    // 3 (GoldLink, KNOWN_RISKS #135): a sprite straight on the 3D scene (Fly's
++                    // landing trainer, an emote bubble): lit as the player, as its 3D sprite is.
++                    // A sprite on a background (the HM cut-in's banner, a menu's cursor) isn't.
++                    // A sprite's flags: 0x10, or 0x80 semi-transparent (0xC0 | alpha a bitmap
++                    // one); a background's 0x01 << its number; the 3D layer's 0x40.
++                    mask[col] = ((val1 >> 24) & 0xC0) == 0x40 ? 1
++                        : ((val2 >> 24) & 0xC0) == 0x40 ? (((val1 >> 24) & 0x90) ? 3 : 2) : 0;
+                     const u32 flag1 = val1 >> 24;
+                     Fixed2D[line][col] = (flag1 & 0x40) == 0 && flag1 != 0x20 && !BlendsWith3D(i, val1, val2);
+                 }

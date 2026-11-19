@@ -93,6 +93,11 @@ uint8_t *gl_core_save(GlCore *core, uint32_t *len);
 // The front buffer of a screen (0 top, 1 bottom): 256 x 192 pixels, 0x00RRGGBB.
 const uint32_t *gl_core_framebuffer(GlCore *core, int screen);
 
+// The game's own tint on the attached sprites (the player, a follower) in the frame on screen:
+// per channel (vertex colour + 1) / 64, as the DS modulates their texture (melonDS patch 0036;
+// the last one while none is drawn). rgb holds 3.
+void gl_core_sprite_tint(GlCore *core, float *rgb);
+
 // GoldLink's wider picture (UC9 §4, a change to melonDS's 3D engine): the 3D view keeps `side`
 // more pixels on each side (0 = off; at most GL_CORE_MAX_WIDE_SIDE).
 #define GL_CORE_MAX_WIDE_SIDE 64

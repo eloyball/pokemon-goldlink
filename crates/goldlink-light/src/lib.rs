@@ -32,6 +32,9 @@ pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert, sun_casts};
 
 /// The DS screen's height.
 pub const HEIGHT: usize = 192;
+/// The layer mask's value for a 2D sprite straight on the 3D scene (melonDS patch 0035): lit as the
+/// player, as the player's own 3D sprite is (KNOWN_RISKS #135).
+pub const SPRITE_ON_SCENE: u8 = 3;
 
 /// The game's time of day (pret `GF_RTC_GetTimeOfDayByHour`; late night counts as night).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +82,8 @@ impl Place {
 pub struct Scene<'a> {
     /// 24-bit Z depth.
     pub depth: &'a [u32],
-    /// 1: the 3D scene on top (lit); anything else: a 2D layer shows there (left as it is).
+    /// 1: the 3D scene on top (lit); [`SPRITE_ON_SCENE`]: a 2D sprite straight on it (lit as the
+    /// player); anything else: a 2D layer shows there (left as it is).
     pub layer: &'a [u8],
     /// The projection matrix, 20.12, row by row (vectors on the left).
     pub proj: [i32; 16],
@@ -94,6 +98,10 @@ pub struct Scene<'a> {
     /// (`width` x 192, or empty): lit there as the player, so their own shadow on the ground
     /// under them doesn't darken them.
     pub attached: &'a [u8],
+    /// The game's own tint on the player's sprite (per channel, what the DS multiplies its
+    /// texture by; 0 or less: none): 2D sprites on the scene ([`SPRITE_ON_SCENE`]) take it too,
+    /// as the player's 3D sprite has it (KNOWN_RISKS #135: Fly's landing by evening and night).
+    pub sprite_tint: [f32; 3],
     /// Whether the picture's polygons cast shadows (the Shadows setting); they're given either
     /// way (the cards: what shows on a sprite is never a light source).
     pub shadows: bool,
@@ -493,7 +501,7 @@ const TRACK_REACH: f32 = 32.0;
 struct Cell {
     base: V3,
     pos: V3,
-    /// 1: the 3D scene; 0: a 2D layer shows (left as it is).
+    /// 1: the 3D scene; [`SPRITE_ON_SCENE`]: a 2D sprite on it; 0: a 2D layer shows (left as it is).
     layer: u8,
     /// A light source (a lit window, a lamp, a sign).
     emissive: bool,
@@ -595,6 +603,17 @@ fn make_pool(threads: usize) -> Option<rayon::ThreadPool> {
                 .ok()
         })
         .flatten()
+}
+
+/// A 2D sprite's colour as the DS would draw it on a 3D sprite tinted so: each channel times the
+/// tint, in the game's own (gamma) values, as the DS modulates them.
+fn tint(p: u32, t: [f32; 3]) -> u32 {
+    if t.iter().any(|&c| c <= 0.0) {
+        return p;
+    }
+    let ch =
+        |shift: u32, k: f32| ((((p >> shift) & 0xFF) as f32 * k.min(1.0)).round() as u32) << shift;
+    (p & 0xFF00_0000) | ch(16, t[0]) | ch(8, t[1]) | ch(0, t[2])
 }
 
 fn linear(table: &[f32; 256], p: u32) -> V3 {
@@ -800,14 +819,21 @@ impl Lighting {
                 for (x, cell) in row.iter_mut().enumerate() {
                     let col = x0 + x;
                     let g = y * scene.width + col;
-                    cell.base = linear(lin, px[y * w + x]);
+                    cell.base = if scene.layer[g] == SPRITE_ON_SCENE {
+                        linear(lin, tint(px[y * w + x], scene.sprite_tint))
+                    } else {
+                        linear(lin, px[y * w + x])
+                    };
                     cell.emissive = false;
                     cell.glow = 0.0;
                     cell.layer = 0;
                     // Only where the 3D scene itself shows: a text box, a sign's banner or a menu
-                    // over it stays as the game drew it.
+                    // over it stays as the game drew it. A sprite straight on the scene (3: Fly's
+                    // landing trainer, an emote bubble) is lit too, as the player, at the scene's
+                    // place under it (KNOWN_RISKS #135: it landed bright and darkened as the
+                    // player's own sprite took over).
                     let layer = scene.layer[g];
-                    if layer != 1 {
+                    if layer != 1 && layer != SPRITE_ON_SCENE {
                         continue;
                     }
                     let xn = (col as f32 + 0.5 - scene.width as f32 / 2.0) / 128.0;
@@ -904,6 +930,23 @@ impl Lighting {
         };
         let mut lights = self.track_lights(&found);
         let focus = self.focus(w, h);
+        // A 2D sprite on the scene is lit where it stands, as the player's 3D sprite is: at the
+        // ground under its feet (the first 3D below it in its column), not at the scene behind
+        // it (Fly's landing over the Pokemon Centre's door took its lamp's light at night, the
+        // wall's in the evening: KNOWN_RISKS #135); the player's place where nothing is below.
+        for x in 0..w {
+            let mut below: Option<V3> = None;
+            for y in (0..h).rev() {
+                let c = &mut self.cells[y * w + x];
+                if c.layer == 1 {
+                    below = Some(c.pos);
+                } else if c.layer == SPRITE_ON_SCENE
+                    && let Some(at) = below.or(focus)
+                {
+                    c.pos = at;
+                }
+            }
+        }
         if let Some(f) = focus
             && lum(p.player_light) > 0.0
         {
@@ -987,7 +1030,8 @@ impl Lighting {
             .map(|i| {
                 let c = self.cells[i];
                 let (x, y) = (i % w, i / w);
-                let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1);
+                let player = scene.attached.get(y * scene.width + x0 + x) == Some(&1)
+                    || c.layer == SPRITE_ON_SCENE;
                 // A light source's pixel blooms as much as its light shows (-1: not one; -2: a
                 // card's, which doesn't bloom at all).
                 let bloom = if c.emissive {
@@ -1005,7 +1049,17 @@ impl Lighting {
                         c.pos[2],
                         f32::from(u8::from(c.layer != 0)),
                     ],
-                    info: [px[i], c.glow.to_bits(), u32::from(player), bloom.to_bits()],
+                    // A 2D sprite on the scene takes the game's tint on its 3D sprites first.
+                    info: [
+                        if c.layer == SPRITE_ON_SCENE {
+                            tint(px[i], scene.sprite_tint)
+                        } else {
+                            px[i]
+                        },
+                        c.glow.to_bits(),
+                        u32::from(player),
+                        bloom.to_bits(),
+                    ],
                 }
             })
             .collect();
@@ -1339,14 +1393,14 @@ impl Lighting {
                 .flat_map(move |y| (cx.saturating_sub(6)..(cx + 7).min(w)).map(move |x| y * w + x))
         };
         let far = window()
-            .filter(|&i| self.cells[i].layer != 0)
+            .filter(|&i| self.cells[i].layer == 1)
             .map(|i| self.cells[i].pos[2])
             .reduce(f32::min);
         let now = far.map(|far| {
             let (mut sum, mut cnt) = ([0.0f32; 3], 0.0f32);
             for i in window() {
                 let c = self.cells[i];
-                if c.layer != 0 && c.pos[2] < far + 6.0 {
+                if c.layer == 1 && c.pos[2] < far + 6.0 {
                     sum = add(sum, c.pos);
                     cnt += 1.0;
                 }
@@ -1569,6 +1623,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            sprite_tint: [1.0; 3],
             shadows: false,
         };
         let mut px = vec![0x0080_8080u32; 256 * HEIGHT];
@@ -1600,6 +1655,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            sprite_tint: [1.0; 3],
             shadows: false,
         };
         let dark = 0x0050_5060u32;
@@ -1652,6 +1708,7 @@ mod tests {
             geometry: Geometry::default(),
             hours: 12.0,
             attached: &[],
+            sprite_tint: [1.0; 3],
             shadows: false,
         };
         if !Lighting::new().use_gpu() {

@@ -189,6 +189,13 @@ void gl_core_set_steady(GlCore *core, int on)
     core->nds->GPU.GPU3D.MidWanted = on != 0;
 }
 
+void gl_core_sprite_tint(GlCore *core, float *rgb)
+{
+    const auto &gpu3d = core->nds->GPU.GPU3D;
+    for (int c = 0; c < 3; c++)
+        rgb[c] = gpu3d.ShownSpriteTint[c];
+}
+
 int gl_core_steady_shift(GlCore *core, float *xy)
 {
     melonDS::GPU &gpu = core->nds->GPU;

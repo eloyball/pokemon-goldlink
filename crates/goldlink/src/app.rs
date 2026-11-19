@@ -2423,6 +2423,7 @@ fn light(
                 },
                 hours: l.hour as f32 + l.minute as f32 / 60.0,
                 attached: &player,
+                sprite_tint: l.buffers.sprite_tint,
                 shadows,
             },
             Place::of_map(l.map),

@@ -149,6 +149,7 @@ unsafe extern "C" {
     );
     pub fn gl_core_steady_origin(core: *mut GlCore, xy: *mut f64);
     pub fn gl_core_set_sprite_move(core: *mut GlCore, rects: *const i32, count: c_int);
+    pub fn gl_core_sprite_tint(core: *mut GlCore, rgb: *mut f32);
     pub fn gl_core_wide_frame(
         core: *mut GlCore,
         screen: c_int,
