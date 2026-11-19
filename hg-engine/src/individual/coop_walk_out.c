@@ -26,6 +26,16 @@
 // wider picture does) put them in view out of nowhere (the rival at Cherrygrove's exit, the Rocket
 // grunts in their headquarters). Now they're placed on the same row past the wider picture and walk
 // in to the spot, facing as the script asked, and the script waits for it.
+//
+// The neighbours' people (UC16's option A): the game creates a zone's people only once the player
+// crosses into it, so the wider picture showed them appear at the border (Cherrygrove's guide from
+// Route 29). On each tile the player steps to (src/field/coop_ghosts.c calls this with no script),
+// the people of the zones whose blocks the wider picture reaches are created ahead, as the game's
+// own "bit 25" objects: script 0xFFFF and, in the event flag, the zone that adopts them (pret
+// sub_0205ED90, sub_0205EA98, sub_0205F014: on the crossing the game keeps and adopts them, no
+// second copy; scripts don't see them, nobody can talk to them). The zone's own people near a
+// border are kept on a crossing (MAPOBJECTFLAG_KEEP) and become such copies for the zone left.
+// Copies out of the picture are removed.
 // ---------------------------------------------------------------------------
 
 #define WALK_OUT_FROM        6   // tiles from the camera: nearer, the DS shows them well inside
@@ -51,6 +61,13 @@ void *LONG_CALL FieldSysGetAttrAddr(FieldSystem *fsys, int field);
 void *LONG_CALL EventObjectMovementMan_Create(LocalMapObject *object, const u32 *cmds);
 void LONG_CALL _ScheduleObjectEventMovement(FieldSystem *fsys, void *movementMan, void *cmds);
 BOOL LONG_CALL ScrCmd_WaitMovement(SCRIPTCONTEXT *ctx);
+BOOL LONG_CALL FieldSystem_FlagCheck(FieldSystem *fsys, u16 flag);
+// pret 152fe95ec-era asm labels (the addresses): MapHeader_GetEventsBank (bae9772f3),
+// MapObject_Remove (1ffb2adee asm/unk_0205E0BC.s), MapObject_CreateFromMultipleObjectEvents (its
+// InitMapObjectsFromEventTemplates there: 0x20 per event, copied, then sub_0205EA08).
+#define MapHeader_GetEventsBank ((u32 (*)(u32))(0x0203B358 | 1))
+#define MapObject_Remove        ((void (*)(LocalMapObject *))(0x0205E3CC | 1))
+#define MapObject_CreateFromMultipleObjectEvents ((void (*)(void *, u32, u32, void *))(0x0205E9AC | 1))
 // pret 152fe95ec asm/scrcmd.s, asm/map_object.s (the labels carry the addresses).
 #define VANILLA_SHOW_PERSON         ((BOOL (*)(SCRIPTCONTEXT *))(0x02041FB8 | 1))
 #define VANILLA_MOVE_PERSON_FACING  ((BOOL (*)(SCRIPTCONTEXT *))(0x0204473C | 1))
@@ -116,14 +133,25 @@ static BOOL WalkIn(SCRIPTCONTEXT *ctx, LocalMapObject *o, s32 x, s32 y, s32 z, u
 }
 
 static BOOL HidePerson(SCRIPTCONTEXT *ctx, u32 *lists);
+static void Neighbours(FieldSystem *fsys);
 
 // Overlay 1's stub calls this for HidePerson, ShowPerson and MovePersonFacing (the command just
-// read: the halfword before the arguments).
-BOOL __attribute__((section(".init"))) CoopWalkOut_Command(SCRIPTCONTEXT *ctx, u32 *lists)
+// read: the halfword before the arguments); the field's frame, with no script, for the
+// neighbours' people.
+BOOL __attribute__((section(".init"))) CoopWalkOut_Command(SCRIPTCONTEXT *ctx, u32 *lists, FieldSystem *field)
 {
-    FieldSystem *fsys = ctx->fsys;
-    const u8 *arg = ctx->script_ptr;
-    u16 command = HalfwordAt(arg - 2);
+    FieldSystem *fsys;
+    const u8 *arg;
+    u16 command;
+
+    if (ctx == NULL)
+    {
+        Neighbours(field);
+        return FALSE;
+    }
+    fsys = ctx->fsys;
+    arg = ctx->script_ptr;
+    command = HalfwordAt(arg - 2);
 
     if (command == SCRCMD_SHOW_PERSON)
     {
@@ -232,4 +260,172 @@ static BOOL HidePerson(SCRIPTCONTEXT *ctx, u32 *lists)
     // This HidePerson again once every movement is done (its command and argument, 4 bytes back).
     ctx->script_ptr = arg - 2;
     return ScrCmd_WaitMovement(ctx);
+}
+
+// ---------------------------------------------------------------------------
+// The neighbours' people.
+
+#define NEIGHBOUR_NARC_ZONE_EVENT 32   // pret NARC_fielddata_eventdata_zone_event (a/0/3/2)
+#define NEIGHBOUR_HEAP            11   // HEAP_ID_FIELD2
+#define NEIGHBOUR_REACH_X         12   // tiles from the camera the wider picture shows, and a step
+#define NEIGHBOUR_REACH_Z         9
+#define NEIGHBOUR_REMOVE_X        16   // a copy further than this is removed
+#define NEIGHBOUR_REMOVE_Z        12
+#define NEIGHBOUR_MAX_CREATE      12
+#define NEIGHBOUR_SCRIPT_NONE     0xFFFF
+#define MAPOBJECTFLAG_ACTIVE      (1 << 0)
+#define MAPOBJECTFLAG_KEEP        (1 << 10)
+#define MAPOBJECTFLAG_UNK25       (1 << 25)
+#define MAPOBJECTFLAG_UNK13       (1 << 13) // with KEEP on the player, the follower, the ghosts
+
+// pret include/map_events_internal.h: the events file's object event (0x20 bytes) and the
+// background event before them (0x14).
+struct CoopObjectEvent
+{
+    u16 id, spriteId, movement, type, eventFlag, scriptId;
+    s16 facingDirection;
+    u16 param[3];
+    s16 xRange, yRange;
+    u16 x, z;
+    s32 y;
+};
+_Static_assert(sizeof(struct CoopObjectEvent) == 0x20, "pret ObjectEvent");
+#define NEIGHBOUR_BG_EVENT_SIZE 0x14
+// pret include/map_matrix.h MapMatrix: width, height, matrix ID, then MapMatrixData: height, width,
+// the blocks' map headers.
+struct CoopMapMatrix
+{
+    u8 width, height, matrixId;
+    u8 dataHeight, dataWidth;
+    u16 headers[];
+};
+_Static_assert(__builtin_offsetof(struct CoopMapMatrix, headers) == 6, "pret MapMatrix.data.headers");
+// pret include/map_object.h MapObjectManager: the object count and the objects.
+struct CoopMapObjectManager
+{
+    u8 pad0[4];
+    u32 count;
+    u8 pad8[0x124 - 8];
+    LocalMapObject *objects;
+};
+_Static_assert(__builtin_offsetof(struct CoopMapObjectManager, objects) == 0x124, "pret MapObjectManager.objects");
+
+static u32 MapAtTile(const struct CoopMapMatrix *m, s32 x, s32 z)
+{
+    s32 bx = x / 32, bz = z / 32;
+
+    if (x < 0 || z < 0 || bx >= m->width || bz >= m->height)
+        return 0;
+    return m->headers[bz * m->width + bx];
+}
+
+static BOOL InReach(s32 dx, s32 dz, s32 rx, s32 rz)
+{
+    return dx >= -rx && dx <= rx && dz >= -rz && dz <= rz;
+}
+
+// The neighbour `map`'s people within reach of the picture (camera camX, camZ), as copies the
+// game adopts on the crossing, unless the zone already has copies here.
+static void CreateNeighbour(FieldSystem *fsys, struct CoopMapObjectManager *manager, const struct CoopMapMatrix *matrix,
+                            u32 map, s32 camX, s32 camZ)
+{
+    u8 *file;
+    u32 i, n, made = 0;
+    const struct CoopObjectEvent *events;
+    struct CoopObjectEvent copies[NEIGHBOUR_MAX_CREATE];
+
+    for (i = 0; i < manager->count; i++)
+    {
+        LocalMapObject *o = &manager->objects[i];
+
+        if ((o->flags & MAPOBJECTFLAG_ACTIVE) && (o->flags & MAPOBJECTFLAG_UNK25) && (u32)o->evFlagId == map
+            && (u32)o->unkC == map)
+            return;
+    }
+    file = AllocAndReadWholeNarcMemberByIdPair(NEIGHBOUR_NARC_ZONE_EVENT, MapHeader_GetEventsBank(map), NEIGHBOUR_HEAP);
+    if (file == NULL)
+        return;
+    n = *(u32 *)file; // the background events' count (the file is word-aligned)
+    events = (const struct CoopObjectEvent *)(file + 4 + n * NEIGHBOUR_BG_EVENT_SIZE + 4);
+    n = *(u32 *)(file + 4 + n * NEIGHBOUR_BG_EVENT_SIZE);
+    for (i = 0; i < n && made < NEIGHBOUR_MAX_CREATE; i++)
+    {
+        const struct CoopObjectEvent *e = &events[i];
+
+        if (e->scriptId == NEIGHBOUR_SCRIPT_NONE || MapAtTile(matrix, e->x, e->z) != map
+            || !InReach(e->x - camX, e->z - camZ, NEIGHBOUR_REACH_X + 4, NEIGHBOUR_REACH_Z + 4)
+            || FieldSystem_FlagCheck(fsys, e->eventFlag))
+            continue;
+        copies[made] = *e;
+        copies[made].scriptId = NEIGHBOUR_SCRIPT_NONE;
+        copies[made].eventFlag = (u16)map;
+        made++;
+    }
+    sys_FreeMemoryEz(file);
+    if (made != 0)
+        MapObject_CreateFromMultipleObjectEvents(manager, map, made, copies);
+}
+
+static void Neighbours(FieldSystem *fsys)
+{
+    struct CoopMapObjectManager *manager = (struct CoopMapObjectManager *)fsys->mapObjectMan;
+    const struct CoopMapMatrix *matrix = (const struct CoopMapMatrix *)fsys->map_matrix;
+    u32 here = (u32)fsys->location->mapId;
+    u32 seen[4] = {0, 0, 0, 0};
+    s32 camX, camZ, dx, dz;
+    u32 i, k;
+
+    if (manager == NULL || matrix == NULL || matrix->width < 2)
+        return; // a map of one block (indoors) has no neighbours
+    CameraTile(fsys, fsys->playerAvatar->mapObject, &camX, &camZ);
+    for (i = 0; i < manager->count; i++)
+    {
+        LocalMapObject *o = &manager->objects[i];
+
+        // Not the player, the follower, GoldLink's ghosts (KEEP with bit 13, ids from 0xE0) nor a
+        // scene's camera object (241).
+        if (!(o->flags & MAPOBJECTFLAG_ACTIVE) || o->id >= COOP_GHOST_ID_FIRST || (o->flags & MAPOBJECTFLAG_UNK13))
+            continue;
+        dx = o->xCurr - camX;
+        dz = o->yCurr - camZ;
+        if ((u32)o->unkC == here)
+        {
+            // This zone's people near a border: kept if the player crosses.
+            if (!(o->flags & MAPOBJECTFLAG_UNK25) && MapAtTile(matrix, o->xCurr, o->yCurr) == here
+                && InReach(dx, dz, NEIGHBOUR_REMOVE_X, NEIGHBOUR_REMOVE_Z)
+                && (MapAtTile(matrix, o->xCurr - NEIGHBOUR_REACH_X, o->yCurr) != here
+                    || MapAtTile(matrix, o->xCurr + NEIGHBOUR_REACH_X, o->yCurr) != here
+                    || MapAtTile(matrix, o->xCurr, o->yCurr - NEIGHBOUR_REACH_Z) != here
+                    || MapAtTile(matrix, o->xCurr, o->yCurr + NEIGHBOUR_REACH_Z) != here))
+                o->flags |= MAPOBJECTFLAG_KEEP;
+            continue;
+        }
+        // Another zone's: kept from the zone just left (KEEP, its script): a copy for that zone
+        // now; a copy out of the picture: removed.
+        if (!(o->flags & MAPOBJECTFLAG_UNK25) && (o->flags & MAPOBJECTFLAG_KEEP))
+        {
+            o->flags &= ~MAPOBJECTFLAG_KEEP;
+            o->flags |= MAPOBJECTFLAG_UNK25;
+            o->scriptId = NEIGHBOUR_SCRIPT_NONE;
+            o->evFlagId = o->unkC;
+        }
+        if ((o->flags & MAPOBJECTFLAG_UNK25) && (u32)o->evFlagId == (u32)o->unkC
+            && !InReach(dx, dz, NEIGHBOUR_REMOVE_X, NEIGHBOUR_REMOVE_Z))
+            MapObject_Remove(o);
+    }
+    // The zones the picture reaches (its corners and edges' middles), each created once.
+    for (dz = -NEIGHBOUR_REACH_Z; dz <= NEIGHBOUR_REACH_Z; dz += NEIGHBOUR_REACH_Z)
+        for (dx = -NEIGHBOUR_REACH_X; dx <= NEIGHBOUR_REACH_X; dx += NEIGHBOUR_REACH_X)
+        {
+            u32 map = MapAtTile(matrix, camX + dx, camZ + dz);
+
+            if (map == 0 || map == here)
+                continue;
+            for (k = 0; k < 4 && seen[k] != 0 && seen[k] != map; k++)
+                ;
+            if (k == 4 || seen[k] == map)
+                continue;
+            seen[k] = map;
+            CreateNeighbour(fsys, manager, matrix, map, camX, camZ);
+        }
 }

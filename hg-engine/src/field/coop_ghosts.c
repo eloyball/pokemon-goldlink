@@ -11,6 +11,7 @@
 
 #include "map_events_internal.h"
 #include "pokemon.h"
+#include "overlay.h"
 #include "save.h"
 #include "system.h"
 #include "task.h"
@@ -2807,6 +2808,24 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
     ChangeMapObjSprite(player, wanted);
 }
 
+// The wider picture's neighbours (UC16, src/individual/coop_walk_out.c): Overlay 154 runs on each
+// tile the player steps to, outside scripts and tasks (it creates and removes map objects).
+static void Coop_UpdateNeighbours(FieldSystem *fsys)
+{
+    static s32 sLastX = -1, sLastZ = -1;
+    LocalMapObject *player = fsys->playerAvatar->mapObject;
+
+    if (player->xCurr == sLastX && player->yCurr == sLastZ)
+        return;
+    if (fsys->taskman != NULL)
+        return; // again once the field is free (the tile isn't taken yet)
+    sLastX = player->xCurr;
+    sLastZ = player->yCurr;
+    HandleLoadOverlay(COOP_OVERLAY_WALK_OUT, 2);
+    ((BOOL (*)(void *, u32 *, FieldSystem *))(0x023C0400 | 1))(NULL, NULL, fsys);
+    UnloadOverlayByID(COOP_OVERLAY_WALK_OUT);
+}
+
 static void Coop_FieldEntry(FieldSystem *fsys)
 {
     MapObjectMan *manager = fsys->mapObjectMan;
@@ -2833,5 +2852,6 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_ReportTestGhost(manager, player);
     Coop_ChallengeFieldFrame(fsys); // Milestone 5 rules and ledgers (src/field/coop_challenge.c)
     Coop_UpdateMenuMirror(fsys);     // the open choice menu's words, for the window
+    Coop_UpdateNeighbours(fsys);     // the next zones' people ahead (Overlay 154, UC16)
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry
 }

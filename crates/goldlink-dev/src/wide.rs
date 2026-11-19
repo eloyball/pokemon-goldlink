@@ -487,6 +487,16 @@ impl Pass {
                     if f % 40 < 3 {
                         input.keys |= Keys::A;
                     }
+                    // GOLDLINK_DEV_WIDE_CAPTURE: the battle's touch screen every 20 seconds.
+                    if f % 1200 == 600 && std::env::var_os("GOLDLINK_DEV_WIDE_CAPTURE").is_some() {
+                        let id = self.cases[self.index].id.clone();
+                        let line = crate::tour::capture_prompt(
+                            emu,
+                            &dir.join("wide"),
+                            &format!("{id}-battle-{f}"),
+                        );
+                        self.line(format_args!("P {f} {line}"));
+                    }
                     self.idle = 0;
                 } else if field_busy {
                     self.idle = 0;

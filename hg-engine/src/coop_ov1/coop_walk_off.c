@@ -16,7 +16,7 @@
 u32 WalkOff_HandleLoadOverlay(u32 ovyId, u32 loadType);
 void WalkOff_UnloadOverlayByID(u32 ovyId);
 
-typedef BOOL (*CoopWalkOutFunc)(SCRIPTCONTEXT *ctx, u32 *lists);
+typedef BOOL (*CoopWalkOutFunc)(SCRIPTCONTEXT *ctx, u32 *lists, FieldSystem *fsys);
 
 static u32 sWalkOutLists[COOP_WALK_OUT_MAX * 3];
 
@@ -25,7 +25,7 @@ BOOL CoopOv1_ScriptPeople(SCRIPTCONTEXT *ctx)
     BOOL wait;
 
     WalkOff_HandleLoadOverlay(COOP_OVERLAY_WALK_OUT, 2);
-    wait = ((CoopWalkOutFunc)(0x023C0400 | 1))(ctx, sWalkOutLists);
+    wait = ((CoopWalkOutFunc)(0x023C0400 | 1))(ctx, sWalkOutLists, NULL);
     WalkOff_UnloadOverlayByID(COOP_OVERLAY_WALK_OUT);
     return wait;
 }
