@@ -86,9 +86,11 @@ const SINK: f32 = 1.5;
 /// shadow leans toward the camera and shows below what casts it (the user, 2026-11-14): it rises
 /// a little north of east at 5, stands in the north at 12 at 58 degrees, sets a little north
 /// of west at 19: the game's own sunset colours end then (from 19:00 its palette is the blue
-/// dusk; the user, 2026-11-18). Shadows fade out as it nears the horizon, and it's never lower than 20 degrees
-/// (longer shadows reach past what the DS draws, and pop in at the picture's edge).
+/// dusk; the user, 2026-11-18). Shadows fade out as it nears the horizon, and it's never lower than 28 degrees
+/// (longer shadows reach past what the DS draws, and pop in at the picture's edge: 20 degrees,
+/// shadows 2.7 times as long as what casts them, popped in too often; the user, 2026-11-19).
 pub fn sun(hours: f32) -> Option<(f32, f32, f32)> {
+    const SUN_LOWEST: f32 = 28.0; // degrees: shadows 1.9 times as long as what casts them
     let (rise, set) = (5.0f32, 19.0f32);
     let t = (hours.rem_euclid(24.0) - rise) / (set - rise);
     if !(0.0..=1.0).contains(&t) {
@@ -104,7 +106,7 @@ pub fn sun(hours: f32) -> Option<(f32, f32, f32)> {
     }
     // From north toward east: 80 degrees at sunrise, 0 at noon, -80 at sunset.
     let azimuth = 80f32.to_radians() * arc.cos();
-    Some((azimuth, elevation.max(20f32.to_radians()), strength))
+    Some((azimuth, elevation.max(SUN_LOWEST.to_radians()), strength))
 }
 
 /// Whether the sun casts shadows at `hours` (by day; not from dusk to dawn, under the moon).
@@ -1451,8 +1453,10 @@ mod tests {
         assert!(az > 0.5 && el > 0.3 && s == 1.0);
         let (az, el, _) = sun(12.0).unwrap();
         assert!(az.abs() < 0.01 && (el.to_degrees() - 58.0).abs() < 0.1);
-        let (az, _, s) = sun(18.0).unwrap();
+        let (az, el, s) = sun(18.0).unwrap();
         assert!(az < -0.5 && s == 1.0);
+        // The evening's shadows: long, but not so long they pop in from far off the picture.
+        assert!((el.to_degrees() - 28.0).abs() < 0.1, "{}", el.to_degrees());
         // Gone with the game's sunset colours, at 19:00.
         assert!(sun(19.0).is_none() && moon(19.5).is_some());
         let up = DEFAULT_UP;
