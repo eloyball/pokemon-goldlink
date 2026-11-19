@@ -964,3 +964,23 @@ $(MSGDATA_NARC): $(MSGDATA_DEPENDENCIES) $(MSGDATA_COMPILETIME_DEPENDENCIES) $(w
 # rebuild every build so edits other tools make to base/root are not overwritten by a stale copy
 .PHONY: $(BATTLEHUD_NARC) $(MOVEPARTICLES_NARC) $(OPENDEMO_NARC) $(BAGGFX_NARC) $(DEXGFX_NARC) $(BATTLEGFX_NARC)
 .PHONY: $(OTHERPOKE_NARC) $(FONT_NARC) $(TEXTBOX_NARC) $(BALL_SPA_NARC) $(MSGDATA_NARC)
+
+# GoldLink (v0.8, UC16 option C): each area's map textures and props gain those its neighbouring
+# areas' border blocks use (data/coop/area_neighbours.json, from the dev tool; the game's own files
+# copied in by scripts/coop_area_build.py). It appends and skips what's there, so it reads the file
+# system's archives as they are (the last build's) and gives the same result again.
+COOP_AREA_DIR := $(BUILD)/coop_area
+COOP_AREA_STAMP := $(COOP_AREA_DIR)/.built
+COOP_AREA_DEPENDENCIES := data/coop/area_neighbours.json scripts/coop_area_build.py scripts/coop_nitro_tex.py
+
+$(COOP_AREA_STAMP): $(COOP_AREA_DEPENDENCIES)
+	$(PYTHON) scripts/coop_area_build.py data/coop/area_neighbours.json $(FILESYS) $(COOP_AREA_DIR)
+	touch $@
+
+.PHONY: coop_area_install
+coop_area_install: $(COOP_AREA_STAMP)
+	cp $(COOP_AREA_DIR)/a044 $(FILESYS)/a/0/4/4
+	cp $(COOP_AREA_DIR)/a043 $(FILESYS)/a/0/4/3
+	cp $(COOP_AREA_DIR)/a070 $(FILESYS)/a/0/7/0
+
+NARC_FILES += coop_area_install

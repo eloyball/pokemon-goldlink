@@ -73,6 +73,9 @@ enum Step {
     NamingLog,
     /// UC16's emulator pass: every case of GOLDLINK_DEV_TOUR_WIDE_CASES (crate::wide).
     Wide,
+    /// The debug warp to this map, tile and facing (preset COOP_WARP_FROM_BUFFER: the place from
+    /// gCoopDebugMonBuffer).
+    WarpTo(u16, u16, u16, u16),
     /// For the frames: every 40 while a field script runs, the touch screen saved
     /// (`<n>-prompt-<frame>.png`) with what the ROM's menu mirror holds and what the window's
     /// button finder (`hud::touch_choices`) sees, then this key (the one-screen menu box).
@@ -107,6 +110,57 @@ const PROMPT_STEPS: &[Step] = &[
     Step::MashTask(60 * 30),
     Step::MashApp(60 * 60),
     Step::Capture(60 * 40, Keys::A),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=area-border (UC16 option C): the borders between areas with the most
+/// textures copied in: the Ruins of Alph and Route 32, Route 38 and Ecruteak, from each side.
+const AREA_BORDER_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    // The Ruins of Alph (area 20) at x 440, Route 32's block (area 3) in the right strip.
+    Step::WarpTo(113, 440, 300, 3),
+    Step::Wait(420),
+    Step::Shot("ruins-route32"),
+    // Route 32 at x 456, the Ruins' block in the left strip.
+    Step::WarpTo(36, 456, 300, 2),
+    Step::Wait(420),
+    Step::Shot("route32-ruins"),
+    // Route 38 (area 7) at x 343, Ecruteak's block (area 6) in the right strip.
+    Step::WarpTo(42, 343, 175, 3),
+    Step::Wait(420),
+    Step::Shot("route38-ecruteak"),
+    // Ecruteak at x 360, Route 38's block in the left strip.
+    Step::WarpTo(78, 360, 175, 2),
+    Step::Wait(420),
+    Step::Shot("ecruteak-route38"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=heap: the field heap's free bytes (debug command 21, into
+/// gCoopDebugMonBuffer) where the save stands, then in Goldenrod, Ecruteak and Violet City (the
+/// warp presets), each with a RAM dump (UC16 option C's budget).
+const HEAP_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(240),
+    Step::Debug(C::COOP_DEBUG_HEAP_FREE as u8, 0),
+    Step::Wait(30),
+    Step::Dump("heap-here"),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 3),
+    Step::Wait(400),
+    Step::Debug(C::COOP_DEBUG_HEAP_FREE as u8, 0),
+    Step::Wait(30),
+    Step::Dump("heap-goldenrod"),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 4),
+    Step::Wait(400),
+    Step::Debug(C::COOP_DEBUG_HEAP_FREE as u8, 0),
+    Step::Wait(30),
+    Step::Dump("heap-ecruteak"),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 2),
+    Step::Wait(400),
+    Step::Debug(C::COOP_DEBUG_HEAP_FREE as u8, 0),
+    Step::Wait(30),
+    Step::Dump("heap-violet"),
     Step::Close,
 ];
 
@@ -1332,6 +1386,8 @@ fn steps() -> &'static [Step] {
         Ok("catch") => CATCH_STEPS,
         Ok("wide") => WIDE_STEPS,
         Ok("walk-right") => WALK_RIGHT_STEPS,
+        Ok("heap") => HEAP_STEPS,
+        Ok("area-border") => AREA_BORDER_STEPS,
         Ok("starter-prompt") => PROMPT_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
@@ -1986,6 +2042,26 @@ impl FrameHook for TourHook {
                     eprintln!("tour: {line}");
                     s.log.push(line);
                 }
+                true
+            }
+            Step::WarpTo(map, x, z, facing) => {
+                let root =
+                    PathBuf::from(std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()));
+                if let Some(buf) = engine_symbol(&root, "gCoopDebugMonBuffer") {
+                    let at = (buf - 0x0200_0000) as usize;
+                    let ram = emu.nds.main_ram_mut();
+                    for (i, v) in [map, x, z, facing].iter().enumerate() {
+                        ram[at + 2 * i..at + 2 * i + 2].copy_from_slice(&v.to_le_bytes());
+                    }
+                }
+                s.seq = s.seq.wrapping_add(1).max(1);
+                let m = emu.mailbox_offset();
+                let ram = emu.nds.main_ram_mut();
+                ram[m + DEBUG_RESULT] = 0;
+                ram[m + DEBUG_CMD] = C::COOP_DEBUG_WARP as u8;
+                ram[m + DEBUG_ARG] = 0xFF;
+                ram[m + DEBUG_SEQ] = s.seq;
+                s.pending = Some((s.seq, C::COOP_DEBUG_WARP as u8, 0));
                 true
             }
             Step::MashApp(max) => {
