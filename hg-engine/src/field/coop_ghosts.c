@@ -2809,12 +2809,15 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
 }
 
 // The wider picture's neighbours (UC16, src/individual/coop_walk_out.c): Overlay 154 runs on each
-// tile the player steps to, outside scripts and tasks (it creates and removes map objects).
+// tile the player steps to, outside tasks (it creates and removes inert map objects).
 static void Coop_UpdateNeighbours(FieldSystem *fsys)
 {
     static s32 sLastX = -1, sLastZ = -1;
     LocalMapObject *player = fsys->playerAvatar->mapObject;
 
+    // Not while a task runs: run during a warp's arrival, the overlay's load broke the player's
+    // movement (the region it loads into is in use then); walking toward a border, the next
+    // zone's people are made out of view anyway (its blocks come into reach 12 tiles away).
     if (player->xCurr == sLastX && player->yCurr == sLastZ)
         return;
     if (fsys->taskman != NULL)
