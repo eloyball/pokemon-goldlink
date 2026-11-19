@@ -22,6 +22,8 @@ enum Step {
     Until(Scene, u32),
     Wait(u32),
     Press(Keys),
+    /// The local player's avatar from now on (mailbox +0x1BE every frame).
+    Avatar(u8),
     /// The touch screen as the DS draws it, saved as `<n>-<name>-raw.png`.
     Raw(&'static str),
     /// The lead: this species holding this item at this level, alone in the party (debug
@@ -1207,6 +1209,34 @@ const BATTLE_GROWL_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=warp-twice: avatar_probe.lua's steps (the second warp to Cherrygrove,
+/// after the bike and a few steps, hung the game on the hg-engine update's ROM).
+const WARP_TWICE_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Press(Keys::B),
+    Step::Wait(20),
+    Step::Avatar(3),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
+    Step::Wait(240),
+    Step::Shot("first"),
+    Step::Debug(C::COOP_DEBUG_TOGGLE_BIKE as u8, 0),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_TOGGLE_BIKE as u8, 0),
+    Step::Wait(60),
+    Step::Walk(Keys::DOWN, 20, ""),
+    Step::Wait(60),
+    Step::Walk(Keys::DOWN, 20, ""),
+    Step::Wait(60),
+    Step::Avatar(2),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
+    Step::Wait(300),
+    Step::Shot("second"),
+    Step::Wait(300),
+    Step::Shot("later"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=link-a / link-b (dev/run_visual_pair.sh link): two windows in one
 /// room, a link battle between them (debug command 12, 6 on A and 7 on B, as
 /// link_e2e_probe.lua), A every 40 frames through it.
@@ -1560,6 +1590,7 @@ fn steps() -> &'static [Step] {
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
         Ok("battle-tray") => BATTLE_TRAY_STEPS,
         Ok("battle-growl") => BATTLE_GROWL_STEPS,
+        Ok("warp-twice") => WARP_TWICE_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
         Ok("boss-a") => BOSS_STEPS[0],
@@ -1651,6 +1682,9 @@ struct State {
     emu_frames: u64,
     /// Frames the field has been free in a row (Step::Settle).
     idle: u32,
+    /// The avatar written to the mailbox every frame over the bridge's (Step::Avatar), as the
+    /// BizHawk bridge of avatar_probe.lua does.
+    avatar: Option<u8>,
     /// Frames shown so far (the window has them), as of the last pre_frame.
     published: u64,
     filmed: u64,
@@ -1849,6 +1883,10 @@ impl FrameHook for TourHook {
         }
         let mut s = self.0.state();
         s.emu_frames += 1;
+        if let Some(a) = s.avatar {
+            let at = emu.mailbox_offset() + 0x1BE;
+            emu.nds.main_ram_mut()[at] = a;
+        }
         if s.holding > 0 {
             s.holding -= 1;
             match s.step.checked_sub(1).and_then(|i| steps().get(i)) {
@@ -2059,6 +2097,11 @@ impl FrameHook for TourHook {
                 };
                 eprintln!("tour: {line}");
                 s.log.push(line);
+                true
+            }
+            Step::Avatar(a) => {
+                s.avatar = Some(a);
+                eprintln!("tour: avatar {a}");
                 true
             }
             Step::Running(on) => {
