@@ -266,7 +266,6 @@ static BOOL HidePerson(SCRIPTCONTEXT *ctx, u32 *lists)
 // The neighbours' people.
 
 #define NEIGHBOUR_NARC_ZONE_EVENT 32   // pret NARC_fielddata_eventdata_zone_event (a/0/3/2)
-#define NEIGHBOUR_HEAP            11   // HEAP_ID_FIELD2
 #define NEIGHBOUR_REACH_X         12   // tiles from the camera the wider picture shows, and a step
 #define NEIGHBOUR_REACH_Z         9
 #define NEIGHBOUR_REMOVE_X        16   // a copy further than this is removed
@@ -290,6 +289,9 @@ struct CoopObjectEvent
     s32 y;
 };
 _Static_assert(sizeof(struct CoopObjectEvent) == 0x20, "pret ObjectEvent");
+#define NEIGHBOUR_CHUNK      8   // object events read at a time
+#define NEIGHBOUR_MAX_EVENTS 255 // more is a bad file: nothing read
+static struct CoopObjectEvent sEventChunk[NEIGHBOUR_CHUNK]; // .bss, inside the overlay's image
 #define NEIGHBOUR_BG_EVENT_SIZE 0x14
 // pret include/map_matrix.h MapMatrix: width, height, matrix ID, then MapMatrixData: height, width,
 // the blocks' map headers.
@@ -329,9 +331,7 @@ static BOOL InReach(s32 dx, s32 dz, s32 rx, s32 rz)
 static void CreateNeighbour(FieldSystem *fsys, struct CoopMapObjectManager *manager, const struct CoopMapMatrix *matrix,
                             u32 map, s32 camX, s32 camZ)
 {
-    u8 *file;
-    u32 i, n, made = 0;
-    const struct CoopObjectEvent *events;
+    u32 i, k, n, at, bank, part, made = 0;
     struct CoopObjectEvent copies[NEIGHBOUR_MAX_CREATE];
 
     for (i = 0; i < manager->count; i++)
@@ -342,26 +342,36 @@ static void CreateNeighbour(FieldSystem *fsys, struct CoopMapObjectManager *mana
             && (u32)o->unkC == map)
             return;
     }
-    file = AllocAndReadWholeNarcMemberByIdPair(NEIGHBOUR_NARC_ZONE_EVENT, MapHeader_GetEventsBank(map), NEIGHBOUR_HEAP);
-    if (file == NULL)
+    // In parts into a buffer of its own, never the heap: a whole file read into the field's
+    // heap (HEAP_ID_FIELD2) on every tile was written over address 0 (ITCM) when the heap was
+    // short (pret's reader doesn't check the allocation), and the game crashed a few frames later
+    // (avatar_probe.lua: a custom avatar, a warp, a data abort in the 3D library, 2026-11-19).
+    bank = MapHeader_GetEventsBank(map);
+    ReadFromNarcMemberByIdPair(&n, NEIGHBOUR_NARC_ZONE_EVENT, bank, 0, 4); // background events
+    at = 4 + n * NEIGHBOUR_BG_EVENT_SIZE;
+    ReadFromNarcMemberByIdPair(&n, NEIGHBOUR_NARC_ZONE_EVENT, bank, at, 4); // object events
+    at += 4;
+    if (n > NEIGHBOUR_MAX_EVENTS)
         return;
-    n = *(u32 *)file; // the background events' count (the file is word-aligned)
-    events = (const struct CoopObjectEvent *)(file + 4 + n * NEIGHBOUR_BG_EVENT_SIZE + 4);
-    n = *(u32 *)(file + 4 + n * NEIGHBOUR_BG_EVENT_SIZE);
-    for (i = 0; i < n && made < NEIGHBOUR_MAX_CREATE; i++)
+    for (i = 0; i < n && made < NEIGHBOUR_MAX_CREATE; i += part)
     {
-        const struct CoopObjectEvent *e = &events[i];
+        part = n - i < NEIGHBOUR_CHUNK ? n - i : NEIGHBOUR_CHUNK;
+        ReadFromNarcMemberByIdPair(sEventChunk, NEIGHBOUR_NARC_ZONE_EVENT, bank, at + i * sizeof(struct CoopObjectEvent),
+                                   part * sizeof(struct CoopObjectEvent));
+        for (k = 0; k < part && made < NEIGHBOUR_MAX_CREATE; k++)
+        {
+            const struct CoopObjectEvent *e = &sEventChunk[k];
 
-        if (e->scriptId == NEIGHBOUR_SCRIPT_NONE || MapAtTile(matrix, e->x, e->z) != map
-            || !InReach(e->x - camX, e->z - camZ, NEIGHBOUR_REACH_X + 4, NEIGHBOUR_REACH_Z + 4)
-            || FieldSystem_FlagCheck(fsys, e->eventFlag))
-            continue;
-        copies[made] = *e;
-        copies[made].scriptId = NEIGHBOUR_SCRIPT_NONE;
-        copies[made].eventFlag = (u16)map;
-        made++;
+            if (e->scriptId == NEIGHBOUR_SCRIPT_NONE || MapAtTile(matrix, e->x, e->z) != map
+                || !InReach(e->x - camX, e->z - camZ, NEIGHBOUR_REACH_X + 4, NEIGHBOUR_REACH_Z + 4)
+                || FieldSystem_FlagCheck(fsys, e->eventFlag))
+                continue;
+            copies[made] = *e;
+            copies[made].scriptId = NEIGHBOUR_SCRIPT_NONE;
+            copies[made].eventFlag = (u16)map;
+            made++;
+        }
     }
-    sys_FreeMemoryEz(file);
     if (made != 0)
         MapObject_CreateFromMultipleObjectEvents(manager, map, made, copies);
 }

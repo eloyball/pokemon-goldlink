@@ -2810,6 +2810,7 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
 
 // The wider picture's neighbours (UC16, src/individual/coop_walk_out.c): Overlay 154 runs on each
 // tile the player steps to, outside tasks (it creates and removes inert map objects).
+#if COOP_WIDE_NEIGHBOURS
 static void Coop_UpdateNeighbours(FieldSystem *fsys)
 {
     static s32 sLastX = -1, sLastZ = -1;
@@ -2828,6 +2829,7 @@ static void Coop_UpdateNeighbours(FieldSystem *fsys)
     ((BOOL (*)(void *, u32 *, FieldSystem *))(0x023C0400 | 1))(NULL, NULL, fsys);
     UnloadOverlayByID(COOP_OVERLAY_WALK_OUT);
 }
+#endif
 
 static void Coop_FieldEntry(FieldSystem *fsys)
 {
@@ -2855,6 +2857,8 @@ static void Coop_FieldEntry(FieldSystem *fsys)
     Coop_ReportTestGhost(manager, player);
     Coop_ChallengeFieldFrame(fsys); // Milestone 5 rules and ledgers (src/field/coop_challenge.c)
     Coop_UpdateMenuMirror(fsys);     // the open choice menu's words, for the window
+#if COOP_WIDE_NEIGHBOURS
     Coop_UpdateNeighbours(fsys);     // the next zones' people ahead (Overlay 154, UC16)
+#endif
     Coop_UpdateFieldConnection(fsys); // last, as when the co-op SysTask ran it after this entry
 }

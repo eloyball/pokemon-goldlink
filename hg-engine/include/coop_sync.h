@@ -282,6 +282,11 @@ enum CoopWarpPreset
 // Overlay 1, src/coop_ov1/coop_walk_off.c: Overlay 154 is unloaded while they walk).
 #define COOP_WALK_OUT_MAX 6
 #define COOP_OVERLAY_WALK_OUT 154
+// The next zones' people ahead of a border (Overlay 154's Neighbours, UC16): off in v0.8. Reading
+// a zone's events file from the card on a tile change left the game to crash at a later warp in
+// which the player's sprite changed (avatar_probe.lua: a data abort in the 3D library; still
+// there with the heap-free read, five seconds later, and with no copy ever made; KNOWN_RISKS #134).
+#define COOP_WIDE_NEIGHBOURS 0
 
 // Why Coop_MainSysTask did or did not call the Overlay 131 entry this frame.
 enum CoopFieldEntryStatus
