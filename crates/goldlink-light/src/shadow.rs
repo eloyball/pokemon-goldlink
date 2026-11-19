@@ -84,20 +84,21 @@ const SINK: f32 = 1.5;
 /// Where the sun is at `hours` (0..24, the DS clock): its azimuth (from north toward east), its
 /// elevation, and how strong its shadows are (0 at night). It crosses the northern sky, so every
 /// shadow leans toward the camera and shows below what casts it (the user, 2026-11-14): it rises
-/// a little north of east at 5, stands in the north at 12:30 at 58 degrees, sets a little north
-/// of west at 20. Shadows fade out as it nears the horizon, and it's never lower than 20 degrees
+/// a little north of east at 5, stands in the north at 12 at 58 degrees, sets a little north
+/// of west at 19: the game's own sunset colours end then (from 19:00 its palette is the blue
+/// dusk; the user, 2026-11-18). Shadows fade out as it nears the horizon, and it's never lower than 20 degrees
 /// (longer shadows reach past what the DS draws, and pop in at the picture's edge).
 pub fn sun(hours: f32) -> Option<(f32, f32, f32)> {
-    let (rise, set) = (5.0f32, 20.0f32);
+    let (rise, set) = (5.0f32, 19.0f32);
     let t = (hours.rem_euclid(24.0) - rise) / (set - rise);
     if !(0.0..=1.0).contains(&t) {
         return None;
     }
     let arc = std::f32::consts::PI * t;
     let elevation = 58f32.to_radians() * arc.sin();
-    // Full strength until the last minutes before sunset (from 19:52) and after sunrise (to
-    // 5:08): the evening keeps its long shadows to the end (the user, 2026-11-18).
-    let strength = (elevation.to_degrees() / 2.0).clamp(0.0, 1.0);
+    // Full strength until the last quarter hour before sunset (fading from about 18:40 to 19:00) and
+    // after sunrise: the evening keeps its long shadows while the game shows its sunset.
+    let strength = (elevation.to_degrees() / 4.5).clamp(0.0, 1.0);
     if strength <= 0.0 {
         return None;
     }
@@ -112,10 +113,10 @@ pub fn sun_casts(hours: f32) -> bool {
 }
 
 /// The moon at `hours` (its azimuth, elevation and how strong its shadows are): it crosses the
-/// northern sky by night as the sun does by day (rising at 20, setting at 5, 45 degrees at its
+/// northern sky by night as the sun does by day (rising at 19, setting at 5, 45 degrees at its
 /// highest), its shadows half the sun's strength (the night's key light is faint as it is).
 pub fn moon(hours: f32) -> Option<(f32, f32, f32)> {
-    let t = (hours.rem_euclid(24.0) - 20.0).rem_euclid(24.0) / 9.0;
+    let t = (hours.rem_euclid(24.0) - 19.0).rem_euclid(24.0) / 10.0;
     if !(0.0..=1.0).contains(&t) {
         return None;
     }
@@ -1448,10 +1449,12 @@ mod tests {
         assert!(sun(21.0).is_none());
         let (az, el, s) = sun(8.0).unwrap();
         assert!(az > 0.5 && el > 0.3 && s == 1.0);
-        let (az, el, _) = sun(12.5).unwrap();
+        let (az, el, _) = sun(12.0).unwrap();
         assert!(az.abs() < 0.01 && (el.to_degrees() - 58.0).abs() < 0.1);
-        let (az, _, _) = sun(18.0).unwrap();
-        assert!(az < -0.5);
+        let (az, _, s) = sun(18.0).unwrap();
+        assert!(az < -0.5 && s == 1.0);
+        // Gone with the game's sunset colours, at 19:00.
+        assert!(sun(19.0).is_none() && moon(19.5).is_some());
         let up = DEFAULT_UP;
         let morning = Shadows::sun_dir(normalize(up), 1.5, 0.5);
         assert!(morning[0] > 0.8, "{morning:?}");

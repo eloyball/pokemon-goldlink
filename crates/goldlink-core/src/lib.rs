@@ -657,6 +657,13 @@ impl Nds {
         unsafe { sys::gl_core_set_hide_blob_shadows(self.ptr(), c_int::from(on)) }
     }
 
+    /// The blobs under people darken at most `dark` (patch 0033; 0: as the game draws them): by
+    /// night, faint as the moon's light.
+    pub fn set_blob_shadow_dark(&mut self, dark: f32) {
+        // SAFETY: the core is live; the shim only sets a value.
+        unsafe { sys::gl_core_set_blob_shadow_dark(self.ptr(), dark) }
+    }
+
     /// What the lighting needs from the top screen (UC11) into `out`; false when the top screen
     /// can't show the 3D scene (then `out` is left as it was).
     pub fn light_buffers(&self, out: &mut LightBuffers) -> bool {

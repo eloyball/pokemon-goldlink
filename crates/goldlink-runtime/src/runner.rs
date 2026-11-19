@@ -400,6 +400,14 @@ fn run(
             .as_ref()
             .is_some_and(|l| goldlink_light::sun_casts(l.hour as f32 + l.minute as f32 / 60.0));
         emu.nds.set_hide_blob_shadows(outdoors && shadows && sunlit);
+        // By night outdoors the blobs are the moon's faint shadows: 8% at most where the game's
+        // darken about 24% (patch 0033; the user, 2026-11-18: "too dark").
+        emu.nds
+            .set_blob_shadow_dark(if outdoors && shadows && !sunlit {
+                0.08
+            } else {
+                0.0
+            });
         {
             let mut f = lock(&shared.frame);
             std::mem::swap(&mut f.pixels, &mut pixels);
