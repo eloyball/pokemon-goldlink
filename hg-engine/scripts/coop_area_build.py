@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GoldLink (v0.8, UC16's option C): each area's map textures and props gain those its
+"""GoldLink (v0.7, UC16's option C): each area's map textures and props gain those its
 neighbouring areas' border blocks use, so the wider picture shows a neighbour's block as it is
 (the game loads one area's graphics at a time; Overlay 153's stand-ins, src/coop_ov1/
 coop_neighbour.c, stay for anything still missing).

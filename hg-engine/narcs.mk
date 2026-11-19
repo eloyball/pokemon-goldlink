@@ -965,7 +965,7 @@ $(MSGDATA_NARC): $(MSGDATA_DEPENDENCIES) $(MSGDATA_COMPILETIME_DEPENDENCIES) $(w
 .PHONY: $(BATTLEHUD_NARC) $(MOVEPARTICLES_NARC) $(OPENDEMO_NARC) $(BAGGFX_NARC) $(DEXGFX_NARC) $(BATTLEGFX_NARC)
 .PHONY: $(OTHERPOKE_NARC) $(FONT_NARC) $(TEXTBOX_NARC) $(BALL_SPA_NARC) $(MSGDATA_NARC)
 
-# GoldLink (v0.8, UC16 option C): each area's map textures and props gain those its neighbouring
+# GoldLink (v0.7, UC16 option C): each area's map textures and props gain those its neighbouring
 # areas' border blocks use (data/coop/area_neighbours.json, from the dev tool; the game's own files
 # copied in by scripts/coop_area_build.py). It appends and skips what's there, so it reads the file
 # system's archives as they are (the last build's) and gives the same result again.
@@ -985,9 +985,10 @@ coop_area_install: $(COOP_AREA_STAMP)
 
 NARC_FILES += coop_area_install
 
-# GoldLink (v0.8, UC16): the next zones' people, built into Overlay 154 (src/individual/
-# coop_walk_out.c includes the header): read from the card as the player walked, their events left
-# the game to crash at a later warp (KNOWN_RISKS #134). From the unpacked game's own a/0/3/2
+# GoldLink (v0.7, UC16): the next zones' people, built into Overlay 154 (src/individual/
+# coop_walk_out.c includes the header): read from the card on each step, they made those frames
+# lag (KNOWN_RISKS #134: the lag let the player's sprite change twice before settling, a crash at
+# the next warp, fixed in Coop_ApplyLocalAvatar). From the unpacked game's own a/0/3/2
 # (GoldLink builds no zone events) and data/coop/border_people.json (ids only, from the dev tool).
 COOP_BORDER_PEOPLE_H := $(BUILD)/coop_border_people.h
 

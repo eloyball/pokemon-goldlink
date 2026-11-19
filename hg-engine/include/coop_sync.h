@@ -286,8 +286,8 @@ enum CoopWarpPreset
 #define COOP_WALK_OUT_MAX 6
 #define COOP_OVERLAY_WALK_OUT 154
 // The next zones' people ahead of a border (Overlay 154's Neighbours, UC16). Their events come
-// with the overlay (scripts/coop_border_people.py): read from the card as the player walked, they
-// left the game to crash at a later warp in which the player's sprite changed (KNOWN_RISKS #134).
+// with the overlay (scripts/coop_border_people.py), so a step costs no card read (KNOWN_RISKS #134:
+// the reads' lag let the player's sprite change twice before settling, a crash at the next warp).
 #define COOP_WIDE_NEIGHBOURS 1
 
 // Why Coop_MainSysTask did or did not call the Overlay 131 entry this frame.

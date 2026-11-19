@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""GoldLink (v0.8, UC16): the next zones' people, built into Overlay 154.
+"""GoldLink (v0.7, UC16): the next zones' people, built into Overlay 154.
 
 Overlay 154 (src/individual/coop_walk_out.c) makes copies of the neighbouring zones' people ahead
-of a border. It read their events from the card on each tile the player stepped to, and the game
-crashed at a later warp (KNOWN_RISKS #134); it reads this table instead, in the overlay's own image.
+of a border. It read their events from the card on each tile the player stepped to, which made
+those frames lag (KNOWN_RISKS #134: the lag let the player's sprite change twice before settling,
+a crash at the next warp); it reads this table instead, in the overlay's own image.
 
 The list (data/coop/border_people.json, from the dev tool: map ids, event banks and object indices
 only) names which; this copies them from the game's own zone events (a/0/3/2, as unpacked: GoldLink

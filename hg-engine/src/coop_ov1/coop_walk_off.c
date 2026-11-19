@@ -3,7 +3,7 @@
 #include "script.h"
 #include "coop_sync.h"
 
-// The wider picture's walk-off and walk-in (UC11, rewritten for v0.8, UC16): HidePerson (script
+// The wider picture's walk-off and walk-in (UC11, rewritten for v0.7, UC16): HidePerson (script
 // command 101), ShowPerson (100) and MovePersonFacing (339) (routinepointers: their entries in the
 // command table) load Overlay 154, run it (src/individual/coop_walk_out.c: the run of HidePersons'
 // people in view at a side walk out together, then each is removed; someone appearing in a side

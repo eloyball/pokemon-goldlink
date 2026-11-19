@@ -5,7 +5,7 @@
 #include "../../include/coop_sync.h"
 
 // ---------------------------------------------------------------------------
-// The wider picture's walk-off, v0.8 (UC16, dev/docs/unified-client/UC16_WIDE_NEIGHBOURS.md):
+// The wider picture's walk-off, v0.7 (UC16, dev/docs/unified-client/UC16_WIDE_NEIGHBOURS.md):
 // Overlay 154, loaded only while the script command HidePerson (101) runs (Overlay 1's stub,
 // src/coop_ov1/coop_walk_off.c, loads it, calls this and unloads it, as src/npc_trade.c does
 // for its overlay; the field doesn't use 0x023C0400 otherwise).
@@ -288,9 +288,10 @@ struct CoopObjectEvent
 };
 _Static_assert(sizeof(struct CoopObjectEvent) == 0x20, "pret ObjectEvent");
 // The next zones' people, from the build (scripts/coop_border_people.py, the game's own a/0/3/2
-// packed from data/coop/border_people.json): read from the card as the player walked, their
-// events left the game to crash at a later warp in which the player's sprite changed
-// (KNOWN_RISKS #134), so they come with this overlay. Each a pret ObjectEvent, packed.
+// packed from data/coop/border_people.json): read from the card on each step, they made those
+// frames lag, which let the player's sprite change twice before settling (a crash at the next
+// warp, KNOWN_RISKS #134, fixed in Coop_ApplyLocalAvatar); so they come with this overlay, and a
+// step costs no card read. Each a pret ObjectEvent, packed.
 struct CoopBorderPerson
 {
     u16 map, x, z, spriteId, eventFlag;

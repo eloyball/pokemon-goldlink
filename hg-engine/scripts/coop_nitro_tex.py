@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GoldLink (v0.8, UC16's option C): NitroSystem texture sets (BTX0 / TEX0) read and written, and
+"""GoldLink (v0.7, UC16's option C): NitroSystem texture sets (BTX0 / TEX0) read and written, and
 the dictionaries' name trees built, for scripts/coop_area_neighbours.py.
 
 A dictionary (NNSG3dResDict, ccd lib/include/nnsys/g3d/binres/res_struct.h): revision, count,
