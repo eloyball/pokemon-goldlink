@@ -2791,12 +2791,22 @@ void Coop_StampBattleAvatar(struct BattleSetup *setup)
 // under a message or a script: waiting for an idle field showed the vanilla
 // look through every post-battle message). Only the same state's sprite is
 // swapped, so poses and script-set sprites are left alone.
+// The local player's sprite as last seen and the frames left before it may change again (in
+// .data: Overlay 131 has no BSS init).
+static u32 sCoopLocalLastSprite __attribute__((section(".data"))) = 0xFFFFFFFF;
+static u8 sCoopLocalSettle __attribute__((section(".data"))) = 0;
+
 static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
 {
     FIELD_PLAYER_AVATAR *avatar = fsys->playerAvatar;
     u32 current = (u32)player->gfxId;
     u32 wanted;
 
+    if (current != sCoopLocalLastSprite)
+    {
+        sCoopLocalLastSprite = current; // changed, by vanilla or by us: wait for it to settle
+        sCoopLocalSettle = COOP_SPRITE_SETTLE_FRAMES;
+    }
     if ((u32)avatar->state >= NELEMS(sCoopVanillaPlayerSprites))
         return;
     wanted = Coop_LocalPlayerSprite((u32)avatar->state, avatar->gender);
@@ -2805,7 +2815,17 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
     if (MapObject_IsSingleMovementActive(player) || MapObject_IsBillboardPending(player)
         || !MapObject_IsDrawInitialized(player))
         return;
+    // As a ghost's (KNOWN_RISKS #80): only once the last change, vanilla's own (a bike, a pose)
+    // or ours, has settled for COOP_SPRITE_SETTLE_FRAMES. A change on a lagging frame right after
+    // another lost the old billboard's copy (10-25 KB of the field heap) for good, and a warp's
+    // sprite load then failed (a data abort in the 3D library, avatar_probe.lua, 2026-11-19).
+    if (sCoopLocalSettle != 0)
+    {
+        sCoopLocalSettle--;
+        return;
+    }
     ChangeMapObjSprite(player, wanted);
+    sCoopLocalSettle = COOP_SPRITE_SETTLE_FRAMES;
 }
 
 // The wider picture's neighbours (UC16, src/individual/coop_walk_out.c): Overlay 154 runs on each

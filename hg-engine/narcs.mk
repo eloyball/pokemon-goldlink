@@ -984,3 +984,14 @@ coop_area_install: $(COOP_AREA_STAMP)
 	cp $(COOP_AREA_DIR)/a070 $(FILESYS)/a/0/7/0
 
 NARC_FILES += coop_area_install
+
+# GoldLink (v0.8, UC16): the next zones' people, built into Overlay 154 (src/individual/
+# coop_walk_out.c includes the header): read from the card as the player walked, their events left
+# the game to crash at a later warp (KNOWN_RISKS #134). From the unpacked game's own a/0/3/2
+# (GoldLink builds no zone events) and data/coop/border_people.json (ids only, from the dev tool).
+COOP_BORDER_PEOPLE_H := $(BUILD)/coop_border_people.h
+
+$(COOP_BORDER_PEOPLE_H): data/coop/border_people.json scripts/coop_border_people.py scripts/coop_area_build.py $(BASE)/arm9.bin
+	$(PYTHON) scripts/coop_border_people.py data/coop/border_people.json $(FILESYS) $@
+
+$(BUILD)/individual/coop_walk_out.o: $(COOP_BORDER_PEOPLE_H)

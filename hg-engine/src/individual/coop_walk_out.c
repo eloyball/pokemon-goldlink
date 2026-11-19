@@ -62,10 +62,9 @@ void *LONG_CALL EventObjectMovementMan_Create(LocalMapObject *object, const u32 
 void LONG_CALL _ScheduleObjectEventMovement(FieldSystem *fsys, void *movementMan, void *cmds);
 BOOL LONG_CALL ScrCmd_WaitMovement(SCRIPTCONTEXT *ctx);
 BOOL LONG_CALL FieldSystem_FlagCheck(FieldSystem *fsys, u16 flag);
-// pret 152fe95ec-era asm labels (the addresses): MapHeader_GetEventsBank (bae9772f3),
-// MapObject_Remove (1ffb2adee asm/unk_0205E0BC.s), MapObject_CreateFromMultipleObjectEvents (its
-// InitMapObjectsFromEventTemplates there: 0x20 per event, copied, then sub_0205EA08).
-#define MapHeader_GetEventsBank ((u32 (*)(u32))(0x0203B358 | 1))
+// pret 152fe95ec-era asm labels (the addresses): MapObject_Remove (1ffb2adee asm/unk_0205E0BC.s),
+// MapObject_CreateFromMultipleObjectEvents (its InitMapObjectsFromEventTemplates there: 0x20 per
+// event, copied, then sub_0205EA08).
 #define MapObject_Remove        ((void (*)(LocalMapObject *))(0x0205E3CC | 1))
 #define MapObject_CreateFromMultipleObjectEvents ((void (*)(void *, u32, u32, void *))(0x0205E9AC | 1))
 // pret 152fe95ec asm/scrcmd.s, asm/map_object.s (the labels carry the addresses).
@@ -265,7 +264,6 @@ static BOOL HidePerson(SCRIPTCONTEXT *ctx, u32 *lists)
 // ---------------------------------------------------------------------------
 // The neighbours' people.
 
-#define NEIGHBOUR_NARC_ZONE_EVENT 32   // pret NARC_fielddata_eventdata_zone_event (a/0/3/2)
 #define NEIGHBOUR_REACH_X         12   // tiles from the camera the wider picture shows, and a step
 #define NEIGHBOUR_REACH_Z         9
 #define NEIGHBOUR_REMOVE_X        16   // a copy further than this is removed
@@ -289,10 +287,21 @@ struct CoopObjectEvent
     s32 y;
 };
 _Static_assert(sizeof(struct CoopObjectEvent) == 0x20, "pret ObjectEvent");
-#define NEIGHBOUR_CHUNK      8   // object events read at a time
-#define NEIGHBOUR_MAX_EVENTS 255 // more is a bad file: nothing read
-static struct CoopObjectEvent sEventChunk[NEIGHBOUR_CHUNK]; // .bss, inside the overlay's image
-#define NEIGHBOUR_BG_EVENT_SIZE 0x14
+// The next zones' people, from the build (scripts/coop_border_people.py, the game's own a/0/3/2
+// packed from data/coop/border_people.json): read from the card as the player walked, their
+// events left the game to crash at a later warp in which the player's sprite changed
+// (KNOWN_RISKS #134), so they come with this overlay. Each a pret ObjectEvent, packed.
+struct CoopBorderPerson
+{
+    u16 map, x, z, spriteId, eventFlag;
+    u8 id, movement;
+    u8 bits;    // type (bits 0-2), facing (3-4), param[1] (5-6)
+    u8 param0;
+    u8 ranges;  // xRange (bits 0-3), yRange (4-7)
+    u8 y;       // the height in tiles (ObjectEvent.y >> 12)
+};
+_Static_assert(sizeof(struct CoopBorderPerson) == 16, "16 bytes, as scripts/coop_border_people.py packs it");
+#include "../../build/coop_border_people.h"
 // pret include/map_matrix.h MapMatrix: width, height, matrix ID, then MapMatrixData: height, width,
 // the blocks' map headers.
 struct CoopMapMatrix
@@ -331,7 +340,7 @@ static BOOL InReach(s32 dx, s32 dz, s32 rx, s32 rz)
 static void CreateNeighbour(FieldSystem *fsys, struct CoopMapObjectManager *manager, const struct CoopMapMatrix *matrix,
                             u32 map, s32 camX, s32 camZ)
 {
-    u32 i, k, n, at, bank, part, made = 0;
+    u32 i, made = 0;
     struct CoopObjectEvent copies[NEIGHBOUR_MAX_CREATE];
 
     for (i = 0; i < manager->count; i++)
@@ -342,35 +351,31 @@ static void CreateNeighbour(FieldSystem *fsys, struct CoopMapObjectManager *mana
             && (u32)o->unkC == map)
             return;
     }
-    // In parts into a buffer of its own, never the heap: a whole file read into the field's
-    // heap (HEAP_ID_FIELD2) on every tile was written over address 0 (ITCM) when the heap was
-    // short (pret's reader doesn't check the allocation), and the game crashed a few frames later
-    // (avatar_probe.lua: a custom avatar, a warp, a data abort in the 3D library, 2026-11-19).
-    bank = MapHeader_GetEventsBank(map);
-    ReadFromNarcMemberByIdPair(&n, NEIGHBOUR_NARC_ZONE_EVENT, bank, 0, 4); // background events
-    at = 4 + n * NEIGHBOUR_BG_EVENT_SIZE;
-    ReadFromNarcMemberByIdPair(&n, NEIGHBOUR_NARC_ZONE_EVENT, bank, at, 4); // object events
-    at += 4;
-    if (n > NEIGHBOUR_MAX_EVENTS)
-        return;
-    for (i = 0; i < n && made < NEIGHBOUR_MAX_CREATE; i += part)
+    for (i = 0; i < COOP_BORDER_PEOPLE && made < NEIGHBOUR_MAX_CREATE; i++)
     {
-        part = n - i < NEIGHBOUR_CHUNK ? n - i : NEIGHBOUR_CHUNK;
-        ReadFromNarcMemberByIdPair(sEventChunk, NEIGHBOUR_NARC_ZONE_EVENT, bank, at + i * sizeof(struct CoopObjectEvent),
-                                   part * sizeof(struct CoopObjectEvent));
-        for (k = 0; k < part && made < NEIGHBOUR_MAX_CREATE; k++)
-        {
-            const struct CoopObjectEvent *e = &sEventChunk[k];
+        const struct CoopBorderPerson *p = &sBorderPeople[i];
+        struct CoopObjectEvent *e = &copies[made];
 
-            if (e->scriptId == NEIGHBOUR_SCRIPT_NONE || MapAtTile(matrix, e->x, e->z) != map
-                || !InReach(e->x - camX, e->z - camZ, NEIGHBOUR_REACH_X + 4, NEIGHBOUR_REACH_Z + 4)
-                || FieldSystem_FlagCheck(fsys, e->eventFlag))
-                continue;
-            copies[made] = *e;
-            copies[made].scriptId = NEIGHBOUR_SCRIPT_NONE;
-            copies[made].eventFlag = (u16)map;
-            made++;
-        }
+        if (p->map != map || MapAtTile(matrix, p->x, p->z) != map
+            || !InReach(p->x - camX, p->z - camZ, NEIGHBOUR_REACH_X + 4, NEIGHBOUR_REACH_Z + 4)
+            || FieldSystem_FlagCheck(fsys, p->eventFlag))
+            continue;
+        e->id = p->id;
+        e->spriteId = p->spriteId;
+        e->movement = p->movement;
+        e->type = p->bits & 7;
+        e->eventFlag = (u16)map; // the adopting zone (pret sub_0205ED90)
+        e->scriptId = NEIGHBOUR_SCRIPT_NONE;
+        e->facingDirection = (p->bits >> 3) & 3;
+        e->param[0] = p->param0;
+        e->param[1] = (p->bits >> 5) & 3;
+        e->param[2] = 0;
+        e->xRange = p->ranges & 15;
+        e->yRange = p->ranges >> 4;
+        e->x = p->x;
+        e->z = p->z;
+        e->y = (s32)p->y << 12;
+        made++;
     }
     if (made != 0)
         MapObject_CreateFromMultipleObjectEvents(manager, map, made, copies);
