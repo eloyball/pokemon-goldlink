@@ -277,6 +277,12 @@ enum CoopWarpPreset
 // story and watch the people (fsys->mapObjectMan: the field recreates the manager on each warp).
 #define COOP_WARP_FROM_BUFFER 0xFF
 
+// The wider picture's walk-off (UC16, src/individual/coop_walk_out.c): at most this many people
+// of one run of HidePersons walk out together (their movement lists, 3 words each, live in
+// Overlay 1, src/coop_ov1/coop_walk_off.c: Overlay 154 is unloaded while they walk).
+#define COOP_WALK_OUT_MAX 6
+#define COOP_OVERLAY_WALK_OUT 154
+
 // Why Coop_MainSysTask did or did not call the Overlay 131 entry this frame.
 enum CoopFieldEntryStatus
 {

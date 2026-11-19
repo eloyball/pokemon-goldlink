@@ -10,6 +10,10 @@ arm9 Script_RunNewCmd 080FB040
 0012 Task_PlayFaintingSequence_WithVictoryPose 0225ABB4
 # HidePerson (script command 101): the command table gScriptCmdTable is at 0x020FAD00 (pret
 # 152fe95ec asm/scrcmd.s; command 0xD0's entry, above, is 0x020FB040), so 101's entry is at
-# 0x020FAE94 (vanilla: ScrCmd_HidePerson, 0x02042001). People walk off the wider picture's strips
-# (src/coop_ov1/coop_walk_off.c).
-arm9 CoopOv1_HidePerson 080FAE94
+# 0x020FAE94 (vanilla: ScrCmd_HidePerson, 0x02042001), ShowPerson's (100) at 0x020FAE90
+# (vanilla 0x02041FB9), MovePersonFacing's (339, pret 152fe95ec ScrCmd_MovePerson) at 0x020FB24C
+# (vanilla 0x0204473D). People walk off the wider picture's strips and walk in from past them
+# (src/coop_ov1/coop_walk_off.c, src/individual/coop_walk_out.c).
+arm9 CoopOv1_ScriptPeople 080FAE94
+arm9 CoopOv1_ScriptPeople 080FAE90
+arm9 CoopOv1_ScriptPeople 080FB24C

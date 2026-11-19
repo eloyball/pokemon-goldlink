@@ -24,19 +24,10 @@ CoopOv1_HidePlaceholder:
 
 @ What src/coop_ov1/coop_walk_off.c calls, as Thumb functions: Overlay 1 is within a bl's reach
 @ of arm9, but rom.ld's absolute symbols carry no type, so the linker would branch through an
-@ ARM-state veneer, which can't enter Thumb code (and costs 8 bytes each). rom.ld's addresses;
-@ src/coop_ov1/linker.ld asserts they are the same (the linker keeps a Thumb symbol without bit 0).
-    .global WalkOff_VarGet
-    .thumb_set WalkOff_VarGet, 0x020403AC
-    .global WalkOff_GetMapObjectByID
-    .thumb_set WalkOff_GetMapObjectByID, 0x0205EE60
-    .global WalkOff_DeleteMapObject
-    .thumb_set WalkOff_DeleteMapObject, 0x0205E400
-    .global WalkOff_FieldSysGetAttrAddr
-    .thumb_set WalkOff_FieldSysGetAttrAddr, 0x020402F0
-    .global WalkOff_EventObjectMovementMan_Create
-    .thumb_set WalkOff_EventObjectMovementMan_Create, 0x02062214
-    .global WalkOff__ScheduleObjectEventMovement
-    .thumb_set WalkOff__ScheduleObjectEventMovement, 0x02041CC4
-    .global WalkOff_ScrCmd_WaitMovement
-    .thumb_set WalkOff_ScrCmd_WaitMovement, 0x02041C98
+@ ARM-state veneer, which can't enter Thumb code (and costs 8 bytes each). The game's overlay
+@ functions, where hg-engine's hooks branch to its own (hooks: HandleLoadOverlay 02006FF8,
+@ UnloadOverlayByID 02006F7C).
+    .global WalkOff_HandleLoadOverlay
+    .thumb_set WalkOff_HandleLoadOverlay, 0x02006FF8
+    .global WalkOff_UnloadOverlayByID
+    .thumb_set WalkOff_UnloadOverlayByID, 0x02006F7C

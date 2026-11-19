@@ -4,7 +4,8 @@
    billboard's init/destroy/update/draw, referenced only by the template ov01_02209244, which
    nothing reads). It is linked here at that address; armips/asm/coop_wide.s copies it into
    overlay_0001.bin. The game never loads Overlay 153 itself. LENGTH is that space, so an
-   overflow fails the link. No .data or .bss: nothing here keeps state. */
+   overflow fails the link. The walk-off's movement lists (.bss) are the only state, filled
+   while a script runs. */
 OUTPUT_ARCH(arm)
 MEMORY {
 
@@ -27,18 +28,15 @@ SECTIONS {
                 *(.text.*)
                 *(.rodata)
                 *(.rodata.*)
+                /* The walk-off's movement lists: zeros in the binary, written while a script runs. */
+                *(.bss)
+                *(.bss.*)
+                *(COMMON)
                 __text_end  = . ;
         } >rom = 0xff
 
-        /DISCARD/ : { *(.data) *(.bss) *(COMMON) *(.comment) *(.ARM.attributes) }
+        /DISCARD/ : { *(.data) *(.comment) *(.ARM.attributes) }
 }
 
 ASSERT(CoopOv1_BindMapModel == 0x021FFCA8, "armips/asm/coop_wide.s branches to 0x021FFCA8")
 ASSERT(CoopOv1_HidePlaceholder == 0x021FFCAA, "armips/asm/coop_wide.s branches to 0x021FFCAA")
-ASSERT((WalkOff_VarGet | 1) == VarGet, "asm/coop_ov1/entry.s: WalkOff_VarGet is not rom.ld's VarGet")
-ASSERT((WalkOff_GetMapObjectByID | 1) == GetMapObjectByID, "asm/coop_ov1/entry.s: WalkOff_GetMapObjectByID is not rom.ld's GetMapObjectByID")
-ASSERT((WalkOff_DeleteMapObject | 1) == DeleteMapObject, "asm/coop_ov1/entry.s: WalkOff_DeleteMapObject is not rom.ld's DeleteMapObject")
-ASSERT((WalkOff_FieldSysGetAttrAddr | 1) == FieldSysGetAttrAddr, "asm/coop_ov1/entry.s: WalkOff_FieldSysGetAttrAddr is not rom.ld's FieldSysGetAttrAddr")
-ASSERT((WalkOff_EventObjectMovementMan_Create | 1) == EventObjectMovementMan_Create, "asm/coop_ov1/entry.s: WalkOff_EventObjectMovementMan_Create is not rom.ld's EventObjectMovementMan_Create")
-ASSERT((WalkOff__ScheduleObjectEventMovement | 1) == _ScheduleObjectEventMovement, "asm/coop_ov1/entry.s: WalkOff__ScheduleObjectEventMovement is not rom.ld's _ScheduleObjectEventMovement")
-ASSERT((WalkOff_ScrCmd_WaitMovement | 1) == ScrCmd_WaitMovement, "asm/coop_ov1/entry.s: WalkOff_ScrCmd_WaitMovement is not rom.ld's ScrCmd_WaitMovement")
