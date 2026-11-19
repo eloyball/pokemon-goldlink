@@ -1237,6 +1237,53 @@ const WARP_TWICE_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=fly-landing: avatar 3, then Fly's own warp (debug warp preset 1 |
+/// COOP_WARP_FLY) to Cherrygrove: the landing's trainer, every 20 frames (KNOWN_RISKS #135).
+const FLY_LANDING_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Press(Keys::B),
+    Step::Wait(20),
+    Step::Avatar(3),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
+    Step::Wait(300),
+    Step::Shot("before"),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 0x81),
+    Step::Wait(20),
+    Step::Shot("land-00"),
+    Step::Wait(20),
+    Step::Shot("land-01"),
+    Step::Wait(20),
+    Step::Shot("land-02"),
+    Step::Wait(20),
+    Step::Shot("land-03"),
+    Step::Wait(20),
+    Step::Shot("land-04"),
+    Step::Wait(20),
+    Step::Shot("land-05"),
+    Step::Wait(20),
+    Step::Shot("land-06"),
+    Step::Wait(20),
+    Step::Shot("land-07"),
+    Step::Wait(20),
+    Step::Shot("land-08"),
+    Step::Wait(20),
+    Step::Shot("land-09"),
+    Step::Wait(20),
+    Step::Shot("land-10"),
+    Step::Wait(20),
+    Step::Shot("land-11"),
+    Step::Wait(20),
+    Step::Shot("land-12"),
+    Step::Wait(20),
+    Step::Shot("land-13"),
+    Step::Wait(20),
+    Step::Shot("land-14"),
+    Step::Wait(20),
+    Step::Shot("land-15"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=link-a / link-b (dev/run_visual_pair.sh link): two windows in one
 /// room, a link battle between them (debug command 12, 6 on A and 7 on B, as
 /// link_e2e_probe.lua), A every 40 frames through it.
@@ -1591,6 +1638,7 @@ fn steps() -> &'static [Step] {
         Ok("battle-tray") => BATTLE_TRAY_STEPS,
         Ok("battle-growl") => BATTLE_GROWL_STEPS,
         Ok("warp-twice") => WARP_TWICE_STEPS,
+        Ok("fly-landing") => FLY_LANDING_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
         Ok("boss-a") => BOSS_STEPS[0],

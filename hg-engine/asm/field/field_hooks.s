@@ -45,3 +45,26 @@ ldrh r0, [r5]
 ldr r2, =0x021E6AFC | 1
 bx r2
 .pool
+
+// Fly's landing (KNOWN_RISKS #135, src/field/coop_ghosts.c Coop_FlyLandingKind): hooks: 0002 at
+// 0x0224B536 in pret ov02_0224B4AC, the landing's loader, r5 = the landing, r4 = the NARC. The
+// jump (10 bytes, unaligned) replaces its gender check and Ethan's branch's first two:
+//   ldr r0, [r5, #0xc]; cmp r0, #0; bne 0x0224B57C; add r0, r5, #0; add r0, #0x18
+// r0-r3 are free there (each branch sets them). 0: Ethan's branch; 1: Lyra's (0x0224B57C); 2: the
+// avatar's image and palette are loaded, so Lyra's branch after those two loads (0x0224B598).
+.global Coop_FlyLanding_hook
+Coop_FlyLanding_hook:
+mov r0, r5
+mov r1, r4
+bl Coop_FlyLandingKind
+ldr r2, =0x0224B57C | 1
+cmp r0, #1
+beq .Lfly_go
+ldr r2, =0x0224B598 | 1
+bhi .Lfly_go
+add r0, r5, #0
+add r0, #0x18
+ldr r2, =0x0224B540 | 1
+.Lfly_go:
+bx r2
+.pool

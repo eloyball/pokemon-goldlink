@@ -1,3 +1,7 @@
+// Overlay 131 is full: inlining this file's functions that are called once makes it bigger at -Os
+// (measured 2026-11-19; the same as src/coop_link.c in Overlay 129).
+#pragma GCC optimize ("no-inline-functions-called-once")
+
 #include "constants/moves.h"
 #include "config.h"
 #include "types.h"
@@ -374,6 +378,19 @@ static BOOL Coop_CanRunFieldDebugCommand(FieldSystem *fsys, LocalMapObject *play
         && !Coop_IsMapNameBannerShowing(fsys);
 }
 
+// COOP_WARP_FLY: Fly's warp, as the party menu's Fly starts it from its task (pret
+// Task_UseFlyInField), so the landing plays (KNOWN_RISKS #135).
+void LONG_CALL sub_02053908(TaskManager *taskman, u32 mapId, int warpId, int x, int z, int direction);
+static u8 sCoopDebugFlyTarget __attribute__((section(".data"))) = 0;
+
+static BOOL Coop_Task_DebugFly(TaskManager *taskman)
+{
+    const struct CoopWarpTarget *target = &sCoopWarpTargets[sCoopDebugFlyTarget];
+
+    sub_02053908(taskman, target->mapId, -1, target->x, target->z, COOP_DIR_SOUTH);
+    return FALSE;
+}
+
 static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
 {
     const struct CoopWarpTarget *target;
@@ -388,6 +405,12 @@ static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
         if (in[0] != 0)
             sub_020538C0(fsys, in[0], -1, in[1], in[2], in[3]);
         return COOP_DEBUG_RESULT_OK;
+    }
+    if ((preset & COOP_WARP_FLY) && (preset & ~COOP_WARP_FLY) < COOP_WARP_COUNT)
+    {
+        sCoopDebugFlyTarget = preset & ~COOP_WARP_FLY;
+        return Coop_FieldSystem_CreateTask(fsys, Coop_Task_DebugFly, NULL) != NULL ? COOP_DEBUG_RESULT_OK
+                                                                                 : COOP_DEBUG_RESULT_FAILED;
     }
     if (preset >= COOP_WARP_COUNT)
         return COOP_DEBUG_RESULT_BAD_ARG;
@@ -1785,6 +1808,50 @@ static u32 Coop_LocalPlayerSprite(u32 state, u32 gender)
 #if COOP_AVATAR_CUSTOM > 0
 static const u16 sCoopAvatarCutIn[COOP_AVATAR_CUSTOM] = COOP_AVATAR_CUTIN;
 #endif
+
+// Fly's landing (pret ov02_0224B418, set up by ov02_0224B4AC): its own 2D animation of the trainer
+// dropping in, from the cut-in's NARC a/0/9/3 with the sets' members as immediates (Ethan 17-19,
+// Lyra 20-22 and palette 7), chosen by the save's gender: an avatar landed as Ethan or Lyra
+// (KNOWN_RISKS #135). The hook on the gender check (asm/field/field_hooks.s) takes the branch this
+// returns: 0 Ethan's, 1 Lyra's, 2 Lyra's after its image and palette, loaded here from the avatar's
+// cut-in set (its cell and animation are the same in every set).
+#define COOP_FLY_LOAD_CHAR  ((void (*)(void *, void *, u32, u32))(0x02248980 | 1)) // pret ov02_02248980
+#define COOP_FLY_LOAD_PLTT  ((void (*)(void *, void *, u32, u32))(0x02248A58 | 1)) // pret ov02_02248A58
+
+static u32 Coop_FlyLandingSet(u8 *landing, void *narc)
+{
+    u32 avatar = gCoopCommBlock.local_avatar;
+    u32 gender;
+
+    __builtin_memcpy(&gender, landing + 0xC, sizeof(gender)); // the gender ov02_0224B418 stored
+    if (avatar == COOP_AVATAR_ETHAN)
+        return 0;
+    if (avatar == COOP_AVATAR_LYRA)
+        return 1;
+#if COOP_AVATAR_CUSTOM > 0
+    if (avatar >= COOP_AVATAR_FIRST_CUSTOM_ID && avatar < COOP_AVATAR_FIRST_CUSTOM_ID + COOP_AVATAR_CUSTOM
+        && sCoopAvatarCutIn[avatar - COOP_AVATAR_FIRST_CUSTOM_ID] != 0xFFFF)
+    {
+        u32 file = sCoopAvatarCutIn[avatar - COOP_AVATAR_FIRST_CUSTOM_ID];
+
+        COOP_FLY_LOAD_CHAR(landing + 0x18, narc, file, 2);     // as Lyra's: image (member 0x14), mode 2
+        COOP_FLY_LOAD_PLTT(landing + 0x18, narc, file + 1, 1); // palette (member 7), mode 1
+        return 2;
+    }
+#endif
+    return gender != 0;
+}
+
+u32 Coop_FlyLandingKind(u8 *landing, void *narc)
+{
+    u32 kind = Coop_FlyLandingSet(landing, narc);
+    u32 gender = kind != 0;
+
+    // The landing's sprite (pret ov02_02248D18) reads this again to pick the palette: Lyra's set
+    // (1) or Ethan's (0); left as the save's, an avatar of the other set drew in the wrong colours.
+    __builtin_memcpy(landing + 0xC, &gender, sizeof(gender));
+    return kind;
+}
 
 void Coop_CutInTrainerGraphics(u8 *cutIn)
 {

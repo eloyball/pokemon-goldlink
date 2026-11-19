@@ -1,3 +1,7 @@
+// Overlay 131 is full: inlining this file's functions that are called once makes it bigger at -Os
+// (measured 2026-11-19; the same as src/coop_link.c in Overlay 129).
+#pragma GCC optimize ("no-inline-functions-called-once")
+
 #include "config.h"
 #include "types.h"
 #include "constants/item.h"

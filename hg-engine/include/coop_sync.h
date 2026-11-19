@@ -276,6 +276,9 @@ enum CoopWarpPreset
 // include/save_vars_flags.h) and the FieldSystem, for the tour to set the
 // story and watch the people (fsys->mapObjectMan: the field recreates the manager on each warp).
 #define COOP_WARP_FROM_BUFFER 0xFF
+// DEVELOPMENT ONLY: a preset with this bit warps by Fly's own warp (pret sub_02053908 from a task),
+// so its landing animation plays (KNOWN_RISKS #135's probe).
+#define COOP_WARP_FLY 0x80
 
 // The wider picture's walk-off (UC16, src/individual/coop_walk_out.c): at most this many people
 // of one run of HidePersons walk out together (their movement lists, 3 words each, live in
