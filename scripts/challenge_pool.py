@@ -47,6 +47,19 @@ POOL_A_EXTRA = {'RAGING_BOLT', 'GOUGING_FIRE', 'WALKING_WAKE', 'IRON_LEAVES', 'I
 # Never a replacement (still listed, so a wild slot holding one can be looked up).
 NOT_PICKABLE = {'UNOWN'}
 
+# hg-engine's stand-in for a sprite nobody has drawn yet: Bulbasaur's (Iron Hands, Bramblin,
+# Terapagos... showed up as Bulbasaur in a random run). A species or form whose front sprite is
+# it is never picked, plain or as a legend, until it gets its own.
+SPRITES = HG / 'data' / 'graphics' / 'sprites'
+
+
+def has_placeholder_sprite(name):
+    if name == 'BULBASAUR':
+        return False
+    front = SPRITES / name.lower() / 'male' / 'front.png'
+    stand_in = SPRITES / 'bulbasaur' / 'male' / 'front.png'
+    return front.exists() and front.read_bytes() == stand_in.read_bytes()
+
 # Random abilities never rolled: bound to one species or form, or game-breaking.
 BANNED_ABILITIES = {
     'NONE', 'WONDER_GUARD', 'MULTITYPE', 'RKS_SYSTEM', 'STANCE_CHANGE', 'SCHOOLING', 'BATTLE_BOND',
@@ -133,6 +146,7 @@ def build():
     legend_forms = [n for n in legends if n in forms]
 
     entries, problems = {}, []
+    placeholders = []
 
     def add(name, species_name, form):
         if name not in stats:
@@ -145,6 +159,9 @@ def build():
             flags |= 0x02
         if name in legends or species_name in legends:
             flags |= 0x08 if species_name in POOL_B else 0x04
+        if has_placeholder_sprite(name):
+            flags &= ~0x0D
+            placeholders.append(name)
         entries[value] = (name, family_of.get(species_name, 0xFFFF), t1, t2, flags, tier(bst))
 
     for name in sp:
@@ -158,6 +175,8 @@ def build():
             problems.append(f'battle-only form {name} listed as wild')
             continue
         add(name, base, n)
+    if placeholders:
+        print(f'never picked (placeholder sprite): {", ".join(sorted(placeholders))}')
     return [entries[v] + (v,) for v in sorted(entries)], load_abilities(), len(fam), problems
 
 
