@@ -159,6 +159,7 @@ unsafe extern "C" {
     pub fn gl_core_shadow_counts(core: *mut GlCore, counts: *mut u32);
     pub fn gl_core_set_hide_game_shadows(core: *mut GlCore, on: c_int);
     pub fn gl_core_set_hide_blob_shadows(core: *mut GlCore, on: c_int);
+    pub fn gl_core_set_blob_shadow_dark(core: *mut GlCore, dark: f32);
     pub fn gl_core_set_soften_game_shadows(core: *mut GlCore, on: c_int);
     pub fn gl_core_shadow_geometry(
         core: *mut GlCore,
