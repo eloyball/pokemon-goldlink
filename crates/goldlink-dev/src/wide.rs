@@ -356,6 +356,12 @@ impl Pass {
         } else {
             Scene::Unknown
         };
+        if self.frame % 600 == 0 {
+            eprintln!(
+                "tour: wide heartbeat frame {} phase {:?} scene {scene:?} busy {field_busy}",
+                self.frame, self.phase
+            );
+        }
         if self.scene != Some(scene) && self.log.is_some() {
             self.scene = Some(scene);
             let f = self.frame;
@@ -425,11 +431,26 @@ impl Pass {
                     if field_busy && n % 30 < 3 {
                         input.keys |= Keys::A;
                     }
+                    if n % 600 == 599 {
+                        self.line(format_args!("K {n} waiting for the debug command (stage {stage}, scene {scene:?}, busy {field_busy})"));
+                        if let Some(w) = self.log.as_mut() {
+                            let _ = w.flush();
+                        }
+                    }
                     self.phase = Phase::Ack(seq, stage, n + 1)
                 }
             },
             Phase::Settle(n) => {
                 let case = self.cases[self.index].clone();
+                if n > 3600 {
+                    // Never free after the warp (a scene that won't end, a screen that stays
+                    // dark): the case is skipped, as the run would wait forever.
+                    eprintln!("tour: wide {}: never settled (scene {scene:?}, busy {field_busy})", case.id);
+                    self.line(format_args!("K {n} never settled"));
+                    self.index += 1;
+                    self.phase = Phase::Recover(0);
+                    return false;
+                }
                 if n < 90 || scene != Scene::Overworld || field_busy {
                     if field_busy && n % 30 < 3 {
                         input.keys |= Keys::A;
@@ -463,6 +484,12 @@ impl Pass {
                 let case = self.cases[self.index].clone();
                 self.watch(emu, fsys_ptr);
                 let f = self.frame;
+                // Written out every 5 seconds: a run that freezes still shows how far it got.
+                if f % 300 == 0
+                    && let Some(w) = self.log.as_mut()
+                {
+                    let _ = w.flush();
+                }
                 if let Some(seq) = self.pending {
                     if let Some(result) = self.acked(emu).filter(|_| seq == self.seq) {
                         self.write_vars(emu, &case);

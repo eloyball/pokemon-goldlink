@@ -561,30 +561,12 @@
   ]
  },
  "props": {
-  "0": {
-   "ids": [
-    55
-   ],
-   "tex": [
-    [
-     "kk_tourou_a",
-     "kk_tourou_a_pl",
-     2
-    ],
-    [
-     "kk_tourou_b.1",
-     "kk_tourou_b.1_pl",
-     2
-    ]
-   ]
-  },
   "2": {
    "ids": [
     153,
     157,
     158,
-    159,
-    164
+    159
    ],
    "tex": [
     [
@@ -610,11 +592,6 @@
     [
      "ar_yogosi",
      "ar_yogosi_pl",
-     19
-    ],
-    [
-     "ar_study_door",
-     "ar_study_door_pl",
      19
     ]
    ]
@@ -655,8 +632,7 @@
   },
   "10": {
    "ids": [
-    252,
-    330
+    252
    ],
    "tex": [
     [
@@ -667,16 +643,6 @@
     [
      "ybc_mado",
      "ybc_mado_pl",
-     11
-    ],
-    [
-     "ymbk_sl2",
-     "ymbk_sl2_pl",
-     11
-    ],
-    [
-     "ymbk_sl3",
-     "ymbk_sl3_pl",
      11
     ]
    ]
@@ -709,29 +675,11 @@
     ]
    ]
   },
-  "13": {
-   "ids": [
-    330
-   ],
-   "tex": [
-    [
-     "ymbk_sl2",
-     "ymbk_sl2_pl",
-     11
-    ],
-    [
-     "ymbk_sl3",
-     "ymbk_sl3_pl",
-     11
-    ]
-   ]
-  },
   "14": {
    "ids": [
     252,
     253,
-    254,
-    330
+    254
    ],
    "tex": [
     [
@@ -748,63 +696,18 @@
      "ybc_h1c",
      "ybc_h1c_pl",
      11
-    ],
-    [
-     "ymbk_sl2",
-     "ymbk_sl2_pl",
-     11
-    ],
-    [
-     "ymbk_sl3",
-     "ymbk_sl3_pl",
-     11
     ]
    ]
   },
   "15": {
    "ids": [
-    24,
     41
    ],
    "tex": [
     [
-     "wk_door1",
-     "wk_door1_pl",
-     13
-    ],
-    [
      "kn_h01_a",
      "kn_h01_a_pl",
      13
-    ]
-   ]
-  },
-  "17": {
-   "ids": [
-    16,
-    307,
-    333
-   ],
-   "tex": [
-    [
-     "gym_door",
-     "gym_door_pl",
-     9
-    ],
-    [
-     "sk_door2",
-     "sk_door2_pl",
-     15
-    ],
-    [
-     "sktk_sl2",
-     "sktk_sl2_pl",
-     15
-    ],
-    [
-     "sktk_sl3",
-     "sktk_sl3_pl",
-     15
     ]
    ]
   }

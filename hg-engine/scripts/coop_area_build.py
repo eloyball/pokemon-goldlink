@@ -11,10 +11,17 @@ them from the game's own files (nothing of the game's is in the repository), app
 own data keeps its offsets, names and ids already there are skipped, so running it again on its
 output changes nothing (the build's file system keeps the last build's archives).
 
+Always from the game's originals: the first run keeps a copy of the three archives (<out
+dir>/vanilla; `make clean` empties the build and the file system together, so that copy is taken
+from a freshly unpacked game) and every run starts from it. Props with an animation (their
+entry in a/1/0/7 isn't 0xFFFF) are left out: their animation files are their own area's, and one
+loaded in another area kept Route 8's from ever finishing loading.
+
     python3 scripts/coop_area_build.py <plan.json> <file system root> <out dir>
 """
 import json
 import os
+import shutil
 import struct
 import sys
 
@@ -92,10 +99,15 @@ def tex_bytes(b):
 def main():
     plan_path, root, out = sys.argv[1:4]
     plan = json.load(open(plan_path))
-    os.makedirs(out, exist_ok=True)
-    maptex, maptex_btnf = narc_parts(os.path.join(root, "a/0/4/4"))
-    proptex, proptex_btnf = narc_parts(os.path.join(root, "a/0/7/0"))
-    lists, lists_btnf = narc_parts(os.path.join(root, "a/0/4/3"))
+    vanilla = os.path.join(out, "vanilla")
+    os.makedirs(vanilla, exist_ok=True)
+    for name, path in (("a044", "a/0/4/4"), ("a070", "a/0/7/0"), ("a043", "a/0/4/3")):
+        if not os.path.exists(os.path.join(vanilla, name)):
+            shutil.copyfile(os.path.join(root, path), os.path.join(vanilla, name))
+    maptex, maptex_btnf = narc_parts(os.path.join(vanilla, "a044"))
+    proptex, proptex_btnf = narc_parts(os.path.join(vanilla, "a070"))
+    lists, lists_btnf = narc_parts(os.path.join(vanilla, "a043"))
+    anims, _ = narc_parts(os.path.join(root, "a/1/0/7"))
     added = skipped = 0
     for member, wanted in plan["map"].items():
         m = int(member)
@@ -118,7 +130,7 @@ def main():
         lst = lists[m]
         count = nt.u16(lst, 0)
         ids = [nt.u16(lst, 2 * (i + 1)) for i in range(count)]
-        new = [p for p in entry["ids"] if p not in ids]
+        new = [p for p in entry["ids"] if p not in ids and (p >= len(anims) or nt.u16(anims[p], 0) == 0xFFFF)]
         if count + len(new) > MAX_PROPS:
             print(f"props {m}: {count} + {len(new)} over the limit, unchanged")
             continue

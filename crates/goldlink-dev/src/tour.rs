@@ -180,6 +180,10 @@ const WALK_RIGHT_STEPS: &[Step] = &[
 const WIDE_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(120),
+    // A level 100 Mewtwo alone in the party: the scenes' battles end with A alone (a lead that
+    // faints asks for another, and A on the party screen went round in circles).
+    Step::Lead("MEWTWO", "NONE", 100),
+    Step::Wait(120),
     Step::Wide,
     Step::Close,
 ];

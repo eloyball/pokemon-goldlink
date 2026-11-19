@@ -281,12 +281,16 @@ def merge_btx0(b, textures, palettes):
     o_c4i = o_c4 + len(c4_data)
     o_plt = o_c4i + len(_align(c4_index))
     block_size = o_plt + len(plt_data)
+    # NNSG3dResTex: the texture, 4x4 and palette infos (vramKey, size, dictionary, flag, data);
+    # their flags kept from the original (the palettes' 0x8000: its 4-colour palettes go in the
+    # first 64 KB of palette memory; lost, Route 8's area never finished loading).
+    tex_flag, c4_flag, plt_flag = u16(b, t + 0x10), u16(b, t + 0x20), u16(b, t + 0x32)
     head = b"TEX0" + struct.pack("<I", block_size) + struct.pack("<I", 0)
-    head += struct.pack("<HH", len(tex_data) >> 3, o_texdict) + struct.pack("<I", 0)
+    head += struct.pack("<HH", len(tex_data) >> 3, o_texdict) + struct.pack("<HH", tex_flag, 0)
     head += struct.pack("<I", o_tex) + struct.pack("<I", 0)
-    head += struct.pack("<HH", len(c4_data) >> 3, o_texdict) + struct.pack("<I", 0)
+    head += struct.pack("<HH", len(c4_data) >> 3, o_texdict) + struct.pack("<HH", c4_flag, 0)
     head += struct.pack("<I", o_c4) + struct.pack("<I", o_c4i) + struct.pack("<I", 0)
-    head += struct.pack("<HH", len(plt_data) >> 3, 0) + struct.pack("<HH", o_pltdict, 0)
+    head += struct.pack("<HH", len(plt_data) >> 3, plt_flag) + struct.pack("<HH", o_pltdict, 0)
     head += struct.pack("<I", o_plt)
     block = _align(head + _align(tex_dict, 4) + plt_dict, 8)
     block += tex_data + c4_data + _align(c4_index) + plt_data
