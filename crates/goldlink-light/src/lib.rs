@@ -302,8 +302,8 @@ fn phase_grade(phase: Phase) -> Grade {
         Phase::Evening => Grade {
             // A golden hour: the game's own evening is orange but much darker than its day (its
             // path 185, 140, 85 against noon's 248, 218, 141), so brighter, warm orange
-            // highlights, violet shade, more colour (the user's pick of three, 2026-11-18: "A";
-            // the soft bloom of "B" looked blurred).
+            // highlights, violet shade, more colour (the user's pick, 2026-11-18, with the soft
+            // bloom of the evening's preset).
             tint: [1.04, 0.99, 0.94],
             shadow: [0.92, 0.90, 1.10],
             highlight: [1.10, 1.0, 0.86],
@@ -357,6 +357,10 @@ fn preset(place: Place, phase: Phase) -> Preset {
                 ambient: scale([0.80, 0.80, 0.96], 0.64),
                 key: scale([1.0, 0.72, 0.45], 0.92),
                 key_dir: normalize([-0.8, 0.35, 0.48]),
+                // A soft bloom over the whole picture, even, so nothing turns on and off (the
+                // user tried "B" in game and kept it, 2026-11-18).
+                bloom: 0.15,
+                bloom_from: 0.52,
                 ..outdoor
             },
             Phase::Night => Preset {
