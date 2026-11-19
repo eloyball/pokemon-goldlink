@@ -1,3 +1,4 @@
+#pragma GCC optimize ("no-inline-functions-called-once") // Overlay 131 is full: 4 bytes smaller (2026-11-19)
 #include "config.h"
 #include "types.h"
 #include "constants/item.h"

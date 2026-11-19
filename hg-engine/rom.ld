@@ -1007,6 +1007,9 @@ sub_02053908 = 0x02053908 | 1;
    overlay_01.h ErrorContinueEnv. TaskManager_Jump: pret src/task.c, NowRunTask
    0x02050510 in asm/unk_020504C0.s before commit b5bc963f7. A spirit's warps (UC15). */
 Task_ScriptWarp = 0x0205380C | 1;
+/* pret include/screen_fade.h (asm/unk_0200FA24.s IsPaletteFadeFinished: ; 0x0200FB5C): the
+   spirit's warp waits for its fades (coop_spirit.c). */
+IsPaletteFadeFinished = 0x0200FB5C | 1;
 TaskManager_Jump = 0x02050510 | 1;
 /* pret src/player_avatar.c (sub_0205CB38 before commit 5daf3f928): the running
    shoes' lock (the touch button): vanilla then counts B as held. */

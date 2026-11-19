@@ -380,6 +380,7 @@ static BOOL Coop_CanRunFieldDebugCommand(FieldSystem *fsys, LocalMapObject *play
 
 // COOP_WARP_FLY: Fly's warp, as the party menu's Fly starts it from its task (pret
 // Task_UseFlyInField), so the landing plays (KNOWN_RISKS #135).
+#if COOP_DEBUG_FLY
 void LONG_CALL sub_02053908(TaskManager *taskman, u32 mapId, int warpId, int x, int z, int direction);
 static u8 sCoopDebugFlyTarget __attribute__((section(".data"))) = 0;
 
@@ -390,11 +391,13 @@ static BOOL Coop_Task_DebugFly(TaskManager *taskman)
     sub_02053908(taskman, target->mapId, -1, target->x, target->z, COOP_DIR_SOUTH);
     return FALSE;
 }
+#endif
 
 static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
 {
     const struct CoopWarpTarget *target;
 
+#if COOP_DEBUG_PLACE
     if (preset == COOP_WARP_FROM_BUFFER)
     {
         u16 *in = (u16 *)gCoopDebugMonBuffer.mon;
@@ -406,12 +409,15 @@ static u8 Coop_DebugWarp(FieldSystem *fsys, u8 preset)
             sub_020538C0(fsys, in[0], -1, in[1], in[2], in[3]);
         return COOP_DEBUG_RESULT_OK;
     }
+#endif
+#if COOP_DEBUG_FLY
     if ((preset & COOP_WARP_FLY) && (preset & ~COOP_WARP_FLY) < COOP_WARP_COUNT)
     {
         sCoopDebugFlyTarget = preset & ~COOP_WARP_FLY;
         return Coop_FieldSystem_CreateTask(fsys, Coop_Task_DebugFly, NULL) != NULL ? COOP_DEBUG_RESULT_OK
                                                                                  : COOP_DEBUG_RESULT_FAILED;
     }
+#endif
     if (preset >= COOP_WARP_COUNT)
         return COOP_DEBUG_RESULT_BAD_ARG;
     target = &sCoopWarpTargets[preset];
@@ -2860,7 +2866,10 @@ void Coop_StampBattleAvatar(struct BattleSetup *setup)
 // swapped, so poses and script-set sprites are left alone.
 // The local player's sprite as last seen and the frames left before it may change again (in
 // .data: Overlay 131 has no BSS init).
-static u32 sCoopLocalLastSprite __attribute__((section(".data"))) = 0xFFFFFFFF;
+// Overlay 131 is loaded again with each map: 0xFFFFFFFF until the field has run on a new map
+// (the spirit's warp waits for it, coop_spirit.c). Hiding a new map's player until ours was on
+// hung the game (a hidden object is never drawn, so never ready for a change; 2026-11-19).
+u32 gCoopLocalLastSprite __attribute__((section(".data"))) = 0xFFFFFFFF;
 static u8 sCoopLocalSettle __attribute__((section(".data"))) = 0;
 
 static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
@@ -2869,14 +2878,14 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
     u32 current = (u32)player->gfxId;
     u32 wanted;
 
-    if (current != sCoopLocalLastSprite)
-    {
-        sCoopLocalLastSprite = current; // changed, by vanilla or by us: wait for it to settle
-        sCoopLocalSettle = COOP_SPRITE_SETTLE_FRAMES;
-    }
     if ((u32)avatar->state >= NELEMS(sCoopVanillaPlayerSprites))
         return;
     wanted = Coop_LocalPlayerSprite((u32)avatar->state, avatar->gender);
+    if (current != gCoopLocalLastSprite)
+    {
+        gCoopLocalLastSprite = current; // changed, by vanilla or by us: wait for it to settle
+        sCoopLocalSettle = COOP_SPRITE_SETTLE_FRAMES;
+    }
     if (current == wanted || Coop_AvatarStateOf(Coop_AvatarBase(current)) != Coop_AvatarStateOf(Coop_AvatarBase(wanted)))
         return;
     if (MapObject_IsSingleMovementActive(player) || MapObject_IsBillboardPending(player)

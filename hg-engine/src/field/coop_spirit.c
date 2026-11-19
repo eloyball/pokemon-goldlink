@@ -45,7 +45,6 @@ BOOL LONG_CALL Field_SaveGameNormal(FieldSystem *fsys);
 // (TaskManager_Jump, as sub_02053908 does for the Fly warp); from outside, a new task.
 BOOL LONG_CALL Task_ScriptWarp(TaskManager *taskman);
 void LONG_CALL TaskManager_Jump(TaskManager *taskman, BOOL (*func)(TaskManager *), void *env);
-u16 LONG_CALL PlayerAvatar_CheckRunningShoesLock(void *avatar);
 // pret (rom.ld, docs/MILESTONE5_PLAN.md §11.1): vanilla's "can the follower
 // step there" test in ScrCmd_FollowMonFacePlayer.
 BOOL LONG_CALL sub_020549A8(FieldSystem *fsys, VecFx32 *pos, int x, int z, int unused); // TRUE: blocked
@@ -69,10 +68,9 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_DIR_DOWN            1
 #define COOP_DIR_LEFT            2
 #define COOP_DIR_RIGHT           3
-#define COOP_MOVEMENT_FACE_UP    0  // + direction (pret constants/movements.h)
 #define COOP_MOVEMENT_STEP_UP    12 // + direction
 #define COOP_MOVEMENT_JUMP_FAR_UP 56 // + direction: two tiles, a ledge's jump (pret asm/macros/movement.inc JumpFar*)
-#define COOP_MOVEMENT_RUN_UP     88 // + direction: the running shoes' step (pret asm/macros/movement.inc RunNorth)
+#define COOP_MOVEMENT_TURN_UP    36 // + direction: a turn, as a quick step on the spot (pret asm/macros/movement.inc WalkOnSpotFastNorth)
 #define COOP_MOVEMENT_STEP_END   254
 #define COOP_PLAYER_STATE_SURFING 2 // pret PLAYER_STATE_SURFING
 #define COOP_SE_SELECT           1500
@@ -553,6 +551,40 @@ static struct CoopScriptWarpEnv *Coop_ScriptWarpEnv(u32 map, s32 warpId, s32 x, 
     return warp;
 }
 
+// pret include/screen_fade.h: a script's FadeScreen 6, 1, 0 / 1, RGB_BLACK (out / in, both screens).
+void LONG_CALL BeginNormalPaletteFade(int mode, int typeMain, int typeSub, u16 color, int steps, int framesPerStep, int heapId);
+BOOL LONG_CALL IsPaletteFadeFinished(void);
+#define COOP_HEAP_FIELD1 4 // pret HEAP_ID_FIELD1
+extern u32 gCoopLocalLastSprite; // coop_ghosts.c: 0xFFFFFFFF until the field runs on a new map
+static u8 sCoopSpiritArrival __attribute__((section(".data"))) = 0;
+
+// A spirit's warp: the script warp between a script's fades, out and in (the spirit had none:
+// the 3D light went off and the next map showed half loaded, the user's play test, 2026-11-19;
+// the step warp's own fades, ov01_021F35C4, are the warp panel's, the player dropping in).
+// Its env is the script warp's, which frees it.
+static BOOL Coop_Task_SpiritWarp(TaskManager *taskman)
+{
+    u32 state = taskman->state;
+
+    if (state & 1) // 1, 3: a fade runs
+    {
+        if (!IsPaletteFadeFinished())
+            return FALSE;
+        if (state == 3)
+            return TRUE;
+        TaskManager_Call(taskman, Task_ScriptWarp, taskman->env); // it frees its env
+    }
+    // In once the field has run on the new map and the avatar had time to become ours (its
+    // settle wait and the change: Ethan or Lyra showed through the fade-in, the user's play test,
+    // 2026-11-19). The count starts at 0 with each map (Overlay 131 is loaded again).
+    else if (state == 2 && (gCoopLocalLastSprite == 0xFFFFFFFF || ++sCoopSpiritArrival < 24))
+        return FALSE;
+    else // 0: out, 2: in
+        BeginNormalPaletteFade(0, state >> 1, state >> 1, 0, 6, 1, COOP_HEAP_FIELD1);
+    taskman->state = state + 1;
+    return FALSE;
+}
+
 // A spirit may step onto a tile that vanilla's follower could step onto: no
 // water, no object (UC15: other zones and warp tiles too).
 static BOOL Coop_SpiritCanStep(FieldSystem *fsys, LocalMapObject *player, s32 x, s32 z)
@@ -595,12 +627,13 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
         dir = COOP_DIR_RIGHT;
     else
         return FALSE;
-    // A new direction turns first (vanilla's FACE movement); still held when it ends, the
-    // spirit walks that way: a tap turns in place, as vanilla's player.
+    // A new direction turns first, a quick step on the spot that lasts a few frames; still
+    // held when it ends, the spirit walks that way: a tap turns in place, as vanilla's player.
+    // (An instant FACE turn walked on as soon as a tap lasted two frames: every tap walked.)
     if ((u32)player->curFacing != dir)
     {
         env->stepped = FALSE;
-        Coop_SpiritMove(env, player, COOP_MOVEMENT_FACE_UP + dir);
+        Coop_SpiritMove(env, player, COOP_MOVEMENT_TURN_UP + dir);
         return FALSE;
     }
     nx = x + sDx[dir];
@@ -631,12 +664,11 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
             return FALSE;
         }
     }
+    // Spirits walk: no B, no running shoes' lock (the user's call: one run step at a time
+    // stuttered, and the lock can't be turned off from the spirit's screens).
     if (Coop_SpiritCanStep(fsys, player, nx, nz))
     {
-        // B runs (vanilla counts it held while the running shoes' lock is on).
-        BOOL run = (held & PAD_BUTTON_B) || PlayerAvatar_CheckRunningShoesLock(fsys->playerAvatar);
-
-        Coop_SpiritMove(env, player, (run ? COOP_MOVEMENT_RUN_UP : COOP_MOVEMENT_STEP_UP) + dir);
+        Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + dir);
         env->stepped = TRUE;
     }
     return FALSE;
@@ -783,6 +815,13 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     case COOP_SPIRIT_WAIT_STILL:
         if (MapObject_IsSingleMovementActive(player))
             break;
+        // Out of a house onto its door (facing out): a step out, as vanilla's player
+        // (on the door, walking back in needed a step away first; the user's play test).
+        if (GetMetatileBehaviorAt(fsys, player->xCurr, player->yCurr) == COOP_TILE_DOOR)
+        {
+            Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + player->curFacing);
+            break;
+        }
         if (save != NULL && (save->spirit_flags & COOP_SPIRIT_INTRO))
         {
             // The task may start under the map name banner (UC15); our windows
@@ -802,7 +841,7 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     case COOP_SPIRIT_INTRO_TEXT:
         if (Coop_DialogIsPrinting(&env->dialog) || !Coop_DialogButtonPressed())
             break;
-        Coop_DialogPrint(&env->dialog, "Hold B to run.\nX opens the spirit menu.");
+        Coop_DialogPrint(&env->dialog, "X opens the menu.");
         taskman->state = COOP_SPIRIT_INTRO_PAGE2;
         break;
 
@@ -920,7 +959,7 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
 
             if (warp == NULL)
                 return TRUE; // this task starts again where it is
-            TaskManager_Jump(taskman, Task_ScriptWarp, warp);
+            TaskManager_Jump(taskman, Coop_Task_SpiritWarp, warp);
         }
         return FALSE;
 

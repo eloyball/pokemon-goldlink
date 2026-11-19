@@ -276,9 +276,15 @@ enum CoopWarpPreset
 // include/save_vars_flags.h) and the FieldSystem, for the tour to set the
 // story and watch the people (fsys->mapObjectMan: the field recreates the manager on each warp).
 #define COOP_WARP_FROM_BUFFER 0xFF
+// Off unless COOP_DEBUG_PLACE is 1 (goldlink-dev's Place step, UC16's border tours): Overlay 131
+// has no room for it next to the spirits' warp fades and the avatar's hiding (2026-11-19).
+#define COOP_DEBUG_PLACE 0
 // DEVELOPMENT ONLY: a preset with this bit warps by Fly's own warp (pret sub_02053908 from a task),
-// so its landing animation plays (KNOWN_RISKS #135's probe).
+// so its landing animation plays (KNOWN_RISKS #135's probe: goldlink-dev's fly-landing route).
+// Off unless COOP_DEBUG_FLY is 1: Overlay 131 has no room for it next to the spirits' warp fades
+// (2026-11-19); to film the landing, turn it on and something else off for that build.
 #define COOP_WARP_FLY 0x80
+#define COOP_DEBUG_FLY 0
 
 // The wider picture's walk-off (UC16, src/individual/coop_walk_out.c): at most this many people
 // of one run of HidePersons walk out together (their movement lists, 3 words each, live in
