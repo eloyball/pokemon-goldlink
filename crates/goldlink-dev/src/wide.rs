@@ -80,7 +80,11 @@ impl Case {
         let n = |k: &str| v[k].as_u64().map(|x| x as u16);
         let list = |k: &str| -> Vec<u16> {
             v[k].as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_u64().map(|x| x as u16)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_u64().map(|x| x as u16))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         Some(Self {
@@ -147,7 +151,7 @@ pub struct Pass {
     frame: u32,
     key: usize,
     key_frames: u32,
-    talked: bool,
+    talk_frames: u32,
     idle: u32,
     seq: u8,
     vars_flags: u32,
@@ -322,7 +326,10 @@ impl Pass {
         let mut out = Vec::new();
         for &(var, _) in &case.vars {
             let i = (var - VAR_BASE) as usize;
-            out.push(format!("{var:#x}={}", u16::from_le_bytes([ram[base + 2 * i], ram[base + 2 * i + 1]])));
+            out.push(format!(
+                "{var:#x}={}",
+                u16::from_le_bytes([ram[base + 2 * i], ram[base + 2 * i + 1]])
+            ));
         }
         for &flag in case.flags_clear.iter().chain(&case.flags_set) {
             let b = ram[base + 2 * NUM_VARS + flag as usize / 8] >> (flag % 8) & 1;
@@ -374,7 +381,7 @@ impl Pass {
                 self.frame = 0;
                 self.key = 0;
                 self.key_frames = 0;
-                self.talked = false;
+                self.talk_frames = 0;
                 self.idle = 0;
                 self.last.clear();
                 self.camera = None;
@@ -382,7 +389,12 @@ impl Pass {
                 self.player = None;
                 self.key_from = None;
                 self.alt = 0;
-                eprintln!("tour: wide {} ({}/{})", case.id, self.index + 1, self.cases.len());
+                eprintln!(
+                    "tour: wide {} ({}/{})",
+                    case.id,
+                    self.index + 1,
+                    self.cases.len()
+                );
                 // First the pointers (no warp), then the story, then the warp.
                 self.debug(emu, buffer, [0, 0, 0, 0]);
                 self.phase = Phase::Ack(self.seq, 0, 0);
@@ -478,12 +490,24 @@ impl Pass {
                     self.idle = 0;
                 } else if field_busy {
                     self.idle = 0;
+                    // GOLDLINK_DEV_WIDE_CAPTURE: the menu box's inputs before each A.
+                    if f % 30 == 28 && std::env::var_os("GOLDLINK_DEV_WIDE_CAPTURE").is_some() {
+                        let id = self.cases[self.index].id.clone();
+                        let line = crate::tour::capture_prompt(
+                            emu,
+                            &dir.join("wide"),
+                            &format!("{id}-{f}"),
+                        );
+                        self.line(format_args!("P {f} {line}"));
+                    }
                     if f % 30 < 3 {
                         input.keys |= Keys::A;
                     }
                 } else if settled {
                     // The first key didn't move the player: the next start, if any.
-                    if self.key == 1 && self.key_frames == 0 && self.key_from.is_some()
+                    if self.key == 1
+                        && self.key_frames == 0
+                        && self.key_from.is_some()
                         && self.key_from == self.player
                         && self.alt < case.alts.len()
                     {
@@ -511,16 +535,21 @@ impl Pass {
                             self.key_frames = 0;
                         }
                         self.idle = 0;
-                    } else if case.talk && !self.talked {
-                        self.line(format_args!("K {f} talk"));
+                    } else if case.talk && self.talk_frames < 6 {
+                        // Held 6 frames, as the tour's presses (one frame isn't seen).
+                        if self.talk_frames == 0 {
+                            self.line(format_args!("K {f} talk"));
+                        }
                         input.keys |= Keys::A;
-                        self.talked = true;
+                        self.talk_frames += 1;
                         self.idle = 0;
                     } else {
                         self.idle += 1;
                     }
                 }
-                let done = (self.pending.is_none() && f >= self.warped_at + case.watch && self.idle >= 120)
+                let done = (self.pending.is_none()
+                    && f >= self.warped_at + case.watch
+                    && self.idle >= 120)
                     || f >= case.watch * 4 + 3600;
                 if done {
                     self.line(format_args!("K {f} end"));

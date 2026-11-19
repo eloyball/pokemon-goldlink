@@ -73,8 +73,42 @@ enum Step {
     NamingLog,
     /// UC16's emulator pass: every case of GOLDLINK_DEV_TOUR_WIDE_CASES (crate::wide).
     Wide,
+    /// For the frames: every 40 while a field script runs, the touch screen saved
+    /// (`<n>-prompt-<frame>.png`) with what the ROM's menu mirror holds and what the window's
+    /// button finder (`hud::touch_choices`) sees, then this key (the one-screen menu box).
+    Capture(u32, Keys),
+    /// A every 90 frames while the game is out of the overworld (an app: the starter's), until
+    /// it's back (or the frames run out).
+    MashApp(u32),
     Close,
 }
+
+/// GOLDLINK_DEV_TOUR_ROUTE=starter-prompt: the one-screen menu box at the starter: the save put back before
+/// Elm's starter (debug command 20 / 21, as dev/bizhawk/m5_probe.lua's starter mode), the warp to
+/// Elm's lab, the starter machine, then the "Give a nickname?" prompt captured (B: the naming
+/// screen opens either way in GoldLink).
+const PROMPT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Debug(C::COOP_DEBUG_CHALLENGE as u8, 21),
+    Step::Wait(30),
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 12),
+    Step::Wait(240),
+    Step::Until(Scene::Overworld, 900),
+    Step::Wait(60),
+    Step::Press(Keys::B),
+    Step::Wait(30),
+    Step::Press(Keys::B),
+    Step::Wait(30),
+    Step::Press(Keys::UP),
+    Step::Wait(30),
+    Step::Press(Keys::A),
+    Step::Wait(40),
+    Step::MashTask(60 * 30),
+    Step::MashApp(60 * 60),
+    Step::Capture(60 * 40, Keys::A),
+    Step::Close,
+];
 
 /// GOLDLINK_DEV_TOUR_ROUTE=walk-right: a picture where the save stands, then four seconds walking
 /// right (with GOLDLINK_DEV_TOUR_FILM=1, every frame: the lighting at a time of day).
@@ -352,6 +386,42 @@ fn field_task(ram: &[u8]) -> bool {
         .filter(|&f| (0x0200_0000..0x0240_0000).contains(&f))
         .and_then(|f| u32_at(f + 0x10))
         .is_some_and(|task| task != 0)
+}
+
+/// The touch screen saved as `<dir>/<name>.png`, and a line: whether the window would show both
+/// screens, what the ROM's menu mirror holds and what the window's button finder sees (the
+/// one-screen menu box's inputs).
+pub(crate) fn capture_prompt(emu: &Emulator, dir: &std::path::Path, name: &str) -> String {
+    let bottom: Vec<u32> = emu.nds.framebuffer(1).to_vec();
+    let found = goldlink::hud::touch_choices(&bottom);
+    let at = emu.mailbox_offset();
+    let ram = emu.nds.main_ram();
+    let lp = ram[at + LOCAL_PLAYER..at + LOCAL_PLAYER + PLAYER_STATE_SIZE].to_vec();
+    let words = goldlink::goldlink_bridge::menu_text::read_menu(ram, &lp);
+    let table = goldlink_rom::nitro::Charmap::new();
+    let img = egui::ColorImage {
+        size: [256, 192],
+        pixels: bottom
+            .iter()
+            .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+            .collect(),
+    };
+    let _ = write_png(&dir.join(format!("{name}.png")), &img);
+    let top: Vec<u32> = emu.nds.framebuffer(0).to_vec();
+    let rows = &top[256 * goldlink::hud::SCENE_ROWS as usize..256 * 192];
+    let scene = scene_of(&ram[at..at + MAILBOX_SIZE]);
+    format!(
+        "{name}: scene {scene:?}, text box {}; both screens (Pokégear {}, call {}); mirror {:?}; touch buttons {} {:?}",
+        goldlink::hud::game_textbox_shown(rows),
+        goldlink::hud::pokegear_shown(&bottom),
+        goldlink::hud::phone_call_shown(&bottom),
+        words.iter().map(|w| table.decode(w)).collect::<Vec<_>>(),
+        found.len(),
+        found
+            .iter()
+            .map(|c| (c.x0, c.y0, c.x1, c.y1, c.selected))
+            .collect::<Vec<_>>()
+    )
 }
 
 fn engine_symbol(root: &std::path::Path, name: &str) -> Option<u32> {
@@ -1262,6 +1332,7 @@ fn steps() -> &'static [Step] {
         Ok("catch") => CATCH_STEPS,
         Ok("wide") => WIDE_STEPS,
         Ok("walk-right") => WALK_RIGHT_STEPS,
+        Ok("starter-prompt") => PROMPT_STEPS,
         Ok("pokecenter") => POKECENTER_STEPS,
         Ok("walk") => WALK_STEPS,
         Ok("gate") => GATE_STEPS,
@@ -1917,10 +1988,36 @@ impl FrameHook for TourHook {
                 }
                 true
             }
+            Step::MashApp(max) => {
+                let away = scene != Scene::Overworld && scene != Scene::Unknown;
+                if away && s.frames % 90 == 45 {
+                    input.keys |= Keys::A;
+                }
+                (!away && s.frames > 120) || s.frames >= max
+            }
+            Step::Capture(max, key) => {
+                if field_task(emu.nds.main_ram()) && s.frames % 40 == 20 {
+                    s.taken += 1;
+                    let line = capture_prompt(
+                        emu,
+                        &self.0.dir,
+                        &format!("{}-prompt-{}", s.taken, s.frames),
+                    );
+                    eprintln!("tour: {line}");
+                    // The window too, while a menu is open (what the player sees).
+                    if !line.contains("mirror []") {
+                        s.shot = Some(format!("window-{}", s.frames));
+                    }
+                    s.log.push(line);
+                }
+                if field_task(emu.nds.main_ram()) && s.frames % 40 == 30 {
+                    input.keys |= key;
+                }
+                s.frames >= max
+            }
             Step::Wide => {
-                let root = PathBuf::from(
-                    std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()),
-                );
+                let root =
+                    PathBuf::from(std::env::var_os("PROBE_ROOT").unwrap_or_else(|| ".".into()));
                 let found = (
                     engine_symbol(&root, "gCoopDebugMonBuffer"),
                     engine_symbol(&root, "gFieldSysPtr"),
