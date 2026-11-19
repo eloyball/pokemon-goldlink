@@ -1,0 +1,49 @@
+GoldLink's change to melonDS (UC9 §3.2): only the HP boxes' own sprite pieces move with them.
+
+Patch 0002 moved every main-engine sprite piece whose centre lay in a box. A move effect or the
+intro can draw a copy of the opposing Pokémon as sprite pieces; its bottom piece, centred in the
+player's box, was cut off and moved right with it (the user's play test, 2026-11-19). Each
+rectangle now carries the box's characters (the box sprite's image, from the shim), and only
+pieces drawn from them move.
+
+Applied by build.rs to a copy of the submodule (which stays at upstream).
+
+diff --git a/src/GPU2D_Soft.h b/src/GPU2D_Soft.h
+index 3e49cf7..c27ee09 100644
+--- a/src/GPU2D_Soft.h
++++ b/src/GPU2D_Soft.h
+@@ -64,7 +64,9 @@ public:
+     // GoldLink: rectangles (screen pixels, end exclusive) whose sprite pieces the main engine draws
+     // moved by DX: the one-screen layout moves the battle's HP boxes toward the wider picture's
+     // edges. A piece belongs to a rectangle when its centre is in it.
+-    struct ObjMoveRect { s32 X0, Y0, X1, Y1, DX; };
++    // CharLo..CharHi (bytes into the main engine's sprite memory, end exclusive): only pieces
++    // drawn from those characters (a box's own) are moved; CharHi <= CharLo moves any piece.
++    struct ObjMoveRect { s32 X0, Y0, X1, Y1, DX, CharLo, CharHi; };
+     static constexpr int MaxObjMove = 8;
+     ObjMoveRect ObjMove[MaxObjMove] {};
+     int ObjMoveCount = 0;
+@@ -106,10 +108,22 @@ private:
+         if (CurUnit->Num == 0 && ((attrib2 >> 10) & 3) != 3)
+         {
+             s32 cx = x + width / 2, cy = (s32)top + height / 2;
++            // GoldLink: where the piece's characters start (1D mapping: tile units of 32 bytes
++            // times the boundary; 2D: 32 bytes). A move effect's copy of a Pokémon drawn as
++            // sprite pieces could have a piece centred in a box (the opponent's bottom piece
++            // in the player's box): it isn't the box's, and stays put.
++            u32 tile = attrib2 & 0x3FF;
++            s32 chars = (CurUnit->DispCnt & 0x10) ? (s32)(tile << (5 + ((CurUnit->DispCnt >> 20) & 3)))
++                                                  : (s32)(tile << 5);
+             for (int r = 0; r < ObjMoveCount; r++)
+             {
+                 const ObjMoveRect& m = ObjMove[r];
+-                if (cx >= m.X0 && cx < m.X1 && cy >= m.Y0 && cy < m.Y1) { dx = m.DX; break; }
++                if (cx >= m.X0 && cx < m.X1 && cy >= m.Y0 && cy < m.Y1
++                    && (m.CharHi <= m.CharLo || (chars >= m.CharLo && chars < m.CharHi)))
++                {
++                    dx = m.DX;
++                    break;
++                }
+             }
+         }
+         if (dx != 0) x += dx;

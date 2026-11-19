@@ -54,6 +54,13 @@ const SYSTEM_MAX_BATTLERS: u32 = 0x44;
 const OPPONENT_HP_BAR: u32 = 0x28;
 /// `Sprite`: its position (fx32 x, y) and whether it's drawn (+0x34).
 const SPRITE_DRAW: u32 = 0x34;
+/// `Sprite.imageProxy`'s main-engine address (+0xB8: the proxy's VRAM addresses come before its
+/// attributes; measured, the opponent's box at 0x1340, its pieces' tile 77 x 64 bytes).
+const SPRITE_CHARS_2D_MAIN: u32 = 0xB8;
+/// A box's characters: two 64 x 64 pieces of 16 colours.
+const BOX_CHARS: u32 = 0x1000;
+/// The box's arrow sprite's characters (at most).
+const ARROW_CHARS: u32 = 0x400;
 /// hg-engine `BattleStruct.battlemon` (+0x2D40, 0xC0 each): species, level (+0x34), nickname
 /// (+0x36, 11 characters), status (+0x6C), gender (+0x7E, low 4 bits).
 const CONTEXT_BATTLEMON: u32 = 0x2D40;
@@ -259,6 +266,11 @@ pub struct HpBox {
     pub x: i32,
     pub y: i32,
     pub drawn: bool,
+    /// The box sprite's address (pret `Sprite`; 0 without one).
+    pub sprite: u32,
+    /// Where the box's sprites draw from (bytes into the main engine's sprite memory, end
+    /// exclusive): the box's own characters, and its arrow's while drawn (`BattleHpBar.arrowObj`).
+    pub chars: Vec<[u32; 2]>,
     pub hp: i32,
     pub max_hp: i32,
     /// While the bar drains or fills: the value it shows, in 1/256 HP; otherwise None.
@@ -485,6 +497,18 @@ fn read_boxes(r: &Ram<'_>, system: u32) -> (Vec<HpBox>, [Vec<u16>; 4]) {
             continue;
         };
         let sprite = r.ptr(bar + 4).and_then(|box_obj| r.ptr(box_obj));
+        let arrow = r.ptr(bar + 8).and_then(|obj| r.ptr(obj));
+        let mut chars = Vec::new();
+        for (sp, size) in [(sprite, BOX_CHARS), (arrow, ARROW_CHARS)] {
+            if let Some(sp) = sp
+                && r.u8(sp + SPRITE_DRAW) == Some(1)
+                && let Some(at) = r
+                    .u32(sp + SPRITE_CHARS_2D_MAIN)
+                    .filter(|&a| a < 0x0010_0000)
+            {
+                chars.push([at, at + size]);
+            }
+        }
         let (x, y, drawn) = sprite.map_or((0, 0, false), |sp| {
             (
                 s32_at(r, sp) >> 12,
@@ -502,6 +526,8 @@ fn read_boxes(r: &Ram<'_>, system: u32) -> (Vec<HpBox>, [Vec<u16>; 4]) {
             x,
             y,
             drawn,
+            sprite: sprite.unwrap_or(0),
+            chars,
             hp: s32(0x28).unwrap_or(0),
             max_hp: s32(0x2C).unwrap_or(0),
             hp_anim: anim(s32(0x34), s32(0x30)),
@@ -542,17 +568,22 @@ fn s32_at(r: &Ram<'_>, addr: u32) -> i32 {
 
 /// The game's HP boxes with how far to move them: the opponents' `shift` to the left, the
 /// player's to the right. melonDS moves the sprite pieces whose centre lies in a box (the
-/// pieces are 64 x 64 and reach above the box, so their centres sit on its middle row). Only
-/// boxes the game draws: in the intro the player's trainer slides through where the player's
-/// box will be, before it shows, and its pieces were moved (a second trainer, 43 pixels on).
-pub fn box_moves(ui: &BattleUi, shift: i32) -> Vec<[i32; 5]> {
+/// pieces are 64 x 64 and reach above the box, so their centres sit on its middle row) and that
+/// are drawn from the box's own characters: a move effect's copy of the opposing Pokémon drawn
+/// as sprite pieces had its bottom piece centred in the player's box, cut off and moved with it.
+/// Only boxes the game draws: in the intro the player's trainer slides through where the
+/// player's box will be, before it shows, and its pieces were moved (a second trainer, 43
+/// pixels on).
+pub fn box_moves(ui: &BattleUi, shift: i32) -> Vec<[i32; 7]> {
     ui.boxes
         .iter()
         .filter(|b| b.drawn)
-        .map(|b| {
+        .flat_map(|b| {
             let [x0, y0, x1, y1] = b.rect();
             let dx = if b.players() { shift } else { -shift };
-            [x0, y0, x1, y1, dx]
+            b.chars
+                .iter()
+                .map(move |&[lo, hi]| [x0, y0, x1, y1, dx, lo as i32, hi as i32])
         })
         .collect()
 }

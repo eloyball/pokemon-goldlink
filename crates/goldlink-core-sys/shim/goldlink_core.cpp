@@ -444,8 +444,8 @@ void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count)
         count = 0;
     for (int i = 0; i < count; i++)
     {
-        const int32_t *r = rects + i * 5;
-        soft2d.ObjMove[i] = {r[0], r[1], r[2], r[3], r[4]};
+        const int32_t *r = rects + i * 7;
+        soft2d.ObjMove[i] = {r[0], r[1], r[2], r[3], r[4], r[5], r[6]};
     }
     soft2d.ObjMoveCount = count;
 }

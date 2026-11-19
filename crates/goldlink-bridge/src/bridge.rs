@@ -445,7 +445,7 @@ impl Bridge {
 
     /// The game's HP boxes and how far melonDS moves them: the opponents' to the left, the
     /// player's to the right (empty unless the window shows the wider picture: `box_shift`).
-    pub fn moved_boxes(&self) -> Vec<[i32; 5]> {
+    pub fn moved_boxes(&self) -> Vec<[i32; 7]> {
         match &self.battle_ui {
             Some(ui) if self.box_shift > 0 => crate::battle_ui::box_moves(ui, self.box_shift),
             _ => Vec::new(),

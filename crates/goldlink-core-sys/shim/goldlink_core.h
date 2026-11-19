@@ -189,10 +189,12 @@ void gl_core_shadow_geometry(GlCore *core, GlShadowPoly *polys, GlShadowVert *ve
 // effect's brightness on the 3D layer (where the 3D scene shows on top).
 void gl_core_light_fades(GlCore *core, uint8_t out[192 * 4]);
 
-// Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx) whose main-engine sprite
-// pieces (by their centre) are drawn moved by dx, from the next frame on: the one-screen layout
-// moves the battle's HP boxes toward the wider picture's edges. At most 8; 0 clears. None while
-// the main engine draws the touch screen.
+// Rectangles (x0, y0, x1, y1 in screen pixels, end exclusive, then dx, then chars_lo, chars_hi:
+// seven ints each) whose main-engine sprite pieces (by their centre) are drawn moved by dx, from
+// the next frame on: the one-screen layout moves the battle's HP boxes toward the wider
+// picture's edges. Only pieces drawn from the characters chars_lo..chars_hi (bytes into the main
+// engine's sprite memory; chars_hi <= chars_lo: any) move. At most 8; 0 clears. None while the
+// main engine draws the touch screen.
 void gl_core_set_sprite_move(GlCore *core, const int32_t *rects, int count);
 
 // Up to max_frames stereo frames (interleaved L, R) of audio produced so far. Returns how many.

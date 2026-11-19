@@ -1167,6 +1167,36 @@ const BATTLE_INTRO_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=battle-tray: the intro's window where the party ball tray and the
+/// player's HP box show together (patch 0034: only the box's own pieces move).
+const BATTLE_TRAY_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Walk(Keys::NONE, 655, ""),
+    Step::Shot("tray-a"),
+    Step::Walk(Keys::NONE, 25, ""),
+    Step::Shot("tray-b"),
+    Step::Walk(Keys::NONE, 120, ""),
+    Step::Shot("after"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=battle-growl: the lead's second move (Chikorita's Growl in the mid
+/// save), its stat-change animation on the opponent filmed with the sprite log (patch 0034).
+const BATTLE_GROWL_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::MashUntilMenu(goldlink::goldlink_bridge::battle_ui::menu::FIGHT, 60 * 60),
+    Step::Wait(40),
+    Step::Touch(192, 52),
+    Step::Walk(Keys::NONE, 235, ""),
+    Step::Shot("growl"),
+    Step::Walk(Keys::NONE, 365, "growl"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=link-a / link-b (dev/run_visual_pair.sh link): two windows in one
 /// room, a link battle between them (debug command 12, 6 on A and 7 on B, as
 /// link_e2e_probe.lua), A every 40 frames through it.
@@ -1304,7 +1334,7 @@ const TEAM_STEPS: [&[Step]; 3] = [
 /// (u32), the wide picture's side (u32); then the wide top screen ((256 + 2 * side) x 192 u32,
 /// 0x00RRGGBB), the depth (384 x 192 u32) and the layer mask (384 x 192 u8). Nothing when the
 /// top screen doesn't show the 3D scene.
-fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
+fn record_frame(emu: &mut Emulator, path: &std::path::Path) -> std::io::Result<()> {
     use goldlink_abi::{CoopCommBlock, CoopPlayerState};
     use std::mem::offset_of;
     let mut b = goldlink_core::LightBuffers::default();
@@ -1377,6 +1407,90 @@ fn record_frame(emu: &Emulator, path: &std::path::Path) -> std::io::Result<()> {
         ),
         None => "no battle ui\n".to_owned(),
     };
+    // Each drawn box: its rectangle and its sprite's palette fields (pret Sprite: palIndex +0x29,
+    // palOffset +0x2A, the palette proxy +0xD8..+0xEC); then the main engine's sprite pieces
+    // (OAM) whose centre lies in a box, as the sprite move (patch 0002) sees them.
+    let mut line = line;
+    let moves: Vec<[i32; 7]> = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram())
+        .map(|b| goldlink::goldlink_bridge::battle_ui::box_moves(&b, 1))
+        .unwrap_or_default();
+    let rects: Vec<[i32; 4]> = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram())
+        .map(|b| {
+            b.boxes
+                .iter()
+                .filter(|x| x.drawn)
+                .map(|x| {
+                    let ram = emu.nds.main_ram();
+                    let at = |o: u32| {
+                        let a = (x.sprite + o - 0x0200_0000) as usize;
+                        ram.get(a..a + 4)
+                            .map_or(0, |v| u32::from_le_bytes([v[0], v[1], v[2], v[3]]))
+                    };
+                    line += &format!(
+                        "box kind {} rect {:?} pal {:08x} image {:08x} {:08x} {:08x} attr {:x} {:x} {:x} {:x} {:x} {:x}\n",
+                        x.kind,
+                        x.rect(),
+                        at(0x28),
+                        at(0xCC),
+                        at(0xD0),
+                        at(0xD4),
+                        at(0xB4),
+                        at(0xB8),
+                        at(0xBC),
+                        at(0xC0),
+                        at(0xC4),
+                        at(0xC8)
+                    );
+                    x.rect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    const SIZES: [[i32; 2]; 12] = [
+        [8, 8],
+        [16, 16],
+        [32, 32],
+        [64, 64],
+        [16, 8],
+        [32, 8],
+        [32, 16],
+        [64, 32],
+        [8, 16],
+        [8, 32],
+        [16, 32],
+        [32, 64],
+    ];
+    for i in 0..128u32 {
+        let mut h = |o: u32| {
+            u16::from(emu.nds.arm9_peek8(0x0700_0000 + i * 8 + o))
+                | u16::from(emu.nds.arm9_peek8(0x0700_0000 + i * 8 + o + 1)) << 8
+        };
+        let (a0, a1, a2) = (h(0), h(2), h(4));
+        if a0 & 0x0300 == 0x0200 {
+            continue; // hidden
+        }
+        let shape = usize::from(a0 >> 14).min(2);
+        let [w, ht] = SIZES[shape * 4 + usize::from(a1 >> 14)];
+        let (x, y) = ((i32::from(a1 & 0x1FF) << 23) >> 23, i32::from(a0 & 0xFF));
+        let (cx, cy) = (x + w / 2, y + ht / 2);
+        if rects
+            .iter()
+            .any(|r| cx >= r[0] && cx < r[2] && cy >= r[1] && cy < r[3])
+        {
+            // As patch 0034 decides (1D mapping, 64-byte units in HeartGold's battle).
+            let chars = i32::from(a2 & 0x3FF) * 64;
+            let moved = moves.iter().any(|m| {
+                cx >= m[0] && cx < m[2] && cy >= m[1] && cy < m[3] && chars >= m[5] && chars < m[6]
+            });
+            line += &format!(
+                "oam {i} at {x},{y} {w}x{ht} tile {} prio {} pal {} mode {} moved {moved}\n",
+                a2 & 0x3FF,
+                (a2 >> 10) & 3,
+                a2 >> 12,
+                (a0 >> 10) & 3
+            );
+        }
+    }
     std::fs::write(path.with_extension("txt"), line)
 }
 
@@ -1434,6 +1548,8 @@ fn steps() -> &'static [Step] {
         Ok("down-rec") => DOWN_REC_STEPS,
         Ok("down12") => DOWN12_STEPS,
         Ok("battle-intro") => BATTLE_INTRO_STEPS,
+        Ok("battle-tray") => BATTLE_TRAY_STEPS,
+        Ok("battle-growl") => BATTLE_GROWL_STEPS,
         Ok("link-a") => LINK_STEPS[0],
         Ok("link-b") => LINK_STEPS[1],
         Ok("boss-a") => BOSS_STEPS[0],
