@@ -133,6 +133,9 @@ enum Phase {
     /// spot, is logged too).
     Settle(u32),
     Drive,
+    /// A case that ran out of frames with a script still running (a menu, a wait): B, then A,
+    /// until the field is free, so the next case's warp is answered.
+    Recover(u32),
     Done,
 }
 
@@ -522,9 +525,29 @@ impl Pass {
                 if done {
                     self.line(format_args!("K {f} end"));
                     self.index += 1;
-                    self.phase = Phase::Next;
+                    self.phase = if field_busy || scene != Scene::Overworld {
+                        self.line(format_args!("K {f} still busy: recovering"));
+                        Phase::Recover(0)
+                    } else {
+                        Phase::Next
+                    };
                 } else {
                     self.phase = Phase::Drive;
+                }
+            }
+            Phase::Recover(n) => {
+                if !field_busy && scene == Scene::Overworld && n > 60 {
+                    self.line(format_args!("K {n} recovered"));
+                    self.phase = Phase::Next;
+                } else if n > 3600 {
+                    eprintln!("tour: wide: stuck after {}", self.cases[self.index - 1].id);
+                    self.line(format_args!("K {n} still stuck"));
+                    self.phase = Phase::Next;
+                } else {
+                    if n % 20 < 3 {
+                        input.keys |= if (n / 600) % 2 == 0 { Keys::B } else { Keys::A };
+                    }
+                    self.phase = Phase::Recover(n + 1);
                 }
             }
             Phase::Done => {
