@@ -223,6 +223,25 @@ int gl_core_fixed_2d(GlCore *core, int side, uint8_t *out)
     return n;
 }
 
+void gl_core_ortho_state(GlCore *core, double *out)
+{
+    const auto &g = core->nds->GPU.GPU3D;
+    out[0] = g.OrthoDepth;
+    out[1] = g.OrthoCameraAt;
+    out[2] = g.NumOrthoCameras;
+    for (int i = 0; i < 5; i++)
+        out[3 + i] = g.OrthoCameraAt >= 0 ? g.OrthoCameras[g.OrthoCameraAt].Key[i] : 0;
+    out[8] = g.OrthoCameraAt >= 0 ? g.OrthoCameras[g.OrthoCameraAt].Depth : 0;
+    out[9] = g.OrthoCameraAt >= 0 ? g.OrthoCameras[g.OrthoCameraAt].NumSeen : 0;
+    out[10] = g.ShownOrtho ? 1 : 0;
+    out[11] = g.OrthoNear;
+    // The last field projection loaded: perspective or not, and its terms (20.12).
+    out[12] = g.OrthoFromPersp ? 1 : 0;
+    const int terms[6] = {0, 5, 10, 11, 14, 15};
+    for (int i = 0; i < 6; i++)
+        out[13 + i] = g.OrthoPersp[terms[i]];
+}
+
 void gl_core_steady_origin(GlCore *core, double *xy)
 {
     xy[0] = core->nds->GPU.GPU3D.ShownOrthoOrigin[0];

@@ -149,6 +149,11 @@ void gl_composite(const GlPictures *o, int side, int n, const int32_t *world, co
 // Where the steady world's origin truly is in the picture on screen (the screen's columns and rows,
 // patch 0023), for the window to land it on a whole pixel of its own.
 void gl_core_steady_origin(GlCore *core, double *xy);
+/* Development (the dev tour's camera log): the steady camera's state, 19 doubles: the distance in
+   use, the camera setup's slot and count, its key (projection x and y scale, camera m4, m5, m8),
+   its learned distance and scenes seen, whether the picture shown is steady, the last scene's
+   nearest object distance; the last field projection (perspective or not, m0 m5 m10 m11 m14 m15). */
+void gl_core_ortho_state(GlCore *core, double *out);
 // The screen `256 + 2*side` wide into `out` (192 rows): the centre is the screen as shown, the
 // sides the 3D layer (black where it has nothing). Returns the width.
 int gl_core_wide_frame(GlCore *core, int screen, int side, uint32_t *out);

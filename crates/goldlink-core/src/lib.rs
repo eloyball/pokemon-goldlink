@@ -558,6 +558,15 @@ impl Nds {
 
     /// Where the steady world's origin truly is in the picture on screen (the DS screen's columns
     /// and rows; patch 0023): the window lands it on a whole pixel of its own.
+    /// Development (the dev tour's camera log): the steady camera's state (see the shim's
+    /// gl_core_ortho_state).
+    pub fn ortho_state(&self) -> [f64; 19] {
+        let mut out = [0f64; 19];
+        // SAFETY: the shim writes nineteen doubles.
+        unsafe { sys::gl_core_ortho_state(self.ptr(), out.as_mut_ptr()) };
+        out
+    }
+
     pub fn steady_origin(&self) -> [f64; 2] {
         let mut xy = [0f64; 2];
         // SAFETY: the shim writes two doubles.

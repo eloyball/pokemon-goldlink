@@ -37,6 +37,9 @@ enum Step {
     /// level-up's stats box), saving the raw top screen every 20 frames as `rawtop-<frame>.png`
     /// meanwhile (or gives up after the frames).
     MashUntilWindow(u32),
+    /// Power cycle straight into the game from the cart as it is now (after an in-game save), as
+    /// GoldLink boots a world (`Emulator::boot_into_game`).
+    Reboot,
     /// Presses A every second until the top screen shows the Pokédex's registration page
     /// (`goldlink::hud::pokedex_page_shown`), or gives up after the frames.
     MashUntilPokedex(u32),
@@ -435,6 +438,94 @@ const LEVELUP_STEPS: &[Step] = &[
     Step::Press(Keys::A),
     Step::Wait(40),
     Step::Shot("levelup-box2"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=gym (v0.7.1, the user's Violet Gym report): the save at the top of
+/// Falkner's gym as it loads (shots before and after the first step), then down and up its left
+/// and right sides (with GOLDLINK_DEV_TOUR_FILM for every frame).
+const GYM_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Shot("load"),
+    Step::Wait(60),
+    Step::Shot("load-1s"),
+    Step::Wait(180),
+    Step::Shot("load-4s"),
+    Step::Dump("load"),
+    Step::Walk(Keys::DOWN, 16, ""),
+    Step::Wait(30),
+    Step::Shot("first-step"),
+    Step::Dump("first-step"),
+    Step::Walk(Keys::LEFT, 48, ""),
+    Step::Walk(Keys::DOWN, 128, ""),
+    Step::Wait(20),
+    Step::Shot("left-down"),
+    Step::Walk(Keys::UP, 128, ""),
+    Step::Wait(20),
+    Step::Shot("left-up"),
+    Step::Walk(Keys::RIGHT, 96, ""),
+    Step::Walk(Keys::DOWN, 128, ""),
+    Step::Wait(20),
+    Step::Shot("right-down"),
+    Step::Walk(Keys::UP, 128, ""),
+    Step::Wait(20),
+    Step::Shot("right-up"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=gym-reload (v0.7.1, the user's Violet Gym report: a save made at the
+/// top beside the elevator, loaded): from the save beside Falkner, down toward the elevator (pret
+/// violet.c: its platform at tile (15, 20)), the start menu's Save, then a power cycle into the
+/// game and shots as it loads and after a step.
+const GYM_RELOAD_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    // Down to the plank across under the mat, right onto the glass tiles, then down that side (the
+    // user: the pink strips and the pillars' clipping show there).
+    Step::Walk(Keys::DOWN, 64, ""),
+    Step::Walk(Keys::RIGHT, 96, ""),
+    Step::Wait(10),
+    Step::Shot("glass"),
+    Step::Walk(Keys::DOWN, 64, ""),
+    Step::Wait(10),
+    Step::Shot("glass-down4"),
+    Step::Walk(Keys::DOWN, 64, ""),
+    Step::Wait(10),
+    Step::Shot("glass-down8"),
+    Step::Walk(Keys::DOWN, 64, ""),
+    Step::Wait(10),
+    Step::Shot("glass-down12"),
+    Step::Walk(Keys::DOWN, 64, ""),
+    Step::Wait(10),
+    Step::Shot("glass-down16"),
+    Step::Walk(Keys::LEFT, 80, ""),
+    Step::Wait(10),
+    Step::Shot("toward-elevator"),
+    Step::Press(Keys::X),
+    Step::Wait(60),
+    Step::Touch(126, 80),
+    Step::Wait(240),
+    Step::Shot("save-asked"),
+    Step::Press(Keys::A),
+    Step::Wait(240),
+    // "There is already a saved file. Is it OK to overwrite it?"
+    Step::Press(Keys::A),
+    Step::Wait(600),
+    Step::Shot("saved"),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::Press(Keys::B),
+    Step::Wait(60),
+    Step::Reboot,
+    Step::Until(Scene::Overworld, 60 * 60),
+    Step::Shot("reload"),
+    Step::Wait(60),
+    Step::Shot("reload-1s"),
+    Step::Wait(180),
+    Step::Shot("reload-4s"),
+    Step::Walk(Keys::LEFT, 16, ""),
+    Step::Wait(30),
+    Step::Shot("reload-step"),
     Step::Close,
 ];
 
@@ -2429,6 +2520,8 @@ fn steps() -> &'static [Step] {
         Ok("intro") => intro_steps(),
         Ok("learn") => LEARN_STEPS,
         Ok("levelup") => LEVELUP_STEPS,
+        Ok("gym") => GYM_STEPS,
+        Ok("gym-reload") => GYM_RELOAD_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
@@ -2569,6 +2662,8 @@ struct State {
     /// Whether a button held the keyboard last frame (logged as it changes).
     focused: bool,
     last_menu: Option<(i8, bool)>,
+    /// The steady camera's state last logged (GOLDLINK_DEV_TOUR_ORTHO).
+    ortho_last: Option<Vec<i64>>,
     /// A debug command waiting for the ROM's answer: its sequence number, command, and frames.
     pending: Option<(u8, u8, u32)>,
     /// Text for the window's keyboard, taken by `input()` before the next frame.
@@ -2780,6 +2875,47 @@ impl FrameHook for TourHook {
         }
         let mut s = self.0.state();
         s.emu_frames += 1;
+        // GOLDLINK_DEV_TOUR_ORTHO=1: the steady camera's state, a line whenever it changes, with
+        // the player's tile (the user's Violet Gym report, v0.7.1).
+        if std::env::var_os("GOLDLINK_DEV_TOUR_ORTHO").is_some() {
+            let o = emu.nds.ortho_state();
+            let key: Vec<i64> = o[..10]
+                .iter()
+                .chain(&o[12..])
+                .map(|v| (v * 100.0).round() as i64)
+                .collect();
+            if s.ortho_last.as_deref() != Some(&key[..]) {
+                let lp = emu.mailbox_offset() + LOCAL_PLAYER;
+                let ram = emu.nds.main_ram();
+                let rd = |o: usize| i16::from_le_bytes([ram[lp + o], ram[lp + o + 1]]);
+                eprintln!(
+                    "tour: ortho f{} tile ({}, {}) depth {:.1} slot {}/{} key [{} {} {} {} {}] learned {:.1} seen {} shown {} near {:.1} persp {} proj [{} {} {} {} {} {}]",
+                    s.emu_frames,
+                    rd(PS_X),
+                    rd(PS_Z),
+                    o[0],
+                    o[1],
+                    o[2],
+                    o[3],
+                    o[4],
+                    o[5],
+                    o[6],
+                    o[7],
+                    o[8],
+                    o[9],
+                    o[10],
+                    o[11],
+                    o[12],
+                    o[13],
+                    o[14],
+                    o[15],
+                    o[16],
+                    o[17],
+                    o[18]
+                );
+                s.ortho_last = Some(key);
+            }
+        }
         if let Some(a) = s.avatar {
             let at = emu.mailbox_offset() + 0x1BE;
             emu.nds.main_ram_mut()[at] = a;
@@ -2927,6 +3063,16 @@ impl FrameHook for TourHook {
             Step::Press(k) => {
                 input.keys |= k;
                 s.holding = 6;
+                true
+            }
+            Step::Reboot => {
+                emu.flush();
+                let line = match emu.boot_into_game() {
+                    Ok(()) => "rebooted into the game".to_string(),
+                    Err(e) => format!("reboot failed: {e}"),
+                };
+                eprintln!("tour: {line}");
+                s.log.push(line);
                 true
             }
             Step::MashUntilPokedex(max) => {
