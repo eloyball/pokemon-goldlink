@@ -24,6 +24,13 @@ pub struct WorldPanel {
     preview: Option<(u8, Option<egui::TextureHandle>)>,
 }
 
+impl WorldPanel {
+    /// A new window: the preview's texture is made again.
+    pub fn forget_textures(&mut self) {
+        self.preview = None;
+    }
+}
+
 /// A PNG file as an egui image.
 pub fn load_png(path: &std::path::Path) -> Option<egui::ColorImage> {
     let decoder = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).ok()?));

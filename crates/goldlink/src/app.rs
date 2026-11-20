@@ -642,7 +642,8 @@ impl GameApp {
                 let worker = self
                     .light_thread
                     .get_or_insert_with(|| LightThread::start(ctx.clone()));
-                if let Some(s) = taken {
+                // Not lit while minimized: each lit frame asks for a frame of the window.
+                if let Some(s) = taken.filter(|_| !minimized(ctx)) {
                     worker.send(s, self.config.video.shadows);
                     if self.frames_in_step {
                         worker.wait();
@@ -851,6 +852,28 @@ impl GameApp {
 }
 
 impl GameApp {
+    /// The window is opening again on a new GPU device (KNOWN_RISKS #138): the textures made for
+    /// the old one are gone, so they are made again; the lighting's thread starts again for the
+    /// new window.
+    pub fn forget_textures(&mut self) {
+        self.texture = None;
+        self.textbox = None;
+        self.wide = None;
+        self.choice_tex.clear();
+        self.choice_words.clear();
+        self.mega_icon = None;
+        self.shoes_icon = None;
+        self.attached.texture = None;
+        self.attached.made = None;
+        self.fixed.texture = None;
+        self.light_thread = None;
+        // The lighting tries the GPU again (its own device may have gone with the window's).
+        self.no_gpu = false;
+        if let Some(w) = self.world.as_mut() {
+            w.forget_textures();
+        }
+    }
+
     /// The bar above the screens: the world on the left; who's online and Leave on the right.
     fn top_bar(&mut self, ctx: &egui::Context) -> Option<GameAction> {
         let view = self
@@ -1536,8 +1559,14 @@ impl GameApp {
         if let Some(extra) = self.extra_ui.as_mut() {
             extra(ctx);
         }
-        // The emulator runs on its own clock; draw whenever the display can.
-        ctx.request_repaint();
+        if minimized(ctx) {
+            // Nothing to see: a few frames a second keep the game's events going (the emulator
+            // runs on its own thread), with far less for the GPU to do (KNOWN_RISKS #138).
+            ctx.request_repaint_after(MINIMIZED_FRAME);
+        } else {
+            // The emulator runs on its own clock; draw whenever the display can.
+            ctx.request_repaint();
+        }
         action
     }
 
@@ -1574,6 +1603,7 @@ impl GameApp {
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(rs) = frame.wgpu_render_state() {
+            crate::gpu_watch::watch(rs);
             crate::composite::install(rs);
         }
         let _ = self.ui(ctx);
@@ -1595,6 +1625,13 @@ impl Drop for GameApp {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// The window's frame interval while it's minimized.
+const MINIMIZED_FRAME: Duration = Duration::from_millis(250);
+
+fn minimized(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().minimized == Some(true))
 }
 
 /// How the game's pictures are uploaded for the chosen filter at `scale` physical pixels per DS
@@ -2530,15 +2567,24 @@ impl LightThread {
                                 Some(w) => w.clone(),
                                 None => s.pixels[..256 * 192].to_vec(),
                             });
-                        light(
-                            &mut lighting,
-                            shadows,
-                            &mut s.pixels,
-                            s.wide.as_deref_mut(),
-                            s.side,
-                            s.light.as_ref(),
-                            s.attached.as_ref(),
-                        );
+                        // A panic in the lighting (a GPU error wgpu panics on) turns the
+                        // lighting off, not the game (KNOWN_RISKS #138).
+                        let ok = crate::crash::caught(|| {
+                            light(
+                                &mut lighting,
+                                shadows,
+                                &mut s.pixels,
+                                s.wide.as_deref_mut(),
+                                s.side,
+                                s.light.as_ref(),
+                                s.attached.as_ref(),
+                            )
+                        });
+                        if ok.is_none() {
+                            no_gpu.store(true, Ordering::Relaxed);
+                            ctx.request_repaint();
+                            return;
+                        }
                         s.light_maps = lighting.take_light_maps();
                         if !lighting.has_gpu() {
                             no_gpu.store(true, Ordering::Relaxed);
@@ -2597,7 +2643,17 @@ impl Drop for LightThread {
         self.stop.store(true, Ordering::Relaxed);
         self.job.1.notify_all();
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // A frame on a stuck GPU can take long: never wait for ever (after a crash this
+            // waited with the window still up, so it never came back; KNOWN_RISKS #138).
+            let until = Instant::now() + Duration::from_secs(1);
+            while !t.is_finished() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            } else {
+                log::warn!("the lighting's thread didn't stop in time: left to end on its own");
+            }
         }
     }
 }

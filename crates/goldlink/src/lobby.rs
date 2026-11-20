@@ -115,6 +115,11 @@ pub struct Lobby {
 }
 
 impl Lobby {
+    /// A new window (on a new GPU device): the avatar's texture is made again.
+    pub fn forget_textures(&mut self) {
+        self.avatar = None;
+    }
+
     pub fn new(bridge: &SharedBridge) -> Self {
         let b = goldlink_bridge::hook::lock(bridge);
         let last = b.worlds().entries().first().cloned();
@@ -874,7 +879,10 @@ impl Lobby {
             .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
             .changed();
         changed |= ui
-            .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"))
+            .add_enabled(
+                v.lighting,
+                egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"),
+            )
             .on_hover_text(crate::app::SHADOWS_HINT)
             .on_disabled_hover_text("With the revamped lighting on")
             .changed();

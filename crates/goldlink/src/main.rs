@@ -77,7 +77,16 @@ fn main() -> ExitCode {
             }
         }
     }
-    if let Ok(data) = goldlink::data_dir() {
+    let data = goldlink::data_dir().ok();
+    goldlink::logfile::install(data.as_deref());
+    log::info!(
+        "GoldLink {} ({}) on {} {}",
+        env!("CARGO_PKG_VERSION"),
+        option_env!("GOLDLINK_BUILD").unwrap_or("dev"),
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    if let Some(data) = data {
         goldlink::crash::install(data, env!("CARGO_PKG_VERSION"));
     }
     let result = (|| {
@@ -108,12 +117,19 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("goldlink: {e}");
+            log::error!("{e}");
+            // Errors once the window was up say what happened themselves; the rest are a start
+            // that failed.
+            let text = if e == goldlink::shell::CRASHED || e == goldlink::shell::GPU_GONE {
+                e
+            } else {
+                format!("GoldLink couldn't start: {e}")
+            };
             // Started from a desktop there's no terminal to read: say it in a box.
             rfd::MessageDialog::new()
                 .set_level(rfd::MessageLevel::Error)
                 .set_title("GoldLink")
-                .set_description(format!("GoldLink couldn't start: {e}"))
+                .set_description(text)
                 .show();
             ExitCode::FAILURE
         }

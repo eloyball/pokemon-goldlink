@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+log = "0.4"
 # A pool of worker threads that stays up between frames (spawning threads per step cost more
 # than the steps).
 rayon = "1"

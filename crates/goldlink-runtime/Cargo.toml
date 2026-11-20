@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+log = "0.4"
 goldlink-core = { path = "../goldlink-core" }
 goldlink-abi = { path = "../goldlink-abi" }
 goldlink-light = { path = "../goldlink-light" }

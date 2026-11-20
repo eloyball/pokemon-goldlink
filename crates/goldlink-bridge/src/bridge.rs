@@ -661,6 +661,15 @@ impl Bridge {
         self.next_backup = Some(Instant::now());
     }
 
+    /// A backup asked for ([`Self::backup_soon`]) isn't written yet (it waits for a safe
+    /// moment, then its file).
+    pub fn backup_pending(&self) -> bool {
+        self.backup_writing.is_some()
+            || (self.slot_key.is_some()
+                && self.slot_state == SlotState::Ready
+                && self.next_backup.is_some_and(|t| t <= Instant::now()))
+    }
+
     /// This host power-cycles the emulator when [`Actions::boot_into_game`] asks (UC9 §2).
     pub fn set_boots_into_game(&mut self, yes: bool) {
         self.boots_into_game = yes;

@@ -15,6 +15,11 @@ unsafe_code = "deny"
 [lib]
 path = "src/lib.rs"
 
+[features]
+# Development only (docs/DEBUG_TOOLS.md): GOLDLINK_DEBUG_LOSE_GPU loses the window's GPU device on
+# purpose, to test opening the window again (gpu_watch.rs). Never in a release.
+debug-gpu = []
+
 [[bin]]
 name = "goldlink"
 path = "src/main.rs"
@@ -27,6 +32,7 @@ goldlink-proto = { path = "../goldlink-proto" }
 goldlink-rom = { path = "../goldlink-rom" }
 goldlink-light = { path = "../goldlink-light" }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+log = "0.4"
 serde_json = "1"
 ureq = "3"
 png = "0.17"

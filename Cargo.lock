@@ -1395,6 +1395,7 @@ dependencies = [
  "goldlink-sign",
  "goldlink-update",
  "hex",
+ "log",
  "png 0.17.16",
  "pollster",
  "rfd",
@@ -1482,6 +1483,7 @@ name = "goldlink-light"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "log",
  "pollster",
  "rayon",
  "wgpu",
@@ -1511,6 +1513,7 @@ dependencies = [
  "goldlink-core",
  "goldlink-light",
  "goldlink-rom",
+ "log",
  "serde",
  "toml",
 ]

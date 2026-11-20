@@ -85,6 +85,35 @@ pub struct Shell {
     version: String,
     /// `--join` / `--create`: the world to go to once at the launcher.
     auto_join: Option<(String, String, bool)>,
+    /// The window as it was last seen, for opening it again (KNOWN_RISKS #138).
+    window: WindowState,
+    /// The window's GPU device was lost: this window closes and a new one opens, on a new device.
+    reopen: bool,
+    /// The window opened once (a panic before is the graphics driver failing to draw it).
+    created: bool,
+}
+
+/// What a window opened again keeps of the one before.
+#[derive(Clone, Copy)]
+struct WindowState {
+    size: egui::Vec2,
+    fullscreen: bool,
+    maximized: bool,
+    minimized: bool,
+    /// Minimize the new window on its first frame (the old one was).
+    minimize_next: bool,
+}
+
+impl Default for WindowState {
+    fn default() -> Self {
+        Self {
+            size: LAUNCHER_SIZE,
+            fullscreen: false,
+            maximized: false,
+            minimized: false,
+            minimize_next: false,
+        }
+    }
 }
 
 impl Shell {
@@ -637,6 +666,28 @@ impl Shell {
         }
     }
 
+    /// After a crash, the window gone: a last emergency backup if the game allows one in a
+    /// moment (in the overworld, nothing open), then the usual shutdown (the game's save).
+    fn crash_exit(&mut self) {
+        if let (Stage::Playing { .. } | Stage::Leaving { .. }, Some(b)) =
+            (&self.stage, &self.bridge)
+        {
+            goldlink_bridge::hook::lock(b).backup_soon();
+            let until = Instant::now() + Duration::from_secs(3);
+            let mut pending = true;
+            while pending && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(50));
+                pending = goldlink_bridge::hook::lock(b).backup_pending();
+            }
+            if pending {
+                log::warn!("no backup after the crash: the game wasn't at a safe moment");
+            } else {
+                log::info!("a backup was taken after the crash");
+            }
+        }
+        self.shutdown();
+    }
+
     fn shutdown(&mut self) {
         match std::mem::replace(&mut self.stage, Stage::Rom) {
             Stage::Playing { mut game, .. } | Stage::Leaving { mut game, .. } => game.shutdown(),
@@ -656,25 +707,103 @@ impl Shell {
     }
 }
 
-impl eframe::App for Shell {
+impl Shell {
+    /// Notes the window's size and state (not while minimized: its size is nothing then).
+    fn remember_window(&mut self, ctx: &egui::Context) {
+        let w = &mut self.window;
+        ctx.input(|i| {
+            let v = i.viewport();
+            w.minimized = v.minimized == Some(true);
+            if w.minimized {
+                return;
+            }
+            w.fullscreen = v.fullscreen == Some(true);
+            w.maximized = v.maximized == Some(true);
+            if let Some(r) = v
+                .inner_rect
+                .filter(|r| r.width() >= 64.0 && r.height() >= 64.0)
+            {
+                w.size = r.size();
+            }
+        });
+    }
+
+    /// The window's least size for what it shows.
+    fn min_size(&self) -> egui::Vec2 {
+        match &self.stage {
+            Stage::Playing { game, .. } | Stage::Leaving { game, .. } => game.window_size(1.0),
+            _ => LAUNCHER_MIN,
+        }
+    }
+
+    /// A new window (on a new GPU device) is opening: what was drawn for the old one is gone.
+    fn new_window(&mut self) {
+        self.art = None;
+        if let Some(l) = self.lobby.as_mut() {
+            l.forget_textures();
+        }
+        if let Stage::Playing { game, .. } | Stage::Leaving { game, .. } = &mut self.stage {
+            game.forget_textures();
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(rs) = frame.wgpu_render_state() {
+            crate::gpu_watch::watch(rs);
             crate::composite::install(rs);
+            #[cfg(feature = "debug-gpu")]
+            crate::gpu_watch::debug::tick(rs);
         }
+        if crate::gpu_watch::lost() {
+            // Nothing more for this window: it closes and run() opens another on a new device.
+            if !self.reopen {
+                log::warn!("the window's GPU device was lost: opening the window again");
+                self.reopen = true;
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
+            return;
+        }
+        if std::mem::take(&mut self.window.minimize_next) {
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+        }
+        self.remember_window(ctx);
         self.step(ctx);
+    }
+}
+
+/// The window's view of the shell, which outlives it (a lost GPU device's window is closed and
+/// another opened, the shell and its game kept).
+struct Window<'s>(&'s mut Shell);
+
+impl eframe::App for Window<'_> {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.0.update(ctx, frame);
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         // The game's Tab (its touch screen), before egui moves its focus with it.
-        if let Stage::Playing { game, .. } | Stage::Leaving { game, .. } = &mut self.stage {
+        if let Stage::Playing { game, .. } | Stage::Leaving { game, .. } = &mut self.0.stage {
             game.take_tab(raw);
         }
     }
 
     fn on_exit(&mut self) {
-        self.shutdown();
+        if !self.0.reopen {
+            self.0.shutdown();
+        }
     }
 }
+
+/// How often a window may be opened again before GoldLink gives up on the graphics driver.
+const REOPEN_MAX: u32 = 5;
+
+/// run()'s errors after the window opened: said as they are (main.rs), not as a failed start.
+pub const CRASHED: &str = "GoldLink closed after an error. If you lost progress since your last \
+in-game save, the launcher's \"Restore a backup\" has the newest emergency backups. A crash \
+report is in the crashes folder of GoldLink's data folder.";
+pub const GPU_GONE: &str = "GoldLink closed: the graphics driver kept losing the window. If you \
+lost progress since your last in-game save, the launcher's \"Restore a backup\" has the newest \
+emergency backups. Updating the graphics driver may help.";
 
 /// The release program: the ROM screen, the launcher, the game, in one window. `autoplay`
 /// presses PLAY at once (`--play`).
@@ -685,21 +814,7 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
     let mut rom = Launcher::new(paths);
     rom.autoplay = autoplay;
     let version = rom.version().unwrap_or("?").to_owned();
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(LAUNCHER_SIZE)
-            .with_min_inner_size(LAUNCHER_MIN)
-            .with_title("GoldLink")
-            // matches goldlink.desktop, so desktops show the window under GoldLink's own icon
-            .with_app_id("goldlink")
-            .with_icon(
-                eframe::icon_data::from_png_bytes(include_bytes!("../assets/goldlink.png"))
-                    .expect("the app icon is a PNG"),
-            ),
-        renderer: eframe::Renderer::Wgpu,
-        ..Default::default()
-    };
-    let mut shell = Some(Shell {
+    let mut shell = Shell {
         art: None,
         rom,
         lobby: None,
@@ -711,23 +826,78 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
         notes: note.into_iter().collect(),
         version,
         auto_join,
-    });
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        eframe::run_native(
-            "GoldLink",
-            options,
-            Box::new(|cc| {
-                theme::install(&cc.egui_ctx);
-                Ok(Box::new(shell.take().expect("one window")))
-            }),
-        )
-    }))
-    .unwrap_or_else(|_| {
-        Err(eframe::Error::AppCreation(
-            "the graphics driver can't draw the window".into(),
-        ))
-    })
-    .map_err(|e| e.to_string())
+        window: WindowState::default(),
+        reopen: false,
+        created: false,
+    };
+    let mut opened = 0;
+    loop {
+        let w = shell.window;
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_inner_size(w.size)
+            .with_min_inner_size(shell.min_size())
+            .with_title("GoldLink")
+            // matches goldlink.desktop, so desktops show the window under GoldLink's own icon
+            .with_app_id("goldlink")
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../assets/goldlink.png"))
+                    .expect("the app icon is a PNG"),
+            );
+        if opened > 0 {
+            viewport = viewport
+                .with_fullscreen(w.fullscreen)
+                .with_maximized(w.maximized)
+                // Opened again behind the player's back: don't take the focus from what they do.
+                .with_active(!w.minimized);
+            shell.window.minimize_next = w.minimized;
+        }
+        let options = eframe::NativeOptions {
+            viewport,
+            renderer: eframe::Renderer::Wgpu,
+            ..Default::default()
+        };
+        let first = opened == 0;
+        let shell_ref = &mut shell;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            eframe::run_native(
+                "GoldLink",
+                options,
+                Box::new(move |cc| {
+                    theme::install(&cc.egui_ctx);
+                    shell_ref.created = true;
+                    if !first {
+                        shell_ref.new_window();
+                    }
+                    Ok(Box::new(Window(shell_ref)))
+                }),
+            )
+        }));
+        opened += 1;
+        match result {
+            Ok(_) if shell.reopen && opened <= REOPEN_MAX => {
+                shell.reopen = false;
+                crate::gpu_watch::clear();
+                log::warn!("opening the window again ({} of {REOPEN_MAX})", opened);
+            }
+            Ok(r) => {
+                if shell.reopen {
+                    shell.reopen = false;
+                    shell.shutdown();
+                    return Err(GPU_GONE.into());
+                }
+                return r.map_err(|e| e.to_string());
+            }
+            Err(_) if !shell.created => {
+                return Err("the graphics driver can't draw the window".into());
+            }
+            Err(_) => {
+                // A crash: the window is gone (eframe unwound), the game isn't yet: a last
+                // backup and its save before quitting.
+                shell.crash_exit();
+                return Err(CRASHED.into());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -918,6 +1088,9 @@ mod tests {
             notes: Vec::new(),
             version: "test".into(),
             auto_join: Some((format!("127.0.0.1:{port}"), "TEAM01".into(), false)),
+            window: WindowState::default(),
+            reopen: false,
+            created: true,
         };
         shell.bridge().unwrap();
         let mut d = Driver {

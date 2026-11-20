@@ -35,7 +35,7 @@ impl AudioOut {
             buffer_size: cpal::BufferSize::Default,
         };
         let vol = Arc::new(AtomicU32::new(u32::from(volume.min(100))));
-        let err = |e| eprintln!("goldlink: sound: {e}");
+        let err = |e| log::warn!("sound: {e}");
         let stream = match supported.sample_format() {
             cpal::SampleFormat::F32 => {
                 let (s, v) = (shared.clone(), vol.clone());

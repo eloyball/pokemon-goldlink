@@ -64,12 +64,20 @@ struct Resources {
     srgb: bool,
 }
 
+/// The pipeline was tried on this render state's device.
+struct Tried;
+
 /// Makes the pipeline on the window's device, once; READY says whether it worked.
 pub fn install(rs: &egui_wgpu::RenderState) {
-    static TRIED: AtomicBool = AtomicBool::new(false);
-    if TRIED.swap(true, Ordering::Relaxed) {
-        return;
+    {
+        // Once per window's device (a lost device's window is opened again on a new one).
+        let mut r = rs.renderer.write();
+        if r.callback_resources.contains::<Tried>() {
+            return;
+        }
+        r.callback_resources.insert(Tried);
     }
+    READY.store(false, Ordering::Relaxed);
     let device = &rs.device;
     device.push_error_scope(wgpu::ErrorFilter::Validation);
     let src = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -138,7 +146,7 @@ pub fn install(rs: &egui_wgpu::RenderState) {
     let planes = planes_buffer(device, planes_size);
     let group = bind_group(device, &layout, &uniforms, &planes);
     if let Some(e) = pollster::block_on(device.pop_error_scope()) {
-        eprintln!("[goldlink] the player's picture is put together on the CPU: {e}");
+        log::warn!("the player's picture is put together on the CPU: {e}");
         return;
     }
     rs.renderer.write().callback_resources.insert(Resources {

@@ -3,6 +3,7 @@
 
 pub mod app;
 mod composite;
+mod gpu_watch;
 pub mod crash;
 pub mod hud;
 pub mod import;
@@ -10,6 +11,7 @@ pub mod input;
 pub mod launcher;
 pub mod layout;
 pub mod lobby;
+pub mod logfile;
 pub mod shell;
 pub mod theme;
 pub mod typing;

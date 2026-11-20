@@ -259,9 +259,25 @@ impl Gpu {
         let gpu = Self::build(device, queue, failed);
         let error = pollster::block_on(gpu.device.pop_error_scope());
         if let Some(e) = error {
-            eprintln!("[goldlink-light] the GPU can't light the picture, lighting off: {e}");
+            log::warn!("the GPU can't light the picture, lighting off: {e}");
             return None;
         }
+        // An error nothing catches turns the lighting off (wgpu's default panics), a lost device
+        // too (KNOWN_RISKS #138).
+        let failed = gpu.failed.clone();
+        gpu.device.on_uncaptured_error(Box::new(move |e| {
+            log::error!("the lighting's GPU, lighting off: {e}");
+            failed.store(true, Ordering::Relaxed);
+        }));
+        let failed = gpu.failed.clone();
+        gpu.device.set_device_lost_callback(move |reason, message| {
+            if reason != wgpu::DeviceLostReason::Destroyed {
+                log::error!(
+                    "the lighting's GPU device was lost ({reason:?}), lighting off: {message}"
+                );
+                failed.store(true, Ordering::Relaxed);
+            }
+        });
         Some(gpu)
     }
 
@@ -933,7 +949,7 @@ impl Gpu {
         );
         queue.submit([enc.finish()]);
         if let Some(e) = pollster::block_on(device.pop_error_scope()) {
-            eprintln!("[goldlink-light] GPU error, lighting off: {e}");
+            log::warn!("GPU error, lighting off: {e}");
             self.failed.store(true, Ordering::Relaxed);
             return false;
         }
@@ -944,8 +960,16 @@ impl Gpu {
             let _ = tx.send(r);
         });
         device.poll(wgpu::Maintain::Wait);
-        if !matches!(rx.recv(), Ok(Ok(()))) || self.failed() {
-            return false;
+        // poll gives up on a stuck GPU (after a minute) with the map not done: never wait for
+        // ever on it (the window's close waited on this thread; KNOWN_RISKS #138).
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Ok(())) if !self.failed() => {}
+            Err(_) => {
+                log::warn!("the lighting's GPU didn't answer, lighting off");
+                self.failed.store(true, Ordering::Relaxed);
+                return false;
+            }
+            _ => return false,
         }
         {
             let data = slice.get_mapped_range();
