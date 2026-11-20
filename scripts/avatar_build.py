@@ -601,10 +601,11 @@ def main():
         h += ["// Per custom avatar, its tag in each state (0: the vanilla sprite).",
               "#define COOP_AVATAR_TAGS { \\"] + [t + " \\" for t in tags] + ["}", ""]
     if base:
-        h += ["// Per custom tag from COOP_AVATAR_FIRST_TAG, the hero sprite it stands in for (0xFFFF: none).",
+        # (The hero sprite each tag stands in for is found through COOP_AVATAR_TAGS: a table of
+        # it cost Overlay 131 30 bytes an avatar, coop_ghosts.c Coop_AvatarBase.)
+        h += ["// The custom tags' range (from COOP_AVATAR_FIRST_TAG).",
               "#define COOP_AVATAR_FIRST_TAG %d" % first,
-              "#define COOP_AVATAR_TAG_SPAN %d" % span,
-              "#define COOP_AVATAR_TAG_BASE { %s }" % ", ".join(str(v) for v in base_row), ""]
+              "#define COOP_AVATAR_TAG_SPAN %d" % span, ""]
     if avatars:
         h += ["// Battle pictures per custom avatar (Phase 5): { front (NARC a/0/5/8 set), throw, link throw",
               "// (a/0/0/6 sets) }, 0xFFFF where the column wasn't drawn (Ethan's picture is used).",

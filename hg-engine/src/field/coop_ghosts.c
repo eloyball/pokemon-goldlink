@@ -1718,16 +1718,27 @@ static const struct CoopPlayerSprite sCoopPlayerSprites[] = {
 static const u16 sCoopAvatarStateSprites[COOP_AVATAR_STATES][2] = COOP_AVATAR_STATE_SPRITES;
 #if COOP_AVATAR_CUSTOM > 0
 static const u16 sCoopAvatarTags[COOP_AVATAR_CUSTOM][COOP_AVATAR_STATES] = COOP_AVATAR_TAGS;
-static const u16 sCoopAvatarTagBase[COOP_AVATAR_TAG_SPAN] = COOP_AVATAR_TAG_BASE;
 #endif
 
-// The vanilla sprite a custom tag stands in for; any other sprite as is.
+// The vanilla sprite a custom tag stands in for (its state's hero sprite, found through the
+// avatars' tags: a table of it per tag cost Overlay 131 30 bytes an avatar); any other sprite
+// as is.
 static u32 Coop_AvatarBase(u32 sprite)
 {
 #if COOP_AVATAR_CUSTOM > 0
-    if (sprite >= COOP_AVATAR_FIRST_TAG && sprite < COOP_AVATAR_FIRST_TAG + COOP_AVATAR_TAG_SPAN
-        && sCoopAvatarTagBase[sprite - COOP_AVATAR_FIRST_TAG] != 0xFFFF)
-        return sCoopAvatarTagBase[sprite - COOP_AVATAR_FIRST_TAG];
+    u32 k, s;
+
+    if (sprite >= COOP_AVATAR_FIRST_TAG && sprite < COOP_AVATAR_FIRST_TAG + COOP_AVATAR_TAG_SPAN)
+    {
+        for (k = 0; k < COOP_AVATAR_CUSTOM; k++)
+        {
+            for (s = 0; s < COOP_AVATAR_STATES; s++)
+            {
+                if (sCoopAvatarTags[k][s] == sprite)
+                    return sCoopAvatarStateSprites[s][0];
+            }
+        }
+    }
 #endif
     return sprite;
 }
