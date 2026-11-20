@@ -829,11 +829,33 @@ fn channels(p: u32) -> (u32, u32, u32) {
 /// and grey (130) for at least 10; its outline above it dark grey, or red when it's the selected
 /// one. Its width is the white run across its first white row.
 pub fn touch_choices(bottom: &[u32]) -> Vec<TouchChoice> {
+    // Both columns, the one that found more: a button's label can cross a column and hide it
+    // (the Poké Mart's SELL at column 40, the user's v0.7 play test: two of three found, so no
+    // box).
     [40, 236]
         .iter()
         .map(|&x| touch_choices_at(bottom, x))
-        .find(|c| !c.is_empty())
+        .max_by_key(Vec::len)
         .unwrap_or_default()
+}
+
+/// Whether the touch screen shows the Poké Mart's list to buy from (its slate header with the
+/// money, a dark line under it, the blue ground; measured raw: 718292, 414141, 389AFB): the
+/// one-screen layout pops it up, as the start menu.
+pub fn mart_list_shown(bottom: &[u32]) -> bool {
+    let near = |x: usize, y: usize, v: u32| {
+        bottom.get(y * 256 + x).is_some_and(|&p| {
+            let (r, g, b) = channels(p);
+            let (vr, vg, vb) = channels(v);
+            r.abs_diff(vr) <= 8 && g.abs_diff(vg) <= 8 && b.abs_diff(vb) <= 8
+        })
+    };
+    [2, 128, 250]
+        .iter()
+        .all(|&x| near(x, 20, 0x71_8292) && near(x, 32, 0x41_4141))
+        && [(2, 100), (128, 150), (2, 150)]
+            .iter()
+            .all(|&(x, y)| near(x, y, 0x38_9AFB))
 }
 
 fn touch_choices_at(bottom: &[u32], column: usize) -> Vec<TouchChoice> {
@@ -1239,5 +1261,60 @@ mod window_tests {
     #[test]
     fn nothing_without_it() {
         assert_eq!(window_under_band(&screen(false)), None);
+    }
+}
+
+#[cfg(test)]
+mod choice_tests {
+    use super::{mart_list_shown, touch_choices};
+
+    /// The Poké Mart's question as the touch screen draws it (measured raw, the v0.7.1 mart route):
+    /// three wide buttons (white 15 rows, D3D3D3 2, AAAAAA 15, 828282 2) on green, the first
+    /// selected (a red line above it), each label a dark run across column 40 in the second.
+    fn mart_question() -> Vec<u32> {
+        let mut px = vec![0x28_DB92u32; 256 * 192];
+        for (k, top) in [32usize, 80, 128].iter().enumerate() {
+            let rows = [
+                (15, 0xFB_FBFB),
+                (2, 0xD3_D3D3),
+                (15, 0xAA_AAAA),
+                (2, 0x82_8282),
+            ];
+            let mut y = *top;
+            for (n, v) in rows {
+                for _ in 0..n {
+                    px[y * 256 + 8..y * 256 + 248].fill(v);
+                    y += 1;
+                }
+            }
+            if k == 0 {
+                px[(top - 4) * 256 + 8..(top - 4) * 256 + 248].fill(0xDB_3841);
+            }
+            // The label's letters in the lower half (SELL reaches column 40).
+            if k == 1 {
+                for y in top + 19..top + 22 {
+                    px[y * 256 + 18..y * 256 + 46].fill(0x41_4141);
+                }
+            }
+        }
+        px
+    }
+
+    #[test]
+    fn a_label_across_a_column_hides_no_button() {
+        let c = touch_choices(&mart_question());
+        assert_eq!(c.len(), 3);
+        assert!(c[0].selected && !c[1].selected);
+    }
+
+    #[test]
+    fn the_buy_list_is_told() {
+        let mut px = vec![0x38_9AFBu32; 256 * 192];
+        for y in 0..32 {
+            px[y * 256..y * 256 + 256].fill(0x71_8292);
+        }
+        px[32 * 256..33 * 256].fill(0x41_4141);
+        assert!(mart_list_shown(&px));
+        assert!(!mart_list_shown(&mart_question()));
     }
 }

@@ -1598,14 +1598,14 @@ const PC_STEPS: &[Step] = &[
     Step::Wait(90),
     // Cherrygrove (debug warp preset 1, in front of the Pokémon Center), in (pret
     // MAP_CHERRYGROVE_POKECENTER_1F: the door at (8, 19), the nurse at (8, 11) behind the
-    // counter), up to the counter, a tile right, facing up at the PC.
+    // counter), up to the counter, two tiles right under the PC, facing up at it.
     Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
     Step::Wait(400),
     Step::Walk(Keys::UP, 40, ""),
     Step::Wait(150),
     Step::Walk(Keys::UP, 120, ""),
-    Step::Walk(Keys::RIGHT, 16, ""),
-    Step::Walk(Keys::UP, 16, ""),
+    Step::Walk(Keys::RIGHT, 32, ""),
+    Step::Walk(Keys::UP, 4, ""),
     Step::Wait(20),
     Step::Shot("pc-at"),
     Step::Press(Keys::A),

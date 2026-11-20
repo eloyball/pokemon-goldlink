@@ -240,6 +240,8 @@ pub struct GameApp {
     band_window: Option<[usize; 4]>,
     /// The Pokédex's registration page after a catch is up (`hud::pokedex_page_shown`): no band.
     pokedex_page: bool,
+    /// The Poké Mart's list to buy from is on the touch screen (`hud::mart_list_shown`): it pops up.
+    mart_list: bool,
     /// Frames in a row the game's text box rows have shown something else (the band steps aside
     /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
     textbox_away: u32,
@@ -367,6 +369,7 @@ impl GameApp {
             textbox_away: 0,
             band_window: None,
             pokedex_page: false,
+            mart_list: false,
             wide: None,
             wide_side: 0,
             shown_scale: 1.0,
@@ -595,6 +598,7 @@ impl GameApp {
                         self.pokegear_hold = self.pokegear_hold.saturating_sub(1);
                     }
                     self.choices = hud::touch_choices(bottom);
+                    self.mart_list = hud::mart_list_shown(bottom);
                     if frame.running_shoes.is_some()
                         && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
                     {
@@ -1337,6 +1341,7 @@ impl GameApp {
             }
         }
         let wanted = matches!(scene, Scene::StartMenu | Scene::App)
+            || self.mart_list
             || self.typing.naming.is_some()
             || battle.is_some_and(|b| b.bag_or_party || (b.waiting && !hud_draws));
         let modal = self.one.by_hand.unwrap_or(wanted);
