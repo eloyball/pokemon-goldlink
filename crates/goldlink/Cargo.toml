@@ -39,6 +39,7 @@ flate2 = "1"
 sha2 = "0.10"
 hex = "0.4"
 goldlink-sign = { path = "../goldlink-sign" }
+goldlink-update = { path = "../goldlink-update" }
 # The player's picture put together on the window's GPU (UC14, composite.rs).
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"

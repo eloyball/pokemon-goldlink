@@ -13,7 +13,8 @@ pub mod lobby;
 pub mod shell;
 pub mod theme;
 pub mod typing;
-pub mod update;
+/// The updater (its own crate: the Windows installer shares it).
+pub use goldlink_update as update;
 pub mod world_ui;
 
 use std::path::{Path, PathBuf};

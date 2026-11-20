@@ -1,0 +1,39 @@
+[package]
+name = "goldlink-setup"
+version = "0.1.0"
+description = "GoldLink's Windows installer: the newest signed release from GitHub, installed for the user (Start menu, desktop, Windows' apps list, an uninstaller)"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# The workspace forbids unsafe code; here it's denied, so the Windows calls (the shortcuts' COM
+# object, the apps list's registry key) can be allowed where they are (src/system.rs).
+[lints.rust]
+unsafe_code = "deny"
+
+[[bin]]
+name = "goldlink-setup"
+path = "src/main.rs"
+
+[dependencies]
+goldlink-update = { path = "../goldlink-update" }
+# The launcher's look (src/main.rs includes crates/goldlink/src/theme.rs as it is).
+png = "0.17"
+dirs = "6"
+serde_json = "1"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts", "wayland", "x11"] }
+wgpu = { version = "24", default-features = false, features = ["wgsl"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu = { version = "24", default-features = false, features = ["metal", "wgsl"] }
+
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }
+wgpu = { version = "24", default-features = false, features = ["dx12", "wgsl"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell"] }

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 
-use goldlink::update::{self, Stage};
+use goldlink_update::{self as update, Stage};
 
 /// A tiny HTTP server: GET <path> → its bytes (404 otherwise). Returns its address.
 fn serve(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> String {

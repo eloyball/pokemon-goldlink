@@ -1,0 +1,21 @@
+[package]
+name = "goldlink-update"
+version = "0.1.0"
+description = "GoldLink's updates: the newest signed release found, downloaded, checked and installed (the launcher's updater and the Windows installer share it)"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+goldlink-sign = { path = "../goldlink-sign" }
+serde_json = "1"
+ureq = "3"
+tar = { version = "0.4", default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+sha2 = "0.10"
+hex = "0.4"

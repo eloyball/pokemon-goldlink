@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The unified client's player release (dev/docs/unified-client/UC7.md): GoldLink-vX.Y-linux.tar.gz
 # and GoldLink-vX.Y-windows.zip in build/client-release/vX.Y/, one program each (melonDS built
-# in, no BizHawk, no .NET or Mono), built from HEAD with the debug tools off.
+# in, no BizHawk, no .NET or Mono), built from HEAD with the debug tools off; and
+# GoldLink-Setup.exe, the Windows installer (it downloads the newest release itself).
 #
 #   scripts/package_client.sh vX.Y [--publish]
 #
@@ -116,6 +117,10 @@ target/release/goldlink-dev --make-patch "$ROM" "$WORK/goldlink.nds" "$WORK/gold
 step 4 "The program"
 BUILD="GOLDLINK_BUILD=$VERSION-${COMMIT:0:9}${DIRTY:-}"
 env "$BUILD" cargo build --release --locked -p goldlink --target x86_64-pc-windows-gnu
+# The Windows installer (crates/goldlink-setup): it fetches the newest release itself, so it
+# carries no game; built for size.
+cargo build --profile setup --locked -p goldlink-setup --target x86_64-pc-windows-gnu
+SETUP_BIN="target/x86_64-pc-windows-gnu/setup/goldlink-setup.exe"
 docker image inspect "$IMAGE" > /dev/null 2>&1 \
     || docker build -t "$IMAGE" -f scripts/release/client/Dockerfile scripts/release/client
 mkdir -p "$CACHE/cargo-home"
@@ -135,9 +140,11 @@ for bin in "$LINUX_BIN" "$WINDOWS_BIN"; do
         die "$bin has dev tools in it"
     fi
 done
-odd="$(x86_64-w64-mingw32-objdump -p "$WINDOWS_BIN" | grep -oP 'DLL Name: \K.*' | sort -u \
+for exe in "$WINDOWS_BIN" "$SETUP_BIN"; do
+odd="$(x86_64-w64-mingw32-objdump -p "$exe" | grep -oP 'DLL Name: \K.*' | sort -u \
     | grep -viE '^(api-ms-win-.*|kernel32|user32|gdi32|advapi32|ole32|oleaut32|shell32|ntdll|combase|bcrypt(primitives)?|ws2_32|wsock32|imm32|dwmapi|uxtheme|propsys|shlwapi|userenv|rpcrt4|opengl32|d3dcompiler_47|winmm|setupapi|hid|dxgi|d3d12|iphlpapi|secur32|crypt32|comctl32|comdlg32|msvcrt|ucrtbase|version|xinput.*)\.dll$' || true)"
-[[ -z "$odd" ]] || die "the Windows program needs DLLs Windows doesn't have: $odd"
+[[ -z "$odd" ]] || die "$exe needs DLLs Windows doesn't have: $odd"
+done
 
 # The libraries' licenses: the program's dependencies only (not the dev tools').
 cargo tree --locked -p goldlink -e normal --target all --prefix none --format '{p}' \
@@ -224,21 +231,22 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             full = os.path.join(dirpath, f)
             z.write(full, os.path.relpath(full, base))
 PY
-(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" > SHA256SUMS)
+cp "$SETUP_BIN" "$OUT/GoldLink-Setup.exe"
+(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" GoldLink-Setup.exe > SHA256SUMS)
 # The signature the launcher's Update button checks (UC10), made with the maintainer's key and
 # checked against the public key built into this release's program.
 if [[ -f "$SIGNING_KEY" ]]; then
     cargo build -q --release -p goldlink-sign
     SIGN="${CARGO_TARGET_DIR:-$ROOT/target}/release/goldlink-sign"
-    BUILT_IN="$(python3 -I -c 'import re,sys; s=open(sys.argv[1]).read(); b=s[s.index("RELEASE_KEY"):].split("];")[0]; print("".join(h[2:] for h in re.findall(r"0x[0-9a-fA-F]{2}", b)))' crates/goldlink/src/update.rs)"
-    [[ "$("$SIGN" public "$SIGNING_KEY")" == "$BUILT_IN" ]] || die "$SIGNING_KEY isn't the key built into GoldLink (update.rs RELEASE_KEY)"
+    BUILT_IN="$(python3 -I -c 'import re,sys; s=open(sys.argv[1]).read(); b=s[s.index("RELEASE_KEY"):].split("];")[0]; print("".join(h[2:] for h in re.findall(r"0x[0-9a-fA-F]{2}", b)))' crates/goldlink-update/src/lib.rs)"
+    [[ "$("$SIGN" public "$SIGNING_KEY")" == "$BUILT_IN" ]] || die "$SIGNING_KEY isn't the key built into GoldLink (crates/goldlink-update RELEASE_KEY)"
     "$SIGN" sign "$SIGNING_KEY" "$VERSION" "$OUT/SHA256SUMS" > "$OUT/SHA256SUMS.sig"
     "$SIGN" verify "$BUILT_IN" "$VERSION" "$OUT/SHA256SUMS" "$OUT/SHA256SUMS.sig" > /dev/null || die "the new signature doesn't check"
     echo "[*] signed: SHA256SUMS.sig"
 else
     echo "[!] no signing key ($SIGNING_KEY): unsigned, so the Update button won't install it"
 fi
-ls -l "$OUT"/*.tar.gz "$OUT"/*.zip
+ls -l "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/GoldLink-Setup.exe
 
 # ---------------------------------------------------------------------------
 step 6 "Notes"
@@ -253,8 +261,8 @@ fi
 step 7 "GitHub"
 if [[ $PUBLISH == 1 ]]; then
     gh release create "$VERSION" -R "$REPOSITORY" --draft --target "$COMMIT" --title "GoldLink $VERSION" \
-        --notes-file "$OUT/notes.md" "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/SHA256SUMS" \
-        "$OUT/SHA256SUMS.sig"
+        --notes-file "$OUT/notes.md" "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/GoldLink-Setup.exe" \
+        "$OUT/SHA256SUMS" "$OUT/SHA256SUMS.sig"
     echo "[*] draft release $VERSION created: review and publish it on GitHub"
 else
     echo "[*] not published (--publish creates a draft GitHub release)"

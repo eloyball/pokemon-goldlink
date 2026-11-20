@@ -1,4 +1,5 @@
-//! Updates (RFC §6 M5; dev/docs/unified-client/UC10_UPDATER.md). Once per start, on its own
+//! Updates (RFC §6 M5; dev/docs/unified-client/UC10_UPDATER.md), for the launcher and the
+//! Windows installer (goldlink-setup). Once per start, on its own
 //! thread, the repository's releases (`release.json`'s `repository`) are listed and the newest
 //! player release (`vX.Y[.Z]`; the relay's `relay-v*` releases are skipped) is compared with this
 //! one. A failure (offline, rate limited) says nothing: it's a courtesy, never in the way.

@@ -1393,6 +1393,7 @@ dependencies = [
  "goldlink-rom",
  "goldlink-runtime",
  "goldlink-sign",
+ "goldlink-update",
  "hex",
  "png 0.17.16",
  "pollster",
@@ -1515,11 +1516,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "goldlink-setup"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "goldlink-update",
+ "png 0.17.16",
+ "rfd",
+ "serde_json",
+ "tokio",
+ "wgpu",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "goldlink-sign"
 version = "0.1.0"
 dependencies = [
  "hex",
  "ring",
+]
+
+[[package]]
+name = "goldlink-update"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "goldlink-sign",
+ "hex",
+ "serde_json",
+ "sha2",
+ "tar",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
