@@ -1,11 +1,11 @@
-//! Where GoldLink goes, and how Windows learns of it: the Start menu's and the desktop's
-//! shortcuts, the apps list's entry (Settings → Apps, with an uninstaller), and taking them away
-//! again. Other systems only get the defaults (the installer builds there to be looked at).
+//! Where GoldLink goes, and how the desktop learns of it, and taking it away again. Windows: the
+//! Start menu's and the desktop's shortcuts, the apps list's entry (Settings → Apps, with an
+//! uninstaller). Linux: the app menu's entry (the one scripts/release/client/install.sh writes,
+//! with an "Uninstall GoldLink" action) and a launcher on the desktop.
 
 use std::path::{Path, PathBuf};
 
 /// The uninstaller: this program, copied into the program's folder.
-#[cfg_attr(not(windows), allow(dead_code))]
 pub const UNINSTALLER: &str = if cfg!(windows) {
     "GoldLink-Uninstall.exe"
 } else {
@@ -13,18 +13,20 @@ pub const UNINSTALLER: &str = if cfg!(windows) {
 };
 
 /// The program's folder unless the player picks another (`GOLDLINK_SETUP_DIR` for the tests):
-/// `%LOCALAPPDATA%\Programs\GoldLink`, where programs installed for one user go. No
-/// administrator is needed, and the launcher's updater can write there. (The player's data is
-/// `%LOCALAPPDATA%\GoldLink`, apart from it: uninstalling never touches it.)
+/// `%LOCALAPPDATA%\Programs\GoldLink`, where programs installed for one user go; on Linux
+/// `~/.local/opt/GoldLink`. No administrator (root) is needed, and the launcher's updater can
+/// write there. (The player's data is `%LOCALAPPDATA%\GoldLink`, `~/.local/share/goldlink`,
+/// apart from it: uninstalling never touches it.)
 pub fn default_dir() -> PathBuf {
     if let Some(d) = std::env::var_os("GOLDLINK_SETUP_DIR") {
         return PathBuf::from(d);
     }
-    let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
     if cfg!(windows) {
+        let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
         base.join("Programs").join("GoldLink")
     } else {
-        base.join("goldlink-program")
+        let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+        home.join(".local").join("opt").join("GoldLink")
     }
 }
 
@@ -60,7 +62,6 @@ pub fn installed_version(dir: &Path) -> Option<String> {
 
 /// Whether `dir` holds GoldLink (its program and its release.json): what the uninstaller
 /// checks before removing a folder.
-#[cfg_attr(not(windows), allow(dead_code))]
 pub fn holds_goldlink(dir: &Path) -> bool {
     dir.join(goldlink_update::program_name()).is_file() && dir.join("release.json").is_file()
 }
@@ -69,18 +70,130 @@ pub fn holds_goldlink(dir: &Path) -> bool {
 pub use windows_impl::{installed_dir, integrate, uninstall};
 
 #[cfg(not(windows))]
-pub fn installed_dir() -> Option<PathBuf> {
-    None
-}
+pub use linux_impl::{installed_dir, integrate, uninstall};
 
 #[cfg(not(windows))]
-pub fn integrate(_dir: &Path, _version: &str, _page: &str, _desktop: bool) -> Result<(), String> {
-    Ok(())
-}
+mod linux_impl {
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
 
-#[cfg(not(windows))]
-pub fn uninstall(_dir: &Path) -> Result<(), String> {
-    Err("The uninstaller is for Windows.".into())
+    use super::UNINSTALLER;
+
+    /// The app menu's entry: `$XDG_DATA_HOME/applications/goldlink.desktop`, as install.sh's.
+    fn entry() -> Option<PathBuf> {
+        Some(
+            dirs::data_dir()?
+                .join("applications")
+                .join("goldlink.desktop"),
+        )
+    }
+
+    fn desktop() -> Option<PathBuf> {
+        Some(dirs::desktop_dir()?.join("goldlink.desktop"))
+    }
+
+    fn write(path: &Path, text: &str, executable: bool) -> Result<(), String> {
+        let fail = |e: std::io::Error| format!("Couldn't write {}: {e}", path.display());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(fail)?;
+        }
+        let tmp = path.with_extension("desktop.tmp");
+        std::fs::write(&tmp, text).map_err(fail)?;
+        if executable {
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(fail)?;
+        }
+        std::fs::rename(&tmp, path).map_err(fail)
+    }
+
+    /// Where the app menu's entry says GoldLink is (an earlier install), if it does.
+    pub fn installed_dir() -> Option<PathBuf> {
+        let text = std::fs::read_to_string(entry()?).ok()?;
+        let dir = PathBuf::from(text.lines().find_map(|l| l.strip_prefix("Path="))?);
+        super::holds_goldlink(&dir).then_some(dir)
+    }
+
+    /// After the files: the uninstaller, the app menu's entry and the desktop's launcher.
+    pub fn integrate(
+        dir: &Path,
+        _version: &str,
+        _page: &str,
+        desktop_too: bool,
+    ) -> Result<(), String> {
+        let shown = dir.display().to_string();
+        // What a desktop entry's Exec can't carry (install.sh refuses them too).
+        if shown.contains(['\\', '"', '`', '$', '\n']) {
+            return Err(format!(
+                "App menus can't start GoldLink from {shown} (a \\, \", ` or $ in it): pick another folder."
+            ));
+        }
+        let program = dir.join(goldlink_update::program_name());
+        let uninstaller = dir.join(UNINSTALLER);
+        let me =
+            std::env::current_exe().map_err(|e| format!("Couldn't find the installer: {e}"))?;
+        if me != uninstaller {
+            std::fs::copy(&me, &uninstaller)
+                .and_then(|_| {
+                    std::fs::set_permissions(&uninstaller, std::fs::Permissions::from_mode(0o755))
+                })
+                .map_err(|e| format!("Couldn't write {}: {e}", uninstaller.display()))?;
+        }
+        let text = format!(
+            "[Desktop Entry]\nType=Application\nName=GoldLink\nComment=Six-player co-op Pokémon HeartGold\n\
+             Exec=\"{program}\"\nPath={shown}\nIcon={icon}\nTerminal=false\nCategories=Game;\n\
+             StartupWMClass=goldlink\nActions=Uninstall;\n\n\
+             [Desktop Action Uninstall]\nName=Uninstall GoldLink\nExec=\"{uninstaller}\" --uninstall\n",
+            program = program.display(),
+            icon = dir.join("goldlink.png").display(),
+            uninstaller = uninstaller.display(),
+        );
+        let apps = entry().ok_or("Can't find your app menu's folder")?;
+        write(&apps, &text, false)?;
+        if let Some(lnk) = desktop() {
+            if desktop_too {
+                write(&lnk, &text, true)?;
+            } else {
+                std::fs::remove_file(&lnk).ok();
+            }
+        }
+        refresh_menu(&apps);
+        Ok(())
+    }
+
+    fn refresh_menu(entry: &Path) {
+        if let Some(apps) = entry.parent() {
+            std::process::Command::new("update-desktop-database")
+                .arg(apps)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .ok();
+        }
+    }
+
+    /// Takes GoldLink away: the program's folder (a running program can be deleted here), the
+    /// app menu's entry and the desktop's launcher. The player's data folder is never touched.
+    pub fn uninstall(dir: &Path) -> Result<(), String> {
+        if !super::holds_goldlink(dir) {
+            return Err(format!(
+                "{} doesn't look like GoldLink's folder: nothing removed.",
+                dir.display()
+            ));
+        }
+        std::fs::remove_dir_all(dir)
+            .map_err(|e| format!("Couldn't remove {}: {e}", dir.display()))?;
+        for f in [entry(), desktop()].into_iter().flatten() {
+            // Only ours: one that starts this folder's GoldLink.
+            let ours = std::fs::read_to_string(&f)
+                .is_ok_and(|t| t.contains(&format!("Path={}", dir.display())));
+            if ours {
+                std::fs::remove_file(&f).ok();
+            }
+        }
+        if let Some(apps) = entry() {
+            refresh_menu(&apps);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(windows)]

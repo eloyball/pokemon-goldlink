@@ -2,7 +2,8 @@
 # The unified client's player release (dev/docs/unified-client/UC7.md): GoldLink-vX.Y-linux.tar.gz
 # and GoldLink-vX.Y-windows.zip in build/client-release/vX.Y/, one program each (melonDS built
 # in, no BizHawk, no .NET or Mono), built from HEAD with the debug tools off; and
-# GoldLink-Setup.exe, the Windows installer (it downloads the newest release itself).
+# GoldLink-Setup.exe and GoldLink-Setup-linux, the installers (they download the newest release
+# themselves).
 #
 #   scripts/package_client.sh vX.Y [--publish]
 #
@@ -127,10 +128,11 @@ mkdir -p "$CACHE/cargo-home"
 docker run --rm --user "$(id -u):$(id -g)" \
     -v "$ROOT:/src" -v "$CACHE/cargo-home:/cargo-home" \
     -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/src/target/bullseye -e "$BUILD" -w /src \
-    "$IMAGE" cargo build --release --locked -p goldlink
+    "$IMAGE" sh -c 'cargo build --release --locked -p goldlink && cargo build --profile setup --locked -p goldlink-setup'
 LINUX_BIN="target/bullseye/release/goldlink"
+LINUX_SETUP_BIN="target/bullseye/setup/goldlink-setup"
 WINDOWS_BIN="target/x86_64-pc-windows-gnu/release/goldlink.exe"
-glibc="$(objdump -T "$LINUX_BIN" | grep -oP 'GLIBC_\K[0-9.]+' | sort -uV | tail -1)"
+glibc="$(objdump -T "$LINUX_BIN" "$LINUX_SETUP_BIN" | grep -oP 'GLIBC_\K[0-9.]+' | sort -uV | tail -1)"
 [[ "$(printf '%s\n%s\n' "$glibc" "$MAX_GLIBC" | sort -V | tail -1)" == "$MAX_GLIBC" ]] \
     || die "the Linux program needs glibc $glibc (at most $MAX_GLIBC)"
 echo "[*] Linux program: glibc $glibc or newer"
@@ -232,7 +234,8 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             z.write(full, os.path.relpath(full, base))
 PY
 cp "$SETUP_BIN" "$OUT/GoldLink-Setup.exe"
-(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" GoldLink-Setup.exe > SHA256SUMS)
+install -m 755 "$LINUX_SETUP_BIN" "$OUT/GoldLink-Setup-linux"
+(cd "$OUT" && sha256sum "$NAME-linux.tar.gz" "$NAME-windows.zip" GoldLink-Setup.exe GoldLink-Setup-linux > SHA256SUMS)
 # The signature the launcher's Update button checks (UC10), made with the maintainer's key and
 # checked against the public key built into this release's program.
 if [[ -f "$SIGNING_KEY" ]]; then
@@ -246,7 +249,7 @@ if [[ -f "$SIGNING_KEY" ]]; then
 else
     echo "[!] no signing key ($SIGNING_KEY): unsigned, so the Update button won't install it"
 fi
-ls -l "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/GoldLink-Setup.exe
+ls -l "$OUT"/*.tar.gz "$OUT"/*.zip "$OUT"/GoldLink-Setup.exe "$OUT"/GoldLink-Setup-linux
 
 # ---------------------------------------------------------------------------
 step 6 "Notes"
@@ -262,7 +265,7 @@ step 7 "GitHub"
 if [[ $PUBLISH == 1 ]]; then
     gh release create "$VERSION" -R "$REPOSITORY" --draft --target "$COMMIT" --title "GoldLink $VERSION" \
         --notes-file "$OUT/notes.md" "$OUT/$NAME-linux.tar.gz" "$OUT/$NAME-windows.zip" "$OUT/GoldLink-Setup.exe" \
-        "$OUT/SHA256SUMS" "$OUT/SHA256SUMS.sig"
+        "$OUT/GoldLink-Setup-linux" "$OUT/SHA256SUMS" "$OUT/SHA256SUMS.sig"
     echo "[*] draft release $VERSION created: review and publish it on GitHub"
 else
     echo "[*] not published (--publish creates a draft GitHub release)"

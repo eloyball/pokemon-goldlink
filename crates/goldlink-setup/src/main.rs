@@ -1,7 +1,8 @@
 //! GoldLink's installer (`GoldLink-Setup.exe`, published with each release): finds the newest
 //! player release on GitHub, downloads it, checks it is signed by the release key (the launcher's
 //! updater, crates/goldlink-update), and installs it for this user, as a program: the Start
-//! menu, a desktop shortcut if asked, Windows' apps list with an uninstaller. The launcher keeps
+//! menu, a desktop shortcut if asked, Windows' apps list with an uninstaller (on Linux: the app
+//! menu, a desktop launcher, an "Uninstall GoldLink" action on the menu's entry). The launcher keeps
 //! it up to date from then on. In GoldLink's look (the launcher's theme.rs, included as it is).
 //!
 //!   GoldLink-Setup.exe                    the installer's window
@@ -262,13 +263,52 @@ impl Setup {
         let (tx, rx) = channel();
         let start = self.dir.parent().map(Path::to_path_buf);
         std::thread::spawn(move || {
-            let mut dialog = rfd::FileDialog::new().set_title("Where to install GoldLink");
+            let mut dialog = rfd::AsyncFileDialog::new().set_title("Where to install GoldLink");
             if let Some(s) = start.filter(|s| s.is_dir()) {
                 dialog = dialog.set_directory(s);
             }
-            tx.send(dialog.pick_folder()).ok();
+            let picked = block_on(dialog.pick_folder()).map(|f| f.path().to_path_buf());
+            tx.send(picked).ok();
         });
         self.choosing = Some(rx);
+    }
+}
+
+/// Runs the folder chooser to the end. On Linux rfd asks the desktop portal over D-Bus on Tokio,
+/// which needs one runtime for the whole program (as the launcher's, crates/goldlink
+/// launcher.rs `run_dialog`); elsewhere the native dialog completes on its own thread.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn block_on<T>(f: impl std::future::Future<Output = Option<T>>) -> Option<T> {
+    static RUNTIME: std::sync::OnceLock<Option<tokio::runtime::Runtime>> =
+        std::sync::OnceLock::new();
+    let runtime = RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .ok()
+    });
+    runtime.as_ref()?.block_on(f)
+}
+
+#[cfg(not(all(unix, not(target_os = "macos"))))]
+fn block_on<T>(f: impl std::future::Future<Output = Option<T>>) -> Option<T> {
+    use std::sync::Arc;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct Thread(std::thread::Thread);
+    impl Wake for Thread {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+    let waker = Waker::from(Arc::new(Thread(std::thread::current())));
+    let mut cx = Context::from_waker(&waker);
+    let mut f = std::pin::pin!(f);
+    loop {
+        match f.as_mut().poll(&mut cx) {
+            Poll::Ready(v) => return v,
+            Poll::Pending => std::thread::park(),
+        }
     }
 }
 
@@ -352,13 +392,18 @@ impl eframe::App for Setup {
                         ui.add_space(10.0);
                         ui.checkbox(&mut self.desktop, RichText::new("A shortcut on the desktop").font(theme::text(17.0)).color(theme::TEXT));
                         ui.add_space(6.0);
-                        line(ui, format!("Your saves and settings stay in {data}."), 15.0, theme::TEXT_FAINT);
+                        line_cut(ui, format!("Your saves and settings stay in {data}."), 15.0, theme::TEXT_FAINT);
                     });
                     let label = if installed.is_some() { "UPDATE" } else { "INSTALL" };
                     if theme::big_button(ui, &self.art, c.button, None, label, theme::Kind::Go, true).clicked() {
                         action = Some(Action::Install(release.clone()));
                     }
-                    ("For you only: no administrator needed. GoldLink keeps itself up to date.".to_owned(), false)
+                    (if cfg!(windows) {
+                        "For you only: no administrator needed. GoldLink keeps itself up to date."
+                    } else {
+                        "For you only: nothing needs root. GoldLink keeps itself up to date."
+                    }
+                    .to_owned(), false)
                 }
                 Page::Installing { release, stage, .. } => {
                     theme::panel(ui, c.main, "Installing", theme::EDGE, |ui| {
@@ -386,8 +431,10 @@ impl eframe::App for Setup {
                         ui.add_space(12.0);
                         let place = if cfg!(windows) {
                             if self.desktop { "Find it in the Start menu and on your desktop." } else { "Find it in the Start menu." }
+                        } else if self.desktop {
+                            "Find it in your app menu (Games) and on your desktop."
                         } else {
-                            "Installed."
+                            "Find it in your app menu (Games)."
                         };
                         line(ui, place, 18.0, theme::TEXT);
                         line(ui, "Its launcher brings each new version: no need to run this again.", 16.0, theme::TEXT_DIM);
@@ -399,7 +446,12 @@ impl eframe::App for Setup {
                     if theme::big_button(ui, &self.art, c.button, Some("play"), "PLAY", theme::Kind::Go, true).clicked() {
                         action = Some(Action::Play);
                     }
-                    ("Uninstall it from Windows' apps list whenever you like.".to_owned(), false)
+                    (if cfg!(windows) {
+                        "Uninstall it from Windows' apps list whenever you like."
+                    } else {
+                        "Uninstall it from its app menu entry (right-click) whenever you like."
+                    }
+                    .to_owned(), false)
                 }
                 Page::Failed(e) => {
                     theme::panel(ui, c.main, "Not installed", theme::RED, |ui| {
@@ -416,7 +468,11 @@ impl eframe::App for Setup {
                     theme::panel(ui, c.main, "Uninstall", theme::RED, |ui| {
                         line(ui, "Remove GoldLink from this computer?", 24.0, theme::GOLD);
                         ui.add_space(10.0);
-                        line(ui, format!("The program ({}), its shortcuts and its place in Windows' apps go.", dir.display()), 16.0, theme::TEXT);
+                        line(ui, format!(
+                            "The program ({}), its shortcuts and its place in {} go.",
+                            dir.display(),
+                            if cfg!(windows) { "Windows' apps" } else { "your app menu" }
+                        ), 16.0, theme::TEXT);
                         ui.add_space(6.0);
                         line(ui, format!("Your saves and settings stay in {data}."), 16.0, theme::TEXT_DIM);
                         ui.add_space(18.0);

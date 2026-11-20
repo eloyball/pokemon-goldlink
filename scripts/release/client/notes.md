@@ -8,12 +8,18 @@ unmodified Pokémon HeartGold (USA) ROM and builds the co-op game from it.
 | :--- | :--- |
 | `GoldLink-Setup.exe` | Windows 10 / 11, 64-bit: **the installer** (the easiest way) |
 | `GoldLink-{{VERSION}}-windows.zip` | Windows 10 / 11, 64-bit, without installing |
-| `GoldLink-{{VERSION}}-linux.tar.gz` | Linux, 64-bit |
+| `GoldLink-Setup-linux` | Linux, 64-bit: **the installer** (any distribution from 2020 on) |
+| `GoldLink-{{VERSION}}-linux.tar.gz` | Linux, 64-bit, without installing |
 
 **Windows:** run `GoldLink-Setup.exe`. It downloads the newest GoldLink, checks its signature
 and installs it for you (no administrator needed): GoldLink in the Start menu (and on the
 desktop if you like), and in Windows' apps list to uninstall it. Your saves are kept apart and
 stay if you uninstall. Or unpack the zip anywhere.
+
+**Linux:** make `GoldLink-Setup-linux` executable (`chmod +x GoldLink-Setup-linux`, or the file's
+properties) and run it. It installs GoldLink for you in `~/.local/opt/GoldLink` (no root): in
+your app menu (Games), on the desktop if you like, and "Uninstall GoldLink" on the menu entry
+(right-click). Your saves stay in `~/.local/share/goldlink`. Or unpack the tar.gz anywhere.
 
 Unpack, start `GoldLink` (`GoldLink.exe` on Windows), choose your ROM the first time, then
 press **Play**. The `README.txt` inside says more. Coming from the BizHawk version: your worlds,
