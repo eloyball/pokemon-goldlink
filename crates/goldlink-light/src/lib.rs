@@ -539,6 +539,9 @@ pub struct Lighting {
     vignette: (usize, usize, f32, Vec<f32>),
     /// Where the player stood last frame (view space), for [`Lighting::focus`].
     focus: Option<V3>,
+    /// Frames the ground at the screen's middle has been far nearer the camera than the focus
+    /// (something in front of the player: [`next_focus`]).
+    focus_hidden: u32,
     /// The light sources being followed, and when they were last updated (a pause, a battle or
     /// a menu, starts them afresh).
     tracked: Vec<Tracked>,
@@ -695,6 +698,7 @@ impl Lighting {
             stack: Vec::new(),
             vignette: (0, 0, 0.0, Vec::new()),
             focus: None,
+            focus_hidden: 0,
             tracked: Vec::new(),
             tracked_at: None,
             patch_weight: Vec::new(),
@@ -1418,19 +1422,40 @@ impl Lighting {
             }
             scale(sum, 1.0 / cnt)
         });
-        // Eased toward where it is now; a jump (a new map, a warp) is taken at once.
-        self.focus = match (self.focus, now) {
-            (Some(was), Some(now)) => {
-                let d = sub(now, was);
-                Some(if dot(d, d) < 64.0 * 64.0 {
-                    add(was, scale(d, 0.25))
-                } else {
-                    now
-                })
-            }
-            (_, now) => now,
-        };
+        (self.focus, self.focus_hidden) = next_focus(self.focus, now, self.focus_hidden);
         self.focus
+    }
+}
+
+/// Ground at the screen's middle this much nearer the camera than the focus (view units) is
+/// something in front of the player, not where they stand.
+const FOCUS_OCCLUDER: f32 = 48.0;
+/// How long (frames) the focus stays put behind it before taking it as the new ground (a new map
+/// whose camera stands nearer).
+const FOCUS_HIDDEN_MAX: u32 = 90;
+
+/// The focus after this frame (`was`, the ground seen at the screen's middle `now`, and the frames
+/// it has been hidden): eased toward the ground; a jump (a new map, a warp) taken at once; but
+/// ground suddenly far nearer the camera is an object in front of the player (the user's Sprout
+/// Tower, 2026-11-20: walking behind the central pillar, the player's light jumped onto the
+/// pillar's face, the room dimmed and the light came back at once by the other window). The
+/// camera follows the player, so where they stand barely moves in view space: it stays put
+/// until the ground shows again, or for FOCUS_HIDDEN_MAX frames.
+fn next_focus(was: Option<V3>, now: Option<V3>, hidden: u32) -> (Option<V3>, u32) {
+    match (was, now) {
+        (Some(was), Some(now)) => {
+            if now[2] > was[2] + FOCUS_OCCLUDER && hidden < FOCUS_HIDDEN_MAX {
+                return (Some(was), hidden + 1);
+            }
+            let d = sub(now, was);
+            let next = if dot(d, d) < 64.0 * 64.0 {
+                add(was, scale(d, 0.25))
+            } else {
+                now
+            };
+            (Some(next), 0)
+        }
+        (_, now) => (now, 0),
     }
 }
 
@@ -1554,6 +1579,42 @@ fn unproject(rows: &[[f32; 4]; 4], xn: f32, yn: f32, zn: f32) -> Option<V3> {
     }
     let p = [r[0] / r[3], r[1] / r[3], r[2] / r[3]];
     (p.iter().all(|v| v.is_finite()) && p[2] < 0.0).then_some(p)
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::*;
+
+    #[test]
+    fn a_pillar_in_front_of_the_player_keeps_the_light_where_they_stand() {
+        // Measured in Sprout Tower: the ground at -669, the pillar's face at -481.
+        let ground = [1.0, -2.0, -669.0];
+        let pillar = [1.0, -8.0, -481.0];
+        let (mut f, mut hidden) = (Some(ground), 0);
+        for _ in 0..12 {
+            (f, hidden) = next_focus(f, Some(pillar), hidden);
+            assert_eq!(f, Some(ground));
+        }
+        (f, hidden) = next_focus(f, Some([5.0, 0.0, -670.0]), hidden);
+        assert_eq!(hidden, 0);
+        assert!(f.unwrap()[2] < -668.0, "eased along the ground: {f:?}");
+    }
+
+    #[test]
+    fn nearer_ground_that_stays_is_taken() {
+        let (mut f, mut hidden) = (Some([0.0, 0.0, -670.0]), 0);
+        for _ in 0..=FOCUS_HIDDEN_MAX {
+            (f, hidden) = next_focus(f, Some([0.0, 0.0, -400.0]), hidden);
+        }
+        assert_eq!(f, Some([0.0, 0.0, -400.0]));
+        assert_eq!(hidden, 0);
+    }
+
+    #[test]
+    fn ground_further_away_is_taken_at_once() {
+        let (f, hidden) = next_focus(Some([0.0, 0.0, -400.0]), Some([0.0, 0.0, -670.0]), 0);
+        assert_eq!((f, hidden), (Some([0.0, 0.0, -670.0]), 0));
+    }
 }
 
 #[cfg(test)]
