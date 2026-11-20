@@ -1104,12 +1104,13 @@ static void Coop_SpiritWarp(FieldSystem *fsys, u32 map, s32 x, s32 z)
 
     if (map == (u32)fsys->location->mapId && player != NULL && player->xCurr == x && player->yCurr == z)
         return; // already there
-    // Fades out, unloads the field (and this overlay) and loads the map: the script warp, no
-    // Fly landing.
+    // The spirit's warp (its fades, in once the field runs there; the bare script warp showed a
+    // black screen and a strip of the Center on a rescue, the user's v0.7 play test): unloads the
+    // field (and this overlay) and loads the map, no Fly landing.
     {
         struct CoopScriptWarpEnv *warp = Coop_ScriptWarpEnv(map, -1, x, z, COOP_DIR_DOWN);
 
-        if (warp != NULL && Coop_FieldSystem_CreateTask(fsys, Task_ScriptWarp, warp) == NULL)
+        if (warp != NULL && Coop_FieldSystem_CreateTask(fsys, Coop_Task_SpiritWarp, warp) == NULL)
             sys_FreeMemoryEz(warp);
     }
 }
