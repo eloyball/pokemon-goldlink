@@ -238,6 +238,8 @@ pub struct GameApp {
     /// A game window reaching into the band's rows (the level-up's stats box): drawn over the
     /// band, as the game draws it over its text box (`hud::window_under_band`).
     band_window: Option<[usize; 4]>,
+    /// The Pokédex's registration page after a catch is up (`hud::pokedex_page_shown`): no band.
+    pokedex_page: bool,
     /// Frames in a row the game's text box rows have shown something else (the band steps aside
     /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
     textbox_away: u32,
@@ -364,6 +366,7 @@ impl GameApp {
             game_textbox: true,
             textbox_away: 0,
             band_window: None,
+            pokedex_page: false,
             wide: None,
             wide_side: 0,
             shown_scale: 1.0,
@@ -617,6 +620,7 @@ impl GameApp {
                         }
                     }
                     self.band_window = hud::window_under_band(&frame.pixels[..256 * 192]);
+                    self.pokedex_page = hud::pokedex_page_shown(&frame.pixels[..256 * 192]);
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
                     if hud::game_textbox_shown(rows) {
                         self.textbox_away = 0;
@@ -1211,7 +1215,7 @@ impl GameApp {
         match battle {
             // The band only with something for it: the HUD's menu or the game's text box (a link
             // battle's VS screen draws the bottom player's party where the band would be).
-            Some(b) if hud_draws || self.game_textbox => {
+            Some(b) if hud_draws || (self.game_textbox && !self.pokedex_page) => {
                 // The scene above the band.
                 let band = hud::band(frame);
                 let scene_rows = hud::SCENE_ROWS / 192.0;

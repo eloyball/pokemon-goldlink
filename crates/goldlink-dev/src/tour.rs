@@ -227,7 +227,7 @@ const NAMING_STEPS: &[Step] = &[
 
 /// GOLDLINK_DEV_TOUR_ROUTE=catch: a wild Pokémon caught with a Master Ball, and its nickname
 /// typed on the window's keyboard (the naming screen opened from inside the battle).
-/// GOLDLINK_DEV_TOUR_ROUTE=catch-dex (v0.7.1): as catch, then A every second for 25 seconds with
+/// GOLDLINK_DEV_TOUR_ROUTE=catch-dex (v0.7.1): as catch, then A every second for 45 seconds with
 /// the raw top screen saved every 20 frames (the Pokédex's registration screen after the catch).
 const CATCH_DEX_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
@@ -259,7 +259,7 @@ const CATCH_DEX_STEPS: &[Step] = &[
     Step::Wait(150),
     Step::Press(Keys::A),
     Step::Wait(60),
-    Step::MashUntilWindow(60 * 25),
+    Step::MashUntilWindow(60 * 45),
     Step::Close,
 ];
 
@@ -1596,10 +1596,17 @@ const PROMPTS_STEPS: &[Step] = &[
 const PC_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(90),
-    // Cherrygrove's Pokémon Center (pret MAP_CHERRYGROVE_POKECENTER_1F 69): the nurse at (8, 11)
-    // behind the counter, the PC on the counter two tiles right; below it, facing up.
-    Step::WarpTo(69, 10, 13, 0),
+    // Cherrygrove (debug warp preset 1, in front of the Pokémon Center), in (pret
+    // MAP_CHERRYGROVE_POKECENTER_1F: the door at (8, 19), the nurse at (8, 11) behind the
+    // counter), up to the counter, a tile right, facing up at the PC.
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
     Step::Wait(400),
+    Step::Walk(Keys::UP, 40, ""),
+    Step::Wait(150),
+    Step::Walk(Keys::UP, 120, ""),
+    Step::Walk(Keys::RIGHT, 16, ""),
+    Step::Walk(Keys::UP, 16, ""),
+    Step::Wait(20),
     Step::Shot("pc-at"),
     Step::Press(Keys::A),
     Step::Wait(120),
@@ -1628,10 +1635,17 @@ const PC_STEPS: &[Step] = &[
 const MART_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(90),
-    // Cherrygrove's Poké Mart (pret MAP_CHERRYGROVE_POKEMART 68): the clerk at (2, 6) behind the
-    // counter; across it, facing left.
-    Step::WarpTo(68, 4, 6, 2),
+    // Cherrygrove (debug warp preset 1), five tiles left to the Poké Mart's door, in (pret
+    // MAP_CHERRYGROVE_POKEMART: the door at (4, 11), the clerk at (2, 6) behind the counter), up
+    // five tiles, facing left across the counter.
+    Step::Debug(C::COOP_DEBUG_WARP as u8, 1),
     Step::Wait(400),
+    Step::Walk(Keys::LEFT, 80, ""),
+    Step::Walk(Keys::UP, 40, ""),
+    Step::Wait(150),
+    Step::Walk(Keys::UP, 80, ""),
+    Step::Walk(Keys::LEFT, 16, ""),
+    Step::Wait(20),
     Step::Shot("mart-at"),
     Step::Press(Keys::A),
     Step::Wait(120),

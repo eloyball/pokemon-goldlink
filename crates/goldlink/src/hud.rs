@@ -977,6 +977,27 @@ pub fn game_textbox_shown(top_screen_rows: &[u32]) -> bool {
     all == 0 || light * 10 < all * 4
 }
 
+/// Whether the top screen shows the Pokédex's registration page after a catch (the band hid its
+/// bottom, the user's v0.7 play test): its header across the top, one warm colour (measured raw:
+/// FBBA38, 921818 as it fades in, darker as it fades out), where a battle has its sky.
+pub fn pokedex_page_shown(top: &[u32]) -> bool {
+    let at = |x: usize| top.get(256 + x).map(|&p| channels(p & 0xFF_FFFF));
+    let Some((r, g, b)) = at(128) else {
+        return false;
+    };
+    let warm = r >= 40 && r >= g + 15 && r >= b + 30;
+    // Its frame's ends a darker shade (CB8A20 by FBBA38).
+    let ends = [2, 250]
+        .iter()
+        .all(|&x| at(x).is_some_and(|(r2, g2, _)| r2 + 20 <= r && r2 > g2 + 10));
+    warm && ends
+        && (16..241).step_by(4).all(|x| {
+            at(x).is_some_and(|(r2, g2, b2)| {
+                r2.abs_diff(r) <= 6 && g2.abs_diff(g) <= 6 && b2.abs_diff(b) <= 6
+            })
+        })
+}
+
 /// A game window reaching down into the band's rows (DS columns and rows, ends past the last):
 /// the level-up's stats box, drawn over the game's text box by the game itself, hid under the band
 /// (the user's v0.7 play test). Found by the game's window frame down its left side, in the band's
@@ -1190,6 +1211,29 @@ mod window_tests {
     #[test]
     fn finds_the_stats_box() {
         assert_eq!(window_under_band(&screen(true)), Some([130, 60, 224, 158]));
+    }
+
+    #[test]
+    fn the_pokedex_page_hides_the_band() {
+        let mut px = screen(false);
+        // A battle's sky (measured: CBCBCB to EBEBDB across the row).
+        for x in 0..256 {
+            let v = 0xCB + (x as u32 * 0x20) / 256;
+            px[256 + x] = v << 16 | v << 8 | v;
+        }
+        assert!(!super::pokedex_page_shown(&px), "a battle's sky");
+        for (v, end) in [
+            (0xFB_BA38u32, 0xCB_8A20u32),
+            (0x92_1818, 0x70_1010),
+            (0x58_3808, 0x40_2004),
+        ] {
+            px[256..512].fill(v);
+            px[256..256 + 16].fill(end);
+            px[256 + 245..512].fill(end);
+            assert!(super::pokedex_page_shown(&px), "{v:06X}");
+        }
+        px[256..512].fill(0x30_3030);
+        assert!(!super::pokedex_page_shown(&px), "a fade's grey");
     }
 
     #[test]
