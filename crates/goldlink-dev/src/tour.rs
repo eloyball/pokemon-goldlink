@@ -529,6 +529,44 @@ const GYM_RELOAD_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=gym-elevator (v0.7.1, the user's Violet Gym report, from a save made
+/// on the elevator at the top): as it loads (shots and main RAM), a step up, then left to the
+/// glass passageway and down and up it, then the same on the right (with
+/// GOLDLINK_DEV_TOUR_FILM for every frame).
+const GYM_ELEVATOR_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Shot("load"),
+    Step::Wait(60),
+    Step::Shot("load-1s"),
+    Step::Wait(180),
+    Step::Shot("load-4s"),
+    Step::Dump("load"),
+    Step::Walk(Keys::UP, 16, ""),
+    Step::Wait(40),
+    Step::Shot("up1"),
+    Step::Dump("up1"),
+    Step::Walk(Keys::LEFT, 160, ""),
+    Step::Wait(20),
+    Step::Shot("left"),
+    Step::Walk(Keys::DOWN, 96, ""),
+    Step::Wait(20),
+    Step::Shot("left-down"),
+    Step::Walk(Keys::UP, 192, ""),
+    Step::Wait(20),
+    Step::Shot("left-up"),
+    Step::Walk(Keys::DOWN, 96, ""),
+    Step::Walk(Keys::RIGHT, 320, ""),
+    Step::Wait(20),
+    Step::Shot("right"),
+    Step::Walk(Keys::DOWN, 96, ""),
+    Step::Wait(20),
+    Step::Shot("right-down"),
+    Step::Walk(Keys::UP, 192, ""),
+    Step::Wait(20),
+    Step::Shot("right-up"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=mega: the Key Stone, a Mega Stone holder, a wild battle's fight menu;
 /// the touch screen's MEGA button off, then lit (for the HUD's reading of it).
 const MEGA_STEPS: &[Step] = &[
@@ -2522,6 +2560,7 @@ fn steps() -> &'static [Step] {
         Ok("levelup") => LEVELUP_STEPS,
         Ok("gym") => GYM_STEPS,
         Ok("gym-reload") => GYM_RELOAD_STEPS,
+        Ok("gym-elevator") => GYM_ELEVATOR_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,

@@ -1,0 +1,46 @@
+GoldLink: the steady camera's distance when no object shows near the centre (Violet Gym's elevator).
+
+--- a/src/GPU3D.h
++++ b/src/GPU3D.h
+@@ -292,7 +292,9 @@
+     // the centre never change the scale, so the picture never zooms.
+     // Main: the first projection seen with this camera (m10, m14): the depth range it keeps
+     // (its near and far) is what every projection of the scene is scaled to (OrthoProjection).
+-    struct OrthoCamera { s32 Key[5]; double Depth; double Seen[5]; int NumSeen; double MainM10, MainM14; };
++    struct OrthoCamera { s32 Key[5]; double Depth; double Seen[5]; int NumSeen; double MainM10, MainM14;
++        // GoldLink (patch 0037): its scenes so far, and the object nearest the centre among them.
++        int Scenes; double BestNear; double BestScore; };
+     OrthoCamera OrthoCameras[8] {};
+     int NumOrthoCameras = 0, OrthoCameraAt = -1;
+     void OrthoProjection(const s32* camera) noexcept;
+--- a/src/GPU3D.cpp
++++ b/src/GPU3D.cpp
+@@ -2939,6 +2939,28 @@
+             }
+         }
+     }
++    // GoldLink (patch 0037): a camera setup whose first scenes show nothing near the centre (a
++    // save loaded on Violet Gym's elevator: none for 500 frames, until the player stepped off)
++    // drew at the last setup's distance or the default, 656 against the player's 433 there: the
++    // picture two thirds its size (the user, 2026-11-20). After three such scenes it takes the
++    // object nearest the centre it has seen; patch 0019 rounds that to the exact scale.
++    if (OrthoSceneFromPersp && OrthoCameraAt >= 0)
++    {
++        OrthoCamera &c = OrthoCameras[OrthoCameraAt];
++        if (c.Depth <= 0)
++        {
++            if (c.Scenes == 0 || OrthoNearScore < c.BestScore)
++            {
++                c.BestScore = OrthoNearScore;
++                c.BestNear = OrthoNear;
++            }
++            if (++c.Scenes >= 3 && c.NumSeen == 0 && c.BestScore < 1.0)
++            {
++                c.Depth = c.BestNear;
++                OrthoDepth = c.Depth;
++            }
++        }
++    }
+     OrthoScene = false;
+     OrthoSceneFromPersp = false;
+     OrthoArmed = false;
