@@ -53,15 +53,12 @@ void LONG_CALL MapObject_CopyPositionVector(LocalMapObject *object, VecFx32 *out
 BOOL LONG_CALL MetatileBehavior_IsSurfableWater(u8 behavior);
 void LONG_CALL MapID_GetLandmarkName(u32 mapId, u32 heapId, String *dest);
 
-struct CoopMovementCommand // pret MovementScriptCommand
-{
-    u16 command;
-    u16 length;
-};
-
-void *LONG_CALL EventObjectMovementMan_Create(LocalMapObject *object, const struct CoopMovementCommand *data);
-BOOL LONG_CALL EventObjectMovementMan_IsFinish(void *movementMan);
-void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
+// pret include/unk_02062108.h: one movement action on the object, as the player's own steps
+// are set (a movement script's runner left 2 idle frames after each step: the spirit stopped
+// at every tile, laggy to play and stop-and-go on teammates' screens; the user, 2026-11-19).
+// ClearHeldMovementIfActive: TRUE once the last one is done (or there's none).
+void LONG_CALL MapObject_SetHeldMovement(LocalMapObject *object, u32 action);
+BOOL LONG_CALL MapObject_ClearHeldMovementIfActive(LocalMapObject *object);
 
 #define COOP_HEAP_FIELD          11
 #define COOP_DIR_UP              0 // pret DIR_NORTH.. (constants/global_fieldmap.h)
@@ -70,8 +67,7 @@ void LONG_CALL EventObjectMovementMan_Delete(void *movementMan);
 #define COOP_DIR_RIGHT           3
 #define COOP_MOVEMENT_STEP_UP    12 // + direction
 #define COOP_MOVEMENT_JUMP_FAR_UP 56 // + direction: two tiles, a ledge's jump (pret asm/macros/movement.inc JumpFar*)
-#define COOP_MOVEMENT_TURN_UP    36 // + direction: a turn, as a quick step on the spot (pret asm/macros/movement.inc WalkOnSpotFastNorth)
-#define COOP_MOVEMENT_STEP_END   254
+#define COOP_MOVEMENT_TURN_UP    40 // + direction: vanilla's turn, a quick step on the spot (pret asm/macros/movement.inc WalkOnSpotFasterNorth)
 #define COOP_PLAYER_STATE_SURFING 2 // pret PLAYER_STATE_SURFING
 #define COOP_SE_SELECT           1500
 #define COOP_NAME_GLYPHS         12
@@ -410,8 +406,6 @@ struct CoopSpiritEnv
 {
     struct CoopDialog dialog;
     struct CoopChoice choice;
-    void *movement;
-    struct CoopMovementCommand moves[2]; // read by the movement engine until it finishes
     u16 name[COOP_NAME_GLYPHS];
     u16 place1[COOP_NAME_GLYPHS]; // a landmark name, split for the 11-glyph arguments
     u16 place2[COOP_NAME_GLYPHS];
@@ -421,6 +415,7 @@ struct CoopSpiritEnv
     u16 frames;
     u8 warpDir;
     u8 stepped;  // the last movement was a step (not a turn): check a warp underfoot
+    u8 walking;  // the last movement was a step, and a direction is still held
     u8 menuAsked; // X pressed under the map name banner: the menu opens once it's gone
     u8 open;     // the dialog is open
 };
@@ -574,10 +569,10 @@ static BOOL Coop_Task_SpiritWarp(TaskManager *taskman)
             return TRUE;
         TaskManager_Call(taskman, Task_ScriptWarp, taskman->env); // it frees its env
     }
-    // In once the field has run on the new map and the avatar had time to become ours (its
-    // settle wait and the change: Ethan or Lyra showed through the fade-in, the user's play test,
-    // 2026-11-19). The count starts at 0 with each map (Overlay 131 is loaded again).
-    else if (state == 2 && (gCoopLocalLastSprite == 0xFFFFFFFF || ++sCoopSpiritArrival < 24))
+    // In once the field has run on the new map and the avatar had time to become ours (Ethan or
+    // Lyra showed through the fade-in, the user's play test, 2026-11-19). The count starts at 0
+    // with each map (Overlay 131 is loaded again).
+    else if (state == 2 && (gCoopLocalLastSprite == 0xFFFFFFFF || ++sCoopSpiritArrival < 8))
         return FALSE;
     else // 0: out, 2: in
         BeginNormalPaletteFade(0, state >> 1, state >> 1, 0, 6, 1, COOP_HEAP_FIELD1);
@@ -598,14 +593,6 @@ static BOOL Coop_SpiritCanStep(FieldSystem *fsys, LocalMapObject *player, s32 x,
         && !sub_02060BFC(player, x, player->hCurr, z);
 }
 
-static void Coop_SpiritMove(struct CoopSpiritEnv *env, LocalMapObject *player, u32 command)
-{
-    env->moves[0].command = (u16)command;
-    env->moves[0].length = 1;
-    env->moves[1].command = COOP_MOVEMENT_STEP_END;
-    env->moves[1].length = 0;
-    env->movement = EventObjectMovementMan_Create(player, env->moves);
-}
 
 // The D-pad: a warp (a pushed one underfoot, a door ahead), a step, or a turn.
 // TRUE: a warp is aimed.
@@ -626,14 +613,14 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
     else if (held & PAD_KEY_RIGHT)
         dir = COOP_DIR_RIGHT;
     else
-        return FALSE;
-    // A new direction turns first, a quick step on the spot that lasts a few frames; still
-    // held when it ends, the spirit walks that way: a tap turns in place, as vanilla's player.
-    // (An instant FACE turn walked on as soon as a tap lasted two frames: every tap walked.)
-    if ((u32)player->curFacing != dir)
+        return env->walking = FALSE;
+    // From standing, a new direction turns first (vanilla's turn: a tap of up to 6 frames turns,
+    // a longer press walks on); walking, it steps that way at once, as vanilla's player does
+    // (a turn at each change of direction made the spirit feel laggy).
+    if ((u32)player->curFacing != dir && !env->walking)
     {
         env->stepped = FALSE;
-        Coop_SpiritMove(env, player, COOP_MOVEMENT_TURN_UP + dir);
+        MapObject_SetHeldMovement(player, COOP_MOVEMENT_TURN_UP + dir);
         return FALSE;
     }
     nx = x + sDx[dir];
@@ -650,7 +637,7 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
         Coop_SpiritAimWarp(env, warp->header, warp->anchor, 0, 0, dir);
         return TRUE;
     }
-    env->stepped = FALSE;
+    env->stepped = env->walking = FALSE;
     {
         // A ledge ahead, jumped the way it faces: two tiles, onto a free one.
         static const u8 sLedge[4] = { COOP_TILE_JUMP_NORTH, COOP_TILE_JUMP_SOUTH, COOP_TILE_JUMP_WEST, COOP_TILE_JUMP_EAST };
@@ -658,8 +645,8 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
         {
             if (Coop_SpiritCanStep(fsys, player, nx + sDx[dir], nz + sDz[dir]))
             {
-                Coop_SpiritMove(env, player, COOP_MOVEMENT_JUMP_FAR_UP + dir);
-                env->stepped = TRUE;
+                MapObject_SetHeldMovement(player, COOP_MOVEMENT_JUMP_FAR_UP + dir);
+                env->stepped = env->walking = TRUE;
             }
             return FALSE;
         }
@@ -668,8 +655,8 @@ static BOOL Coop_SpiritWalk(FieldSystem *fsys, struct CoopSpiritEnv *env, LocalM
     // stuttered, and the lock can't be turned off from the spirit's screens).
     if (Coop_SpiritCanStep(fsys, player, nx, nz))
     {
-        Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + dir);
-        env->stepped = TRUE;
+        MapObject_SetHeldMovement(player, COOP_MOVEMENT_STEP_UP + dir);
+        env->stepped = env->walking = TRUE;
     }
     return FALSE;
 }
@@ -790,15 +777,8 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
     u32 map, value;
     s32 warpId, x, z, dir;
 
-    // A step finishes before anything else happens.
-    if (env->movement != NULL)
-    {
-        if (!EventObjectMovementMan_IsFinish(env->movement))
-            return FALSE;
-        EventObjectMovementMan_Delete(env->movement);
-        env->movement = NULL;
-    }
-    if (player == NULL)
+    // A step finishes before anything else happens (the next one starts on the frame it ends).
+    if (player == NULL || !MapObject_ClearHeldMovementIfActive(player))
         return FALSE;
     // The menu and its pages give way too (a revive left waiting would time
     // out at the relay); the intro finishes first, it saves.
@@ -819,7 +799,7 @@ static BOOL Coop_Task_Spirit(TaskManager *taskman)
         // (on the door, walking back in needed a step away first; the user's play test).
         if (GetMetatileBehaviorAt(fsys, player->xCurr, player->yCurr) == COOP_TILE_DOOR)
         {
-            Coop_SpiritMove(env, player, COOP_MOVEMENT_STEP_UP + player->curFacing);
+            MapObject_SetHeldMovement(player, COOP_MOVEMENT_STEP_UP + player->curFacing);
             break;
         }
         if (save != NULL && (save->spirit_flags & COOP_SPIRIT_INTRO))

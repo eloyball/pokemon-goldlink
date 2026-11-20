@@ -2883,8 +2883,12 @@ static void Coop_ApplyLocalAvatar(FieldSystem *fsys, LocalMapObject *player)
     wanted = Coop_LocalPlayerSprite((u32)avatar->state, avatar->gender);
     if (current != gCoopLocalLastSprite)
     {
-        gCoopLocalLastSprite = current; // changed, by vanilla or by us: wait for it to settle
-        sCoopLocalSettle = COOP_SPRITE_SETTLE_FRAMES;
+        // Changed, by vanilla or by us: wait for it to settle. Not a new map's player (nothing
+        // seen yet: this overlay is loaded again with each map), whose sprite nothing changed:
+        // ours goes on as soon as it's drawn (the wait showed Ethan or Lyra on joining and on
+        // each arrival, the user's play test, 2026-11-19).
+        sCoopLocalSettle = gCoopLocalLastSprite == 0xFFFFFFFF ? 0 : COOP_SPRITE_SETTLE_FRAMES;
+        gCoopLocalLastSprite = current;
     }
     if (current == wanted || Coop_AvatarStateOf(Coop_AvatarBase(current)) != Coop_AvatarStateOf(Coop_AvatarBase(wanted)))
         return;
