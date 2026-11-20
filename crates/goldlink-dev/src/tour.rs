@@ -37,6 +37,9 @@ enum Step {
     /// level-up's stats box), saving the raw top screen every 20 frames as `rawtop-<frame>.png`
     /// meanwhile (or gives up after the frames).
     MashUntilWindow(u32),
+    /// Presses A every second until the top screen shows the Pokédex's registration page
+    /// (`goldlink::hud::pokedex_page_shown`), or gives up after the frames.
+    MashUntilPokedex(u32),
     /// A touch on the touch screen (held a few frames).
     Touch(u16, u16),
     Debug(u8, u8),
@@ -227,8 +230,8 @@ const NAMING_STEPS: &[Step] = &[
 
 /// GOLDLINK_DEV_TOUR_ROUTE=catch: a wild Pokémon caught with a Master Ball, and its nickname
 /// typed on the window's keyboard (the naming screen opened from inside the battle).
-/// GOLDLINK_DEV_TOUR_ROUTE=catch-dex (v0.7.1): as catch, then A every second for 45 seconds with
-/// the raw top screen saved every 20 frames (the Pokédex's registration screen after the catch).
+/// GOLDLINK_DEV_TOUR_ROUTE=catch-dex (v0.7.1): as catch, then A every second to the Pokédex's
+/// registration page after the catch, a shot of it.
 const CATCH_DEX_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(60),
@@ -259,7 +262,9 @@ const CATCH_DEX_STEPS: &[Step] = &[
     Step::Wait(150),
     Step::Press(Keys::A),
     Step::Wait(60),
-    Step::MashUntilWindow(60 * 45),
+    Step::MashUntilPokedex(60 * 45),
+    Step::Wait(30),
+    Step::Shot("dex-page"),
     Step::Close,
 ];
 
@@ -2923,6 +2928,13 @@ impl FrameHook for TourHook {
                 input.keys |= k;
                 s.holding = 6;
                 true
+            }
+            Step::MashUntilPokedex(max) => {
+                let found = goldlink::hud::pokedex_page_shown(emu.nds.framebuffer(0));
+                if !found && (30..36).contains(&(s.frames % 60)) {
+                    input.keys |= Keys::A;
+                }
+                found || s.frames >= max
             }
             Step::MashUntilWindow(max) => {
                 use goldlink::goldlink_bridge::battle_ui::menu;
