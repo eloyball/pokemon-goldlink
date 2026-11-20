@@ -567,6 +567,33 @@ const GYM_ELEVATOR_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=gym-glass (v0.7.1, the user's Violet Gym report, from a save on a side
+/// glass passageway): down and up it, shots on the way (with GOLDLINK_DEV_TOUR_FILM for every
+/// frame).
+const GYM_GLASS_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Shot("start"),
+    Step::Dump("start"),
+    Step::Walk(Keys::DOWN, 48, ""),
+    Step::Wait(20),
+    Step::Shot("down3"),
+    Step::Walk(Keys::DOWN, 48, ""),
+    Step::Wait(20),
+    Step::Shot("down6"),
+    Step::Dump("down6"),
+    Step::Walk(Keys::UP, 96, ""),
+    Step::Wait(20),
+    Step::Shot("back"),
+    Step::Walk(Keys::UP, 48, ""),
+    Step::Wait(20),
+    Step::Shot("up3"),
+    Step::Walk(Keys::UP, 48, ""),
+    Step::Wait(20),
+    Step::Shot("up6"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=mega: the Key Stone, a Mega Stone holder, a wild battle's fight menu;
 /// the touch screen's MEGA button off, then lit (for the HUD's reading of it).
 const MEGA_STEPS: &[Step] = &[
@@ -2561,6 +2588,7 @@ fn steps() -> &'static [Step] {
         Ok("gym") => GYM_STEPS,
         Ok("gym-reload") => GYM_RELOAD_STEPS,
         Ok("gym-elevator") => GYM_ELEVATOR_STEPS,
+        Ok("gym-glass") => GYM_GLASS_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
