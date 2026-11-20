@@ -634,7 +634,25 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
 /// Yes / no and the other two-choice menus: the message, then the two choices stacked.
 fn two_options(c: &mut Ctx<'_>, hud: &BattleHud, top: &str, bottom: &str) {
     let w = c.w;
-    let bx = (w * 0.406).round();
+    // The buttons as wide as their labels need (at a small size), the message the rest: these
+    // prompts' messages are long ("… is about to send in …. Will you change Pokémon?" ran past
+    // its box, the user's v0.7 play test), their labels mostly short.
+    let need = {
+        let font = c.caps(6.5);
+        let p = c.ui.painter();
+        [top, bottom]
+            .iter()
+            .map(|l| {
+                p.layout_no_wrap((*l).to_owned(), font.clone(), INK)
+                    .size()
+                    .x
+            })
+            .fold(0.0_f32, f32::max)
+            / c.s
+    };
+    // label_room keeps 0.6 of the button's height (19 rows) clear for its pointed ends.
+    let bw = (need + 0.6 * 19.0 + 6.0).clamp(w * 0.32, w * 0.594);
+    let bx = (w - 4.0 - bw).round();
     let text = c.rect(4.0, 4.0, bx - 4.0, 44.0);
     message_box(c, text, &hud.message, 9.0);
     let rects = [
@@ -746,7 +764,13 @@ fn message_box(c: &mut Ctx<'_>, r: Rect, text: &str, size: f32) {
         StrokeKind::Inside,
     );
     let inner = r.shrink(4.0 * s);
-    let galley = p.layout(text.to_owned(), c.font(size), INK, inner.width());
+    // Smaller, a step of the font's grid at a time, until it fits the box's height.
+    let mut font = c.font(size);
+    let mut galley = p.layout(text.to_owned(), font.clone(), INK, inner.width());
+    while galley.size().y > inner.height() && font.size > 11.0 {
+        font.size -= 11.0;
+        galley = p.layout(text.to_owned(), font.clone(), INK, inner.width());
+    }
     p.galley(
         pos2(inner.left(), inner.center().y - galley.size().y / 2.0),
         galley,
@@ -953,6 +977,47 @@ pub fn game_textbox_shown(top_screen_rows: &[u32]) -> bool {
     all == 0 || light * 10 < all * 4
 }
 
+/// A game window reaching down into the band's rows (DS columns and rows, ends past the last):
+/// the level-up's stats box, drawn over the game's text box by the game itself, hid under the band
+/// (the user's v0.7 play test). Found by the game's window frame down its left side, in the band's
+/// rows: a dark blue line, a mid blue, a light blue, then the white inside; then its top, right
+/// and bottom edges along the same frame.
+pub fn window_under_band(top: &[u32]) -> Option<[usize; 4]> {
+    let px = |x: usize, y: usize| top.get(y * 256 + x).map(|&p| channels(p & 0xFF_FFFF));
+    // Measured (the stats box, raw): the dark line 30495F, mid 496179 (two pixels), light AABAC3
+    // (two), the inside FBFBFB. The box reaches 13 rows into the band (to row 157).
+    let dark = |x: usize, y: usize| {
+        px(x, y).is_some_and(|(r, g, b)| {
+            r < 80 && (45..115).contains(&g) && (75..145).contains(&b) && b > r + 30
+        })
+    };
+    let white =
+        |x: usize, y: usize| px(x, y).is_some_and(|(r, g, b)| r > 225 && g > 225 && b > 220);
+    let inside_right = |x: usize, y: usize| (3..=7).any(|d| white(x + d, y));
+    let inside_left = |x: usize, y: usize| (3..=7).any(|d| x >= d && white(x - d, y));
+    let probe = SCENE_ROWS as usize + 2;
+    let x0 = (16..240)
+        .find(|&x| (0..3).all(|k| dark(x, probe + 3 * k) && inside_right(x, probe + 3 * k)))?;
+    let mut y0 = probe;
+    while y0 > 0 && dark(x0, y0 - 1) {
+        y0 -= 1;
+    }
+    // Down the frame's second column (its mid line, then the bottom lines') to the box's end.
+    let framed = |x: usize, y: usize| {
+        dark(x, y) || px(x, y).is_some_and(|(r, g, b)| (150..195).contains(&r) && g > r && b > g)
+    };
+    let mut y1 = probe;
+    while y1 + 1 < 192 && framed(x0 + 1, y1 + 1) {
+        y1 += 1;
+    }
+    // The right edge: the dark line again, the inside left of it; on to the outer line.
+    let mut x1 = (x0 + 8..256).find(|&x| dark(x, probe) && inside_left(x, probe))?;
+    while x1 + 1 < 256 && dark(x1 + 1, probe) {
+        x1 += 1;
+    }
+    (y0 < SCENE_ROWS as usize && x1 - x0 >= 24).then_some([x0, y0, x1 + 1, y1 + 1])
+}
+
 /// The game's text box rows (144 to 191 of the top screen) with only its words kept: the text
 /// colour becomes white, its shadow a near black, everything else transparent. The game prints
 /// battle messages in one palette (measured: text 515159, shadow A2A2AA on FBFBFB; the box's
@@ -1089,5 +1154,46 @@ mod tests {
             }
         }
         assert_eq!(ink(&recolour_textbox(&fading)), 0);
+    }
+}
+
+#[cfg(test)]
+mod window_tests {
+    use super::window_under_band;
+
+    /// The level-up's stats box as the game draws it (measured raw, the v0.7.1 levelup route): x
+    /// 130 to 223, y 60 to 157, over the text box's white rows.
+    fn screen(with_box: bool) -> Vec<u32> {
+        let mut px = vec![0xCB_A259u32; 256 * 192];
+        for y in 144..192 {
+            for x in 0..256 {
+                px[y * 256 + x] = 0xFB_FBFB;
+            }
+        }
+        if with_box {
+            let (x0, y0, x1, y1) = (130usize, 60usize, 223usize, 157usize);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let d = (x - x0).min(x1 - x).min(y - y0).min(y1 - y);
+                    px[y * 256 + x] = match d {
+                        0 => 0x30_495F,
+                        1 | 2 => 0x49_6179,
+                        3 | 4 => 0xAA_BAC3,
+                        _ => 0xFB_FBFB,
+                    };
+                }
+            }
+        }
+        px
+    }
+
+    #[test]
+    fn finds_the_stats_box() {
+        assert_eq!(window_under_band(&screen(true)), Some([130, 60, 224, 158]));
+    }
+
+    #[test]
+    fn nothing_without_it() {
+        assert_eq!(window_under_band(&screen(false)), None);
     }
 }

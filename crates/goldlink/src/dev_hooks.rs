@@ -8,6 +8,8 @@
 //!   not a panic), then the loss as wgpu reports it (gpu_watch.rs, KNOWN_RISKS #138).
 //! - `GOLDLINK_DEV_INPUT="<seconds>:click <x> <y>;<seconds>:key <Name>;..."` clicks (in points)
 //!   or presses keys (egui's names: Escape, Enter, F11) that many seconds after the start.
+//! - `GOLDLINK_DEV_HUD_TEXT=<text>` replaces the battle HUD's message in two-option prompts (a
+//!   long one, as a trainer's "about to send in" prompt has, from a wild battle's).
 //! - `GOLDLINK_DEV_BACKUP=<seconds>` asks the bridge for an emergency backup that long after the
 //!   start (taken at the game's next safe moment).
 
@@ -152,4 +154,15 @@ pub fn backup_tick(bridge: Option<&goldlink_bridge::SharedBridge>) {
         log::info!("dev: a backup asked for");
         goldlink_bridge::hook::lock(b).backup_soon();
     }
+}
+
+/// `GOLDLINK_DEV_HUD_TEXT`: the HUD with that message in its two-option prompts.
+pub fn hud_text(
+    hud: &goldlink_bridge::battle_ui::BattleHud,
+) -> goldlink_bridge::battle_ui::BattleHud {
+    let mut h = hud.clone();
+    if let (Ok(t), Some(_)) = (std::env::var("GOLDLINK_DEV_HUD_TEXT"), &h.options) {
+        h.message = t;
+    }
+    h
 }

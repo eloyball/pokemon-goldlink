@@ -235,6 +235,9 @@ pub struct GameApp {
     textbox: Option<egui::TextureHandle>,
     /// The band belongs over the game's text box rows (hud::game_textbox_shown).
     game_textbox: bool,
+    /// A game window reaching into the band's rows (the level-up's stats box): drawn over the
+    /// band, as the game draws it over its text box (`hud::window_under_band`).
+    band_window: Option<[usize; 4]>,
     /// Frames in a row the game's text box rows have shown something else (the band steps aside
     /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
     textbox_away: u32,
@@ -360,6 +363,7 @@ impl GameApp {
             textbox: None,
             game_textbox: true,
             textbox_away: 0,
+            band_window: None,
             wide: None,
             wide_side: 0,
             shown_scale: 1.0,
@@ -612,6 +616,7 @@ impl GameApp {
                             }
                         }
                     }
+                    self.band_window = hud::window_under_band(&frame.pixels[..256 * 192]);
                     let rows = &frame.pixels[256 * hud::SCENE_ROWS as usize..256 * 192];
                     if hud::game_textbox_shown(rows) {
                         self.textbox_away = 0;
@@ -1231,11 +1236,46 @@ impl GameApp {
                         lit,
                         icon: self.mega_icon.as_ref().map(egui::TextureHandle::id),
                     });
+                    #[cfg(feature = "dev-hooks")]
+                    let b = &crate::dev_hooks::hud_text(b);
                     if let Some(at) = hud::draw(ui, frame, b, mega) {
                         self.one.tap = Some((at, Instant::now()));
                     }
                 } else if let Some(tb) = &self.textbox {
                     hud::draw_text_band(ui, frame, tb);
+                }
+                // A game window reaching into the band (the stats box after a level-up): over
+                // the band, from the picture shown, as the game draws it over its text box.
+                if let Some([x0, y0, x1, y1]) = self.band_window {
+                    // From a row above the band: its gold top line is wider than a pixel.
+                    let y0 = (y0 as f32).max(hud::SCENE_ROWS - 1.0);
+                    let r = egui::Rect::from_min_max(
+                        egui::pos2(middle.left() + x0 as f32 * s, frame.top() + y0 * s),
+                        egui::pos2(middle.left() + x1 as f32 * s, frame.top() + y1 as f32 * s),
+                    );
+                    let (tex, uv) = match &wide {
+                        Some(w) => (
+                            w.id(),
+                            egui::Rect::from_min_max(
+                                egui::pos2(
+                                    (r.left() - frame.left()) / frame.width(),
+                                    (r.top() - frame.top()) / frame.height(),
+                                ),
+                                egui::pos2(
+                                    (r.right() - frame.left()) / frame.width(),
+                                    (r.bottom() - frame.top()) / frame.height(),
+                                ),
+                            ),
+                        ),
+                        None => (
+                            t.id(),
+                            egui::Rect::from_min_max(
+                                egui::pos2(x0 as f32 / 256.0, y0 / 384.0),
+                                egui::pos2(x1 as f32 / 256.0, y1 as f32 / 384.0),
+                            ),
+                        ),
+                    };
+                    p.image(tex, r, uv, egui::Color32::WHITE);
                 }
             }
             None if stacked => {

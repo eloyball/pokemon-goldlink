@@ -32,6 +32,11 @@ enum Step {
     Lead(&'static str, &'static str, u8),
     /// Presses A every second until the battle's touch screen waits in this menu (or gives up).
     MashUntilMenu(i8, u32),
+    /// Presses A every second (never on a two-option question) until the top screen shows a game
+    /// window reaching into the battle band's rows (`goldlink::hud::window_under_band`, the
+    /// level-up's stats box), saving the raw top screen every 20 frames as `rawtop-<frame>.png`
+    /// meanwhile (or gives up after the frames).
+    MashUntilWindow(u32),
     /// A touch on the touch screen (held a few frames).
     Touch(u16, u16),
     Debug(u8, u8),
@@ -222,6 +227,42 @@ const NAMING_STEPS: &[Step] = &[
 
 /// GOLDLINK_DEV_TOUR_ROUTE=catch: a wild Pokémon caught with a Master Ball, and its nickname
 /// typed on the window's keyboard (the naming screen opened from inside the battle).
+/// GOLDLINK_DEV_TOUR_ROUTE=catch-dex (v0.7.1): as catch, then A every second for 25 seconds with
+/// the raw top screen saved every 20 frames (the Pokédex's registration screen after the catch).
+const CATCH_DEX_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    // Three Master Balls.
+    Step::Debug(C::COOP_DEBUG_CHALLENGE as u8, 7),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Until(Scene::Battle, 600),
+    Step::Wait(60 * 15),
+    // BAG (m5_probe.lua throw_ball): Down, Left, Left; the Poké Balls pocket; the second ball
+    // (the Master Ball); USE.
+    Step::Press(Keys::DOWN),
+    Step::Wait(30),
+    Step::Press(Keys::LEFT),
+    Step::Wait(30),
+    Step::Press(Keys::LEFT),
+    Step::Wait(60),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::RIGHT),
+    Step::Wait(30),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::RIGHT),
+    Step::Wait(30),
+    Step::Shot("catch-balls"),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Press(Keys::A),
+    Step::Wait(60),
+    Step::MashUntilWindow(60 * 25),
+    Step::Close,
+];
+
 const CATCH_STEPS: &[Step] = &[
     Step::Until(Scene::Overworld, 60 * 120),
     Step::Wait(60),
@@ -371,6 +412,24 @@ const LEARN_STEPS: &[Step] = &[
     ),
     Step::Wait(30),
     Step::Shot("learn-give-up"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=levelup (v0.7.1): as learn, to the level-up's stats box (found on the
+/// top screen, raw top screens saved on the way), a shot of it over the band.
+const LEVELUP_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Debug(C::COOP_DEBUG_GIVE_TEST_MON as u8, 10),
+    Step::Wait(300),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 2),
+    Step::Until(Scene::Battle, 600),
+    Step::MashUntilWindow(60 * 90),
+    Step::Wait(10),
+    Step::Shot("levelup-box"),
+    Step::Press(Keys::A),
+    Step::Wait(40),
+    Step::Shot("levelup-box2"),
     Step::Close,
 ];
 
@@ -1509,6 +1568,7 @@ const PROMPTS_STEPS: &[Step] = &[
     Step::Wait(90),
     Step::Shot("pc2"),
     Step::Raw("pc2"),
+    Step::Dump("pc2"),
     Step::Press(Keys::B),
     Step::Wait(60),
     Step::Press(Keys::B),
@@ -1527,6 +1587,67 @@ const PROMPTS_STEPS: &[Step] = &[
     Step::Wait(90),
     Step::Shot("save2"),
     Step::Raw("save2"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=pc (v0.7.1, the one-screen menu box): Cherrygrove's Pokémon Center,
+/// the PC right of the counter, its first menu and the one after (a shot, the touch screen and
+/// main RAM at each A).
+const PC_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    // Cherrygrove's Pokémon Center (pret MAP_CHERRYGROVE_POKECENTER_1F 69): the nurse at (8, 11)
+    // behind the counter, the PC on the counter two tiles right; below it, facing up.
+    Step::WarpTo(69, 10, 13, 0),
+    Step::Wait(400),
+    Step::Shot("pc-at"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("pc-a1"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("pc-a2"),
+    Step::Raw("pc-a2"),
+    Step::Dump("pc-a2"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("pc-a3"),
+    Step::Raw("pc-a3"),
+    Step::Dump("pc-a3"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("pc-a4"),
+    Step::Raw("pc-a4"),
+    Step::Dump("pc-a4"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=mart (v0.7.1, the one-screen menu box): Cherrygrove's Poké Mart, left
+/// of the Pokémon Center; the clerk, the first question, Buy (a shot, the touch screen and main
+/// RAM at each A).
+const MART_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(90),
+    // Cherrygrove's Poké Mart (pret MAP_CHERRYGROVE_POKEMART 68): the clerk at (2, 6) behind the
+    // counter; across it, facing left.
+    Step::WarpTo(68, 4, 6, 2),
+    Step::Wait(400),
+    Step::Shot("mart-at"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("mart-a1"),
+    Step::Raw("mart-a1"),
+    Step::Dump("mart-a1"),
+    Step::Press(Keys::A),
+    Step::Wait(120),
+    Step::Shot("mart-a2"),
+    Step::Raw("mart-a2"),
+    Step::Dump("mart-a2"),
+    Step::Press(Keys::A),
+    Step::Wait(150),
+    Step::Shot("mart-a3"),
+    Step::Raw("mart-a3"),
+    Step::Dump("mart-a3"),
     Step::Close,
 ];
 
@@ -2288,9 +2409,11 @@ fn steps() -> &'static [Step] {
         Ok("faint") => FAINT_STEPS,
         Ok("intro") => intro_steps(),
         Ok("learn") => LEARN_STEPS,
+        Ok("levelup") => LEVELUP_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
+        Ok("catch-dex") => CATCH_DEX_STEPS,
         Ok("wide") => WIDE_STEPS,
         Ok("walk-right") => WALK_RIGHT_STEPS,
         Ok("heap") => HEAP_STEPS,
@@ -2323,6 +2446,8 @@ fn steps() -> &'static [Step] {
         Ok("through") => THROUGH_STEPS,
         Ok("grass") => GRASS_STEPS,
         Ok("prompts") => PROMPTS_STEPS,
+        Ok("pc") => PC_STEPS,
+        Ok("mart") => MART_STEPS,
         Ok("gear") => GEAR_STEPS,
         Ok("follower") => FOLLOWER_STEPS,
         Ok("stand") => STAND_STEPS,
@@ -2784,6 +2909,37 @@ impl FrameHook for TourHook {
                 input.keys |= k;
                 s.holding = 6;
                 true
+            }
+            Step::MashUntilWindow(max) => {
+                use goldlink::goldlink_bridge::battle_ui::menu;
+                let top = emu.nds.framebuffer(0);
+                let found = goldlink::hud::window_under_band(top);
+                if s.frames % 20 == 0 || found.is_some() {
+                    let img = egui::ColorImage {
+                        size: [256, 192],
+                        pixels: top
+                            .iter()
+                            .map(|&p| {
+                                egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8)
+                            })
+                            .collect(),
+                    };
+                    let _ = write_png(
+                        &self.0.dir.join(format!("rawtop-{:05}.png", s.frames)),
+                        &img,
+                    );
+                }
+                let b = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram());
+                let question = b.as_ref().is_some_and(|b| {
+                    b.waiting && (menu::YES_NO..=menu::SWITCH_OR_KEEP).contains(&b.menu)
+                });
+                if found.is_none() && !question && (30..36).contains(&(s.frames % 60)) {
+                    input.keys |= Keys::A;
+                }
+                if let Some(w) = found {
+                    eprintln!("tour: a window under the band at {w:?}, frame {}", s.frames);
+                }
+                found.is_some() || s.frames >= max
             }
             Step::MashUntilNaming(max, taps) => {
                 let found = (s.frames % 20 == 0)

@@ -138,7 +138,7 @@ glibc="$(objdump -T "$LINUX_BIN" "$LINUX_SETUP_BIN" | grep -oP 'GLIBC_\K[0-9.]+'
 echo "[*] Linux program: glibc $glibc or newer"
 # The release program carries no dev tools (DECISIONS D2).
 for bin in "$LINUX_BIN" "$WINDOWS_BIN"; do
-    if strings "$bin" | grep -qE 'COOP_BRIDGE_AUTOJOIN|COOP_BRIDGE_LEAVE_IN_BATTLE|GOLDLINK_DEV_PANEL|GOLDLINK_DEBUG_LOSE_GPU|GOLDLINK_DEV_INPUT|GOLDLINK_DEV_LIGHT|GOLDLINK_DEV_BACKUP|memorysavestate'; then
+    if strings "$bin" | grep -qE 'COOP_BRIDGE_AUTOJOIN|COOP_BRIDGE_LEAVE_IN_BATTLE|GOLDLINK_DEV_PANEL|GOLDLINK_DEBUG_LOSE_GPU|GOLDLINK_DEV_INPUT|GOLDLINK_DEV_LIGHT|GOLDLINK_DEV_BACKUP|GOLDLINK_DEV_HUD_TEXT|memorysavestate'; then
         die "$bin has dev tools in it"
     fi
 done
