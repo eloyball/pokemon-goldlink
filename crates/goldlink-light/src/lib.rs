@@ -28,6 +28,7 @@ mod gpu;
 mod places;
 mod shadow;
 
+pub use gpu::{Unavailable, check_in_background, unavailable};
 pub use shadow::{Geometry, ShadowPoly, ShadowTex, ShadowVert, sun_casts};
 
 /// The DS screen's height.

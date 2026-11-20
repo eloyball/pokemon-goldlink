@@ -16,9 +16,10 @@ unsafe_code = "deny"
 path = "src/lib.rs"
 
 [features]
-# Development only (docs/DEBUG_TOOLS.md): GOLDLINK_DEBUG_LOSE_GPU loses the window's GPU device on
-# purpose, to test opening the window again (gpu_watch.rs). Never in a release.
-debug-gpu = []
+# Development only (docs/DEBUG_TOOLS.md, dev_hooks.rs): GOLDLINK_DEBUG_LOSE_GPU loses the window's
+# GPU device on purpose; GOLDLINK_DEV_INPUT clicks and presses keys on a headless display. Never in
+# a release.
+dev-hooks = ["goldlink-light/dev-hooks"]
 
 [[bin]]
 name = "goldlink"

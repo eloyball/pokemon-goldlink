@@ -20,6 +20,8 @@ pub struct WorldPanel {
     code: String,
     server: String,
     restore_open: bool,
+    /// A backup clicked, waiting for the player to confirm.
+    confirm_restore: Option<goldlink_runtime::backups::Backup>,
     /// The chosen avatar's preview picture, by avatar ID (None: it has none).
     preview: Option<(u8, Option<egui::TextureHandle>)>,
 }
@@ -65,6 +67,7 @@ impl WorldPanel {
             code: String::new(),
             server: b.config.server.clone(),
             restore_open: false,
+            confirm_restore: None,
             preview: None,
         }
     }
@@ -360,15 +363,38 @@ impl WorldPanel {
             if list.is_empty() {
                 ui.label("There are no backups of your last world yet. One is taken every few minutes while you play in a world.");
             }
+            // A click asks first: restoring overwrites the save (the user, 2026-11-20).
+            if let Some(b) = self.confirm_restore.clone() {
+                ui.label(RichText::new("Overwrite your save with this backup?").strong());
+                ui.label(
+                    RichText::new(format!(
+                        "Your game goes back to {}. Everything since then is lost.",
+                        crate::lobby::backup_time(&b)
+                    ))
+                    .color(ERROR),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Restore").clicked() {
+                        goldlink_bridge::hook::lock(bridge).restore_backup(b.path.clone());
+                        self.confirm_restore = None;
+                        self.restore_open = false;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.confirm_restore = None;
+                    }
+                });
+                return;
+            }
             for b in list.iter().take(12) {
-                let when: chrono::DateTime<chrono::Local> = b.taken.into();
-                if ui.button(format!("Restore {}", when.format("%a %-d %b, %H:%M:%S"))).clicked() {
-                    goldlink_bridge::hook::lock(bridge).restore_backup(b.path.clone());
-                    self.restore_open = false;
+                if ui.button(format!("Restore {}", crate::lobby::backup_time(b))).clicked() {
+                    self.confirm_restore = Some(b.clone());
                 }
             }
         });
         self.restore_open &= open;
+        if !self.restore_open {
+            self.confirm_restore = None;
+        }
     }
 }
 

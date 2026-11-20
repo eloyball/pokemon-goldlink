@@ -3,8 +3,8 @@
 //! casters and each map's triangles: lib.rs, shadow.rs); this draws the maps and lights the
 //! picture (light.wgsl: the same steps as the CPU's), and reads it back.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -217,6 +217,53 @@ pub(crate) struct Gpu {
     glow_b: Grow,
 }
 
+/// Why the revamped lighting can't run (BACKLOG #12), so the settings can say so instead of
+/// showing it ticked and doing nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unavailable {
+    /// No graphics card wgpu can use.
+    NoGpu,
+    /// The card's driver can't run the lighting's shaders; `gl`: through OpenGL, where Vulkan or
+    /// Direct3D 12 was expected (often a driver updated without a restart).
+    Unsupported { gl: bool },
+    /// It ran, then the GPU failed (an error, a lost device, no answer).
+    Stopped,
+}
+
+static UNAVAILABLE: Mutex<Option<Unavailable>> = Mutex::new(None);
+
+fn set_unavailable(u: Option<Unavailable>) {
+    *UNAVAILABLE.lock().unwrap_or_else(|e| e.into_inner()) = u;
+}
+
+/// Why the lighting can't run here, as last found (None: it can, or nothing has tried yet).
+pub fn unavailable() -> Option<Unavailable> {
+    // Development only (docs/DEBUG_TOOLS.md): GOLDLINK_DEV_LIGHT=nogpu|gl|driver|stopped shows
+    // the settings' note without a broken driver.
+    #[cfg(feature = "dev-hooks")]
+    if let Ok(v) = std::env::var("GOLDLINK_DEV_LIGHT") {
+        return match v.as_str() {
+            "nogpu" => Some(Unavailable::NoGpu),
+            "gl" => Some(Unavailable::Unsupported { gl: true }),
+            "driver" => Some(Unavailable::Unsupported { gl: false }),
+            "stopped" => Some(Unavailable::Stopped),
+            _ => None,
+        };
+    }
+    *UNAVAILABLE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Tries the lighting's GPU once on a thread of its own, so the launcher's settings know before
+/// a game starts.
+pub fn check_in_background() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = std::thread::Builder::new()
+            .name("goldlink-light-check".into())
+            .spawn(|| drop(Gpu::new()));
+    });
+}
+
 /// What the lighting hands the GPU for a frame.
 pub(crate) struct Input<'a> {
     pub frame: Frame,
@@ -234,12 +281,29 @@ impl Gpu {
             backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             ..Default::default()
         });
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        }))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(
+        let Some(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            }))
+        else {
+            log::warn!("no GPU for the lighting");
+            set_unavailable(Some(Unavailable::NoGpu));
+            return None;
+        };
+        let info = adapter.get_info();
+        // OpenGL where Vulkan or Direct3D 12 is expected: usually a driver that isn't loaded
+        // (updated without a restart, on Linux).
+        let gl = info.backend == wgpu::Backend::Gl && !cfg!(target_os = "macos");
+        log::info!(
+            "the lighting runs on {} ({:?}, driver {} {})",
+            info.name,
+            info.backend,
+            info.driver,
+            info.driver_info
+        );
+        let gpu = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("goldlink-light"),
                 required_features: wgpu::Features::empty(),
@@ -248,8 +312,13 @@ impl Gpu {
             },
             None,
         ))
-        .ok()?;
-        Self::with(device, queue)
+        .ok()
+        .and_then(|(device, queue)| Self::with(device, queue));
+        set_unavailable(match gpu {
+            Some(_) => None,
+            None => Some(Unavailable::Unsupported { gl }),
+        });
+        gpu
     }
 
     /// The lighting on `device` and `queue`, or None when its shaders can't run there.
@@ -268,6 +337,7 @@ impl Gpu {
         gpu.device.on_uncaptured_error(Box::new(move |e| {
             log::error!("the lighting's GPU, lighting off: {e}");
             failed.store(true, Ordering::Relaxed);
+            set_unavailable(Some(Unavailable::Stopped));
         }));
         let failed = gpu.failed.clone();
         gpu.device.set_device_lost_callback(move |reason, message| {
@@ -276,6 +346,7 @@ impl Gpu {
                     "the lighting's GPU device was lost ({reason:?}), lighting off: {message}"
                 );
                 failed.store(true, Ordering::Relaxed);
+                set_unavailable(Some(Unavailable::Stopped));
             }
         });
         Some(gpu)
@@ -951,6 +1022,7 @@ impl Gpu {
         if let Some(e) = pollster::block_on(device.pop_error_scope()) {
             log::warn!("GPU error, lighting off: {e}");
             self.failed.store(true, Ordering::Relaxed);
+            set_unavailable(Some(Unavailable::Stopped));
             return false;
         }
 
@@ -967,6 +1039,7 @@ impl Gpu {
             Err(_) => {
                 log::warn!("the lighting's GPU didn't answer, lighting off");
                 self.failed.store(true, Ordering::Relaxed);
+                set_unavailable(Some(Unavailable::Stopped));
                 return false;
             }
             _ => return false,

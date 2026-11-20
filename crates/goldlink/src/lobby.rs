@@ -108,6 +108,8 @@ pub struct Lobby {
     /// Import a save's folder chooser, while it's open.
     choosing: Option<crate::launcher::Choosing>,
     avatar: Option<(u8, Option<TextureHandle>)>,
+    /// A backup clicked in Restore a backup, waiting for the player to confirm.
+    confirm_restore: Option<goldlink_runtime::backups::Backup>,
     status: Status,
     status_of: String,
     status_rx: Option<Receiver<Status>>,
@@ -141,6 +143,7 @@ impl Lobby {
             secret_offer: None,
             choosing: None,
             avatar: None,
+            confirm_restore: None,
             status: Status::NoServer,
             status_of: String::new(),
             status_rx: None,
@@ -731,9 +734,39 @@ impl Lobby {
         if list.is_empty() {
             theme::hint(ui, "No backups of your last world yet.");
         }
+        // A click asks first: restoring overwrites the save (the user, 2026-11-20: one click did
+        // it at once).
+        if let Some(b) = self.confirm_restore.clone() {
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Overwrite your save with this backup?")
+                    .font(theme::text(19.0))
+                    .color(theme::TEXT),
+            );
+            ui.label(
+                RichText::new(format!(
+                    "Your game goes back to {}. Everything since then is lost.",
+                    backup_time(&b)
+                ))
+                .font(theme::text(15.0))
+                .color(theme::RED),
+            );
+            ui.add_space(8.0);
+            let w = (ui.available_width() - 8.0) / 2.0;
+            let mut action = Action::None;
+            ui.horizontal(|ui| {
+                if theme::button(ui, "Restore", Kind::Danger, vec2(w, 36.0), true).clicked() {
+                    self.confirm_restore = None;
+                    action = Action::Restore(b.path.clone());
+                }
+                if theme::button(ui, "Cancel", Kind::Neutral, vec2(w, 36.0), true).clicked() {
+                    self.confirm_restore = None;
+                }
+            });
+            return action;
+        }
         for b in list.iter().take(10) {
-            let when: chrono::DateTime<chrono::Local> = b.taken.into();
-            let label = format!("Restore {}", when.format("%a %-d %b, %H:%M:%S"));
+            let label = format!("Restore {}", backup_time(b));
             if theme::button(
                 ui,
                 &label,
@@ -743,7 +776,7 @@ impl Lobby {
             )
             .clicked()
             {
-                return Action::Restore(b.path.clone());
+                self.confirm_restore = Some(b.clone());
             }
         }
         Action::None
@@ -874,18 +907,29 @@ impl Lobby {
                 .checkbox(&mut v.wide, "Widescreen in the overworld and in battles")
                 .changed();
         }
+        let why = crate::app::lighting_unavailable();
         changed |= ui
-            .checkbox(&mut v.lighting, "Revamped lighting")
+            .add_enabled(
+                why.is_none(),
+                egui::Checkbox::new(&mut v.lighting, "Revamped lighting"),
+            )
             .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+            .on_disabled_hover_text(why.as_deref().unwrap_or_default())
             .changed();
         changed |= ui
             .add_enabled(
-                v.lighting,
+                v.lighting && why.is_none(),
                 egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"),
             )
             .on_hover_text(crate::app::SHADOWS_HINT)
-            .on_disabled_hover_text("With the revamped lighting on")
+            .on_disabled_hover_text(why.as_deref().unwrap_or("With the revamped lighting on"))
             .changed();
+        if let Some(why) = &why {
+            ui.add(
+                egui::Label::new(RichText::new(why).font(theme::text(15.0)).color(theme::RED))
+                    .wrap(),
+            );
+        }
         changed |= ui
             .checkbox(&mut v.steady, "Smooth camera")
             .on_hover_text(
@@ -938,6 +982,12 @@ impl Lobby {
 
 /// A screen with one panel in the middle (connecting, a missing save, restoring): the title,
 /// a line that moves, what the bridge says, and buttons the caller adds.
+/// When a backup was taken, as the restore lists say it.
+pub fn backup_time(b: &goldlink_runtime::backups::Backup) -> String {
+    let when: chrono::DateTime<chrono::Local> = b.taken.into();
+    when.format("%a %-d %b, %H:%M:%S").to_string()
+}
+
 pub fn waiting_screen<R>(
     ctx: &egui::Context,
     art: &Art,

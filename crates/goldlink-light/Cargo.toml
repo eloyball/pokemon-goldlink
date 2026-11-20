@@ -10,6 +10,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Development only (docs/DEBUG_TOOLS.md): GOLDLINK_DEV_LIGHT pretends the lighting can't run.
+dev-hooks = []
+
 [dependencies]
 log = "0.4"
 # A pool of worker threads that stays up between frames (spawning threads per step cost more

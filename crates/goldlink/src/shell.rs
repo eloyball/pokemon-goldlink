@@ -68,6 +68,8 @@ enum Stage {
         runner: Runner,
         since: Instant,
         loaded: Option<u32>,
+        /// When the restore began (shown as it goes).
+        started: Instant,
     },
 }
 
@@ -335,7 +337,8 @@ impl Shell {
                 runner,
                 since,
                 loaded,
-            } => self.restoring(ctx, runner, since, loaded),
+                started,
+            } => self.restoring(ctx, runner, since, loaded, started),
         };
     }
 
@@ -371,6 +374,7 @@ impl Shell {
                         runner,
                         since: Instant::now(),
                         loaded: None,
+                        started: Instant::now(),
                     }
                 }
                 Err(e) => {
@@ -599,17 +603,49 @@ impl Shell {
         runner: Runner,
         since: Instant,
         loaded: Option<u32>,
+        started: Instant,
     ) -> Stage {
         let art = self.art.as_ref().expect("loaded");
+        // Something moves while it works (the user, 2026-11-20: a still screen looked frozen).
+        let step = if loaded.is_none() {
+            "Loading the backup"
+        } else {
+            "Saving your game"
+        };
+        let secs = started.elapsed().as_secs();
         lobby::waiting_screen(
             ctx,
             art,
             "Restoring a backup",
-            "Your game goes back to the backup's moment and saves it. This takes a few seconds.",
+            "Your game goes back to the backup's moment and saves it. This can take up to a minute: please don't close GoldLink.",
             false,
-            |_, _, _| (),
+            |ui, _, rect| {
+                // A spinner and the step, centred low in the panel.
+                let text = format!("{step}{} ({secs} s)", theme::dots(ui));
+                let galley = ui.painter().layout_no_wrap(
+                    // The dots' room kept, so the line doesn't shift as they come and go.
+                    format!("{step}... ({secs} s)"),
+                    theme::text(19.0),
+                    theme::TEXT,
+                );
+                let (spin, gap) = (26.0, 12.0);
+                let w = spin + gap + galley.size().x;
+                let y = rect.bottom() - 70.0;
+                let x = rect.center().x - w / 2.0;
+                egui::Spinner::new().size(spin).color(theme::GOLD).paint_at(
+                    ui,
+                    egui::Rect::from_center_size(egui::pos2(x + spin / 2.0, y), vec2(spin, spin)),
+                );
+                ui.painter().text(
+                    egui::pos2(x + spin + gap, y),
+                    egui::Align2::LEFT_CENTER,
+                    text,
+                    theme::text(19.0),
+                    theme::TEXT,
+                );
+            },
         );
-        ctx.request_repaint_after(Duration::from_millis(100));
+        ctx.request_repaint_after(Duration::from_millis(50));
         let view = self.view();
         let in_session = view.as_ref().is_some_and(|v| v.game_in_session);
         let Some(saves) = loaded else {
@@ -618,6 +654,7 @@ impl Shell {
                     runner,
                     since: Instant::now(),
                     loaded: Some(view.as_ref().map_or(0, |v| v.save_counter)),
+                    started,
                 };
             }
             if since.elapsed() > RESTORE_LOAD || view.as_ref().is_some_and(|v| v.message_is_error) {
@@ -633,6 +670,7 @@ impl Shell {
                 runner,
                 since,
                 loaded,
+                started,
             };
         };
         // The restored game's disconnect save is written (and kept by the bridge): done. The ROM
@@ -663,6 +701,7 @@ impl Shell {
             runner,
             since,
             loaded,
+            started,
         }
     }
 
@@ -751,8 +790,8 @@ impl Shell {
         if let Some(rs) = frame.wgpu_render_state() {
             crate::gpu_watch::watch(rs);
             crate::composite::install(rs);
-            #[cfg(feature = "debug-gpu")]
-            crate::gpu_watch::debug::tick(rs);
+            #[cfg(feature = "dev-hooks")]
+            crate::dev_hooks::lose_gpu_tick(rs);
         }
         if crate::gpu_watch::lost() {
             // Nothing more for this window: it closes and run() opens another on a new device.
@@ -768,6 +807,11 @@ impl Shell {
         }
         self.remember_window(ctx);
         self.step(ctx);
+        #[cfg(feature = "dev-hooks")]
+        {
+            crate::dev_hooks::pending(ctx);
+            crate::dev_hooks::backup_tick(self.bridge.as_ref());
+        }
     }
 }
 
@@ -781,6 +825,8 @@ impl eframe::App for Window<'_> {
     }
 
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(feature = "dev-hooks")]
+        crate::dev_hooks::input(raw);
         // The game's Tab (its touch screen), before egui moves its focus with it.
         if let Stage::Playing { game, .. } | Stage::Leaving { game, .. } = &mut self.0.stage {
             game.take_tab(raw);
@@ -814,6 +860,8 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
     let mut rom = Launcher::new(paths);
     rom.autoplay = autoplay;
     let version = rom.version().unwrap_or("?").to_owned();
+    // Whether the revamped lighting can run, known before a game for the settings (BACKLOG #12).
+    goldlink_light::check_in_background();
     let mut shell = Shell {
         art: None,
         rom,

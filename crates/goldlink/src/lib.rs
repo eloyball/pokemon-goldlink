@@ -3,6 +3,8 @@
 
 pub mod app;
 mod composite;
+#[cfg(feature = "dev-hooks")]
+mod dev_hooks;
 mod gpu_watch;
 pub mod crash;
 pub mod hud;

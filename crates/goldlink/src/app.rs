@@ -97,6 +97,28 @@ const TAP: Duration = Duration::from_millis(100);
 /// The Shadows setting's hint (both settings screens).
 pub const SHADOWS_HINT: &str = "Outdoors, things cast shadows from the sun, the moon and lit windows and lamps; off: the game's own shadows";
 
+/// Why the revamped lighting can't run here, for the settings (BACKLOG #12): they showed it
+/// ticked while the GPU had turned it off.
+pub fn lighting_unavailable() -> Option<String> {
+    use goldlink_light::Unavailable;
+    const RESTART: &str = "If you just updated your graphics driver, restart your computer.";
+    Some(match goldlink_light::unavailable()? {
+        Unavailable::NoGpu => {
+            format!("Revamped lighting is unavailable: no graphics card here can run it. {RESTART}")
+        }
+        Unavailable::Unsupported { gl: true } => format!(
+            "Revamped lighting is unavailable: your graphics driver doesn't support it. {RESTART}"
+        ),
+        Unavailable::Unsupported { gl: false } => {
+            "Revamped lighting is unavailable: your graphics driver doesn't support it.".into()
+        }
+        Unavailable::Stopped => {
+            "Revamped lighting stopped: the graphics card stopped responding. Restart GoldLink to try again."
+                .into()
+        }
+    })
+}
+
 /// What the release program's game window asks of the shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GameAction {
@@ -785,15 +807,23 @@ impl GameApp {
                     changed |= ui.radio_value(&mut v.filter, Filter::Linear, "Smooth").changed();
                 });
                 changed |= ui.checkbox(&mut v.integer_scale, "Whole-number scaling only").changed();
+                let why = lighting_unavailable();
                 changed |= ui
-                    .checkbox(&mut v.lighting, "Revamped lighting")
+                    .add_enabled(why.is_none(), egui::Checkbox::new(&mut v.lighting, "Revamped lighting"))
                     .on_hover_text("Light and shade in the overworld, a soft colour grade elsewhere")
+                    .on_disabled_hover_text(why.as_deref().unwrap_or_default())
                     .changed();
                 changed |= ui
-                    .add_enabled(v.lighting, egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"))
+                    .add_enabled(v.lighting && why.is_none(), egui::Checkbox::new(&mut v.shadows, "Dynamic shadows"))
                     .on_hover_text(SHADOWS_HINT)
-                    .on_disabled_hover_text("With the revamped lighting on")
+                    .on_disabled_hover_text(why.as_deref().unwrap_or("With the revamped lighting on"))
                     .changed();
+                if let Some(why) = &why {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(why).color(egui::Color32::from_rgb(255, 120, 110)))
+                            .wrap(),
+                    );
+                }
                 changed |= ui
                     .checkbox(&mut v.steady, "Smooth camera")
                     .on_hover_text("The camera glides smoothly as you move, the town's pixels kept still; off: the game's own camera, which shimmers")
