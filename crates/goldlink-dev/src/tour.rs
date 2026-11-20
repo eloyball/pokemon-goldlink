@@ -594,6 +594,16 @@ const GYM_GLASS_STEPS: &[Step] = &[
     Step::Close,
 ];
 
+/// GOLDLINK_DEV_TOUR_ROUTE=gym-glass-rec (v0.7.1): as gym-glass, every frame's buffers recorded
+/// (`record_frame`: the picture, depth and layers) walking down and up the passageway.
+const GYM_GLASS_REC_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(120),
+    Step::Walk(Keys::DOWN, 96, "glass-down"),
+    Step::Walk(Keys::UP, 96, "glass-up"),
+    Step::Close,
+];
+
 /// GOLDLINK_DEV_TOUR_ROUTE=mega: the Key Stone, a Mega Stone holder, a wild battle's fight menu;
 /// the touch screen's MEGA button off, then lit (for the HUD's reading of it).
 const MEGA_STEPS: &[Step] = &[
@@ -2589,6 +2599,7 @@ fn steps() -> &'static [Step] {
         Ok("gym-reload") => GYM_RELOAD_STEPS,
         Ok("gym-elevator") => GYM_ELEVATOR_STEPS,
         Ok("gym-glass") => GYM_GLASS_STEPS,
+        Ok("gym-glass-rec") => GYM_GLASS_REC_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
