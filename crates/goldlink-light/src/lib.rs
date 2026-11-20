@@ -55,6 +55,16 @@ impl Phase {
             _ => Self::Night,
         }
     }
+
+    /// The lighting's: the game's table, but night from 19:00, when the game turns to its blue
+    /// dusk palette and lights its lamps, and the sun has set (shadow::sun): the hour between
+    /// was the evening's look with neither the sun nor the night's lights (the user, 2026-11-19).
+    pub fn lighting_of_hour(hour: u32) -> Self {
+        match hour % 24 {
+            19 => Self::Night,
+            h => Self::of_hour(h),
+        }
+    }
 }
 
 /// What kind of place a map is (its map header's type).
@@ -1571,6 +1581,11 @@ mod tests {
         assert_eq!(got[17], Phase::Evening);
         assert_eq!(got[19], Phase::Evening);
         assert_eq!(got[20], Phase::Night);
+        // The lighting's night starts with the game's dusk, at 19:00.
+        assert_eq!(Phase::lighting_of_hour(18), Phase::Evening);
+        assert_eq!(Phase::lighting_of_hour(19), Phase::Night);
+        assert_eq!(Phase::lighting_of_hour(3), Phase::Night);
+        assert_eq!(Phase::lighting_of_hour(10), Phase::Day);
     }
 
     #[test]

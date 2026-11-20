@@ -2366,7 +2366,7 @@ fn light(
             .collect()
     });
     let hour = light.map_or_else(|| chrono::Timelike::hour(&chrono::Local::now()), |l| l.hour);
-    let phase = Phase::of_hour(hour);
+    let phase = Phase::lighting_of_hour(hour);
     let world = light.filter(|l| l.overworld());
     // The picture's polygons, as the lighting takes them: the cast shadows' (UC13, with the
     // Shadows setting) and the cards' (sprites aren't light sources).
