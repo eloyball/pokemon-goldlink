@@ -55,6 +55,8 @@ pub struct Frame {
     /// screen as shown in the middle. Empty when off.
     pub wide: Vec<u32>,
     pub wide_side: usize,
+    /// The local player's map (the mailbox's), 0 before the game: the window's indoor rules.
+    pub map: u16,
     /// Counts frames; changes when the pixels do.
     pub seq: u64,
     /// What the lighting needs (UC11), with it on and the top screen showing the 3D scene.
@@ -162,6 +164,7 @@ impl Runner {
                 pixels: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 2],
                 wide: Vec::new(),
                 wide_side: 0,
+                map: 0,
                 seq: 0,
                 light: None,
                 steady_shift: None,
@@ -413,6 +416,11 @@ fn run(
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;
+            f.map = emu.mailbox().map_or(0, |mb| {
+                let m = std::mem::offset_of!(goldlink_abi::CoopCommBlock, local_player)
+                    + std::mem::offset_of!(goldlink_abi::CoopPlayerState, map_id);
+                u16::from_le_bytes([mb[m], mb[m + 1]])
+            });
             f.steady_shift = emu.nds.steady_shift();
             f.steady_origin = emu.nds.steady_origin();
             f.fixed = if f.steady_shift.is_some() {

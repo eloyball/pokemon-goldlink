@@ -645,10 +645,17 @@ impl GameApp {
                     }
                 }
                 // The wider top screen, when the emulation thread makes it (one-screen layout).
-                let wide = (self.config.video.layout == Layout::OneScreen
+                let mut wide = (self.config.video.layout == Layout::OneScreen
                     && frame.wide_side > 0
                     && !frame.wide.is_empty())
                 .then(|| frame.wide.clone());
+                // Indoors and in caves the dark beyond a room's walls stays dark to the picture's
+                // edge (`seal_wide_sides`).
+                if let Some(w) = wide.as_mut()
+                    && goldlink_light::Place::of_map(frame.map) != goldlink_light::Place::Outdoor
+                {
+                    seal_wide_sides(w, frame.wide_side);
+                }
                 self.running_shoes = frame.running_shoes;
                 Some(Shown {
                     pixels: frame.pixels.clone(),
@@ -1703,6 +1710,39 @@ impl eframe::App for GameApp {
 impl Drop for GameApp {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// How far either side of the DS's edge a row must be black to be sealed (pixels).
+const SEAL_EDGE: usize = 6;
+
+/// Indoors: a row of a widened side whose pixels at the DS's edge (SEAL_EDGE either side) are
+/// black, the dark beyond a room's walls reaching into the DS's own picture, is black to the
+/// picture's edge. A room's black outer walls stand near the camera; the perspective magnifies
+/// them over the whole side, the steady overworld draws them at the player's scale, and what
+/// stands past their edge showed beyond them: Violet Gym's sky panel as a strip at the far edge
+/// (the user, 2026-11-20; KNOWN_RISKS #140). Only from the edge: a dark gap further out (Sprout
+/// Tower's lattice) cut its rows into stripes. `px`: the wide picture, `256 + 2 * side` wide.
+fn seal_wide_sides(px: &mut [u32], side: usize) {
+    if side < SEAL_EDGE {
+        return;
+    }
+    let width = 256 + 2 * side;
+    let black = |p: u32| (p >> 16) & 0xFF <= 4 && (p >> 8) & 0xFF <= 4 && p & 0xFF <= 4;
+    for row in px.chunks_exact_mut(width) {
+        let (left, right) = (side, side + 256);
+        if row[left - SEAL_EDGE..left + SEAL_EDGE]
+            .iter()
+            .all(|&p| black(p))
+        {
+            row[..left].iter_mut().for_each(|p| *p &= 0xFF00_0000);
+        }
+        if row[right - SEAL_EDGE..right + SEAL_EDGE]
+            .iter()
+            .all(|&p| black(p))
+        {
+            row[right..].iter_mut().for_each(|p| *p &= 0xFF00_0000);
+        }
     }
 }
 
@@ -2922,5 +2962,49 @@ mod slide_tests {
             right.caps[178],
             vec![egui::Color32::from_rgb(0x30, 0x30, 0x30)]
         );
+    }
+}
+
+#[cfg(test)]
+mod seal_tests {
+    use super::seal_wide_sides;
+
+    const SIDE: usize = 40;
+    const W: usize = 256 + 2 * SIDE;
+
+    /// A row: the DS's picture grey but for `wall` black pixels from its left edge; the left side
+    /// black for 20 pixels from the DS's edge, then the sky panel's pink.
+    fn row(wall: usize) -> Vec<u32> {
+        let mut r = vec![0x0080_8080u32; W];
+        for x in 0..SIDE {
+            r[x] = if x >= SIDE - 20 { 0 } else { 0x00C0_6070 };
+        }
+        for x in SIDE..SIDE + wall {
+            r[x] = 0;
+        }
+        r
+    }
+
+    #[test]
+    fn past_a_black_wall_it_stays_black() {
+        let mut r = row(72);
+        seal_wide_sides(&mut r, SIDE);
+        assert!(
+            r[..SIDE].iter().all(|&p| p == 0),
+            "the pink past the wall is gone"
+        );
+        assert!(
+            r[SIDE + 72..].iter().all(|&p| p == 0x0080_8080),
+            "the rest untouched"
+        );
+    }
+
+    #[test]
+    fn a_dark_gap_off_the_edge_is_no_wall() {
+        // Sprout Tower's lattice: the DS's picture lit at its edge, a dark gap in the side.
+        let mut r = row(0);
+        let before = r.clone();
+        seal_wide_sides(&mut r, SIDE);
+        assert_eq!(r, before);
     }
 }
