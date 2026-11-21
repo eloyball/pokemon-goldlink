@@ -14,56 +14,49 @@ melonDS emulator built in: one program, nothing else to install.
 
 - **Your own Pokémon HeartGold (USA) ROM**, unmodified. GoldLink doesn't include the game: it
   checks your copy and builds the co-op version from it.
-- **A server for your group.** One person runs the relay (below); everyone else just needs its
-  address and the world code.
+- **A server for your group.** One person runs the relay ([Hosting a server](#hosting-a-server));
+  everyone else just needs its address and the world code.
 
 ## Installing
 
-GoldLink has no installer: it runs from its own folder. Put that folder somewhere you can write
-to (your home folder, not `Program Files`), because the **Update** button installs new versions
-into it.
+Download the installer for your system from the
+[latest release](https://github.com/eloyball/pokemon-goldlink/releases/latest) and run it. It
+fetches the newest GoldLink, checks its signature and installs it for you. No administrator or
+root password is needed.
 
 ### Windows
 
-1. From the [latest release](https://github.com/eloyball/pokemon-goldlink/releases/latest),
-   download `GoldLink-vX.Y-windows.zip`.
-2. Right-click the zip, choose **Extract All…**, and extract it to a folder of yours, for example
-   `C:\Users\<you>\Games`. That gives you a `GoldLink-vX.Y` folder; you can rename it to
-   `GoldLink`.
-3. Open the folder and double-click `GoldLink.exe`. If Windows says it protected your PC (an
-   unknown publisher), choose **More info**, then **Run anyway**.
-4. For the Start menu: right-click `GoldLink.exe` and choose **Pin to Start** (on Windows 11 it
-   may be under **Show more options**). For the desktop: **Send to → Desktop (create
-   shortcut)**.
+1. Download `GoldLink-Setup.exe` and run it. If Windows says it protected your PC (an unknown
+   publisher), choose **More info**, then **Run anyway**.
+2. GoldLink goes in your Start menu, and on the desktop if you like.
+
+To uninstall, use Windows' **Installed apps** list. Your saves are kept apart (in
+`%LOCALAPPDATA%\GoldLink`) and stay when you uninstall.
 
 ### Linux
 
-In a terminal, set `V` to the version you're installing (the latest is shown on the
-[releases page](https://github.com/eloyball/pokemon-goldlink/releases/latest)):
+1. Download `GoldLink-Setup-linux`, make it executable (`chmod +x GoldLink-Setup-linux`, or in the
+   file's properties), and run it.
+2. GoldLink is installed in `~/.local/opt/GoldLink`. It goes in your app menu (under Games), and
+   on the desktop if you like.
 
-```sh
-V=v0.6.1
-cd ~/Downloads
-curl -LO https://github.com/eloyball/pokemon-goldlink/releases/download/$V/GoldLink-$V-linux.tar.gz
-mkdir -p ~/Games
-tar xzf GoldLink-$V-linux.tar.gz -C ~/Games
-mv ~/Games/GoldLink-$V ~/Games/GoldLink
-~/Games/GoldLink/install.sh
-```
+To uninstall, right-click GoldLink's menu entry and choose **Uninstall GoldLink**. Your saves stay
+in `~/.local/share/goldlink`.
 
-`install.sh` adds GoldLink to your app menu (under Games), with its icon. Start it from there, or
-with `~/Games/GoldLink/GoldLink`. If you move the folder, run `install.sh` again from its new
-place. Fish shell users: write `set V v0.6.1` instead of `V=v0.6.1`.
+### Without the installer
 
-To uninstall: `~/Games/GoldLink/install.sh --uninstall`, then delete `~/Games/GoldLink`. Your
-saves stay in `~/.local/share/goldlink`.
+Each release also has the program on its own: `GoldLink-vX.Y.Z-windows.zip` and
+`GoldLink-vX.Y.Z-linux.tar.gz`. Unpack it into a folder you can write to (your home folder, not
+`Program Files`), because updates install into that folder. Then start `GoldLink.exe` (Windows)
+or `GoldLink` (Linux). On Linux, `./install.sh` in that folder adds it to your app menu
+(`./install.sh --uninstall` removes it).
 
 ### Updating
 
-From v0.6.1 on, the launcher tells you when a new version is out: press **Update to vX.Y** and
-it downloads it, checks its signature, installs it in the same folder and restarts. The Start
-menu pin and the app menu entry keep working. From v0.6 or older, update by hand once: install
-v0.6.1 as above, then delete the old folder (your saves aren't in it).
+GoldLink tells you when a new version is out: press **Update** on the screen with PLAY. It
+downloads the new version, checks its signature, installs it and restarts. Your worlds, saves
+and settings stay where they are. Versions before v0.6.1 can't do this: install the new version as
+above, then delete the old folder (your saves aren't in it).
 
 ## Playing
 
@@ -77,6 +70,10 @@ v0.6.1 as above, then delete the old folder (your saves aren't in it).
 Everyone in a world needs the same GoldLink release. Saves stay on each player's computer, and
 **Import a save** brings your worlds over from another computer or an older GoldLink.
 
+If something goes wrong, your GoldLink folder (`%LOCALAPPDATA%\GoldLink` or
+`~/.local/share/goldlink`) has a log (`goldlink.log`, the run before in `goldlink.old.log`) and a
+`crashes` folder: please attach them when you report a problem.
+
 ## Hosting a server
 
 The relay (`coop-relay`) is a small program any Linux machine, Windows PC, Raspberry Pi or cheap
@@ -85,19 +82,41 @@ VPS can run. It needs one UDP port (7777) and a few MB of memory. Get it from th
 `README.md` covers running it, opening the port and running it as a service. Connections are
 encrypted; the first time a player joins a world, GoldLink remembers the relay's identity.
 
-## Building from source
+## Contributing
+
+GoldLink is open source, and contributions are welcome: bug reports, fixes and new ideas. Open an
+[issue](https://github.com/eloyball/pokemon-goldlink/issues) to report a problem or talk an idea
+through before a large change, then send a pull request.
+
+### How it fits together
+
+- `hg-engine/`: the game itself, hg-engine with GoldLink's co-op code (C, built into the ROM).
+- `crates/`: the program, in Rust.
+  - `goldlink`: the launcher and game window.
+  - `goldlink-core`: melonDS, built in.
+  - `goldlink-bridge`: the link between the game and the relay.
+  - `goldlink-light`: the lighting.
+  - `goldlink-setup` and `goldlink-update`: the installers and the Update button.
+  - `goldlink-dev`: development tools.
+- `coop-relay/`: the server.
+- `scripts/`: building and packaging.
+
+### Building from source
 
 ```
 git clone --recurse-submodules https://github.com/eloyball/pokemon-goldlink
 cd pokemon-goldlink
 cargo build --release -p goldlink                              # the program
 cargo build --release --manifest-path coop-relay/Cargo.toml    # the relay
+cargo test                                                     # the tests
 ```
 
-The program needs Rust, CMake and a C++17 compiler (on Linux also the ALSA and udev development
-headers: `libasound2-dev libudev-dev` on Debian and Ubuntu). The co-op code inside the game lives
-in `hg-engine/`; `./build_all.sh` builds the ROM from it (it needs an `arm-none-eabi` toolchain
-and your ROM as `hg-engine/rom.nds`). `scripts/package_client.sh` makes the release packages.
+The program needs Rust, CMake and a C++17 compiler. On Linux it also needs the ALSA and udev
+development headers (`libasound2-dev libudev-dev` on Debian and Ubuntu).
+
+`./build_all.sh` builds the ROM from `hg-engine/`. It needs an `arm-none-eabi` toolchain and your
+ROM as `hg-engine/rom.nds`, which is never committed. `scripts/package_client.sh` makes the
+release packages.
 
 ## Licenses and credits
 
