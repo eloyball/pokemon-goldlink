@@ -65,6 +65,9 @@ const ARROW_CHARS: u32 = 0x400;
 /// (+0x36, 11 characters), status (+0x6C), gender (+0x7E, low 4 bits).
 const CONTEXT_BATTLEMON: u32 = 0x2D40;
 const BATTLEMON_SIZE: u32 = 0xC0;
+/// `BattlePokemon.type1` (+0x24), `type2` after it: the types the battle uses (a Roost, a Soak,
+/// a form change included).
+const BATTLEMON_TYPE1: u32 = 0x24;
 /// The HP bar's "not animating yet" value.
 const CALC_IDLE: i32 = i32::MIN;
 /// `String`: size, magic, then the characters.
@@ -171,11 +174,29 @@ impl GameText {
                         max: m.max,
                         power: self.moves.power(m.id).unwrap_or(0),
                         accuracy: self.moves.accuracy(m.id).unwrap_or(0),
+                        effect: self
+                            .moves
+                            .power(m.id)
+                            .is_some_and(|p| p > 0)
+                            .then(|| foes_effect(ui, ty))
+                            .flatten(),
                     }
                 })
             }),
         }
     }
+}
+
+/// How a move of `move_type` hits the foes on the field (their HP boxes drawn, HP left): the
+/// same for all of them, or None (a double battle's two foes differ, or no types read).
+fn foes_effect(ui: &BattleUi, move_type: u8) -> Option<crate::types::Effect> {
+    let mut effects = ui
+        .boxes
+        .iter()
+        .filter(|b| !b.players() && b.drawn && b.hp > 0)
+        .map(|b| b.types.map(|t| crate::types::effect(move_type, t)));
+    let first = effects.next()??;
+    effects.all(|e| e == Some(first)).then_some(first)
 }
 
 /// A move as the HUD shows it.
@@ -191,6 +212,8 @@ pub struct HudMove {
     pub power: u8,
     /// 0: never misses.
     pub accuracy: u8,
+    /// How it hits the foes by type, when they all agree (a damaging move; None otherwise).
+    pub effect: Option<crate::types::Effect>,
 }
 
 /// An HP box with its Pokémon's name decoded.
@@ -284,6 +307,8 @@ pub struct HpBox {
     pub name: Vec<u16>,
     pub gender: u8,
     pub status: u32,
+    /// Its two types as the battle has them now (one type twice), when read.
+    pub types: Option<[u8; 2]>,
 }
 
 impl HpBox {
@@ -538,6 +563,8 @@ fn read_boxes(r: &Ram<'_>, system: u32) -> (Vec<HpBox>, [Vec<u16>; 4]) {
             name: names[(battler & 3) as usize].clone(),
             gender: m.and_then(|m| r.u8(m + 0x7E)).map_or(2, |g| g & 0xF),
             status: m.and_then(|m| r.u32(m + 0x6C)).unwrap_or(0),
+            types: m
+                .and_then(|m| Some([r.u8(m + BATTLEMON_TYPE1)?, r.u8(m + BATTLEMON_TYPE1 + 1)?])),
         });
     }
     (boxes, names)

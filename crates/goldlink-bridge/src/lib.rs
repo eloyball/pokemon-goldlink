@@ -19,6 +19,7 @@ pub mod quic;
 pub mod sanitize;
 pub mod slots;
 pub mod text;
+pub mod types;
 pub mod worlds;
 
 pub use bridge::{Actions, Bridge, LinkState, Machine, Scene, View, scene_of};

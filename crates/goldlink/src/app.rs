@@ -242,6 +242,8 @@ pub struct GameApp {
     pokedex_page: bool,
     /// The Poké Mart's list to buy from is on the touch screen (`hud::mart_list_shown`): it pops up.
     mart_list: bool,
+    /// The touch screen shows a Pokémon's summary: both screens side by side.
+    summary: bool,
     /// Frames in a row the game's text box rows have shown something else (the band steps aside
     /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
     textbox_away: u32,
@@ -370,6 +372,7 @@ impl GameApp {
             band_window: None,
             pokedex_page: false,
             mart_list: false,
+            summary: false,
             wide: None,
             wide_side: 0,
             shown_scale: 1.0,
@@ -599,6 +602,7 @@ impl GameApp {
                     }
                     self.choices = hud::touch_choices(bottom);
                     self.mart_list = hud::mart_list_shown(bottom);
+                    self.summary = hud::summary_shown(bottom);
                     if frame.running_shoes.is_some()
                         && let Some(img) = shoes_icon(&frame.pixels[256 * 192..])
                     {
@@ -1365,7 +1369,34 @@ impl GameApp {
         let modal = self.one.by_hand.unwrap_or(wanted);
         self.bottom = egui::Rect::NOTHING;
         self.one.bubble = None;
-        if modal {
+        if modal && scene == Scene::App && self.summary {
+            // A Pokémon's summary: both screens side by side, the top one's stats, ability and
+            // memo beside the touch screen's pages (the user's v0.7.1 play test: the ability was
+            // under the pop-up, Tab to see it).
+            let gap = 12.0;
+            let k = ((frame.width() - 3.0 * gap) / 512.0).min((frame.height() - 2.0 * gap) / 192.0);
+            let size = egui::vec2(256.0, 192.0) * k;
+            let top = egui::Rect::from_min_size(
+                egui::pos2(
+                    frame.center().x - gap / 2.0 - size.x,
+                    frame.center().y - size.y / 2.0,
+                ),
+                size,
+            );
+            let r = top.translate(egui::vec2(size.x + gap, 0.0));
+            p.rect_filled(frame, 0.0, egui::Color32::BLACK);
+            let (top_uv, bottom_uv) = screen_uvs(self.prescale);
+            p.image(t.id(), top, top_uv, egui::Color32::WHITE);
+            p.image(t.id(), r, bottom_uv, egui::Color32::WHITE);
+            p.rect_stroke(
+                r.expand(1.5),
+                3.0,
+                egui::Stroke::new(3.0_f32, theme::EDGE),
+                egui::StrokeKind::Outside,
+            );
+            self.shown_scale = k * ui.ctx().pixels_per_point();
+            self.bottom = r;
+        } else if modal {
             // The touch screen over the dimmed picture, leaving the picture's edges showing (the
             // first Pokémon's choice: darker, as the smaller touch screen leaves more of it).
             let starter = self.one.choosing_starter(scene);

@@ -40,7 +40,8 @@ enum Step {
     /// Loads the emergency backup (a melonDS savestate) GOLDLINK_DEV_TOUR_STATE names: a player's
     /// game exactly as it was (the ROM must be the one it was taken with: TOUR_ROM).
     LoadState,
-    /// GOLDLINK_DEV_TOUR_KEYS's moves, one after another (see state-look).
+    /// GOLDLINK_DEV_TOUR_KEYS's moves, one after another (see state-look): U D L R A B X Y,
+    /// S (Start), E (Select) or W (wait), each with its frames.
     EnvWalk,
     /// Power cycle straight into the game from the cart as it is now (after an in-game save), as
     /// GoldLink boots a world (`Emulator::boot_into_game`).
@@ -626,6 +627,22 @@ const STATE_LOOK_STEPS: &[Step] = &[
     Step::Shot("walked"),
     Step::Raw("walked"),
     Step::Dump("walked"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=fight: a debug wild battle from the save, its fight menu (the moves'
+/// type matchups under each).
+const FIGHT_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(60),
+    Step::Lead("CHARIZARD", "NONE", 50),
+    Step::Wait(400),
+    Step::Debug(C::COOP_DEBUG_WILD_BATTLE as u8, 5),
+    Step::Until(Scene::Battle, 300),
+    Step::MashUntilMenu(goldlink::goldlink_bridge::battle_ui::menu::FIGHT, 60 * 60),
+    Step::Wait(40),
+    Step::Shot("fight"),
+    Step::Raw("fight"),
     Step::Close,
 ];
 
@@ -2627,6 +2644,7 @@ fn steps() -> &'static [Step] {
         Ok("gym-glass-rec") => GYM_GLASS_REC_STEPS,
         Ok("state-look") => STATE_LOOK_STEPS,
         Ok("mega") => MEGA_STEPS,
+        Ok("fight") => FIGHT_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
         Ok("catch-dex") => CATCH_DEX_STEPS,
@@ -3182,6 +3200,10 @@ impl FrameHook for TourHook {
                             'R' => Keys::RIGHT,
                             'A' => Keys::A,
                             'B' => Keys::B,
+                            'X' => Keys::X,
+                            'Y' => Keys::Y,
+                            'S' => Keys::START,
+                            'E' => Keys::SELECT,
                             'W' => Keys::NONE,
                             _ => return None,
                         };
@@ -3375,7 +3397,18 @@ impl FrameHook for TourHook {
                         .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
                         .collect(),
                 };
-                let line = match write_png(&path, &img) {
+                // The top screen beside it (`-rawtop`), as the game drew it.
+                let top = egui::ColorImage {
+                    size: [256, 192],
+                    pixels: emu
+                        .nds
+                        .framebuffer(0)
+                        .iter()
+                        .map(|&p| egui::Color32::from_rgb((p >> 16) as u8, (p >> 8) as u8, p as u8))
+                        .collect(),
+                };
+                let top_path = self.0.dir.join(format!("{}-{name}-rawtop.png", s.taken));
+                let line = match write_png(&path, &img).and_then(|()| write_png(&top_path, &top)) {
                     Ok(()) => format!("raw {}", path.display()),
                     Err(e) => format!("raw {name} failed: {e}"),
                 };
@@ -3436,8 +3469,9 @@ impl FrameHook for TourHook {
                 s.shot = Some(name.to_owned());
                 // What the battle HUD reads at this shot, for the log.
                 if let Some(b) = goldlink::goldlink_bridge::battle_ui::read(emu.nds.main_ram()) {
+                    let types: Vec<_> = b.boxes.iter().map(|x| (x.kind, x.types)).collect();
                     let line = format!(
-                        "{name}: menu {} waiting {} cursor {:?} bag/party {}",
+                        "{name}: menu {} waiting {} cursor {:?} bag/party {} boxes' types {types:?}",
                         b.menu, b.waiting, b.cursor, b.bag_or_party
                     );
                     eprintln!("tour: {line}");

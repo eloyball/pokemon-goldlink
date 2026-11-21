@@ -9,6 +9,7 @@ use eframe::egui::{
     self, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, StrokeKind, pos2, vec2,
 };
 use goldlink_bridge::battle_ui::{Ball, BattleHud, menu};
+use goldlink_bridge::types::Effect;
 
 use crate::theme;
 
@@ -530,6 +531,26 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
             colour.gamma_multiply(0.85),
         );
         p.galley(badge.min + vec2(2.0 * s, 0.5 * s), galley, INK);
+        let pp_text = format!("PP {}/{}", m.pp, m.max);
+        // How it hits the foe by type (the newer games' hint, the user's v0.7.1 play test),
+        // between the badge and the PP, shortened when the button is narrow.
+        if let Some((long, short, colour)) = m.effect.and_then(effect_label) {
+            let pp_left = r.right()
+                - pad
+                - p.layout_no_wrap(pp_text.clone(), caps_font(5.5 * s), INK)
+                    .size()
+                    .x;
+            let room = pp_left - badge.right() - 3.0 * s;
+            let font = caps_font(5.0 * s);
+            let fitting = [long, short]
+                .into_iter()
+                .map(|t| p.layout_no_wrap(t.to_owned(), font.clone(), colour))
+                .find(|g| g.size().x <= room);
+            if let Some(g) = fitting {
+                let at = pos2(badge.right() + 2.0 * s, badge.center().y - g.size().y / 2.0);
+                p.galley(at, g, colour);
+            }
+        }
         let pp_colour = if m.pp == 0 {
             CURSOR
         } else if u32::from(m.pp) * 4 <= u32::from(m.max) {
@@ -540,7 +561,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
         p.text(
             pos2(r.right() - pad, r.bottom() - 1.6 * s),
             egui::Align2::RIGHT_BOTTOM,
-            format!("PP {}/{}", m.pp, m.max),
+            pp_text,
             caps_font(5.5 * s),
             pp_colour,
         );
@@ -629,6 +650,17 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
         hud.cursor.is_some_and(|(y, _)| y >= 2),
         TAP_CANCEL,
     );
+}
+
+/// A move's type matchup as the move button says it: in full, shortened, its colour. Nothing for
+/// a plain hit.
+fn effect_label(e: Effect) -> Option<(&'static str, &'static str, Color32)> {
+    match e {
+        Effect::Super => Some(("SUPER EFFECTIVE", "SUPER EFF.", theme::GREEN_DOT)),
+        Effect::NotVery => Some(("NOT VERY EFFECTIVE", "NOT VERY EFF.", theme::AMBER)),
+        Effect::None => Some(("NO EFFECT", "NO EFFECT", INK_DIM)),
+        Effect::Normal => None,
+    }
 }
 
 /// Yes / no and the other two-choice menus: the message, then the two choices stacked.
@@ -861,6 +893,31 @@ pub fn touch_choices(bottom: &[u32]) -> Vec<TouchChoice> {
     } else {
         Vec::new()
     }
+}
+
+/// Whether the touch screen shows a Pokémon's summary (any of its pages): the party panel's
+/// frame and ground at its top and bottom edges and the blue Cancel button, away from the party's
+/// icons and the page tabs (measured raw on the release v0.7.1, the Info, Battle Moves and
+/// Ribbons pages against the party screen and its menu).
+pub fn summary_shown(bottom: &[u32]) -> bool {
+    const MARKS: [(usize, usize, u32); 9] = [
+        (150, 0, 0x41_4141),
+        (200, 0, 0xE3_EBEB),
+        (250, 0, 0xAA_BAC3),
+        (150, 152, 0x41_4141),
+        (200, 152, 0xE3_EBEB),
+        (250, 152, 0xAA_BAC3),
+        (254, 100, 0xAA_BAC3),
+        (210, 170, 0x28_92FB),
+        (240, 175, 0x28_92FB),
+    ];
+    MARKS.iter().all(|&(x, y, v)| {
+        bottom.get(y * 256 + x).is_some_and(|&p| {
+            let (r, g, b) = channels(p);
+            let (vr, vg, vb) = channels(v);
+            r.abs_diff(vr) <= 8 && g.abs_diff(vg) <= 8 && b.abs_diff(vb) <= 8
+        })
+    })
 }
 
 /// Whether the touch screen shows the Poké Mart's list to buy from (its slate header with the
@@ -1289,7 +1346,7 @@ mod window_tests {
 
 #[cfg(test)]
 mod choice_tests {
-    use super::{mart_list_shown, touch_choices};
+    use super::{mart_list_shown, summary_shown, touch_choices};
 
     /// The Poké Mart's question as the touch screen draws it (measured raw, the v0.7.1 mart route):
     /// three wide buttons (white 15 rows, D3D3D3 2, AAAAAA 15, 828282 2) on green, the first
@@ -1360,6 +1417,24 @@ mod choice_tests {
         let at: Vec<(usize, usize)> = c.iter().map(|c| (c.x0, c.y0)).collect();
         assert_eq!(at, [(8, 30), (136, 30), (8, 78), (136, 78), (136, 126)]);
         assert!(c[0].selected && c[1..].iter().all(|c| !c.selected));
+    }
+
+    #[test]
+    fn the_summary_is_told() {
+        let mut px = vec![0xE3_EBEBu32; 256 * 192];
+        for (x, y, v) in [
+            (150, 0, 0x41_4141),
+            (250, 0, 0xAA_BAC3),
+            (150, 152, 0x41_4141),
+            (250, 152, 0xAA_BAC3),
+            (254, 100, 0xAA_BAC3),
+            (210, 170, 0x28_92FB),
+            (240, 175, 0x28_92FB),
+        ] {
+            px[y * 256 + x] = v;
+        }
+        assert!(summary_shown(&px));
+        assert!(!summary_shown(&mart_question()));
     }
 
     #[test]
