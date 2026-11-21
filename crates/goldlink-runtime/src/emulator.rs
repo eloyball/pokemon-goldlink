@@ -50,6 +50,8 @@ pub enum Event {
     SaveFailed(String),
     BackupTaken(PathBuf),
     BackupFailed(String),
+    /// The game stopped responding (the bridge's hang watch); a report was written.
+    GameHung,
 }
 
 pub struct Emulator {

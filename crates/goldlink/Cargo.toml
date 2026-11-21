@@ -72,7 +72,9 @@ wgpu = { version = "24", default-features = false, features = ["metal", "wgsl"] 
 # rfd's file chooser there goes through the desktop portal on zbus over Tokio, which needs a
 # runtime to drive it (launcher.rs `run_dialog`).
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "net"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "sync", "time"] }
+# The screen kept on while a game shows (awake.rs): the desktop portal's Inhibit, rfd's ashpd.
+ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
 
 [target.'cfg(windows)'.dependencies]
 eframe = { version = "0.31", default-features = false, features = ["wgpu", "default_fonts"] }

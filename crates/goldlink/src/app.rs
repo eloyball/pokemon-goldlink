@@ -789,6 +789,17 @@ impl GameApp {
                 Event::BackupFailed(e) => {
                     self.say(format!("A backup couldn't be written: {e}"), true)
                 }
+                Event::GameHung => {
+                    // Up a minute: the screen is black, nothing else says what happened.
+                    self.messages.push_back(Message {
+                        text: "The game stopped responding. Press Leave (top right), then \
+                               \"Restore a backup\" with the newest one to go on. A report is in \
+                               the crashes folder of your GoldLink folder: please send it."
+                            .into(),
+                        error: true,
+                        until: Instant::now() + Duration::from_secs(60),
+                    });
+                }
             }
         }
         if finished {

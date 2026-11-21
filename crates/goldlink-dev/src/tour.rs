@@ -37,6 +37,11 @@ enum Step {
     /// level-up's stats box), saving the raw top screen every 20 frames as `rawtop-<frame>.png`
     /// meanwhile (or gives up after the frames).
     MashUntilWindow(u32),
+    /// Loads the emergency backup (a melonDS savestate) GOLDLINK_DEV_TOUR_STATE names: a player's
+    /// game exactly as it was (the ROM must be the one it was taken with: TOUR_ROM).
+    LoadState,
+    /// GOLDLINK_DEV_TOUR_KEYS's moves, one after another (see state-look).
+    EnvWalk,
     /// Power cycle straight into the game from the cart as it is now (after an in-game save), as
     /// GoldLink boots a world (`Emulator::boot_into_game`).
     Reboot,
@@ -601,6 +606,26 @@ const GYM_GLASS_REC_STEPS: &[Step] = &[
     Step::Wait(120),
     Step::Walk(Keys::DOWN, 96, "glass-down"),
     Step::Walk(Keys::UP, 96, "glass-up"),
+    Step::Close,
+];
+
+/// GOLDLINK_DEV_TOUR_ROUTE=state-look (v0.7.1): GOLDLINK_DEV_TOUR_STATE's backup loaded once the
+/// tour's own save is in the field; shots and main RAM after, then GOLDLINK_DEV_TOUR_KEYS (a
+/// list of "<key><frames>" moves, U D L R: "U32,R16") walked with every frame filmed if asked.
+const STATE_LOOK_STEPS: &[Step] = &[
+    Step::Until(Scene::Overworld, 60 * 120),
+    Step::Wait(30),
+    Step::LoadState,
+    Step::Wait(90),
+    Step::Shot("loaded"),
+    Step::Raw("loaded"),
+    Step::Dump("loaded"),
+    Step::Poke,
+    Step::EnvWalk,
+    Step::Wait(120),
+    Step::Shot("walked"),
+    Step::Raw("walked"),
+    Step::Dump("walked"),
     Step::Close,
 ];
 
@@ -2600,6 +2625,7 @@ fn steps() -> &'static [Step] {
         Ok("gym-elevator") => GYM_ELEVATOR_STEPS,
         Ok("gym-glass") => GYM_GLASS_STEPS,
         Ok("gym-glass-rec") => GYM_GLASS_REC_STEPS,
+        Ok("state-look") => STATE_LOOK_STEPS,
         Ok("mega") => MEGA_STEPS,
         Ok("naming") => NAMING_STEPS,
         Ok("catch") => CATCH_STEPS,
@@ -3141,6 +3167,49 @@ impl FrameHook for TourHook {
             Step::Press(k) => {
                 input.keys |= k;
                 s.holding = 6;
+                true
+            }
+            Step::EnvWalk => {
+                let moves: Vec<(Keys, u32)> = std::env::var("GOLDLINK_DEV_TOUR_KEYS")
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter_map(|m| {
+                        let m = m.trim();
+                        let k = match m.chars().next()? {
+                            'U' => Keys::UP,
+                            'D' => Keys::DOWN,
+                            'L' => Keys::LEFT,
+                            'R' => Keys::RIGHT,
+                            'A' => Keys::A,
+                            'B' => Keys::B,
+                            'W' => Keys::NONE,
+                            _ => return None,
+                        };
+                        Some((k, m[1..].parse().ok()?))
+                    })
+                    .collect();
+                let mut at = s.frames;
+                let mut done = true;
+                for (k, n) in &moves {
+                    if at < *n {
+                        input.keys |= *k;
+                        done = false;
+                        break;
+                    }
+                    at -= n;
+                }
+                done
+            }
+            Step::LoadState => {
+                let line = match std::env::var_os("GOLDLINK_DEV_TOUR_STATE") {
+                    Some(p) => match emu.load_state_file(std::path::Path::new(&p)) {
+                        Ok(()) => "state loaded".to_string(),
+                        Err(e) => format!("state failed: {e}"),
+                    },
+                    None => "no GOLDLINK_DEV_TOUR_STATE".to_string(),
+                };
+                eprintln!("tour: {line}");
+                s.log.push(line);
                 true
             }
             Step::Reboot => {

@@ -93,6 +93,8 @@ pub struct Shell {
     reopen: bool,
     /// The window opened once (a panic before is the graphics driver failing to draw it).
     created: bool,
+    /// The screen kept on while a game shows (a controller isn't input to the idle timer).
+    awake: Option<crate::awake::KeepAwake>,
 }
 
 /// What a window opened again keeps of the one before.
@@ -296,6 +298,9 @@ impl Shell {
                     forced = true;
                 }
                 let view = self.view();
+                // A game that stopped responding can't save: no waiting for it.
+                let hung = view.as_ref().is_some_and(|v| v.game_hung);
+                forced |= hung;
                 let in_session = view.as_ref().is_some_and(|v| v.game_in_session);
                 let saved = view
                     .as_ref()
@@ -319,6 +324,12 @@ impl Shell {
                     self.config = game.config().clone();
                     game.shutdown();
                     let message = match error {
+                        None if hung => (
+                            format!(
+                                "The game in world {code} had stopped responding, so it couldn't save: restore the newest backup (\"Restore a backup\") to go on."
+                            ),
+                            true,
+                        ),
                         Some(e) => (format!("{e} Your game was saved."), true),
                         None if forced => (
                             format!(
@@ -787,6 +798,10 @@ impl Shell {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let playing = matches!(self.stage, Stage::Playing { .. } | Stage::Leaving { .. });
+        if playing != self.awake.is_some() {
+            self.awake = playing.then(crate::awake::KeepAwake::start);
+        }
         if let Some(rs) = frame.wgpu_render_state() {
             crate::gpu_watch::watch(rs);
             crate::composite::install(rs);
@@ -877,6 +892,7 @@ pub fn run(autoplay: bool, auto_join: Option<(String, String, bool)>) -> Result<
         window: WindowState::default(),
         reopen: false,
         created: false,
+        awake: None,
     };
     let mut opened = 0;
     loop {
@@ -1139,6 +1155,7 @@ mod tests {
             window: WindowState::default(),
             reopen: false,
             created: true,
+            awake: None,
         };
         shell.bridge().unwrap();
         let mut d = Driver {

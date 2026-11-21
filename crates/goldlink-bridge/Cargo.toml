@@ -11,6 +11,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+log = "0.4"
 goldlink-abi = { path = "../goldlink-abi" }
 goldlink-proto = { path = "../goldlink-proto" }
 goldlink-runtime = { path = "../goldlink-runtime" }

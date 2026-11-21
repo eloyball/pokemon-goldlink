@@ -61,7 +61,15 @@ pub struct Actions {
     pub boot_into_game: bool,
     pub backup_taken: Option<PathBuf>,
     pub backup_failed: Option<String>,
+    /// The game just stopped responding ([`GAME_HANG_FRAMES`]): the host writes a report.
+    pub game_hung: bool,
 }
+
+/// Emulated frames the ROM's heartbeat (its main loop's SysTask) may stand still in a session
+/// before the game is taken for stopped: a black screen with the music playing on (the ARM7
+/// keeps the sound), seen by the user and their friends in v0.7.1, a failed assert or a loop
+/// the ARM9 never leaves. Ten seconds: loading and saving keep the main loop running.
+pub const GAME_HANG_FRAMES: u32 = 600;
 
 /// What the game is showing (UC9 §3.1: which screen matters).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +161,9 @@ pub struct View {
     pub save_counter: u32,
     /// A backup waits to be loaded on the next frame.
     pub restore_pending: bool,
+    /// The game has stopped responding (its heartbeat stood still [`GAME_HANG_FRAMES`]): it can't
+    /// save; the last emergency backup is the way back.
+    pub game_hung: bool,
 }
 
 /// A world's relay presented another QUIC certificate than the one pinned with it.
@@ -237,6 +248,10 @@ pub struct Bridge {
     challenge_up: Option<[u8; wire::CHALLENGE_UP_SIZE]>,
     badge_mask_local: u16,
     heartbeat_rom: u32,
+    /// The ROM's heartbeat as last seen by the hang watch, and the frames it has stood still.
+    watch_heartbeat: u32,
+    rom_still: u32,
+    game_hung: bool,
     limits: Limits,
     room_rules: Option<(u16, u8)>,
     link_carrier: LinkCarrier,
@@ -337,6 +352,9 @@ impl Bridge {
             challenge_up: None,
             badge_mask_local: 0,
             heartbeat_rom: 0,
+            watch_heartbeat: 0,
+            rom_still: 0,
+            game_hung: false,
             limits: Limits {
                 map_id: 0,
                 species: 0,
@@ -681,6 +699,8 @@ impl Bridge {
         self.mailbox_copy = None;
         self.last_save_counter = None;
         self.last_rom_heartbeat = 0;
+        self.rom_still = 0;
+        self.game_hung = false;
         self.game_started = false;
         self.new_game_intro = false;
         self.battle_ui = None;
@@ -791,6 +811,7 @@ impl Bridge {
         if self.update_save_slot(m, mailbox) {
             actions.cart_replaced = true;
         }
+        actions.game_hung = self.watch_game(m, mailbox);
         actions.boot_into_game = std::mem::take(&mut self.boot_into_game);
 
         if !matches!(self.link, LinkState::Connecting | LinkState::Connected) {
@@ -1223,6 +1244,26 @@ impl Bridge {
         }
     }
 
+    /// The hang watch: true on the frame the ROM's heartbeat has stood still GAME_HANG_FRAMES in a
+    /// session (once per stop; it clears when the heartbeat moves again or the session ends).
+    fn watch_game(&mut self, m: &mut dyn Machine, mb: usize) -> bool {
+        let ram = m.main_ram();
+        let heartbeat = u32_at(ram, mb + HEARTBEAT_ROM);
+        let in_session = ram[mb + WAS_IN_ACTIVE_SESSION] == 1;
+        if heartbeat != self.watch_heartbeat || !in_session {
+            self.watch_heartbeat = heartbeat;
+            self.rom_still = 0;
+            self.game_hung = false;
+            return false;
+        }
+        self.rom_still = self.rom_still.saturating_add(1);
+        if self.rom_still == GAME_HANG_FRAMES {
+            self.game_hung = true;
+            return true;
+        }
+        false
+    }
+
     /// One save per world (the C# `UpdateSaveSlot`). Copies the cart to the owning world's file
     /// after every completed in-game save (also while disconnected: the disconnect flow saves
     /// after the link drops). Once connected before the game started, swaps the world's save (or
@@ -1407,6 +1448,7 @@ impl Bridge {
                 .as_ref()
                 .map_or(0, |mb| u32_at(mb, SAVE_COUNTER)),
             restore_pending: self.pending_restore.is_some(),
+            game_hung: self.game_hung,
         }
     }
 
@@ -1493,6 +1535,48 @@ fn start_save(started: bool, first: bool, saved: bool, state: u8) -> (bool, u8) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Ram(Vec<u8>);
+
+    impl Machine for Ram {
+        fn main_ram(&mut self) -> &mut [u8] {
+            &mut self.0
+        }
+        fn cart(&mut self) -> &mut [u8] {
+            &mut []
+        }
+        fn savestate(&mut self) -> Option<Vec<u8>> {
+            None
+        }
+        fn load_savestate(&mut self, _: &[u8]) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// A heartbeat standing still in a session is a stopped game once, after GAME_HANG_FRAMES;
+    /// out of a session (the title, a load) it isn't, and a beat again clears it.
+    #[test]
+    fn a_still_heartbeat_is_a_stopped_game() {
+        let dir = std::env::temp_dir().join(format!("goldlink-hang-{}", std::process::id()));
+        let mut b = Bridge::new(&dir, &[]).unwrap();
+        let mut m = Ram(vec![0; MAILBOX_SIZE]);
+        let hung = |b: &mut Bridge, m: &mut Ram, frames: u32| {
+            (0..frames).filter(|_| b.watch_game(m, 0)).count()
+        };
+        assert_eq!(
+            hung(&mut b, &mut m, 2 * GAME_HANG_FRAMES),
+            0,
+            "not in a session"
+        );
+        m.0[WAS_IN_ACTIVE_SESSION] = 1;
+        assert_eq!(hung(&mut b, &mut m, GAME_HANG_FRAMES - 1), 0);
+        assert_eq!(hung(&mut b, &mut m, 3 * GAME_HANG_FRAMES), 1);
+        assert!(b.view().game_hung);
+        put_u32(&mut m.0, HEARTBEAT_ROM, 7);
+        assert_eq!(hung(&mut b, &mut m, 1), 0);
+        assert!(!b.view().game_hung);
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn the_adventure_start_save_happens_once_a_world() {

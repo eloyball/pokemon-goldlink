@@ -101,5 +101,66 @@ impl FrameHook for BridgeHook {
         if let Some(e) = actions.backup_failed {
             emu.push_event(Event::BackupFailed(e));
         }
+        if actions.game_hung {
+            let dir = lock(&self.bridge).dir().join("crashes");
+            write_hang_report(emu, &dir);
+        }
     }
+}
+
+/// A game that stopped responding (the bridge's hang watch): `crashes/hang-<time>.json` (the
+/// build, the player's place, both CPUs' registers, the mailbox) and beside it the whole machine
+/// as a savestate (`.mlds`, loadable by the dev tour's LoadState with the same ROM), so where the
+/// ARM9 is stuck can be read afterwards (dev/docs: the crash triage by the ARM9's PC).
+fn write_hang_report(emu: &mut goldlink_runtime::Emulator, dir: &std::path::Path) {
+    use goldlink_abi::{CoopCommBlock, CoopPlayerState};
+    use std::mem::offset_of;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let regs = emu.nds.registers(9);
+    log::error!(
+        "the game stopped responding: ARM9 PC {:08X} LR {:08X}; report crashes/hang-{stamp}.json",
+        regs[15],
+        regs[14]
+    );
+    let hex = |r: [u32; 17]| r.iter().map(|v| format!("{v:08X}")).collect::<Vec<_>>();
+    let player = emu.mailbox().map(|mb| {
+        let p = offset_of!(CoopCommBlock, local_player);
+        let u16_at = |o: usize| u16::from_le_bytes([mb[p + o], mb[p + o + 1]]);
+        serde_json::json!({
+            "map": u16_at(offset_of!(CoopPlayerState, map_id)),
+            "x": u16_at(offset_of!(CoopPlayerState, x)) as i16,
+            "z": u16_at(offset_of!(CoopPlayerState, z)) as i16,
+            "activity": mb[p + offset_of!(CoopPlayerState, activity)],
+        })
+    });
+    let mailbox: Option<String> = emu
+        .mailbox()
+        .map(|mb| mb.iter().map(|b| format!("{b:02X}")).collect());
+    let report = serde_json::json!({
+        "kind": "the game stopped responding (its main loop stood still; the emulator ran on)",
+        "build": option_env!("GOLDLINK_BUILD").unwrap_or("dev"),
+        "os": std::env::consts::OS,
+        "time": chrono::Utc::now().to_rfc3339(),
+        "frames": emu.frame_count(),
+        "player": player,
+        // r0..r15 then CPSR.
+        "arm9": hex(emu.nds.registers(9)),
+        "arm7": hex(emu.nds.registers(7)),
+        "mailbox": mailbox,
+    });
+    let _ = std::fs::create_dir_all(dir);
+    if let Ok(text) = serde_json::to_string_pretty(&report) {
+        let _ = goldlink_runtime::write_atomic(
+            &dir.join(format!("hang-{stamp}.json")),
+            text.as_bytes(),
+        );
+    }
+    if let Some(state) = emu.nds.savestate() {
+        let path = dir.join(format!("hang-{stamp}.mlds"));
+        // Some 20 MB: off the emulation thread.
+        std::thread::spawn(move || {
+            let _ = goldlink_runtime::write_atomic(&path, &state);
+        });
+    }
+    emu.push_event(Event::GameHung);
 }
