@@ -829,14 +829,38 @@ fn channels(p: u32) -> (u32, u32, u32) {
 /// and grey (130) for at least 10; its outline above it dark grey, or red when it's the selected
 /// one. Its width is the white run across its first white row.
 pub fn touch_choices(bottom: &[u32]) -> Vec<TouchChoice> {
-    // Both columns, the one that found more: a button's label can cross a column and hide it
-    // (the Poké Mart's SELL at column 40, the user's v0.7 play test: two of three found, so no
-    // box).
-    [40, 236]
-        .iter()
-        .map(|&x| touch_choices_at(bottom, x))
-        .max_by_key(Vec::len)
-        .unwrap_or_default()
+    // Three columns, their buttons merged: a button's label can cross a column and hide it (the
+    // Poké Mart's SELL at column 40, the user's v0.7 play test), and a menu can stand in two
+    // columns (the PC's storage menu: two buttons at the left, three at the right, whose labels
+    // cross column 40; the user's v0.7.1 play test: three of five found, so no box). Column 12
+    // is left of any label, 236 right of the right column's.
+    let mut all: Vec<TouchChoice> = Vec::new();
+    for x in [12, 40, 236] {
+        for c in touch_choices_at(bottom, x) {
+            let same = |o: &TouchChoice| o.y0.abs_diff(c.y0) <= 4 && o.x0 < c.x1 && c.x0 < o.x1;
+            match all.iter_mut().find(|o| same(o)) {
+                Some(o) => o.selected |= c.selected,
+                None => all.push(c),
+            }
+        }
+    }
+    // In the game's order: row by row (a row's buttons within a few pixels), left to right.
+    all.sort_by_key(|c| c.y0);
+    let mut out: Vec<TouchChoice> = Vec::with_capacity(all.len());
+    let mut row = 0;
+    for (k, c) in all.iter().enumerate() {
+        if c.y0 > all[row].y0 + 4 {
+            out[row..].sort_by_key(|c| c.x0);
+            row = k;
+        }
+        out.push(*c);
+    }
+    out[row..].sort_by_key(|c| c.x0);
+    if (2..=6).contains(&out.len()) {
+        out
+    } else {
+        Vec::new()
+    }
 }
 
 /// Whether the touch screen shows the Poké Mart's list to buy from (its slate header with the
@@ -853,7 +877,10 @@ pub fn mart_list_shown(bottom: &[u32]) -> bool {
     [2, 128, 250]
         .iter()
         .all(|&x| near(x, 20, 0x71_8292) && near(x, 32, 0x41_4141))
-        && [(2, 100), (128, 150), (2, 150)]
+        // The ground at the screen's left edge and between the two columns of items, which the
+        // items' buttons never cover (at x 2 a second row's button did: four items, the user's
+        // v0.7.1 play test, no pop-up).
+        && [(0, 60), (0, 150), (128, 60), (128, 100), (128, 150)]
             .iter()
             .all(|&(x, y)| near(x, y, 0x38_9AFB))
 }
@@ -908,11 +935,7 @@ fn touch_choices_at(bottom: &[u32], column: usize) -> Vec<TouchChoice> {
         }
         y = end;
     }
-    if (2..=6).contains(&out.len()) {
-        out
-    } else {
-        Vec::new()
-    }
+    out
 }
 
 /// The game's text boxes' ink and its shadow (a message's letters, pret's TEXT_COLOR 1 and 2 in
@@ -1300,6 +1323,45 @@ mod choice_tests {
         px
     }
 
+    /// The PC's storage menu (measured on the user's save, release v0.7.1): DEPOSIT and MOVE
+    /// POKéMON at the left, WITHDRAW, MOVE ITEMS and SEE YA! at the right, every left label
+    /// across column 40.
+    #[test]
+    fn a_menu_in_two_columns_is_read_row_by_row() {
+        let mut px = vec![0x28_DB92u32; 256 * 192];
+        let mut button = |x0: usize, x1: usize, top: usize, selected: bool| {
+            let mut y = top;
+            for (n, v) in [
+                (15, 0xFB_FBFB),
+                (2, 0xD3_D3D3),
+                (15, 0xAA_AAAA),
+                (2, 0x82_8282),
+            ] {
+                for _ in 0..n {
+                    px[y * 256 + x0..y * 256 + x1].fill(v);
+                    y += 1;
+                }
+            }
+            if selected {
+                px[(top - 4) * 256 + x0..(top - 4) * 256 + x1].fill(0xDB_3841);
+            }
+            if x0 < 40 {
+                for y in top + 4..top + 28 {
+                    px[y * 256 + 16..y * 256 + 64].fill(0x41_4141);
+                }
+            }
+        };
+        button(8, 120, 32, true);
+        button(136, 248, 32, false);
+        button(8, 120, 80, false);
+        button(136, 248, 80, false);
+        button(136, 248, 128, false);
+        let c = touch_choices(&px);
+        let at: Vec<(usize, usize)> = c.iter().map(|c| (c.x0, c.y0)).collect();
+        assert_eq!(at, [(8, 30), (136, 30), (8, 78), (136, 78), (136, 126)]);
+        assert!(c[0].selected && c[1..].iter().all(|c| !c.selected));
+    }
+
     #[test]
     fn a_label_across_a_column_hides_no_button() {
         let c = touch_choices(&mart_question());
@@ -1314,6 +1376,11 @@ mod choice_tests {
             px[y * 256..y * 256 + 256].fill(0x71_8292);
         }
         px[32 * 256..33 * 256].fill(0x41_4141);
+        // Four items: two rows of buttons, their dark edges at x 2.
+        for y in 40..124 {
+            px[y * 256 + 2..y * 256 + 126].fill(0x41_4141);
+            px[y * 256 + 130..y * 256 + 254].fill(0x41_4141);
+        }
         assert!(mart_list_shown(&px));
         assert!(!mart_list_shown(&mart_question()));
     }

@@ -62,6 +62,9 @@ pub fn read_menu(ram: &[u8], local_player: &[u8]) -> Vec<Vec<u16>> {
         .collect()
 }
 
+/// HeartGold's space (pret's charmap).
+const SPACE: u16 = 0x01DE;
+
 /// The text boxes' font from the player's ROM.
 #[derive(Debug, Clone)]
 pub struct GameFont {
@@ -120,13 +123,21 @@ impl GameFont {
 
     /// A line of text as colour indices (1 letters, 2 their shadow, 0 clear): its width and
     /// pixels, `height` rows. Control codes (0xFFFE and its arguments) are skipped, a line break
-    /// ends the line.
+    /// is a space.
     pub fn draw(&self, codes: &[u16]) -> (usize, Vec<u8>) {
         let mut glyphs = Vec::new();
         let mut i = 0;
         while i < codes.len() {
             match codes[i] {
-                0xFFFF | 0xE000 => break,
+                0xFFFF => break,
+                // A line break: a space in the one-line box (the PC's two-line buttons, MOVE /
+                // POKéMON and MOVE / ITEMS, read MOVE twice cut at the break).
+                0xE000 => {
+                    let g = SPACE as usize - 1;
+                    if g < self.glyphs.len() {
+                        glyphs.push(g);
+                    }
+                }
                 0xFFFE => {
                     // 0xFFFE, the command, its argument count, the arguments.
                     let args = codes.get(i + 2).copied().unwrap_or(0) as usize;
