@@ -211,6 +211,12 @@ pub(crate) enum View {
 /// Nothing nearer a point light than this casts (view units).
 const NEAR: f32 = 0.5;
 
+/// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at
+/// the seam between two faces was looked up on the outermost texels, which held the ground
+/// itself, and every light drew thin shadow lines out from it across the ground (Cherrygrove's
+/// Pokémon Centre at night, the user's play test).
+pub const WIDEN: f32 = 1.05;
+
 impl View {
     /// A point on the map: its column, row (texels) and nearness to the light (the larger, the
     /// nearer: along the sun's direction, or one over the distance in front of the face).
@@ -238,8 +244,8 @@ impl View {
                 let z = dot(d, forward);
                 (z >= NEAR).then(|| {
                     [
-                        (dot(d, right) / z * 0.5 + 0.5) * size,
-                        (dot(d, upward) / z * 0.5 + 0.5) * size,
+                        (dot(d, right) / (z * WIDEN) * 0.5 + 0.5) * size,
+                        (dot(d, upward) / (z * WIDEN) * 0.5 + 0.5) * size,
                         1.0 / z,
                     ]
                 })
@@ -315,10 +321,10 @@ impl DepthMap {
                     let d = sub(k.p, pos);
                     let (z, x, y) = (dot(d, forward), dot(d, right), dot(d, upward));
                     out[0] &= z < NEAR;
-                    out[1] &= x > z;
-                    out[2] &= x < -z;
-                    out[3] &= y > z;
-                    out[4] &= y < -z;
+                    out[1] &= x > z * WIDEN;
+                    out[2] &= x < -z * WIDEN;
+                    out[3] &= y > z * WIDEN;
+                    out[4] &= y < -z * WIDEN;
                 }
                 if out.iter().any(|&o| o) {
                     continue;
