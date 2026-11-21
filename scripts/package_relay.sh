@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The relay release (docs/RELEASE_PLAN.md §3.2, §6): coop-relay-vX.Y-linux-x86_64.tar.gz,
-# -linux-aarch64.tar.gz and -windows.zip in build/relay-release/vX.Y/, built from HEAD. Needs no
+# The relay release (docs/RELEASE_PLAN.md §3.2, §6): GoldLink-RelayServer-vX.Y-linux-x86_64.tar.gz,
+# -linux-aarch64.tar.gz and -windows.zip in build/relay-release/vX.Y/, built from HEAD. The crate
+# is coop-relay; players and hosts see GoldLink-RelayServer (its program, files and release). Needs no
 # ROM: GitHub Actions runs it on a relay-v* tag (.github/workflows/relay-release.yml).
 #
 #   scripts/package_relay.sh relay-vX.Y [--publish]
@@ -69,7 +70,7 @@ fi
 if [[ $PUBLISH == 1 ]]; then
     gh release view "$TAG" -R "$REPOSITORY" > /dev/null 2>&1 && die "the GitHub release $TAG exists already"
 fi
-echo "[*] coop-relay $CRATE ($TAG) from ${COMMIT:0:9}: relay protocol $WIRE"
+echo "[*] GoldLink-RelayServer $CRATE ($TAG) from ${COMMIT:0:9}: relay protocol $WIRE"
 echo "[*] musl C: x86_64 ${CC_x86_64_unknown_linux_musl:-x86_64-linux-musl-gcc}, aarch64 ${CC_aarch64_unknown_linux_musl:-aarch64-linux-musl-gcc}"
 
 # --- Build (static on Linux; the aarch64 one links with the toolchain's own lld)
@@ -85,19 +86,19 @@ mkdir -p "$OUT/work"
 fill() {
     sed -e "s|{{VERSION}}|$VERSION|g" -e "s|{{WIRE}}|$WIRE|g" -e "s|{{REPOSITORY}}|$REPOSITORY|g" "$1"
 }
-NAME="coop-relay-$VERSION"
+NAME="GoldLink-RelayServer-$VERSION"
 pack() { # <target> <archive suffix>
-    local target="$1" suffix="$2" dir="$OUT/work/$2/$NAME" exe="coop-relay"
-    [[ $target == *windows* ]] && exe="coop-relay.exe"
+    local target="$1" suffix="$2" dir="$OUT/work/$2/$NAME" exe="" built="coop-relay"
+    [[ $target == *windows* ]] && exe=".exe"
     mkdir -p "$dir"
-    cp "coop-relay/target/$target/release/$exe" "$dir/"
+    cp "coop-relay/target/$target/release/$built$exe" "$dir/GoldLink-RelayServer$exe"
     fill coop-relay/release/README.md > "$dir/README.md"
     cp LICENSE "$dir/LICENSE"
     cp NOTICE.md "$dir/NOTICE.md"
     cargo metadata --format-version 1 --locked --manifest-path "$MANIFEST" --filter-platform "$target" \
         | python3 -I scripts/release/crate_licenses.py > "$dir/THIRD_PARTY_LICENSES.txt"
     if [[ $target == *linux* ]]; then
-        cp coop-relay/release/coop-relay.service coop-relay/release/Dockerfile "$dir/"
+        cp coop-relay/release/GoldLink-RelayServer.service coop-relay/release/Dockerfile "$dir/"
         tar czf "$OUT/$NAME-$suffix.tar.gz" -C "$OUT/work/$suffix" "$NAME"
     else
         for f in README.md LICENSE NOTICE.md THIRD_PARTY_LICENSES.txt; do sed -i 's/$/\r/' "$dir/$f"; done
@@ -119,7 +120,7 @@ pack x86_64-pc-windows-gnu windows
 (cd "$OUT" && sha256sum "$NAME"-* > SHA256SUMS)
 
 cat > "$OUT/notes.md" <<EOF
-The GoldLink relay server, **relay protocol $WIRE**: for the GoldLink player releases that need
+GoldLink-RelayServer, the server GoldLink players meet on, **relay protocol $WIRE**: for the GoldLink player releases that need
 protocol $WIRE (their release notes say). A relay for protocol $WIRE refuses players of releases for
 another protocol (they get a message saying which side is behind): update the relay and every
 player together.
@@ -138,10 +139,10 @@ money involved, donations included).
 
 $(if [[ -n "${NOTES:-}" ]]; then cat "$NOTES"; else echo "(write the changes here)"; fi)
 EOF
-ls -l "$OUT"/coop-relay-*
+ls -l "$OUT"/GoldLink-RelayServer-*
 
 if [[ $PUBLISH == 1 ]]; then
-    gh release create "$TAG" -R "$REPOSITORY" --draft --target "$COMMIT" --title "coop-relay $VERSION" \
+    gh release create "$TAG" -R "$REPOSITORY" --draft --target "$COMMIT" --title "GoldLink RelayServer $VERSION" \
         --notes-file "$OUT/notes.md" "$OUT/$NAME"-* "$OUT/SHA256SUMS"
     echo "[*] draft release $TAG created: review and publish it on GitHub"
 else

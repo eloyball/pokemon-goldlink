@@ -41,9 +41,9 @@ jobs:
       - name: The ARM64 relay starts, listens and stops on SIGTERM
         run: |
           v="v${GITHUB_REF_NAME#relay-v}"
-          tar xzf "relay/$v/coop-relay-$v-linux-aarch64.tar.gz"
-          "coop-relay-$v/coop-relay" --version
-          "coop-relay-$v/coop-relay" --bind 127.0.0.1:7777 --save-dir "$RUNNER_TEMP/campaigns" > relay.log 2>&1 &
+          tar xzf "relay/$v/GoldLink-RelayServer-$v-linux-aarch64.tar.gz"
+          "GoldLink-RelayServer-$v/GoldLink-RelayServer" --version
+          "GoldLink-RelayServer-$v/GoldLink-RelayServer" --bind 127.0.0.1:7777 --save-dir "$RUNNER_TEMP/campaigns" > relay.log 2>&1 &
           pid=$!
           sleep 2
           kill -TERM "$pid"
@@ -66,5 +66,5 @@ jobs:
           v="v${GITHUB_REF_NAME#relay-v}"
           cd "relay/$v"
           gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --draft \
-            --title "coop-relay $v" --notes-file notes.md \
-            coop-relay-"$v"-* SHA256SUMS
+            --title "GoldLink RelayServer $v" --notes-file notes.md \
+            GoldLink-RelayServer-"$v"-* SHA256SUMS

@@ -16,9 +16,9 @@ use coop_relay::quic::{self, PlainPacket, QuicServer};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "coop-relay",
+    name = "GoldLink-RelayServer",
     version,
-    about = "Pokemon HeartGold 6-Player Co-op Multi-Room Relay Server"
+    about = "GoldLink's relay server: the server GoldLink players meet on (Pokemon HeartGold co-op, up to six players per world)"
 )]
 struct Args {
     /// Address and UDP port to bind

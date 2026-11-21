@@ -45,7 +45,7 @@ pub fn protocol_mismatch(server: u16) -> String {
         )
     } else {
         format!(
-            "This server runs relay protocol {server}, older than this GoldLink release (protocol {ours}). The server needs a coop-relay release for protocol {ours}: ask whoever runs it to update."
+            "This server runs relay protocol {server}, older than this GoldLink release (protocol {ours}). The server needs a GoldLink-RelayServer release for protocol {ours}: ask whoever runs it to update."
         )
     }
 }

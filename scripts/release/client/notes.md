@@ -38,8 +38,8 @@ GoldLink): **More info > Run anyway**.
 ## Compatibility
 
 - **Who can play together.** This release speaks relay protocol **{{WIRE}}**, like v0.5: v0.5 and
-  newer players share worlds on a `coop-relay` release for protocol {{WIRE}} (relay-v0.5), so
-  nothing changes on the server. That relay refuses v0.3 and older (protocol 8): they can't join,
+  newer players share worlds on a GoldLink-RelayServer release for protocol {{WIRE}}, so nothing
+  changes on the server. That relay refuses v0.3 and older (protocol 8): they can't join,
   and get a message saying which side is behind. Your worlds, saves and places in them carry over.
 - GoldLink connects encrypted (QUIC) by default, on the relay's usual port (7777): nothing new
   to open. A relay run with `--no-quic` is played over plain UDP. The first connection to a

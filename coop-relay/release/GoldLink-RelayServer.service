@@ -1,0 +1,27 @@
+# systemd unit for the GoldLink relay (README.md, "Linux server").
+#   sudo cp GoldLink-RelayServer /usr/local/bin/ && sudo cp GoldLink-RelayServer.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now GoldLink-RelayServer
+# Campaigns: /var/lib/goldlink-relayserver/campaigns. Logs: journalctl -u GoldLink-RelayServer -f
+[Unit]
+Description=GoldLink-RelayServer, the GoldLink relay (Pokemon HeartGold, up to six players per world)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/GoldLink-RelayServer --bind 0.0.0.0:7777 --save-dir /var/lib/goldlink-relayserver/campaigns
+Restart=on-failure
+RestartSec=2
+# Its own throwaway user; /var/lib/goldlink-relayserver is the only place it may write.
+DynamicUser=yes
+StateDirectory=goldlink-relayserver
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

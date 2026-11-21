@@ -1,4 +1,4 @@
-# coop-relay {{VERSION}}: the GoldLink server
+# GoldLink-RelayServer {{VERSION}}: the GoldLink server
 
 The relay is the server GoldLink players meet on: up to six players per room, each room a
 campaign with its own roster and progress. It speaks **relay protocol {{WIRE}}**: it serves the
@@ -11,17 +11,17 @@ database. Anything from a Raspberry Pi to the smallest VPS will do.
 
 ## Quick start
 
-Linux (`coop-relay-{{VERSION}}-linux-x86_64.tar.gz`, or `-linux-aarch64` for ARM: Raspberry Pi,
+Linux (`GoldLink-RelayServer-{{VERSION}}-linux-x86_64.tar.gz`, or `-linux-aarch64` for ARM: Raspberry Pi,
 Oracle Cloud's free Ampere machines):
 
 ```
-tar xzf coop-relay-{{VERSION}}-linux-x86_64.tar.gz
-cd coop-relay-{{VERSION}}
-./coop-relay
+tar xzf GoldLink-RelayServer-{{VERSION}}-linux-x86_64.tar.gz
+cd GoldLink-RelayServer-{{VERSION}}
+./GoldLink-RelayServer
 ```
 
-Windows (`coop-relay-{{VERSION}}-windows.zip`): unzip, open a terminal in the folder, run
-`coop-relay.exe`, and allow it through Windows Firewall when Windows asks (private networks,
+Windows (`GoldLink-RelayServer-{{VERSION}}-windows.zip`): unzip, open a terminal in the folder, run
+`GoldLink-RelayServer.exe`, and allow it through Windows Firewall when Windows asks (private networks,
 or public too if players come from the internet).
 
 It listens on UDP port **7777** on every address, for plain and encrypted (QUIC) connections
@@ -53,28 +53,28 @@ The binaries are static: no runtime or library to install, on any 64-bit Linux d
 ## Linux server: systemd
 
 ```
-sudo cp coop-relay /usr/local/bin/
-sudo cp coop-relay.service /etc/systemd/system/
+sudo cp GoldLink-RelayServer /usr/local/bin/
+sudo cp GoldLink-RelayServer.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now coop-relay
-journalctl -u coop-relay -f        # the log
+sudo systemctl enable --now GoldLink-RelayServer
+journalctl -u GoldLink-RelayServer -f        # the log
 ```
 
 It starts at boot and restarts after a crash, runs as its own unprivileged user, and keeps the
-campaigns in `/var/lib/coop-relay/campaigns`. Change the options on its `ExecStart` line
-(`sudo systemctl edit --full coop-relay`).
+campaigns in `/var/lib/goldlink-relayserver/campaigns`. Change the options on its `ExecStart` line
+(`sudo systemctl edit --full GoldLink-RelayServer`).
 
 ## Docker
 
 The `Dockerfile` packs the binary beside it into a small Alpine image:
 
 ```
-docker build -t coop-relay .
-docker run -d --name coop-relay --restart unless-stopped -p 7777:7777/udp -v coop-relay:/data coop-relay
-docker logs -f coop-relay
+docker build -t goldlink-relayserver .
+docker run -d --name goldlink-relayserver --restart unless-stopped -p 7777:7777/udp -v goldlink-relayserver:/data goldlink-relayserver
+docker logs -f goldlink-relayserver
 ```
 
-Campaigns and the certificate live in the `coop-relay` volume (`/data`). The aarch64 archive
+Campaigns and the certificate live in the `goldlink-relayserver` volume (`/data`). The aarch64 archive
 builds an ARM image the same way.
 
 ## Options

@@ -14,10 +14,10 @@ melonDS emulator built in: one program, nothing else to install.
 
 - **Your own Pokémon HeartGold (USA) ROM**, unmodified. GoldLink doesn't include the game: it
   checks your copy and builds the co-op version from it.
-- **A server for your group.** GoldLink players meet on a server called the **relay**, and
-  there's no public one: to play together, someone in your group has to run it on a computer or
-  a VPS (a small rented server). The relay is free and has its own release on the
-  [releases page](https://github.com/eloyball/pokemon-goldlink/releases) (`coop-relay`); see
+- **A server for your group.** GoldLink players meet on a server called the relay,
+  **GoldLink-RelayServer**, and there's no public one: to play together, someone in your group
+  has to run it on a computer or a VPS (a small rented server). It's free and has its own release
+  on the [releases page](https://github.com/eloyball/pokemon-goldlink/releases); see
   [Hosting a server](#hosting-a-server). Everyone else just needs its address and the world code.
 
 ## Installing
@@ -150,18 +150,18 @@ If the game stops responding, press **Leave**, then **Restore a backup** with th
 
 ## Hosting a server
 
-To play together, your group needs a server, called the relay: everyone's games meet there, and
-GoldLink has no public one. One person runs it, on a computer that stays on while you play or on
+To play together, your group needs a server, called the relay (**GoldLink-RelayServer**):
+everyone's games meet there, and GoldLink has no public one. One person runs it, on a computer that stays on while you play or on
 a VPS (a small rented server). The relay is its own release, separate from GoldLink: a small
 program for Linux, Windows or a Raspberry Pi that uses one network port and a few MB of memory.
 Players don't need it; only the person hosting does.
 
 1. Download the relay for your system from the
    [releases page](https://github.com/eloyball/pokemon-goldlink/releases): the newest
-   **coop-relay** release (`…-windows.zip`, `…-linux-x86_64.tar.gz`, or `…-linux-aarch64.tar.gz`
-   for a Raspberry Pi).
-2. Unpack it and start `coop-relay` (`coop-relay.exe` on Windows; allow it through the firewall
-   when Windows asks). Leave it running while your group plays.
+   **GoldLink RelayServer** release (`GoldLink-RelayServer-…-windows.zip`,
+   `…-linux-x86_64.tar.gz`, or `…-linux-aarch64.tar.gz` for a Raspberry Pi).
+2. Unpack it and start `GoldLink-RelayServer` (`GoldLink-RelayServer.exe` on Windows; allow it
+   through the firewall when Windows asks). Leave it running while your group plays.
 3. Make it reachable for your friends on **UDP port 7777**:
    - **At home:** forward UDP port 7777 on your router to the computer running the relay. If you
      can't, a VPN such as Tailscale or ZeroTier works too: everyone joins it and uses the relay
@@ -191,7 +191,7 @@ through before a large change, then send a pull request.
   - `goldlink-light`: the lighting.
   - `goldlink-setup` and `goldlink-update`: the installers and the Update button.
   - `goldlink-dev`: development tools.
-- `coop-relay/`: the server.
+- `coop-relay/`: the relay server (released as GoldLink-RelayServer).
 - `scripts/`: building and packaging.
 
 ### Building from source
