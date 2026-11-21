@@ -508,13 +508,32 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
             Stroke::new((0.8 * s).max(1.5), colour),
         ));
         let pad = r.height() * 0.42;
-        p.text(
-            pos2(r.left() + pad, r.top() + 1.2 * s),
-            egui::Align2::LEFT_TOP,
-            &m.name,
-            text_font(8.0 * s),
-            INK,
-        );
+        // The name a size under the old 8 (the user, 2026-11-21: crowded against the badge
+        // row), smaller still when a long one would run past the button's edge.
+        // How it hits the foe by type, a mark at the top right (the user, 2026-11-21: words in
+        // the badge's row crowded the button): green ▲▲ super effective, amber ▼ not very,
+        // grey ✕ none. Its room is kept from the name's.
+        let mark_h = 4.5 * s;
+        let mark_w = match m.effect {
+            Some(e) => effect_mark_width(e, mark_h, s) + 2.0 * s,
+            None => 0.0,
+        };
+        let room = r.width() - 2.0 * pad - mark_w;
+        // The name a half step of the text font's grid under the other text (the user,
+        // 2026-11-21: crowded at full size); a name too long for the button takes the next half
+        // step down, then the one under it.
+        let mut px = snap(7.5 * s, 5.5);
+        let mut name = p.layout_no_wrap(m.name.clone(), theme::text(px), INK);
+        while name.size().x > room && px > 11.0 {
+            px -= 5.5;
+            name = p.layout_no_wrap(m.name.clone(), theme::text(px), INK);
+        }
+        let name_at = pos2(r.left() + pad, r.top() + 1.2 * s);
+        let name_mid = name_at.y + name.size().y / 2.0;
+        p.galley(name_at, name, INK);
+        if let Some(e) = m.effect {
+            effect_mark(p, r.right() - pad, name_mid, mark_h, e, s);
+        }
         // The type badge, bottom left.
         let badge_text = m.type_name.to_uppercase();
         let galley = p.layout_no_wrap(badge_text, caps_font(5.0 * s), INK);
@@ -531,26 +550,6 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
             colour.gamma_multiply(0.85),
         );
         p.galley(badge.min + vec2(2.0 * s, 0.5 * s), galley, INK);
-        let pp_text = format!("PP {}/{}", m.pp, m.max);
-        // How it hits the foe by type (the newer games' hint, the user's v0.7.1 play test),
-        // between the badge and the PP, shortened when the button is narrow.
-        if let Some((long, short, colour)) = m.effect.and_then(effect_label) {
-            let pp_left = r.right()
-                - pad
-                - p.layout_no_wrap(pp_text.clone(), caps_font(5.5 * s), INK)
-                    .size()
-                    .x;
-            let room = pp_left - badge.right() - 3.0 * s;
-            let font = caps_font(5.0 * s);
-            let fitting = [long, short]
-                .into_iter()
-                .map(|t| p.layout_no_wrap(t.to_owned(), font.clone(), colour))
-                .find(|g| g.size().x <= room);
-            if let Some(g) = fitting {
-                let at = pos2(badge.right() + 2.0 * s, badge.center().y - g.size().y / 2.0);
-                p.galley(at, g, colour);
-            }
-        }
         let pp_colour = if m.pp == 0 {
             CURSOR
         } else if u32::from(m.pp) * 4 <= u32::from(m.max) {
@@ -561,7 +560,7 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
         p.text(
             pos2(r.right() - pad, r.bottom() - 1.6 * s),
             egui::Align2::RIGHT_BOTTOM,
-            pp_text,
+            format!("PP {}/{}", m.pp, m.max),
             caps_font(5.5 * s),
             pp_colour,
         );
@@ -652,14 +651,46 @@ fn fight(c: &mut Ctx<'_>, hud: &BattleHud, mega: Option<Mega>) {
     );
 }
 
-/// A move's type matchup as the move button says it: in full, shortened, its colour. Nothing for
-/// a plain hit.
-fn effect_label(e: Effect) -> Option<(&'static str, &'static str, Color32)> {
+/// A matchup mark's width at height `h`.
+fn effect_mark_width(e: Effect, h: f32, s: f32) -> f32 {
+    let w = h * 1.1;
     match e {
-        Effect::Super => Some(("SUPER EFFECTIVE", "SUPER EFF.", theme::GREEN_DOT)),
-        Effect::NotVery => Some(("NOT VERY EFFECTIVE", "NOT VERY EFF.", theme::AMBER)),
-        Effect::None => Some(("NO EFFECT", "NO EFFECT", INK_DIM)),
-        Effect::Normal => None,
+        Effect::Super => 2.0 * w + 1.0 * s,
+        Effect::NotVery => w,
+        Effect::None => h,
+        Effect::Normal => 0.0,
+    }
+}
+
+/// A move's type matchup as a mark `h` tall, its right edge at `right`, centred on `y`.
+fn effect_mark(p: &egui::Painter, right: f32, y: f32, h: f32, e: Effect, s: f32) {
+    let w = h * 1.1;
+    let x = right - effect_mark_width(e, h, s);
+    let triangle = |x: f32, up: bool, colour: Color32| {
+        let (tip, base) = if up {
+            (y - h / 2.0, y + h / 2.0)
+        } else {
+            (y + h / 2.0, y - h / 2.0)
+        };
+        p.add(egui::Shape::convex_polygon(
+            vec![pos2(x, base), pos2(x + w / 2.0, tip), pos2(x + w, base)],
+            colour,
+            Stroke::NONE,
+        ));
+    };
+    match e {
+        Effect::Super => {
+            triangle(x, true, theme::GREEN_DOT);
+            triangle(x + w + 1.0 * s, true, theme::GREEN_DOT);
+        }
+        Effect::NotVery => triangle(x, false, theme::AMBER),
+        Effect::None => {
+            let stroke = Stroke::new((1.2 * s).max(1.5), INK_DIM);
+            let r = Rect::from_min_size(pos2(x, y - h / 2.0), vec2(h, h));
+            p.line_segment([r.left_top(), r.right_bottom()], stroke);
+            p.line_segment([r.right_top(), r.left_bottom()], stroke);
+        }
+        Effect::Normal => {}
     }
 }
 

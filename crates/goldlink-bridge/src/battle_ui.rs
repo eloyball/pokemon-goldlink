@@ -187,16 +187,15 @@ impl GameText {
     }
 }
 
-/// How a move of `move_type` hits the foes on the field (their HP boxes drawn, HP left): the
-/// same for all of them, or None (a double battle's two foes differ, or no types read).
+/// How a move of `move_type` hits the foe: single battles only (the user, 2026-11-21: off in
+/// double battles, where a move can have either foe or both as its target).
 fn foes_effect(ui: &BattleUi, move_type: u8) -> Option<crate::types::Effect> {
-    let mut effects = ui
-        .boxes
-        .iter()
-        .filter(|b| !b.players() && b.drawn && b.hp > 0)
-        .map(|b| b.types.map(|t| crate::types::effect(move_type, t)));
-    let first = effects.next()??;
-    effects.all(|e| e == Some(first)).then_some(first)
+    // A double battle's HP boxes are kinds 2 and up (pret's bar types).
+    if ui.boxes.iter().any(|b| b.kind >= 2) {
+        return None;
+    }
+    let foe = ui.boxes.iter().find(|b| !b.players())?;
+    foe.types.map(|t| crate::types::effect(move_type, t))
 }
 
 /// A move as the HUD shows it.
@@ -212,7 +211,7 @@ pub struct HudMove {
     pub power: u8,
     /// 0: never misses.
     pub accuracy: u8,
-    /// How it hits the foes by type, when they all agree (a damaging move; None otherwise).
+    /// How it hits the foe by type (a damaging move in a single battle; None otherwise).
     pub effect: Option<crate::types::Effect>,
 }
 

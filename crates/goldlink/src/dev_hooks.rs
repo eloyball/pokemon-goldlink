@@ -157,12 +157,27 @@ pub fn backup_tick(bridge: Option<&goldlink_bridge::SharedBridge>) {
 }
 
 /// `GOLDLINK_DEV_HUD_TEXT`: the HUD with that message in its two-option prompts.
+/// `GOLDLINK_DEV_HUD_EFFECTS`: the four moves' matchup marks, one letter each (S super, V not
+/// very, X none, - plain), to see them all whatever the foe.
 pub fn hud_text(
     hud: &goldlink_bridge::battle_ui::BattleHud,
 ) -> goldlink_bridge::battle_ui::BattleHud {
+    use goldlink_bridge::types::Effect;
     let mut h = hud.clone();
     if let (Ok(t), Some(_)) = (std::env::var("GOLDLINK_DEV_HUD_TEXT"), &h.options) {
         h.message = t;
+    }
+    if let Ok(e) = std::env::var("GOLDLINK_DEV_HUD_EFFECTS") {
+        for (m, c) in h.moves.iter_mut().zip(e.chars()) {
+            if let Some(m) = m {
+                m.effect = match c {
+                    'S' => Some(Effect::Super),
+                    'V' => Some(Effect::NotVery),
+                    'X' => Some(Effect::None),
+                    _ => None,
+                };
+            }
+        }
     }
     h
 }
