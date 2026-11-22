@@ -1330,7 +1330,7 @@ impl Lighting {
                 let colour = mix(scale(colour, 1.0 / peak), [1.0, 0.85, 0.65], 0.3);
                 let power = strength * (p.size as f32 / 20.0).sqrt().min(1.5);
                 let light = PointLight {
-                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), 6.0)),
+                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), 10.0)),
                     colour: scale(colour, power),
                     range: LIGHT_RANGE,
                 };
