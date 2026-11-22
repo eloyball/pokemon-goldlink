@@ -5,7 +5,7 @@ pub mod app;
 mod awake;
 mod composite;
 #[cfg(feature = "dev-hooks")]
-mod dev_hooks;
+pub mod dev_hooks;
 mod gpu_watch;
 pub mod crash;
 pub mod hud;
@@ -13,6 +13,7 @@ pub mod import;
 pub mod input;
 pub mod launcher;
 pub mod layout;
+mod list_nav;
 pub mod lobby;
 pub mod logfile;
 pub mod shell;

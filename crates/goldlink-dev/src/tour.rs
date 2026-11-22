@@ -41,7 +41,9 @@ enum Step {
     /// game exactly as it was (the ROM must be the one it was taken with: TOUR_ROM).
     LoadState,
     /// GOLDLINK_DEV_TOUR_KEYS's moves, one after another (see state-look): U D L R A B X Y,
-    /// S (Start), E (Select) or W (wait), each with its frames.
+    /// S (Start), E (Select) or W (wait), each with its frames; u d l r press the window's arrow
+    /// keys (as the player's keyboard: what the window handles itself), P takes a screenshot
+    /// and its raw screens.
     EnvWalk,
     /// Power cycle straight into the game from the cart as it is now (after an in-game save), as
     /// GoldLink boots a world (`Emulator::boot_into_game`).
@@ -3188,12 +3190,14 @@ impl FrameHook for TourHook {
                 true
             }
             Step::EnvWalk => {
-                let moves: Vec<(Keys, u32)> = std::env::var("GOLDLINK_DEV_TOUR_KEYS")
+                let moves: Vec<(Keys, u32, char)> = std::env::var("GOLDLINK_DEV_TOUR_KEYS")
                     .unwrap_or_default()
                     .split(',')
                     .filter_map(|m| {
                         let m = m.trim();
-                        let k = match m.chars().next()? {
+                        let c = m.chars().next()?;
+                        let k = match c {
+                            'u' | 'd' | 'l' | 'r' | 'P' => Keys::NONE,
                             'U' => Keys::UP,
                             'D' => Keys::DOWN,
                             'L' => Keys::LEFT,
@@ -3207,14 +3211,30 @@ impl FrameHook for TourHook {
                             'W' => Keys::NONE,
                             _ => return None,
                         };
-                        Some((k, m[1..].parse().ok()?))
+                        Some((k, m[1..].parse().unwrap_or(1), c))
                     })
                     .collect();
                 let mut at = s.frames;
                 let mut done = true;
-                for (k, n) in &moves {
+                for (i, (k, n, c)) in moves.iter().enumerate() {
                     if at < *n {
                         input.keys |= *k;
+                        // The window's keys and the screenshots on a segment's first frame.
+                        if at == 0 {
+                            let key = match c {
+                                'u' => Some(egui::Key::ArrowUp),
+                                'd' => Some(egui::Key::ArrowDown),
+                                'l' => Some(egui::Key::ArrowLeft),
+                                'r' => Some(egui::Key::ArrowRight),
+                                _ => None,
+                            };
+                            if let Some(key) = key {
+                                goldlink::dev_hooks::press_key(key);
+                            }
+                            if *c == 'P' {
+                                s.shot = Some(format!("p{i:02}"));
+                            }
+                        }
                         done = false;
                         break;
                     }

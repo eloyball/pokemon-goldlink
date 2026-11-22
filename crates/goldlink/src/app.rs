@@ -244,6 +244,10 @@ pub struct GameApp {
     mart_list: bool,
     /// The touch screen shows a Pokémon's summary: both screens side by side.
     summary: bool,
+    /// When the white box was last drawn, and Up and Down through it as a list
+    /// (`crate::list_nav`).
+    box_drawn_at: Option<Instant>,
+    list_nav: crate::list_nav::ListNav,
     /// Frames in a row the game's text box rows have shown something else (the band steps aside
     /// only after a while: an attack's white flash is a frame or two, the VS screen stays).
     textbox_away: u32,
@@ -373,6 +377,8 @@ impl GameApp {
             pokedex_page: false,
             mart_list: false,
             summary: false,
+            box_drawn_at: None,
+            list_nav: Default::default(),
             wide: None,
             wide_side: 0,
             shown_scale: 1.0,
@@ -502,7 +508,8 @@ impl GameApp {
         // Typing in a panel or clicking on one isn't playing.
         let typing = ctx.wants_keyboard_input();
         let over_panel = ctx.is_pointer_over_area() && ctx.wants_pointer_input();
-        let (held, down, pos, focused) = ctx.input(|i| {
+        #[allow(unused_mut)]
+        let (mut held, down, pos, mut focused) = ctx.input(|i| {
             (
                 i.keys_down.clone(),
                 i.pointer.primary_down(),
@@ -510,6 +517,13 @@ impl GameApp {
                 i.focused,
             )
         });
+        // The dev tour's keyboard keys (its walker's u d l r), as if typed on the window.
+        #[cfg(feature = "dev-hooks")]
+        {
+            let tour = crate::dev_hooks::held_keys();
+            focused |= !tour.is_empty();
+            held.extend(tour);
+        }
         let mut keys = goldlink_core::Keys::NONE;
         if focused && !self.blocked() && !typing {
             if self.typing.naming.is_some() {
@@ -533,6 +547,13 @@ impl GameApp {
                 keys |= self.controls.gamepads(g);
             }
         }
+        // Up and Down through the white box as the list it shows (the PC's two-column menu).
+        let box_shown = self
+            .box_drawn_at
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(100));
+        keys = self
+            .list_nav
+            .keys(keys, box_shown, &self.choices, Instant::now());
         let on_bubble = |p: egui::Pos2| self.one.bubble.is_some_and(|(c, r)| p.distance(c) <= r);
         let mut touch = match (down, pos) {
             (true, Some(p)) if !self.blocked() && !over_panel && !on_bubble(p) => {
@@ -1452,6 +1473,7 @@ impl GameApp {
         if n == 0 || self.menu_words.len() != n {
             return;
         }
+        self.box_drawn_at = Some(Instant::now());
         if self.choice_words != self.menu_words || self.choice_tex.len() < n {
             for (k, words) in self.menu_words.iter().enumerate() {
                 let (w, px) = font.draw(words);

@@ -69,6 +69,25 @@ struct Input {
 
 static INPUT: Mutex<Option<Input>> = Mutex::new(None);
 
+/// Keys the dev tour holds on the window's keyboard, and for how many more of its frames.
+static HELD: Mutex<Vec<(egui::Key, u32)>> = Mutex::new(Vec::new());
+
+/// The tour's walker presses `key` on the window's keyboard: held a few frames, as a quick tap.
+pub fn press_key(key: egui::Key) {
+    HELD.lock().unwrap().push((key, 3));
+}
+
+/// The keys the tour holds this frame (each frame counts one down).
+pub fn held_keys() -> Vec<egui::Key> {
+    let mut held = HELD.lock().unwrap();
+    let keys = held.iter().map(|&(k, _)| k).collect();
+    held.retain_mut(|(_, n)| {
+        *n -= 1;
+        *n > 0
+    });
+    keys
+}
+
 fn parse(spec: &str) -> Vec<(f32, Step, u8)> {
     spec.split(';')
         .filter_map(|item| {
