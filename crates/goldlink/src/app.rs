@@ -93,6 +93,8 @@ fn screen_uvs(k: usize) -> (egui::Rect, egui::Rect) {
 }
 /// How long the HUD holds a touch on the game's button (then lets go).
 const TAP: Duration = Duration::from_millis(100);
+/// How often a sound device that failed is tried again.
+const AUDIO_RETRY: Duration = Duration::from_secs(2);
 
 /// The Shadows setting's hint (both settings screens).
 pub const SHADOWS_HINT: &str = "Outdoors, things cast shadows from the sun, the moon and lit windows and lamps; off: the game's own shadows";
@@ -224,6 +226,8 @@ pub struct GameApp {
     config_dir: PathBuf,
     controls: Controls,
     audio: Option<AudioOut>,
+    /// When to try opening the sound device again (it failed to open, or its stream died).
+    audio_retry: Option<Instant>,
     gilrs: Option<gilrs::Gilrs>,
     texture: Option<egui::TextureHandle>,
     last_seq: u64,
@@ -363,6 +367,7 @@ impl GameApp {
             bridge,
             config,
             config_dir,
+            audio_retry: audio.is_none().then(|| Instant::now() + AUDIO_RETRY),
             audio,
             gilrs,
             texture: None,
@@ -475,6 +480,30 @@ impl GameApp {
     /// A panel over the game takes the keyboard and the stylus.
     fn blocked(&self) -> bool {
         self.settings_open || self.menu_open
+    }
+
+    /// Opens the sound device again when its stream died (an audio server reconfiguring the
+    /// output, a device switched or unplugged) or it couldn't be opened: until then the game
+    /// stayed silent until the world was joined again (the user's play test).
+    fn keep_sound(&mut self) {
+        let Some(runner) = &self.runner else { return };
+        if self.audio.as_ref().is_some_and(|a| !a.healthy()) {
+            self.audio = None;
+            self.audio_retry = Some(Instant::now());
+        }
+        let Some(at) = self.audio_retry else { return };
+        if self.audio.is_some() || Instant::now() < at {
+            return;
+        }
+        match AudioOut::open(runner.shared.clone(), Self::volume_of(&self.config)) {
+            Ok(a) => {
+                log::info!("sound: playing again ({} Hz)", a.rate);
+                runner.send(Command::AudioRate(a.rate));
+                self.audio = Some(a);
+                self.audio_retry = None;
+            }
+            Err(_) => self.audio_retry = Some(Instant::now() + AUDIO_RETRY),
+        }
     }
 
     fn volume_of(c: &Config) -> u8 {
@@ -1633,6 +1662,7 @@ impl GameApp {
         }
         self.feed_input(ctx);
         self.collect_events();
+        self.keep_sound();
         self.update_texture(ctx);
         if self.release_ui {
             action = self.top_bar(ctx);

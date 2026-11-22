@@ -1,9 +1,16 @@
 //! Sound out through the system's default output device (cpal: WASAPI, ALSA/PipeWire,
 //! CoreAudio). The core resamples to the device's rate, so this only copies samples from the
 //! emulation thread's ring and applies the volume.
+//!
+//! A stream can die under the game: ALSA's `poll()` returned POLLERR on the user's PipeWire
+//! (the audio server reconfiguring the output), a Windows device switched or unplugged. The
+//! sound then stayed off until the world was joined again (the user and their friends' v0.7.2
+//! play test), and the error, logged as it repeated, filled the log. [`AudioOut::healthy`] says
+//! when it died, so the window opens the device again; the error is logged once.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -15,7 +22,15 @@ pub struct AudioOut {
     pub rate: f64,
     /// 0..=100; 0 is silent.
     volume: Arc<AtomicU32>,
+    /// The stream reported an error, and when it last asked for sound (ms since `opened`).
+    broken: Arc<AtomicBool>,
+    last_call: Arc<AtomicU64>,
+    opened: Instant,
 }
+
+/// How long a stream may go without asking for sound before it's taken for dead (the device
+/// asks every few milliseconds while it plays).
+const SILENT_FOR: Duration = Duration::from_secs(2);
 
 impl AudioOut {
     /// Opens the default output device. Errors when there's none (the game runs silent).
@@ -35,14 +50,25 @@ impl AudioOut {
             buffer_size: cpal::BufferSize::Default,
         };
         let vol = Arc::new(AtomicU32::new(u32::from(volume.min(100))));
-        let err = |e| log::warn!("sound: {e}");
+        let broken = Arc::new(AtomicBool::new(false));
+        let last_call = Arc::new(AtomicU64::new(0));
+        let opened = Instant::now();
+        let err = {
+            let broken = broken.clone();
+            move |e| {
+                if !broken.swap(true, Ordering::Relaxed) {
+                    log::warn!("sound: {e} (opening the sound device again)");
+                }
+            }
+        };
         let stream = match supported.sample_format() {
             cpal::SampleFormat::F32 => {
-                let (s, v) = (shared.clone(), vol.clone());
+                let (s, v, at) = (shared.clone(), vol.clone(), last_call.clone());
                 let mut tmp = Vec::new();
                 device.build_output_stream(
                     &config,
                     move |out: &mut [f32], _| {
+                        at.store(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                         fill(&s, &v, channels, out.len(), &mut tmp);
                         for (o, x) in out.iter_mut().zip(&tmp) {
                             *o = *x as f32 / 32768.0;
@@ -53,11 +79,12 @@ impl AudioOut {
                 )
             }
             cpal::SampleFormat::I16 => {
-                let (s, v) = (shared.clone(), vol.clone());
+                let (s, v, at) = (shared.clone(), vol.clone(), last_call.clone());
                 let mut tmp = Vec::new();
                 device.build_output_stream(
                     &config,
                     move |out: &mut [i16], _| {
+                        at.store(opened.elapsed().as_millis() as u64, Ordering::Relaxed);
                         fill(&s, &v, channels, out.len(), &mut tmp);
                         out.copy_from_slice(&tmp[..out.len()]);
                     },
@@ -75,7 +102,21 @@ impl AudioOut {
             _stream: stream,
             rate: f64::from(rate),
             volume: vol,
+            broken,
+            last_call,
+            opened,
         })
+    }
+
+    /// Whether the stream still plays: no error from it, and it asked for sound lately (a
+    /// stream may die without one).
+    pub fn healthy(&self) -> bool {
+        if self.broken.load(Ordering::Relaxed) {
+            return false;
+        }
+        let since_open = self.opened.elapsed();
+        let last = Duration::from_millis(self.last_call.load(Ordering::Relaxed));
+        since_open < last + SILENT_FOR
     }
 
     pub fn set_volume(&self, volume: u8) {

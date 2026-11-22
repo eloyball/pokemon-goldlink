@@ -179,6 +179,9 @@ fn main() -> ExitCode {
             Ok(d) => d,
             Err(e) => return usage(&e),
         };
+        // GoldLink's log (goldlink.log in the data folder, and the terminal), as the player's
+        // program keeps it.
+        goldlink::logfile::install(Some(&data));
         let result = if args.offline_world {
             let world = args
                 .world
