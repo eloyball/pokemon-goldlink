@@ -1557,7 +1557,9 @@ impl GameApp {
                 sizes[k] * s,
             );
             p.image(self.choice_tex[k].id(), label, full, egui::Color32::WHITE);
-            if c.selected {
+            // While Up or Down walks the game's grid, the arrow waits at where it's going (the
+            // steps on the way showed it jumping about: the user's v0.7.3 play test).
+            if self.list_nav.shown(&self.choices) == Some(k) {
                 let (x, m) = (rect.left() + pad * s, y + (line / 2.0 - 1.0) * s);
                 p.add(egui::Shape::convex_polygon(
                     vec![

@@ -35,10 +35,14 @@ impl ListNav {
     /// The keys for the game this frame, from the player's (`keys`): Up and Down taken over while
     /// the box (`shown`) lists `choices` in a grid.
     pub fn keys(&mut self, keys: Keys, shown: bool, choices: &[TouchChoice], now: Instant) -> Keys {
-        let selected = choices.iter().position(|c| c.selected);
-        let (Some(selected), true) = (selected, shown && is_grid(choices)) else {
+        if !(shown && is_grid(choices)) {
             *self = Self::default();
             return keys;
+        }
+        // A frame without a selected button (one changing over): the walk waits, Up and Down
+        // kept from the game.
+        let Some(selected) = choices.iter().position(|c| c.selected) else {
+            return Keys(keys.0 & !(Keys::UP.0 | Keys::DOWN.0));
         };
         let vertical = [Keys::UP, Keys::DOWN].into_iter().find(|&k| {
             keys.contains(k) && !keys.contains(if k == Keys::UP { Keys::DOWN } else { Keys::UP })
@@ -105,6 +109,15 @@ impl ListNav {
             }
         }
         out
+    }
+}
+
+impl ListNav {
+    /// The item the box's arrow points at: where a walk is going, else the game's selection.
+    pub fn shown(&self, choices: &[TouchChoice]) -> Option<usize> {
+        self.target
+            .filter(|&t| t < choices.len())
+            .or_else(|| choices.iter().position(|c| c.selected))
     }
 }
 
@@ -213,6 +226,30 @@ mod tests {
             back.push(selected);
         }
         assert_eq!(back, [0, 4, 3, 2, 1, 0]);
+    }
+
+    /// The box's arrow goes straight to the item being walked to (Withdraw to Move Pokémon
+    /// passes Deposit in the game's grid), and back to the game's selection after.
+    #[test]
+    fn the_arrow_waits_at_where_the_walk_goes() {
+        let (mut nav, mut t) = (ListNav::default(), Instant::now());
+        let mut selected = 1;
+        let mut sent_before = Keys::NONE;
+        let mut shown = Vec::new();
+        for frame in 0..60 {
+            let player = if frame < 2 { Keys::DOWN } else { Keys::NONE };
+            let sent = nav.keys(player, true, &pc(selected), t);
+            for a in [Keys::UP, Keys::DOWN, Keys::LEFT, Keys::RIGHT] {
+                if sent.contains(a) && !sent_before.contains(a) {
+                    selected = game(selected, a);
+                }
+            }
+            sent_before = sent;
+            shown.push(nav.shown(&pc(selected)).unwrap());
+            t += Duration::from_millis(16);
+        }
+        assert_eq!(selected, 2);
+        assert!(shown.iter().all(|&k| k == 2), "{shown:?}");
     }
 
     #[test]
