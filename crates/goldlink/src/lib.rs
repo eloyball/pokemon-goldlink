@@ -5,7 +5,16 @@ pub mod app;
 mod awake;
 mod composite;
 #[cfg(feature = "dev-hooks")]
-pub mod dev_hooks;
+mod dev_hooks;
+
+/// The dev tour's walker presses `key` on the window's keyboard (`dev_hooks::press_key`); nothing
+/// without the dev hooks (the packaging builds goldlink-dev without them, for its ROM patch).
+pub fn tour_press_key(key: eframe::egui::Key) {
+    #[cfg(feature = "dev-hooks")]
+    dev_hooks::press_key(key);
+    #[cfg(not(feature = "dev-hooks"))]
+    let _ = key;
+}
 mod gpu_watch;
 pub mod crash;
 pub mod hud;

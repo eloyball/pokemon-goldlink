@@ -3229,7 +3229,7 @@ impl FrameHook for TourHook {
                                 _ => None,
                             };
                             if let Some(key) = key {
-                                goldlink::dev_hooks::press_key(key);
+                                goldlink::tour_press_key(key);
                             }
                             if *c == 'P' {
                                 s.shot = Some(format!("p{i:02}"));
