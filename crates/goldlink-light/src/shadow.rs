@@ -210,19 +210,18 @@ pub(crate) enum View {
 
 /// Nothing nearer a point light than this casts (view units; light.wgsl's `NEAR` too). Lights
 /// sit 10 units out from their glowing surface (lib.rs `find_lights`): clear of a doorway's
-/// recess, near enough a lamp that its shadows start at it. 7 softens a lamp's own post (its
-/// shadow just in front of it) and stays short of the glowing surface: at the offset, the cut
-/// lands on it and edges show at a doorway's frame. The user's choice, 2026-11-23, from renders
-/// of offsets 6, 8 and 10 with nears from 0.5 to the offset (6 boxed the Pokémon Centre's door
-/// in, 14 put a lamp's light a tile in front of it); 8 let shadows come and go while walking.
-const NEAR: f32 = 7.0;
+/// recess, near enough a lamp that its shadows start at it. Everything casts for it: 7 and 8
+/// barely changed a frame (a lamp post's own shadow), and neither stopped shadows coming and
+/// going while walking (the user's play test, 2026-11-23). Chosen from renders of offsets 6, 8
+/// and 10 with nears from 0.5 to the offset (6 boxed the Pokémon Centre's door in, 14 put a
+/// lamp's light a tile in front of it).
+const NEAR: f32 = 0.5;
 
 /// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at
 /// the seam between two faces was looked up on the outermost texels, which held the ground
 /// itself, and every light drew thin shadow lines out from it across the ground (Cherrygrove's
-/// Pokémon Centre at night, the user's play test). 10% cleared the last two pixels of it there, but
-/// shadows came and went while walking (the user's play test, 2026-11-23): 5%.
-pub const WIDEN: f32 = 1.05;
+/// Pokémon Centre at night, the user's play test). 5% left two pixels of it there; 10% is clear.
+pub const WIDEN: f32 = 1.10;
 
 impl View {
     /// A point on the map: its column, row (texels) and nearness to the light (the larger, the
