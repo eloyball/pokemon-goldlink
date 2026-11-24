@@ -16,6 +16,8 @@ use crate::shadow::{DepthMap, Shadows, Tri, View};
 pub(crate) struct Pixel {
     pub pos: [f32; 4],
     pub info: [u32; 4],
+    /// Its polygon's normal (w 1; 0: none found).
+    pub nrm: [f32; 4],
 }
 
 /// A light (light.wgsl `Light`).

@@ -80,6 +80,9 @@ const SKIRT: f32 = 6.0;
 const SLAB: f32 = 3.0;
 /// How far a standing card goes into the ground when it casts (view units): the test's margin.
 const SINK: f32 = 1.5;
+/// How high a point light may stand over a card (radians up from the ground) before the card
+/// leans away from it (by the rest: 30 degrees under a light straight above).
+const STEEP: f32 = std::f32::consts::FRAC_PI_3;
 
 /// Where the sun is at `hours` (0..24, the DS clock): its azimuth (from north toward east), its
 /// elevation, and how strong its shadows are (0 at night). It crosses the northern sky, so every
@@ -160,17 +163,21 @@ pub(crate) struct Card {
     /// head), not standing on the ground. It casts nothing (the user, 2026-11-18: the bubble's
     /// silhouette lengthened its owner's shadow).
     pub(crate) floating: bool,
+    /// The object it's part of (a lamp's glow is its lamp's; -1 none).
+    object: i32,
 }
 
 impl Card {
-    /// Its corners standing at its foot, turned to face `toward` (a horizontal direction), sunk
-    /// into the ground by the test's margin so the shadow starts where the feet touch it.
-    fn standing(&self, up: V3, toward: V3) -> Vec<Corner> {
+    /// Its corners standing at its foot, turned to face `toward` (a horizontal direction) and
+    /// leant `lean` (radians) away from it, sunk into the ground by the test's margin so the
+    /// shadow starts where the feet touch it.
+    fn standing(&self, up: V3, toward: V3, lean: f32) -> Vec<Corner> {
         let across = normalize(cross(up, toward));
+        let rise = sub(scale(up, lean.cos()), scale(toward, lean.sin()));
         self.local
             .iter()
             .map(|&([a, b], st)| Corner {
-                p: add(self.foot, add(scale(across, a), scale(up, b - SINK))),
+                p: add(self.foot, add(scale(across, a), scale(rise, b - SINK))),
                 st,
                 scr: [0.0; 2],
             })
@@ -185,6 +192,8 @@ struct Caster {
     tex: Option<ShadowTex>,
     param: u32,
     card: u32,
+    /// The object it's part of (-1: a card, or none).
+    object: i32,
 }
 
 /// How a depth map sees the scene: along the sun (orthographic: axes `u`, `v`, the map's origin
@@ -395,6 +404,8 @@ pub struct Shadows {
     pub ready: bool,
     /// Each card's shape on the picture (columns, rows, its nearness).
     pub(crate) card_tris: Vec<Tri>,
+    /// The lamps in the picture: each small object's box (where the polygons put it).
+    lamps: Vec<(i32, V3, V3)>,
 }
 
 /// Least squares `y = a + b x` over `(x, y)` sums; None when the xs don't spread.
@@ -644,6 +655,25 @@ impl Shadows {
                 sum / area
             })
         };
+        // The lamps: objects no bigger than LAMP_SIZE every way.
+        let mut boxes: Vec<(i32, V3, V3)> = Vec::new();
+        for (c, _, p) in placed.iter().filter(|q| q.2.object >= 0) {
+            let i = match boxes.iter().position(|b| b.0 == p.object) {
+                Some(i) => i,
+                None => {
+                    boxes.push((p.object, [f32::MAX; 3], [f32::MIN; 3]));
+                    boxes.len() - 1
+                }
+            };
+            for k in c {
+                for a in 0..3 {
+                    boxes[i].1[a] = boxes[i].1[a].min(k.p[a]);
+                    boxes[i].2[a] = boxes[i].2[a].max(k.p[a]);
+                }
+            }
+        }
+        boxes.retain(|(_, lo, hi)| (0..3).all(|a| hi[a] - lo[a] <= LAMP_SIZE));
+        self.lamps = boxes;
         // Fences cast nothing (the user, 2026-11-18: side by side their shadows looked like
         // separate blocks, as the trees' did): a fence is a short upright face whose texture is
         // largely see-through (the gaps between its pickets), and any short upright face that
@@ -758,6 +788,7 @@ impl Shadows {
                         param: p.tex_param,
                         attached: p.flags & FLAG_ATTACHED != 0,
                         floating: false,
+                        object: p.object,
                     });
                     shapes.push((corners.clone(), tex, p.tex_param));
                     continue;
@@ -790,6 +821,7 @@ impl Shadows {
                         tex: None,
                         param: 0,
                         card: 0,
+                        object: p.object,
                     });
                 }
                 let slab = corners
@@ -807,6 +839,7 @@ impl Shadows {
                     tex,
                     param: p.tex_param,
                     card: 0,
+                    object: p.object,
                 });
             }
             let ground_level = dot(*n, up) > 0.97
@@ -821,6 +854,7 @@ impl Shadows {
                     tex,
                     param: p.tex_param,
                     card: 0,
+                    object: p.object,
                 });
             }
         }
@@ -917,8 +951,8 @@ impl Shadows {
     }
 
     /// The cards standing at their feet turned toward a light (`toward(foot)`: the horizontal
-    /// direction to it from there).
-    fn standing_cards(&self, toward: impl Fn(V3) -> V3, trees: bool) -> Vec<Caster> {
+    /// direction to it from there, and how far to lean away from it).
+    fn standing_cards(&self, toward: impl Fn(V3) -> (V3, f32), trees: bool) -> Vec<Caster> {
         self.cards
             .iter()
             .enumerate()
@@ -929,10 +963,14 @@ impl Shadows {
                     && (trees || height <= TREE_HEIGHT)
             })
             .map(|(k, c)| Caster {
-                corners: c.standing(self.up, toward(c.foot)),
+                corners: {
+                    let (dir, lean) = toward(c.foot);
+                    c.standing(self.up, dir, lean)
+                },
                 tex: c.tex,
                 param: c.param,
                 card: k as u32 + 1,
+                object: c.object,
             })
             .collect()
     }
@@ -951,7 +989,7 @@ impl Shadows {
         // Trees cast no sun shadows: their sprites have one painted under them, and stood up
         // along the sun a forest's were many, costly, and never quite the tree's shape (the
         // user).
-        let cards = self.standing_cards(|_| flat, false);
+        let cards = self.standing_cards(|_| (flat, 0.0), false);
         let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
         for c in self.casters.iter().chain(&cards) {
             for k in &c.corners {
@@ -1020,7 +1058,7 @@ impl Shadows {
     /// through are drawn; all of every light's at once on the pool's threads.
     pub fn build_points(
         &mut self,
-        lights: &[(V3, f32, usize)],
+        lights: &[(V3, V3, f32, usize)],
         receivers: &[V3],
         pool: Option<&rayon::ThreadPool>,
     ) {
@@ -1041,27 +1079,44 @@ impl Shadows {
         // in reach looks out through them).
         let mut work: Vec<(Vec<&Caster>, Vec<Caster>)> = Vec::new();
         let mut faces: Vec<(usize, DepthMap)> = Vec::new();
-        for &(light, range, size) in lights {
+        for &(light, glow, range, size) in lights {
             let Some(pos) = self.true_place(light) else {
                 continue;
             };
+            // A lamp's light: its own head, cage, post and glow (the see-through cards round its
+            // head) cast nothing for it (its lights sit round its head, and the head shadowed the
+            // ground at its sides; the glow the game draws on the ground beside its head is a
+            // light too, and the head and the glow's cards shadowed the ground behind it: two
+            // shadows over each lamp, the user, 2026-11-23). Anything else still shadows its own
+            // light (the user's choice).
+            let lamp = self.true_place(glow).and_then(|g| self.lamp_at(g));
+            #[cfg(feature = "dev-hooks")]
+            dev_fixture_log(pos, lamp);
             let k = self.points.len();
             let cards: Vec<Caster> = self
                 .standing_cards(
                     |foot| {
                         let d = sub(pos, foot);
-                        normalize(sub(d, scale(up, dot(d, up))))
+                        let flat = sub(d, scale(up, dot(d, up)));
+                        // A light high over a card saw it nearly edge-on: its shadow thinned
+                        // to a few rows at its feet that flashed as the light moved (lines by
+                        // the player under the Poké Mart's turning sign, the user, 2026-11-24).
+                        // A sprite stands for a body: past STEEP, it leans away by the rest.
+                        let rise = dot(d, up).atan2(dot(flat, flat).sqrt());
+                        (normalize(flat), (rise - STEEP).max(0.0))
                     },
                     true,
                 )
                 .into_iter()
                 .filter(|c| reaches(&c.corners, pos, range))
+                .filter(|c| lamp != Some(c.object))
                 .collect();
             // Only what's within its reach casts (what's beyond it lies in the dark anyway).
             let near: Vec<&Caster> = self
                 .casters
                 .iter()
                 .filter(|c| reaches(&c.corners, pos, range))
+                .filter(|c| lamp != Some(c.object))
                 .collect();
             let mut used = [false; 6];
             for r in receivers {
@@ -1122,6 +1177,22 @@ impl Shadows {
         for (k, f) in faces {
             self.points[k].faces.push(f);
         }
+    }
+
+    /// The lamp a glow (where the polygons put it) is drawn on or beside: the nearest within
+    /// [`BESIDE`] of its box.
+    fn lamp_at(&self, glow: V3) -> Option<i32> {
+        self.lamps
+            .iter()
+            .map(|(o, lo, hi)| {
+                let d = (0..3)
+                    .map(|a| (lo[a] - glow[a]).max(glow[a] - hi[a]).max(0.0))
+                    .fold(0.0, f32::max);
+                (d, *o)
+            })
+            .filter(|&(d, _)| d <= BESIDE)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, o)| o)
     }
 
     /// Whether the sun's map was drawn this frame.
@@ -1317,6 +1388,38 @@ pub(crate) fn card_spans(g: &Geometry, rows: &[[f32; 4]; 4], out: &mut Vec<CardS
     }
 }
 
+/// The most a lamp is across, up and deep (view units: a tile is 16). Measured: Violet City's lamps
+/// 15 x 25 x 27, its Gym's door 16 x 25 x 28; the rotating sign 11 x 37 x 35; buildings 51 and up.
+const LAMP_SIZE: f32 = 30.0;
+
+/// How far from a lamp (view units) a glow still counts as its own: the glow the game draws on
+/// the ground beside its head lies 4.4 from it (measured); lamps stand a few tiles apart.
+const BESIDE: f32 = 8.0;
+
+/// Dev: each shadow-casting light (`GOLDLINK_DEV_FIXTURE_LOG`), one line each: "x y z lamp": where
+/// it is and its lamp's object (-1 none).
+#[cfg(feature = "dev-hooks")]
+fn dev_fixture_log(pos: V3, lamp: Option<i32>) {
+    use std::io::Write;
+    use std::sync::OnceLock;
+    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("GOLDLINK_DEV_FIXTURE_LOG")?;
+        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
+    });
+    let Some(file) = file else { return };
+    if let Ok(mut f) = file.lock() {
+        let _ = writeln!(
+            f,
+            "{:.1} {:.1} {:.1} {}",
+            pos[0],
+            pos[1],
+            pos[2],
+            lamp.unwrap_or(-1)
+        );
+    }
+}
+
 /// Whether a polygon comes within `range` of `pos` (its corners' box does).
 fn reaches(c: &[Corner], pos: V3, range: f32) -> bool {
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
@@ -1472,5 +1575,192 @@ mod tests {
         let noon = Shadows::sun_dir(normalize(up), 0.0, 1.0);
         let south = normalize(cross([1.0, 0.0, 0.0], up));
         assert!(dot(noon, south) < -0.3, "{noon:?}");
+    }
+}
+
+/// How near a polygon's plane a pixel's place must lie for the pixel to be that polygon's (view
+/// units; the depth buffer's steps are well under one this near).
+const ON_PLANE: f32 = 1.0;
+/// How far outside a polygon's edges (pixels) a pixel's centre may lie and still be tried on it:
+/// the DS's rules for an edge's pixels aren't these.
+const EDGE_SLACK: f32 = 0.75;
+
+/// A triangle of a polygon on the picture, for [`surface_row`]: its plane (a point, the normal
+/// toward the camera), its edges (each `(a, b, c)`: `a x + b y + c`, pixels inside positive) and
+/// the rows and columns it may cover.
+pub(crate) struct SurfaceTri {
+    origin: V3,
+    nrm: V3,
+    edges: [(f32, f32, f32); 3],
+    cols: (usize, usize),
+    rows: (usize, usize),
+}
+
+/// The picture's polygons as triangles for each pixel's surface ([`surface_row`]), with each
+/// corner where the lighting puts it: its pixel and depth unprojected with the lighting's `rows`
+/// (so a polygon's plane holds the places the lighting finds for its pixels), on a `width`-wide
+/// picture `h` rows tall.
+pub(crate) fn surface_tris(
+    g: &Geometry,
+    rows: &[[f32; 4]; 4],
+    width: usize,
+    h: usize,
+    out: &mut Vec<SurfaceTri>,
+) {
+    out.clear();
+    let mut corners: Vec<([f32; 2], V3)> = Vec::new();
+    for p in g.polys {
+        if p.flags & (SKIP | FLAG_OFFSCREEN) != 0 || p.num_verts < 3 {
+            continue;
+        }
+        let (a, b) = (p.first_vert as usize, (p.first_vert + p.num_verts) as usize);
+        let Some(verts) = g.verts.get(a..b) else {
+            continue;
+        };
+        corners.clear();
+        for v in verts {
+            if v.clip[3] == 0 {
+                break;
+            }
+            let (sx, sy) = (v.screen[0] as f32, v.screen[1] as f32);
+            let xn = (sx - width as f32 / 2.0) / 128.0;
+            let yn = 1.0 - sy / (h as f32 / 2.0);
+            let zn = v.clip[2] as f32 / v.clip[3] as f32;
+            match super::unproject(rows, xn, yn, zn) {
+                Some(q) => corners.push(([sx, sy], q)),
+                None => break,
+            }
+        }
+        if corners.len() != verts.len() {
+            continue;
+        }
+        // The plane: Newell's normal over the corners, toward the camera.
+        let mut nrm = [0.0f32; 3];
+        for k in 0..corners.len() {
+            let (c, d) = (corners[k].1, corners[(k + 1) % corners.len()].1);
+            nrm[0] += (c[1] - d[1]) * (c[2] + d[2]);
+            nrm[1] += (c[2] - d[2]) * (c[0] + d[0]);
+            nrm[2] += (c[0] - d[0]) * (c[1] + d[1]);
+        }
+        if dot(nrm, nrm) < 1e-12 {
+            continue;
+        }
+        let mut nrm = normalize(nrm);
+        let origin = corners[0].1;
+        if dot(nrm, origin) > 0.0 {
+            nrm = scale(nrm, -1.0);
+        }
+        for j in 1..corners.len() - 1 {
+            let t = [corners[0].0, corners[j].0, corners[j + 1].0];
+            let area = (t[1][0] - t[0][0]) * (t[2][1] - t[0][1])
+                - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1]);
+            if area.abs() < 1e-6 {
+                continue;
+            }
+            let lo = |a: usize| t.iter().map(|c| c[a]).fold(f32::MAX, f32::min) - EDGE_SLACK;
+            let hi = |a: usize| t.iter().map(|c| c[a]).fold(f32::MIN, f32::max) + EDGE_SLACK;
+            let (c0, c1) = (lo(0).floor().max(0.0), hi(0).ceil().min(width as f32));
+            let (r0, r1) = (lo(1).floor().max(0.0), hi(1).ceil().min(h as f32));
+            if c0 >= c1 || r0 >= r1 {
+                continue;
+            }
+            let s = area.signum();
+            let edges = std::array::from_fn(|k| {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
+                let len = (ex * ex + ey * ey).sqrt().max(1e-6);
+                (
+                    s * -ey / len,
+                    s * ex / len,
+                    s * (ey * a[0] - ex * a[1]) / len,
+                )
+            });
+            out.push(SurfaceTri {
+                origin,
+                nrm,
+                edges,
+                cols: (c0 as usize, c1 as usize),
+                rows: (r0 as usize, r1 as usize),
+            });
+        }
+    }
+}
+
+/// One row's surfaces (`out`: each pixel's normal, toward the camera, w 1; w 0 where no polygon
+/// is found): the triangle the picture shows there, the one whose plane the pixel's place (`pos`)
+/// lies on. The row is `y`, its pixels from column `x0` of the picture. From the depth buffer's
+/// neighbours alone, a thin face (a turning sign's top) or a step in the ground (a block's seam,
+/// the paving's edge) took its neighbours' normals on rows that changed from frame to frame, and
+/// the point lights' shadows, looked up off the surface along them, drew lines there that
+/// flashed (by the player under the Poké Mart's turning sign, the user, 2026-11-24).
+pub(crate) fn surface_row(
+    tris: &[SurfaceTri],
+    y: usize,
+    x0: usize,
+    pos: &[V3],
+    layer: &[u8],
+    out: &mut [[f32; 4]],
+) {
+    let w = out.len();
+    out.fill([0.0; 4]);
+    let mut best = vec![ON_PLANE; w];
+    let py = y as f32 + 0.5;
+    for t in tris.iter().filter(|t| t.rows.0 <= y && y < t.rows.1) {
+        let (c0, c1) = (t.cols.0.max(x0), t.cols.1.min(x0 + w));
+        for col in c0..c1 {
+            let px = col as f32 + 0.5;
+            if t.edges
+                .iter()
+                .any(|e| e.0 * px + e.1 * py + e.2 < -EDGE_SLACK)
+            {
+                continue;
+            }
+            let x = col - x0;
+            if layer[x] == 0 {
+                continue;
+            }
+            let d = dot(sub(pos[x], t.origin), t.nrm).abs();
+            if d < best[x] {
+                best[x] = d;
+                out[x] = [t.nrm[0], t.nrm[1], t.nrm[2], 1.0];
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    /// A triangle over the whole row (columns 0..8) on the plane through `origin` facing `nrm`.
+    fn tri(origin: V3, nrm: V3) -> SurfaceTri {
+        let edge = |a: [f32; 2], b: [f32; 2]| {
+            let (ex, ey) = (b[0] - a[0], b[1] - a[1]);
+            let len = (ex * ex + ey * ey).sqrt();
+            (-ey / len, ex / len, (ey * a[0] - ex * a[1]) / len)
+        };
+        // Clockwise on the screen (rows down): inside is positive.
+        let t = [[-100.0, -100.0], [100.0, -100.0], [0.0, 100.0]];
+        SurfaceTri {
+            origin,
+            nrm,
+            edges: [edge(t[0], t[1]), edge(t[1], t[2]), edge(t[2], t[0])],
+            cols: (0, 8),
+            rows: (0, 8),
+        }
+    }
+
+    /// Each pixel takes the polygon its place lies on: a wall in front of the ground, both
+    /// over the same pixels; one on neither plane takes none.
+    #[test]
+    fn a_pixel_takes_the_polygon_it_lies_on() {
+        let ground = tri([0.0, -10.0, -100.0], [0.0, 1.0, 0.0]);
+        let wall = tri([0.0, 0.0, -80.0], [0.0, 0.0, 1.0]);
+        let pos = [[1.0, -10.0, -120.0], [2.0, 5.0, -80.0], [3.0, 5.0, -90.0]];
+        let mut out = [[0.0; 4]; 3];
+        surface_row(&[ground, wall], 2, 0, &pos, &[1, 1, 1], &mut out);
+        assert_eq!(out[0], [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(out[1], [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(out[2][3], 0.0);
     }
 }

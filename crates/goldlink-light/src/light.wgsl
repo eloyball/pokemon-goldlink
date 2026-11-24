@@ -10,6 +10,12 @@ const CONTRAST: f32 = 0.10;
 const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
 const NEAR: f32 = 0.5;
+// A point light's map's bias and its receivers' push off their surface, at least this many of its
+// texels there: a texel spans more of the ground the further it is, and with the bias in units
+// alone the ground's own steps (the paving's edge, a block's seam) took rows of its texels'
+// shadow that flashed as the light moved (the user, 2026-11-24).
+const TEXEL_BIAS: f32 = 1.0;
+const TEXEL_OFFSET: f32 = 0.5;
 // How much wider than 90 degrees a point light's face sees (shadow.rs `WIDEN`).
 const WIDEN: f32 = 1.05;
 const TREE_HEIGHT: f32 = 44.0;
@@ -59,6 +65,8 @@ struct Frame {
 struct Pixel {
     pos: vec4<f32>,
     info: vec4<u32>,
+    // Its polygon's normal (w 1; 0: none found, then from its neighbours' places).
+    nrm: vec4<f32>,
 }
 
 // A light: where (w: reach), its colour (w: its shadow maps' slot, -1 none).
@@ -158,7 +166,9 @@ fn normals_raw(@builtin(global_invocation_id) g: vec3<u32>) {
     let y = g.y;
     let i = y * w + x;
     var out = vec3<f32>(0.0, 0.0, 1.0);
-    if is3d(i) {
+    if is3d(i) && pix[i].nrm.w > 0.5 {
+        out = pix[i].nrm.xyz;
+    } else if is3d(i) {
         let c = pix[i].pos.xyz;
         let hr = x + 1u < w && is3d(i + 1u);
         let hl = x > 0u && is3d(i - 1u);
@@ -192,6 +202,10 @@ fn normals_smooth(@builtin(global_invocation_id) g: vec3<u32>) {
     let i = g.y * w + g.x;
     if !is3d(i) {
         work1[i] = vec4<f32>(0.0, 0.0, 1.0, 1.0);
+        return;
+    }
+    if pix[i].nrm.w > 0.5 {
+        work1[i] = vec4<f32>(pix[i].nrm.xyz, 1.0);
         return;
     }
     let z = pix[i].pos.z;
@@ -337,7 +351,7 @@ fn over_sun(q: vec3<f32>, slope: f32) -> i32 {
     return -1;
 }
 
-fn over_face(f: Face, q: vec3<f32>, slope: f32) -> i32 {
+fn over_face(f: Face, q: vec3<f32>, slope: f32, texel: f32) -> i32 {
     let size = f.pos.w;
     if size <= 0.0 {
         return -1;
@@ -359,7 +373,7 @@ fn over_face(f: Face, q: vec3<f32>, slope: f32) -> i32 {
     }
     let at = vec2<u32>(u32(f.forward.w) + ix, u32(f.right.w) + iy);
     let depth = textureLoad(atlas_raw, at, 0).r;
-    if depth > 1.0 / max(z - BIAS * (1.0 + slope), NEAR) {
+    if depth > 1.0 / max(z - max(BIAS, TEXEL_BIAS * texel) * (1.0 + slope), NEAR) {
         return i32(textureLoad(atlas_card, at, 0).r);
     }
     return -1;
@@ -389,12 +403,16 @@ fn visible(point: i32, p: vec3<f32>, n: vec3<f32>, attached: bool, card: i32) ->
     }
     let facing = clamp(dot(n, to), 0.05, 1.0);
     let slope = min(sqrt(1.0 - facing * facing) / facing, 3.0);
-    let q = p + n * (NORMAL_OFFSET * (1.0 + slope));
+    var texel = 0.0;
+    if point >= 0 && f.pos.w > 0.0 {
+        texel = 2.0 * WIDEN * max(dot(p - f.pos.xyz, f.forward.xyz), NEAR) / f.pos.w;
+    }
+    let q = p + n * (max(NORMAL_OFFSET, TEXEL_OFFSET * texel) * (1.0 + slope));
     var o: i32;
     if point < 0 {
         o = over_sun(q, slope);
     } else {
-        o = over_face(f, q, slope);
+        o = over_face(f, q, slope, texel);
     }
     if o < 0 {
         return 1.0;

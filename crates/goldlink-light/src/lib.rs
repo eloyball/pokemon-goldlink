@@ -512,10 +512,14 @@ fn dev_light_log(tracked: &[Tracked], found: &[(u32, PointLight)]) {
     }
 }
 
+/// How far in front of its bright surface a light sits (view units).
+const LIGHT_OUT: f32 = 12.0;
 /// Bright patches nearer each other than this (view units; a tile is 16) are one light: a double
 /// window's panes, a shop window's shine. Measured over a walk through Violet City at night: the
 /// pieces of one fixture lie 4 to 16 apart, separate fixtures (a pair of lamps) 20 and more.
 const MERGE: f32 = 18.0;
+/// How far behind the surface shown at its pixel a light may lie and still show (view units).
+const SHOW_SLACK: f32 = 2.0;
 /// How far from each other's plane two bright patches may lie and still be one light (view units).
 const MERGE_PLANE: f32 = 3.0;
 /// The most a merged light may be (a single patch's is at most 1.5).
@@ -532,6 +536,8 @@ const SRGB_STEPS: usize = 4096;
 #[derive(Debug, Clone, Copy)]
 struct PointLight {
     pos: V3,
+    /// Where its glow is (the bright surface it shines from; the player's light: where it is).
+    glow: V3,
     colour: V3,
     range: f32,
 }
@@ -578,6 +584,9 @@ pub struct Lighting {
     layer: Vec<u8>,
     nrm: Vec<V3>,
     tmp3: Vec<V3>,
+    /// Each pixel's surface as its polygon has it (w 1; 0: none found): [`shadow::surface_row`].
+    surface: Vec<[f32; 4]>,
+    tris: Vec<shadow::SurfaceTri>,
     label: Vec<u32>,
     stack: Vec<u32>,
     /// The vignette for (width, height, strength), per pixel.
@@ -741,6 +750,8 @@ impl Lighting {
             layer: Vec::new(),
             nrm: Vec::new(),
             tmp3: Vec::new(),
+            surface: Vec::new(),
+            tris: Vec::new(),
             label: Vec::new(),
             stack: Vec::new(),
             vignette: (0, 0, 0.0, Vec::new()),
@@ -915,6 +926,15 @@ impl Lighting {
         self.pos.extend(self.cells.iter().map(|c| c.pos));
         self.layer.clear();
         self.layer.extend(self.cells.iter().map(|c| c.layer));
+        shadow::surface_tris(&scene.geometry, &rows, scene.width, h, &mut self.tris);
+        self.surface.resize(n, [0.0; 4]);
+        {
+            let (tris, pos, layer) = (&self.tris, &self.pos, &self.layer);
+            par_rows(self.pool.as_ref(), &mut self.surface, w, |y, row| {
+                let r = y * w..(y + 1) * w;
+                shadow::surface_row(tris, y, x0, &pos[r.clone()], &layer[r], row);
+            });
+        }
 
         // What shows on a card (a sprite: a person, the follower, an emote bubble): never a light
         // source, and no bloom from it (a white "!" bubble glowed at night like a lit sign).
@@ -987,7 +1007,17 @@ impl Lighting {
             self.normals(w, h);
         }
         let found = if p.points > 0.0 {
-            self.find_lights(w, h, p.points, phase == Phase::Night)
+            self.find_lights(
+                w,
+                h,
+                p.points,
+                phase == Phase::Night,
+                &Projection {
+                    proj: scene.proj,
+                    width: scene.width,
+                    x0,
+                },
+            )
         } else {
             Vec::new()
         };
@@ -1018,6 +1048,7 @@ impl Lighting {
             // Above the player, a little toward the camera.
             lights.push(PointLight {
                 pos: add(f, [0.0, p.player_height, 12.0]),
+                glow: add(f, [0.0, p.player_height, 12.0]),
                 colour: p.player_light,
                 range: p.player_range,
             });
@@ -1042,7 +1073,7 @@ impl Lighting {
                 let db = sub(lights[b].pos, near);
                 dot(da, da).total_cmp(&dot(db, db))
             });
-            let at: Vec<(V3, f32, usize)> = chosen
+            let at: Vec<(V3, V3, f32, usize)> = chosen
                 .iter()
                 .enumerate()
                 .map(|(k, &i)| {
@@ -1051,7 +1082,7 @@ impl Lighting {
                     } else {
                         shadow::FACE_COARSE
                     };
-                    (lights[i].pos, lights[i].range, face)
+                    (lights[i].pos, lights[i].glow, lights[i].range, face)
                 })
                 .collect();
             // Every third pixel's place, for which faces of a light's cube anything looks out
@@ -1109,6 +1140,7 @@ impl Lighting {
                     -1.0f32
                 };
                 gpu::Pixel {
+                    nrm: self.surface.get(i).copied().unwrap_or_default(),
                     pos: [
                         c.pos[0],
                         c.pos[1],
@@ -1202,7 +1234,7 @@ impl Lighting {
     /// takes its own surface's side); none across an edge (then the pixel faces the camera).
     /// Then averaged with the neighbours on the same surface.
     fn normals(&mut self, w: usize, h: usize) {
-        let (pos, layer) = (&self.pos, &self.layer);
+        let (pos, layer, surface) = (&self.pos, &self.layer, &self.surface);
         // The nearer of two one-sided differences (each present when its neighbour is 3D).
         let pick = |fwd: Option<V3>, bwd: Option<V3>| -> Option<V3> {
             let best = match (fwd, bwd) {
@@ -1225,6 +1257,10 @@ impl Lighting {
                 if layer[i] == 0 {
                     continue;
                 }
+                if let Some(s) = surface.get(i).filter(|s| s[3] > 0.5) {
+                    *out = [s[0], s[1], s[2]];
+                    continue;
+                }
                 let c = pos[i];
                 let right = (x + 1 < w && layer[i + 1] != 0).then(|| sub(pos[i + 1], c));
                 let left = (x > 0 && layer[i - 1] != 0).then(|| sub(c, pos[i - 1]));
@@ -1244,6 +1280,10 @@ impl Lighting {
                 let i = y * w + x;
                 if layer[i] == 0 {
                     *out = [0.0, 0.0, 1.0];
+                    continue;
+                }
+                if let Some(s) = surface.get(i).filter(|s| s[3] > 0.5) {
+                    *out = [s[0], s[1], s[2]];
                     continue;
                 }
                 let z = pos[i][2];
@@ -1270,6 +1310,7 @@ impl Lighting {
         h: usize,
         strength: f32,
         night: bool,
+        view: &Projection,
     ) -> Vec<(u32, PointLight)> {
         let n = w * h;
         let (mut total, mut count) = (0.0f32, 0u32);
@@ -1381,6 +1422,19 @@ impl Lighting {
         // jumping between two and one. A merged patch's pixels bloom as the light they joined.
         self.patch_alias.clear();
         self.patch_alias.extend(0..=patches.len() as u32);
+        // Only lights merge: specks under 3 pixels, no light on their own, could join into one
+        // (two under a lamp's head made a light below it, which shadowed the ground beside it).
+        patches.retain(|p| p.size >= 3);
+        // Whether a place (view space) shows: not behind what the picture shows at its pixel (off
+        // the picture, it does).
+        let cells = &self.cells;
+        let shows = |at: V3| match view.pixel(at, h) {
+            Some((x, y)) if x < w && y < h => {
+                let c = cells[y * w + x];
+                c.layer != 1 || at[2] >= c.pos[2] - SHOW_SLACK
+            }
+            _ => true,
+        };
         let warm = |p: &Patch| p.colour[0] >= p.colour[2] * 1.6;
         let centre = |p: &Patch| scale(p.pos, 1.0 / p.size as f32);
         // Union-find over the patches (by index), each pair compared once.
@@ -1401,10 +1455,20 @@ impl Lighting {
                 // turning sign, in front of its windows and of their kind, faced their way once a
                 // turn and joined their light, then left it, and its light jumped about.
                 let off_plane = dot(d, normalize(add(na, nb))).abs();
+                // Only where the joined light would show (nothing nearer the camera at its place on
+                // the picture): a double window's panes, in front of their wall. A lamp's side
+                // panes joined into a light inside its head, and the head shadowed the ground at
+                // both its sides (the user, 2026-11-23); apart, each lights what the other can't.
+                let joined = || {
+                    let size = (pa.size + pb.size) as f32;
+                    let at = scale(add(pa.pos, pb.pos), 1.0 / size);
+                    shows(add(at, scale(normalize(add(pa.nrm, pb.nrm)), LIGHT_OUT)))
+                };
                 if dot(d, d) < MERGE * MERGE
                     && warm(pa) == warm(pb)
                     && dot(na, nb) > 0.9
                     && off_plane < MERGE_PLANE
+                    && joined()
                 {
                     let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
                     if ra != rb {
@@ -1431,6 +1495,18 @@ impl Lighting {
                 patches[i].size = 0;
             }
         }
+        // A piece joined to one that joined another blooms as the last.
+        for i in 0..self.patch_alias.len() {
+            let mut a = self.patch_alias[i] as usize;
+            for _ in 0..8 {
+                let next = self.patch_alias[a] as usize;
+                if next == a {
+                    break;
+                }
+                a = next;
+            }
+            self.patch_alias[i] = a as u32;
+        }
         patches.retain(|p| p.size >= 3);
         patches.sort_by_key(|p| std::cmp::Reverse(p.size));
         patches.truncate(MAX_LIGHTS);
@@ -1443,7 +1519,8 @@ impl Lighting {
                 let colour = mix(scale(colour, 1.0 / peak), [1.0, 0.85, 0.65], 0.3);
                 let power = strength * p.power;
                 let light = PointLight {
-                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), 6.0)),
+                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), LIGHT_OUT)),
+                    glow: scale(p.pos, k),
                     colour: scale(colour, power),
                     range: LIGHT_RANGE,
                 };
@@ -1668,6 +1745,32 @@ fn invert(m: &[i32; 16]) -> Option<[f64; 16]> {
     Some(inv.map(|v| v / det))
 }
 
+/// The picture's projection, to find where a view-space place lands on it.
+struct Projection {
+    proj: [i32; 16],
+    /// The scene's width in columns (the wide picture's), and the lit part's first column.
+    width: usize,
+    x0: usize,
+}
+
+impl Projection {
+    /// The lit part's pixel (column, row) a view-space place lands on, `h` rows tall.
+    fn pixel(&self, p: V3, h: usize) -> Option<(usize, usize)> {
+        let m = |r: usize, c: usize| self.proj[r * 4 + c] as f32 / 4096.0;
+        let clip: [f32; 4] =
+            std::array::from_fn(|c| p[0] * m(0, c) + p[1] * m(1, c) + p[2] * m(2, c) + m(3, c));
+        if clip[3].abs() < 1e-6 {
+            return None;
+        }
+        let (xn, yn) = (clip[0] / clip[3], clip[1] / clip[3]);
+        let col = xn * 128.0 + self.width as f32 / 2.0 - 0.5;
+        let row = (1.0 - yn) * (h as f32 / 2.0) - 0.5;
+        let x = col.round() - self.x0 as f32;
+        let y = row.round();
+        (x >= 0.0 && y >= 0.0 && x.is_finite() && y.is_finite()).then_some((x as usize, y as usize))
+    }
+}
+
 /// The inverse projection's rows, for [`unproject`].
 fn unprojection(proj: &[i32; 16]) -> Option<[[f32; 4]; 4]> {
     let inv = invert(proj)?;
@@ -1770,6 +1873,30 @@ mod tests {
         assert_eq!(Place::of_map(64), Place::Indoor); // the player's room
         assert_eq!(Place::of_map(99), Place::Cave); // Union Cave 1F
         assert_eq!(Place::of_map(9999), Place::Outdoor);
+    }
+
+    /// A pixel's place, projected back, lands on that pixel (the merge's "does it show" test).
+    #[test]
+    fn projecting_a_pixels_place_gives_back_the_pixel() {
+        let rows = unprojection(&PROJ).expect("invertible");
+        let (width, h, x0) = (384usize, HEIGHT, 64usize);
+        let view = Projection {
+            proj: PROJ,
+            width,
+            x0,
+        };
+        for (x, y, z) in [
+            (10usize, 20usize, -300.0f64),
+            (128, 96, -500.0),
+            (250, 180, -800.0),
+        ] {
+            let col = x0 + x;
+            let xn = (col as f32 + 0.5 - width as f32 / 2.0) / 128.0;
+            let yn = 1.0 - (y as f32 + 0.5) / (h as f32 / 2.0);
+            let zn = depth_of(z) as f32 / 8_388_607.5 - 1.0;
+            let p = unproject(&rows, xn, yn, zn).expect("in front");
+            assert_eq!(view.pixel(p, h), Some((x, y)));
+        }
     }
 
     #[test]
