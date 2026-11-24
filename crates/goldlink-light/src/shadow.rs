@@ -220,8 +220,9 @@ const NEAR: f32 = 7.0;
 /// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at
 /// the seam between two faces was looked up on the outermost texels, which held the ground
 /// itself, and every light drew thin shadow lines out from it across the ground (Cherrygrove's
-/// Pokémon Centre at night, the user's play test). 5% left two pixels of it there; 10% is clear.
-pub const WIDEN: f32 = 1.10;
+/// Pokémon Centre at night, the user's play test). 10% cleared the last two pixels of it there, but
+/// shadows came and went while walking (the user's play test, 2026-11-23): 5%.
+pub const WIDEN: f32 = 1.05;
 
 impl View {
     /// A point on the map: its column, row (texels) and nearness to the light (the larger, the
