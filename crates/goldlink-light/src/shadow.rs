@@ -208,18 +208,8 @@ pub(crate) enum View {
     },
 }
 
-/// Nothing nearer a point light than this casts (view units; light.wgsl's `NEAR` too): everything
-/// casts. Lights sit 6 units out from their glowing surface (lib.rs `find_lights`); 10 freed the
-/// Pokémon Centre's door light from its recess but made more trouble than it solved (the user,
-/// 2026-11-23: a turning sign's light swung wider, 14 put a lamp's light a tile in front of it).
-/// Nears up to the offset barely changed a frame (a lamp post's own shadow).
+/// Nothing nearer a point light than this casts (view units).
 const NEAR: f32 = 0.5;
-
-/// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at
-/// the seam between two faces was looked up on the outermost texels, which held the ground
-/// itself, and every light drew thin shadow lines out from it across the ground (Cherrygrove's
-/// Pokémon Centre at night, the user's play test). 5% left two pixels of it there; 10% is clear.
-pub const WIDEN: f32 = 1.10;
 
 impl View {
     /// A point on the map: its column, row (texels) and nearness to the light (the larger, the
@@ -248,8 +238,8 @@ impl View {
                 let z = dot(d, forward);
                 (z >= NEAR).then(|| {
                     [
-                        (dot(d, right) / (z * WIDEN) * 0.5 + 0.5) * size,
-                        (dot(d, upward) / (z * WIDEN) * 0.5 + 0.5) * size,
+                        (dot(d, right) / z * 0.5 + 0.5) * size,
+                        (dot(d, upward) / z * 0.5 + 0.5) * size,
                         1.0 / z,
                     ]
                 })
@@ -325,10 +315,10 @@ impl DepthMap {
                     let d = sub(k.p, pos);
                     let (z, x, y) = (dot(d, forward), dot(d, right), dot(d, upward));
                     out[0] &= z < NEAR;
-                    out[1] &= x > z * WIDEN;
-                    out[2] &= x < -z * WIDEN;
-                    out[3] &= y > z * WIDEN;
-                    out[4] &= y < -z * WIDEN;
+                    out[1] &= x > z;
+                    out[2] &= x < -z;
+                    out[3] &= y > z;
+                    out[4] &= y < -z;
                 }
                 if out.iter().any(|&o| o) {
                     continue;

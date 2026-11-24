@@ -520,12 +520,6 @@ const MERGE: f32 = 18.0;
 const MERGE_PLANE: f32 = 3.0;
 /// The most a merged light may be (a single patch's is at most 1.5).
 const MERGED_POWER_MAX: f32 = 2.5;
-/// How far a followed light moves, and its strength changes, toward what this frame shows (the
-/// rest is last frame's): a lamp cut by the screen's edge, or a shop window whose glass shines,
-/// showed a different patch each frame, and its light and shadows jumped (the user, 2026-11-23).
-const SETTLE: f32 = 0.35;
-/// The furthest a followed light moves in a frame beyond the camera's own move (view units).
-const STEP: f32 = 1.5;
 /// At most this many point lights (the biggest bright patches).
 const MAX_LIGHTS: usize = 16;
 /// Neighbours further apart than this in depth (one pixel apart) are different surfaces.
@@ -1476,9 +1470,7 @@ impl Lighting {
         self.patch_weight.resize(max_id + 1, 1.0);
         let mut seen = vec![false; self.tracked.len()];
         let mut next = Vec::with_capacity(found.len() + self.tracked.len());
-        // Each light found, and the one it follows from the last frame.
-        let mut matched: Vec<Option<usize>> = Vec::with_capacity(found.len());
-        for &(_, light) in found {
+        for &(id, light) in found {
             let near = self
                 .tracked
                 .iter()
@@ -1490,60 +1482,20 @@ impl Lighting {
                 })
                 .filter(|&(_, d2)| d2 < TRACK_REACH * TRACK_REACH)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((i, _)) = near {
-                seen[i] = true;
-            }
-            matched.push(near.map(|(i, _)| i));
-        }
-        // The camera's own move this frame (the lights are where the camera sees them): the median
-        // of the followed lights' moves. Easing only what's left over keeps each light at its lamp
-        // as the player walks; easing the whole move left it trailing behind, and the lamp's shadows
-        // swung (the user, 2026-11-23: walking down and up past Violet City's lamps).
-        let camera = {
-            let moves: Vec<V3> = found
-                .iter()
-                .zip(&matched)
-                .filter_map(|(&(_, l), m)| m.map(|i| sub(l.pos, self.tracked[i].light.pos)))
-                .collect();
-            let median = |k: usize| {
-                let mut v: Vec<f32> = moves.iter().map(|m| m[k]).collect();
-                v.sort_by(f32::total_cmp);
-                v.get(v.len() / 2).copied().unwrap_or(0.0)
-            };
-            [median(0), median(1), median(2)]
-        };
-        for (&(id, light), m) in found.iter().zip(&matched) {
-            let (weight, light) = match *m {
-                Some(i) => {
-                    let was = self.tracked[i].light;
-                    let carried = add(was.pos, camera);
-                    // Eased, and at most STEP a frame: a light that must go elsewhere (the turning
-                    // sign's, flipping sides as it turns edge-on) glides there.
-                    let mut step = scale(sub(light.pos, carried), SETTLE);
-                    let len = dot(step, step).sqrt();
-                    if len > STEP {
-                        step = scale(step, STEP / len);
-                    }
-                    let settled = PointLight {
-                        pos: add(carried, step),
-                        colour: add(was.colour, scale(sub(light.colour, was.colour), SETTLE)),
-                        range: light.range,
-                    };
-                    ((self.tracked[i].weight + FADE_IN).min(1.0), settled)
+            let weight = match near {
+                Some((i, _)) => {
+                    seen[i] = true;
+                    (self.tracked[i].weight + FADE_IN).min(1.0)
                 }
-                None => (FADE_IN, light),
+                None => FADE_IN,
             };
             self.patch_weight[id as usize] = weight;
             next.push(Tracked { light, weight });
         }
         for (t, seen) in self.tracked.iter().zip(&seen) {
             if !seen && t.weight > FADE_OUT {
-                // A light fading out moves with the camera too, staying where its lamp was.
                 next.push(Tracked {
-                    light: PointLight {
-                        pos: add(t.light.pos, camera),
-                        ..t.light
-                    },
+                    light: t.light,
                     weight: t.weight - FADE_OUT,
                 });
             }

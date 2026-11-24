@@ -9,10 +9,7 @@ const AMBIENT_FLOOR: f32 = 0.55;
 const CONTRAST: f32 = 0.10;
 const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
-// Nothing nearer a point light than this casts (shadow.rs `NEAR`).
 const NEAR: f32 = 0.5;
-// How much wider than 90 degrees a point light's face sees (shadow.rs `WIDEN`).
-const WIDEN: f32 = 1.10;
 const TREE_HEIGHT: f32 = 44.0;
 // Cards whose feet are nearer than this (view units; a tile is 16) don't shadow each other's light.
 const CARD_NEAR: f32 = 12.0;
@@ -348,8 +345,8 @@ fn over_face(f: Face, q: vec3<f32>, slope: f32) -> i32 {
     if !(z >= NEAR) {
         return -1;
     }
-    let x = (dot(d, f.right.xyz) / (z * WIDEN) * 0.5 + 0.5) * size;
-    let y = (dot(d, f.upward.xyz) / (z * WIDEN) * 0.5 + 0.5) * size;
+    let x = (dot(d, f.right.xyz) / z * 0.5 + 0.5) * size;
+    let y = (dot(d, f.upward.xyz) / z * 0.5 + 0.5) * size;
     if !(x >= 0.0) || !(y >= 0.0) {
         return -1;
     }
