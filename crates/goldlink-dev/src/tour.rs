@@ -3190,7 +3190,9 @@ impl FrameHook for TourHook {
                 true
             }
             Step::EnvWalk => {
-                let moves: Vec<(Keys, u32, char)> = std::env::var("GOLDLINK_DEV_TOUR_KEYS")
+                // A move ending in p also takes a screenshot on every one of its frames (R240p:
+                // walk right four seconds, filmed).
+                let moves: Vec<(Keys, u32, char, bool)> = std::env::var("GOLDLINK_DEV_TOUR_KEYS")
                     .unwrap_or_default()
                     .split(',')
                     .filter_map(|m| {
@@ -3211,14 +3213,19 @@ impl FrameHook for TourHook {
                             'W' => Keys::NONE,
                             _ => return None,
                         };
-                        Some((k, m[1..].parse().unwrap_or(1), c))
+                        let film = m.len() > 1 && m.ends_with('p');
+                        let count = &m[1..m.len() - usize::from(film)];
+                        Some((k, count.parse().unwrap_or(1), c, film))
                     })
                     .collect();
                 let mut at = s.frames;
                 let mut done = true;
-                for (i, (k, n, c)) in moves.iter().enumerate() {
+                for (i, (k, n, c, film)) in moves.iter().enumerate() {
                     if at < *n {
                         input.keys |= *k;
+                        if *film {
+                            s.shot = Some(format!("f{i:02}-{at:04}"));
+                        }
                         // The window's keys and the screenshots on a segment's first frame.
                         if at == 0 {
                             let key = match c {
