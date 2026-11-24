@@ -208,13 +208,11 @@ pub(crate) enum View {
     },
 }
 
-/// Nothing nearer a point light than this casts (view units; light.wgsl's `NEAR` too). Lights
-/// sit 10 units out from their glowing surface (lib.rs `find_lights`): clear of a doorway's
-/// recess, near enough a lamp that its shadows start at it. Everything casts for it: 7 and 8
-/// barely changed a frame (a lamp post's own shadow), and neither stopped shadows coming and
-/// going while walking (the user's play test, 2026-11-23). Chosen from renders of offsets 6, 8
-/// and 10 with nears from 0.5 to the offset (6 boxed the Pokémon Centre's door in, 14 put a
-/// lamp's light a tile in front of it).
+/// Nothing nearer a point light than this casts (view units; light.wgsl's `NEAR` too): everything
+/// casts. Lights sit 6 units out from their glowing surface (lib.rs `find_lights`); 10 freed the
+/// Pokémon Centre's door light from its recess but made more trouble than it solved (the user,
+/// 2026-11-23: a turning sign's light swung wider, 14 put a lamp's light a tile in front of it).
+/// Nears up to the offset barely changed a frame (a lamp post's own shadow).
 const NEAR: f32 = 0.5;
 
 /// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at

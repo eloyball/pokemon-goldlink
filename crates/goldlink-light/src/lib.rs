@@ -477,9 +477,9 @@ const MAX_FINE_LIGHTS: usize = 3;
 const LIGHT_RANGE: f32 = 90.0;
 /// Development only (DEBUG_TOOLS.md): `GOLDLINK_DEV_LIGHT_LOG=<file>` appends a line per lit frame,
 /// each light followed as `x y z power weight;` (view space; power its colour's brightest channel),
-/// for measuring how steady the lights are.
+/// then `|` and the lights as this frame found them (`x y z;`), for measuring how steady they are.
 #[cfg(feature = "dev-hooks")]
-fn dev_light_log(tracked: &[Tracked]) {
+fn dev_light_log(tracked: &[Tracked], found: &[(u32, PointLight)]) {
     use std::io::Write;
     use std::sync::OnceLock;
     static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
@@ -501,6 +501,11 @@ fn dev_light_log(tracked: &[Tracked]) {
             t.weight
         );
     }
+    // Then this frame's lights as found, before following.
+    line.push('|');
+    for (_, l) in found {
+        line += &format!("{:.2} {:.2} {:.2};", l.pos[0], l.pos[1], l.pos[2]);
+    }
     line.push('\n');
     if let Ok(mut f) = file.lock() {
         let _ = f.write_all(line.as_bytes());
@@ -511,12 +516,16 @@ fn dev_light_log(tracked: &[Tracked]) {
 /// window's panes, a shop window's shine. Measured over a walk through Violet City at night: the
 /// pieces of one fixture lie 4 to 16 apart, separate fixtures (a pair of lamps) 20 and more.
 const MERGE: f32 = 18.0;
+/// How far from each other's plane two bright patches may lie and still be one light (view units).
+const MERGE_PLANE: f32 = 3.0;
 /// The most a merged light may be (a single patch's is at most 1.5).
 const MERGED_POWER_MAX: f32 = 2.5;
 /// How far a followed light moves, and its strength changes, toward what this frame shows (the
 /// rest is last frame's): a lamp cut by the screen's edge, or a shop window whose glass shines,
 /// showed a different patch each frame, and its light and shadows jumped (the user, 2026-11-23).
 const SETTLE: f32 = 0.35;
+/// The furthest a followed light moves in a frame beyond the camera's own move (view units).
+const STEP: f32 = 1.5;
 /// At most this many point lights (the biggest bright patches).
 const MAX_LIGHTS: usize = 16;
 /// Neighbours further apart than this in depth (one pixel apart) are different surfaces.
@@ -990,7 +999,7 @@ impl Lighting {
         };
         let mut lights = self.track_lights(&found);
         #[cfg(feature = "dev-hooks")]
-        dev_light_log(&self.tracked);
+        dev_light_log(&self.tracked, &found);
         let focus = self.focus(w, h);
         // A 2D sprite on the scene is lit where it stands, as the player's 3D sprite is: at the
         // ground under its feet (the first 3D below it in its column), not at the scene behind
@@ -1393,9 +1402,15 @@ impl Lighting {
             for b in a + 1..patches.len() {
                 let (pa, pb) = (&patches[a], &patches[b]);
                 let d = sub(centre(pa), centre(pb));
+                let (na, nb) = (normalize(pa.nrm), normalize(pb.nrm));
+                // In one plane too (a double window's panes in their wall): the Poké Mart's
+                // turning sign, in front of its windows and of their kind, faced their way once a
+                // turn and joined their light, then left it, and its light jumped about.
+                let off_plane = dot(d, normalize(add(na, nb))).abs();
                 if dot(d, d) < MERGE * MERGE
                     && warm(pa) == warm(pb)
-                    && dot(normalize(pa.nrm), normalize(pb.nrm)) > 0.7
+                    && dot(na, nb) > 0.9
+                    && off_plane < MERGE_PLANE
                 {
                     let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
                     if ra != rb {
@@ -1434,7 +1449,7 @@ impl Lighting {
                 let colour = mix(scale(colour, 1.0 / peak), [1.0, 0.85, 0.65], 0.3);
                 let power = strength * p.power;
                 let light = PointLight {
-                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), 10.0)),
+                    pos: add(scale(p.pos, k), scale(normalize(p.nrm), 6.0)),
                     colour: scale(colour, power),
                     range: LIGHT_RANGE,
                 };
@@ -1461,7 +1476,9 @@ impl Lighting {
         self.patch_weight.resize(max_id + 1, 1.0);
         let mut seen = vec![false; self.tracked.len()];
         let mut next = Vec::with_capacity(found.len() + self.tracked.len());
-        for &(id, light) in found {
+        // Each light found, and the one it follows from the last frame.
+        let mut matched: Vec<Option<usize>> = Vec::with_capacity(found.len());
+        for &(_, light) in found {
             let near = self
                 .tracked
                 .iter()
@@ -1473,12 +1490,42 @@ impl Lighting {
                 })
                 .filter(|&(_, d2)| d2 < TRACK_REACH * TRACK_REACH)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
-            let (weight, light) = match near {
-                Some((i, _)) => {
-                    seen[i] = true;
+            if let Some((i, _)) = near {
+                seen[i] = true;
+            }
+            matched.push(near.map(|(i, _)| i));
+        }
+        // The camera's own move this frame (the lights are where the camera sees them): the median
+        // of the followed lights' moves. Easing only what's left over keeps each light at its lamp
+        // as the player walks; easing the whole move left it trailing behind, and the lamp's shadows
+        // swung (the user, 2026-11-23: walking down and up past Violet City's lamps).
+        let camera = {
+            let moves: Vec<V3> = found
+                .iter()
+                .zip(&matched)
+                .filter_map(|(&(_, l), m)| m.map(|i| sub(l.pos, self.tracked[i].light.pos)))
+                .collect();
+            let median = |k: usize| {
+                let mut v: Vec<f32> = moves.iter().map(|m| m[k]).collect();
+                v.sort_by(f32::total_cmp);
+                v.get(v.len() / 2).copied().unwrap_or(0.0)
+            };
+            [median(0), median(1), median(2)]
+        };
+        for (&(id, light), m) in found.iter().zip(&matched) {
+            let (weight, light) = match *m {
+                Some(i) => {
                     let was = self.tracked[i].light;
+                    let carried = add(was.pos, camera);
+                    // Eased, and at most STEP a frame: a light that must go elsewhere (the turning
+                    // sign's, flipping sides as it turns edge-on) glides there.
+                    let mut step = scale(sub(light.pos, carried), SETTLE);
+                    let len = dot(step, step).sqrt();
+                    if len > STEP {
+                        step = scale(step, STEP / len);
+                    }
                     let settled = PointLight {
-                        pos: add(was.pos, scale(sub(light.pos, was.pos), SETTLE)),
+                        pos: add(carried, step),
                         colour: add(was.colour, scale(sub(light.colour, was.colour), SETTLE)),
                         range: light.range,
                     };
@@ -1491,8 +1538,12 @@ impl Lighting {
         }
         for (t, seen) in self.tracked.iter().zip(&seen) {
             if !seen && t.weight > FADE_OUT {
+                // A light fading out moves with the camera too, staying where its lamp was.
                 next.push(Tracked {
-                    light: t.light,
+                    light: PointLight {
+                        pos: add(t.light.pos, camera),
+                        ..t.light
+                    },
                     weight: t.weight - FADE_OUT,
                 });
             }
