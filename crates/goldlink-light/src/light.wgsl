@@ -10,7 +10,7 @@ const CONTRAST: f32 = 0.10;
 const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
 // Nothing nearer a point light than this casts (shadow.rs `NEAR`).
-const NEAR: f32 = 8.0;
+const NEAR: f32 = 7.0;
 // How much wider than 90 degrees a point light's face sees (shadow.rs `WIDEN`).
 const WIDEN: f32 = 1.10;
 const TREE_HEIGHT: f32 = 44.0;

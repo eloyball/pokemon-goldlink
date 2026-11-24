@@ -210,12 +210,12 @@ pub(crate) enum View {
 
 /// Nothing nearer a point light than this casts (view units; light.wgsl's `NEAR` too). Lights
 /// sit 10 units out from their glowing surface (lib.rs `find_lights`): clear of a doorway's
-/// recess, near enough a lamp that its shadows start at it. 8 leaves out a lamp's own post (its
-/// shadow just in front of it) but stays short of the glowing surface: at the offset, the cut
+/// recess, near enough a lamp that its shadows start at it. 7 softens a lamp's own post (its
+/// shadow just in front of it) and stays short of the glowing surface: at the offset, the cut
 /// lands on it and edges show at a doorway's frame. The user's choice, 2026-11-23, from renders
 /// of offsets 6, 8 and 10 with nears from 0.5 to the offset (6 boxed the Pokémon Centre's door
-/// in, 14 put a lamp's light a tile in front of it).
-const NEAR: f32 = 8.0;
+/// in, 14 put a lamp's light a tile in front of it); 8 let shadows come and go while walking.
+const NEAR: f32 = 7.0;
 
 /// How much wider than 90 degrees a point light's face sees (light.wgsl `WIDEN` too): a point at
 /// the seam between two faces was looked up on the outermost texels, which held the ground
