@@ -475,6 +475,48 @@ const CARD_DEPTH: f32 = 2.0;
 const MAX_FINE_LIGHTS: usize = 3;
 /// A window light's reach.
 const LIGHT_RANGE: f32 = 90.0;
+/// Development only (DEBUG_TOOLS.md): `GOLDLINK_DEV_LIGHT_LOG=<file>` appends a line per lit frame,
+/// each light followed as `x y z power weight;` (view space; power its colour's brightest channel),
+/// for measuring how steady the lights are.
+#[cfg(feature = "dev-hooks")]
+fn dev_light_log(tracked: &[Tracked]) {
+    use std::io::Write;
+    use std::sync::OnceLock;
+    static FILE: OnceLock<Option<std::sync::Mutex<std::fs::File>>> = OnceLock::new();
+    let file = FILE.get_or_init(|| {
+        let path = std::env::var_os("GOLDLINK_DEV_LIGHT_LOG")?;
+        std::fs::File::create(path).ok().map(std::sync::Mutex::new)
+    });
+    let Some(file) = file else { return };
+    let mut line = String::new();
+    for t in tracked {
+        let p = t.light.pos;
+        let c = t.light.colour;
+        line += &format!(
+            "{:.2} {:.2} {:.2} {:.3} {:.3};",
+            p[0],
+            p[1],
+            p[2],
+            c[0].max(c[1]).max(c[2]),
+            t.weight
+        );
+    }
+    line.push('\n');
+    if let Ok(mut f) = file.lock() {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// Bright patches nearer each other than this (view units; a tile is 16) are one light: a double
+/// window's panes, a shop window's shine. Measured over a walk through Violet City at night: the
+/// pieces of one fixture lie 4 to 16 apart, separate fixtures (a pair of lamps) 20 and more.
+const MERGE: f32 = 18.0;
+/// The most a merged light may be (a single patch's is at most 1.5).
+const MERGED_POWER_MAX: f32 = 2.5;
+/// How far a followed light moves, and its strength changes, toward what this frame shows (the
+/// rest is last frame's): a lamp cut by the screen's edge, or a shop window whose glass shines,
+/// showed a different patch each frame, and its light and shadows jumped (the user, 2026-11-23).
+const SETTLE: f32 = 0.35;
 /// At most this many point lights (the biggest bright patches).
 const MAX_LIGHTS: usize = 16;
 /// Neighbours further apart than this in depth (one pixel apart) are different surfaces.
@@ -552,6 +594,8 @@ pub struct Lighting {
     /// Per bright patch (its label): how much of it blooms (its light source's weight: it fades
     /// in and out as the light does).
     patch_weight: Vec<f32>,
+    /// Per bright patch (its label): the patch it was merged into (itself when not merged).
+    patch_alias: Vec<u32>,
     /// The cast shadows' casters and maps (UC13).
     shadow: shadow::Shadows,
     /// The picture's mean brightness, followed slowly (the light sources' threshold): taken
@@ -702,6 +746,7 @@ impl Lighting {
             tracked: Vec::new(),
             tracked_at: None,
             patch_weight: Vec::new(),
+            patch_alias: Vec::new(),
             cards: Vec::new(),
             on_card: Vec::new(),
             mean: None,
@@ -944,6 +989,8 @@ impl Lighting {
             Vec::new()
         };
         let mut lights = self.track_lights(&found);
+        #[cfg(feature = "dev-hooks")]
+        dev_light_log(&self.tracked);
         let focus = self.focus(w, h);
         // A 2D sprite on the scene is lit where it stands, as the player's 3D sprite is: at the
         // ground under its feet (the first 3D below it in its column), not at the scene behind
@@ -1051,6 +1098,7 @@ impl Lighting {
                 // card's, which doesn't bloom at all).
                 let bloom = if c.emissive {
                     let id = self.label.get(i).copied().unwrap_or(0) as usize;
+                    let id = self.patch_alias.get(id).map_or(id, |&a| a as usize);
                     self.patch_weight.get(id).copied().unwrap_or(1.0)
                 } else if self.on_card.get(i).copied().unwrap_or(false) {
                     -2.0
@@ -1278,7 +1326,10 @@ impl Lighting {
             pos: V3,
             nrm: V3,
             colour: V3,
+            /// How strong its light is (summed over the patches merged into it).
+            power: f32,
         }
+        let power_of = |size: u32| (size as f32 / 20.0).sqrt().min(1.5);
         let mut patches: Vec<Patch> = Vec::new();
         for start in 0..n {
             if !self.cells[start].emissive || self.label[start] != 0 {
@@ -1291,6 +1342,7 @@ impl Lighting {
                 pos: [0.0; 3],
                 nrm: [0.0; 3],
                 colour: [0.0; 3],
+                power: 0.0,
             };
             self.stack.clear();
             self.stack.push(start as u32);
@@ -1316,7 +1368,59 @@ impl Lighting {
                     }
                 }
             }
+            patch.power = power_of(patch.size);
             patches.push(patch);
+        }
+        // Patches close together, facing the same way and of the same kind (a warm window, a
+        // shop's cyan light) are one light: a double window's two panes cast one set of shadows
+        // instead of two (the user, 2026-11-23), and a shop's window or a Gym's door whose bright
+        // pixels split and join from frame to frame (the glass's shine) stays one light instead of
+        // jumping between two and one. A merged patch's pixels bloom as the light they joined.
+        self.patch_alias.clear();
+        self.patch_alias.extend(0..=patches.len() as u32);
+        let warm = |p: &Patch| p.colour[0] >= p.colour[2] * 1.6;
+        let centre = |p: &Patch| scale(p.pos, 1.0 / p.size as f32);
+        // Union-find over the patches (by index), each pair compared once.
+        let mut parent: Vec<usize> = (0..patches.len()).collect();
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        for a in 0..patches.len() {
+            for b in a + 1..patches.len() {
+                let (pa, pb) = (&patches[a], &patches[b]);
+                let d = sub(centre(pa), centre(pb));
+                if dot(d, d) < MERGE * MERGE
+                    && warm(pa) == warm(pb)
+                    && dot(normalize(pa.nrm), normalize(pb.nrm)) > 0.7
+                {
+                    let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                    if ra != rb {
+                        parent[rb.max(ra)] = ra.min(rb);
+                    }
+                }
+            }
+        }
+        for i in 0..patches.len() {
+            let r = root(&mut parent, i);
+            if r != i {
+                let (size, pos, nrm, colour, id, power) = {
+                    let p = &patches[i];
+                    (p.size, p.pos, p.nrm, p.colour, p.id, p.power)
+                };
+                let into = &mut patches[r];
+                into.size += size;
+                // As bright as its pieces were together (a double window as its two panes).
+                into.power = (into.power + power).min(MERGED_POWER_MAX);
+                into.pos = add(into.pos, pos);
+                into.nrm = add(into.nrm, nrm);
+                into.colour = add(into.colour, colour);
+                self.patch_alias[id as usize] = into.id;
+                patches[i].size = 0;
+            }
         }
         patches.retain(|p| p.size >= 3);
         patches.sort_by_key(|p| std::cmp::Reverse(p.size));
@@ -1328,7 +1432,7 @@ impl Lighting {
                 let colour = scale(p.colour, k);
                 let peak = colour[0].max(colour[1]).max(colour[2]).max(1e-3);
                 let colour = mix(scale(colour, 1.0 / peak), [1.0, 0.85, 0.65], 0.3);
-                let power = strength * (p.size as f32 / 20.0).sqrt().min(1.5);
+                let power = strength * p.power;
                 let light = PointLight {
                     pos: add(scale(p.pos, k), scale(normalize(p.nrm), 10.0)),
                     colour: scale(colour, power),
@@ -1369,12 +1473,18 @@ impl Lighting {
                 })
                 .filter(|&(_, d2)| d2 < TRACK_REACH * TRACK_REACH)
                 .min_by(|a, b| a.1.total_cmp(&b.1));
-            let weight = match near {
+            let (weight, light) = match near {
                 Some((i, _)) => {
                     seen[i] = true;
-                    (self.tracked[i].weight + FADE_IN).min(1.0)
+                    let was = self.tracked[i].light;
+                    let settled = PointLight {
+                        pos: add(was.pos, scale(sub(light.pos, was.pos), SETTLE)),
+                        colour: add(was.colour, scale(sub(light.colour, was.colour), SETTLE)),
+                        range: light.range,
+                    };
+                    ((self.tracked[i].weight + FADE_IN).min(1.0), settled)
                 }
-                None => FADE_IN,
+                None => (FADE_IN, light),
             };
             self.patch_weight[id as usize] = weight;
             next.push(Tracked { light, weight });
@@ -1768,6 +1878,49 @@ mod tests {
         assert!(r(shown[70 * 256 + 128]) > r(plain_lit[70 * 256 + 128]) + 8);
         assert_eq!(shown[140 * 256 + 10], plain_lit[140 * 256 + 10]);
         plain.clear();
+    }
+
+    /// A double window's two panes are one light (one set of shadows); two windows apart are two.
+    #[test]
+    fn close_panes_are_one_light_far_ones_two() {
+        let width = 384;
+        let (depth, layer) = floor(width);
+        let scene = Scene {
+            depth: &depth,
+            layer: &layer,
+            proj: PROJ,
+            fade: &[],
+            width,
+            geometry: Geometry::default(),
+            hours: 12.0,
+            attached: &[],
+            sprite_tint: [1.0; 3],
+            shadows: false,
+        };
+        if !Lighting::new().use_gpu() {
+            eprintln!("no GPU here: the overworld's lighting isn't tested");
+            return;
+        }
+        let dark = 0x0050_5060u32;
+        let lights = |xs: &[usize]| {
+            let mut px = vec![dark; 256 * HEIGHT];
+            for &x0 in xs {
+                for y in 60..64 {
+                    for x in x0..x0 + 4 {
+                        px[y * 256 + x] = 0x00FF_C060;
+                    }
+                }
+            }
+            let mut lighting = Lighting::new();
+            lighting.use_gpu();
+            for _ in 0..3 {
+                let mut out = px.clone();
+                lighting.overworld(&mut out, 256, 64, &scene, Place::Outdoor, Phase::Night);
+            }
+            lighting.tracked.iter().filter(|t| t.weight > 0.0).count()
+        };
+        assert_eq!(lights(&[120, 126]), 1, "two panes two pixels apart");
+        assert_eq!(lights(&[60, 180]), 2, "two windows far apart");
     }
 
     #[test]
