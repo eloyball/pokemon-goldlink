@@ -589,6 +589,22 @@ impl Shadows {
             }
             best.map_or(foot, |t| add(foot, scale(d, t)))
         };
+        // How far above the flat ground straight under it a place is (None: no ground under it).
+        let above_ground = |at: V3| -> Option<f32> {
+            let d = scale(up, -1.0);
+            flats
+                .iter()
+                .filter_map(|f| {
+                    let (c, n) = (&f.0, f.1);
+                    let dn = dot(d, n);
+                    if dn.abs() < 1e-4 {
+                        return None;
+                    }
+                    let t = dot(sub(c[0].p, at), n) / dn;
+                    (t >= -STANDS && inside(c, n, add(at, scale(d, t)))).then_some(t)
+                })
+                .min_by(|a, b| a.total_cmp(b))
+        };
         let north = normalize(cross(up, [1.0, 0.0, 0.0]));
         // A corner of the drawn ground that moves with the world exactly: the nearest the
         // picture's middle of the untextured flat polygons wholly in the picture (not cut at its
@@ -655,13 +671,17 @@ impl Shadows {
                 sum / area
             })
         };
-        // The lamps: objects no bigger than LAMP_SIZE every way.
-        let mut boxes: Vec<(i32, V3, V3)> = Vec::new();
+        // The lamps: objects no bigger than LAMP_SIZE every way, standing on the ground. Not
+        // what floats over it: the Poke Mart's turning sign (its post is an object of its own)
+        // is as small as a lamp whenever it stands at an angle to the camera, and then didn't
+        // shadow its own light: its shadow on the Mart's roof left mid-turn (the user,
+        // 2026-11-24).
+        let mut boxes: Vec<(i32, V3, V3, V3)> = Vec::new();
         for (c, _, p) in placed.iter().filter(|q| q.2.object >= 0) {
             let i = match boxes.iter().position(|b| b.0 == p.object) {
                 Some(i) => i,
                 None => {
-                    boxes.push((p.object, [f32::MAX; 3], [f32::MIN; 3]));
+                    boxes.push((p.object, [f32::MAX; 3], [f32::MIN; 3], [0.0, f32::MAX, 0.0]));
                     boxes.len() - 1
                 }
             };
@@ -670,10 +690,25 @@ impl Shadows {
                     boxes[i].1[a] = boxes[i].1[a].min(k.p[a]);
                     boxes[i].2[a] = boxes[i].2[a].max(k.p[a]);
                 }
+                if dot(k.p, up) < dot(boxes[i].3, up) || boxes[i].3[1] == f32::MAX {
+                    boxes[i].3 = k.p;
+                }
             }
         }
-        boxes.retain(|(_, lo, hi)| (0..3).all(|a| hi[a] - lo[a] <= LAMP_SIZE));
-        self.lamps = boxes;
+        // Its middle at its lowest point's height (what stands, stands under its middle; the
+        // turning sign's board, over the Mart's roof at a corner, isn't over it there).
+        let foot = |b: &(i32, V3, V3, V3)| {
+            let mid = scale(add(b.1, b.2), 0.5);
+            add(mid, scale(up, dot(sub(b.3, mid), up)))
+        };
+        self.lamps = boxes
+            .into_iter()
+            .filter(|b| {
+                (0..3).all(|a| b.2[a] - b.1[a] <= LAMP_SIZE)
+                    && above_ground(foot(b)).is_some_and(|h| h <= STANDS)
+            })
+            .map(|(o, lo, hi, _)| (o, lo, hi))
+            .collect();
         // Fences cast nothing (the user, 2026-11-18: side by side their shadows looked like
         // separate blocks, as the trees' did): a fence is a short upright face whose texture is
         // largely see-through (the gaps between its pickets), and any short upright face that
@@ -1391,6 +1426,8 @@ pub(crate) fn card_spans(g: &Geometry, rows: &[[f32; 4]; 4], out: &mut Vec<CardS
 /// The most a lamp is across, up and deep (view units: a tile is 16). Measured: Violet City's lamps
 /// 15 x 25 x 27, its Gym's door 16 x 25 x 28; the rotating sign 11 x 37 x 35; buildings 51 and up.
 const LAMP_SIZE: f32 = 30.0;
+/// How far above the ground under it (view units) a lamp's lowest point may be: it stands there.
+const STANDS: f32 = 4.0;
 
 /// How far from a lamp (view units) a glow still counts as its own: the glow the game draws on
 /// the ground beside its head lies 4.4 from it (measured); lamps stand a few tiles apart.
