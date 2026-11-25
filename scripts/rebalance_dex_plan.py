@@ -21,7 +21,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HG = ROOT / 'hg-engine'
-OUT = ROOT / 'docs' / 'REBALANCE_DEX_PLAN.md'
+# The design docs live in the dev repository (dev/docs), beside this one.
+OUT = ROOT.parent / 'pokemon-goldlink' / 'dev' / 'docs' / 'REBALANCE_DEX_PLAN.md'
 
 A = []
 def area(name, act, lv, **m):
@@ -107,7 +108,7 @@ area('Route 36', 2, '16-21',
 area('Route 37', 2, '18-24',
      day=['STANTLER', 'PLUSLE', 'MINUN', 'LUXIO', 'SPOINK', 'GOSSIFLEUR'],
      night=['ARIADOS', 'LEDIAN', 'MIGHTYENA', 'GREAVARD'], rare=['CYCLIZAR', 'SCYTHER'], starter=['TORCHIC'],
-     headbutt=['PINECO', 'SHROODLE', 'BRAMBLIN'])
+     headbutt=['PINECO', 'SHROODLE', 'SLAKOTH'])
 area('Burned Tower 1F', 2, '20-25',
      day=['KOFFING', 'SLUGMA', 'MAGMAR', 'CHARCADET', 'NUMEL', 'SIZZLIPEDE', 'DARUMAKA'],
      night=['KOFFING', 'MISDREAVUS', 'LITWICK', 'DUSKULL'], rare=['TORKOAL', 'TURTONATOR'], starter=['TEPIG'])
@@ -118,11 +119,11 @@ area('Burned Tower B1F', 2, '20-25',
 area('Route 38', 3, '24-30',
      day=['MILTANK', 'TAUROS', 'MAGNEMITE', 'MUDBRAY', 'WOOLOO', 'YAMPER'],
      night=['MEOWTH', 'GLAMEOW', 'MORPEKO', 'NOCTOWL'], rare=['FARFETCHD', 'ORTHWORM'], starter=['CHIMCHAR', 'LITTEN'],
-     headbutt=['AIPOM', 'PINECO', 'SKWOVET'])
+     headbutt=['AIPOM', 'PINECO', 'SKWOVET', 'APPLIN'])
 area('Route 39', 3, '24-30',
      day=['MILTANK', 'TAUROS', 'CUFANT', 'BOUFFALANT', 'MAREEP', 'OINKOLOGNE'],
      night=['MEOWTH', 'MASCHIFF', 'NOCTOWL', 'HOOTHOOT'], rare=['KANGASKHAN', 'AUDINO'], starter=['FENNEKIN'],
-     headbutt=['PINECO', 'SKWOVET'])
+     headbutt=['PINECO', 'SKWOVET', 'APPLIN'])
 area('Routes 40 / 41 (sea)', 3, '26-32',
      surf=['TENTACOOL', 'FINIZEN', 'WINGULL', 'FRILLISH'], starter=['POPPLIO'],
      rare=['CRAMORANT', 'DHELMISE', 'LAPRAS'],
@@ -136,7 +137,7 @@ area('Whirl Islands', 3, '26-34',
      fish=['MAGIKARP', 'LUVDISC', 'BRUXISH', 'HORSEA', 'CLAMPERL'])
 area('Route 42', 3, '25-32',
      day=['MANKEY', 'MARACTUS', 'EKANS', 'FLAAFFY', 'SANDILE', 'HELIOPTILE'],
-     night=['ZUBAT', 'GOLBAT', 'MANKEY', 'TRAPINCH'], rare=['CACNEA', 'SPINDA'], starter=['PIPLUP'],
+     night=['ZUBAT', 'PAWNIARD', 'MANKEY', 'TRAPINCH'], rare=['CACNEA', 'SPINDA'], starter=['PIPLUP'],
      surf=['MARILL', 'GOLDEEN'], fish=['MAGIKARP', 'GOLDEEN', 'SEAKING'],
      headbutt=['AIPOM', 'PINECO', 'SPINDA'])
 area('Mt. Mortar', 3, '25-32',
@@ -247,10 +248,10 @@ area('Route 28 (Mt. Silver approach)', 6, '72-78',
 
 # ---------------- Act 6: post-game ----------------
 area('Cerulean Cave', 6, '74-82',
-     day=['GREAT_TUSK', 'FLUTTER_MANE', 'BRUTE_BONNET', 'SANDY_SHOCKS', 'SCREAM_TAIL', 'SLITHER_WING',
+     day=['GREAT_TUSK', 'FLUTTER_MANE', 'BRUTE_BONNET', 'SCREAM_TAIL', 'SLITHER_WING',
           'ROARING_MOON', 'WALKING_WAKE', 'GOUGING_FIRE', 'RAGING_BOLT'],
-     night=['IRON_VALIANT', 'IRON_BUNDLE', 'IRON_HANDS', 'IRON_MOTH', 'IRON_TREADS', 'IRON_JUGULIS',
-            'IRON_THORNS', 'IRON_LEAVES', 'IRON_BOULDER', 'IRON_CROWN'],
+     night=['IRON_VALIANT', 'IRON_BUNDLE', 'IRON_MOTH', 'IRON_TREADS', 'IRON_JUGULIS',
+            'IRON_THORNS', 'IRON_BOULDER'],
      surf=['DRACOVISH', 'ARCTOVISH'], rare=['DRACOZOLT', 'ARCTOZOLT', 'DITTO'])
 area('Mt. Silver', 6, '76-85',
      day=['URSALUNA', 'MAMOSWINE', 'KLEAVOR', 'DRAGONITE', 'TYRANITAR', 'SALAMENCE', 'METAGROSS', 'GARCHOMP'],
@@ -474,6 +475,22 @@ def families(sp, base, evo):
 FAMILY = {}
 DEFERRED = set()
 
+# Held back until they have sprites of their own (BACKLOG #21, the user, 2026-11-24): the
+# species whose front sprite is hg-engine's stand-in (Bulbasaur's; scripts/challenge_pool.py)
+# are in no wild table, no trainer's party, and nothing evolves into them (Nacli's evolution is
+# off in data/Evolutions.c). The check reports any of them the player can get.
+SPRITES = HG / 'data' / 'graphics' / 'sprites'
+
+
+def placeholder_species(sp):
+    stand_in = (SPRITES / 'bulbasaur' / 'male' / 'front.png').read_bytes()
+    out = set()
+    for n in sp:
+        front = SPRITES / n.lower() / 'male' / 'front.png'
+        if n != 'BULBASAUR' and front.exists() and front.read_bytes() == stand_in:
+            out.add(n)
+    return out
+
 
 def deferred_species(evo):
     """The legendary, mythical and Ultra Beast families, deferred by the user (2026-10-27)."""
@@ -551,9 +568,12 @@ def check(sp, forms, base, evo, where):
         if all(flags) and not any(family_key(n) == k for n in where if any(w[2] != 'rare' for w in where[n])):
             errors.append(f'only in 1 % slots: {k}')
     deferred = deferred_species(evo)
-    missing = sorted((n for n in sp if n not in reach and n not in deferred), key=sp.get)
+    held = placeholder_species(sp)
+    missing = sorted((n for n in sp if n not in reach and n not in deferred and n not in held), key=sp.get)
     for n in missing:
         errors.append(f'not obtainable: {n}')
+    for n in sorted(held & reach - deferred, key=sp.get):
+        errors.append(f'placeholder sprite but obtainable: {n}')
     for n in sorted(deferred & set(where)):
         errors.append(f'deferred species placed anyway: {n}')
     # Safari: alternate forms only, and all of them.
@@ -575,6 +595,24 @@ def check(sp, forms, base, evo, where):
                     mm.startswith('EVO_STONE') or mm == 'EVO_OTHER_PARTY_MON' for mm, tt in lst if tt == t):
                 errors.append(f'trade-only evolution {a} -> {t} (needs the item path, plan section 8.1)')
     return errors
+
+
+def unsold_items(held):
+    """Evolution items no mart sells (BACKLOG #23: the Chipped Pot was nowhere), but those only
+    held-back species (deferred, or waiting for sprites) use."""
+    users, cur = {}, None
+    for line in open(HG / 'data/Evolutions.c'):
+        m = re.match(r'\s*\[SPECIES_([A-Z0-9_]+)\]\s*=', line)
+        if m:
+            cur = m.group(1)
+        m = re.search(r'\{ EVO_\w+, ITEM_(\w+),', line)
+        if m and cur:
+            users.setdefault(m.group(1), set()).add(cur)
+    sold = set()
+    for f in ('src/field/mart.c', 'src/field/coop_marts.c'):
+        sold |= set(re.findall(r'ITEM_(\w+)', open(HG / f).read()))
+    return [f'evolution item sold nowhere: {i} ({", ".join(sorted(u))})'
+            for i, u in sorted(users.items()) if i not in sold and not u <= held]
 
 
 ACT_TITLES = {
@@ -655,6 +693,11 @@ def render(sp, fam, evo, where):
           '| Pokémon | Proposed place | How | Lv. |', '| :--- | :--- | :--- | :--- |']
     for disp, loc, meth, lv in LEGENDS:
         o.append(f"| {disp} | {loc} | {meth} | {lv or '—'} |")
+    held = sorted(placeholder_species(sp) - DEFERRED, key=sp.get)
+    o += ['', '## Held back until they have sprites of their own', '',
+          'hg-engine shows its stand-in (Bulbasaur) for these: no wild table, trainer or evolution gives',
+          'them (Nacli does not evolve; BACKLOG #21). Put back their places in the tables above when the',
+          'sprites land: ' + names(held) + '.']
     o += ['', '## Every family, by National Dex number', '',
           'First listed source per family (other members come by evolution or breeding).', '',
           '| # | Family | First source |', '| :--- | :--- | :--- |']
@@ -673,6 +716,8 @@ def render(sp, fam, evo, where):
                     best = (3, f'{where[a][0][1]} (as {title(a)}, then evolves)')
         if best is None and fam[k][0] in DEFERRED:
             best = (9, 'deferred (legendary / mythical / Ultra Beast)')
+        if best is None and set(fam[k]) <= placeholder_species(sp):
+            best = (9, 'held back until it has sprites')
         o.append(f"| {sp[k]} | {' / '.join(title(n) for n in fam[k])} | {best[1] if best else '**none**'} |")
     o.append('')
     return '\n'.join(o)
@@ -729,14 +774,17 @@ def main():
     where = built_placements() if '--built' in sys.argv else placements()
     DEFERRED.update(deferred_species(evo))
     errors = check(sp, forms, base, evo, where)
+    errors += unsold_items(deferred_species(evo) | placeholder_species(sp))
     for e in errors:
         print(e)
     deferred = deferred_species(evo) & set(sp)
+    held = placeholder_species(sp) - deferred
     print(f'{len(sp)} species, {len(fam)} families, {len(where)} placed directly, '
-          f'{len(deferred)} deferred (legendary / mythical / Ultra Beast), {len(errors)} problems')
+          f'{len(deferred)} deferred (legendary / mythical / Ultra Beast), '
+          f'{len(held)} held back for sprites ({", ".join(sorted(held))}), {len(errors)} problems')
     if '--write' in sys.argv:
         OUT.write_text(render(sp, fam, evo, where))
-        print(f'wrote {OUT.relative_to(ROOT)}')
+        print(f'wrote {OUT}')
     return 1 if errors else 0
 
 

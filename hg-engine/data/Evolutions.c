@@ -13764,7 +13764,9 @@ const EvolutionTable __data[MAX_SPECIES_INCLUDING_FORMS + 1] =
 
     [SPECIES_NACLI] = {
         .entries = {
-            { EVO_LEVEL, 24, SPECIES_NACLSTACK },
+            // GoldLink: no evolution (Naclstack at level 24) until Naclstack has sprites of its
+            // own (BACKLOG #21): it showed hg-engine's stand-in (Bulbasaur).
+            { EVO_NONE, 0, SPECIES_NONE },
             { EVO_NONE, 0, SPECIES_NONE },
             { EVO_NONE, 0, SPECIES_NONE },
             { EVO_NONE, 0, SPECIES_NONE },

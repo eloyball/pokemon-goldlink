@@ -217,6 +217,52 @@ def water_slots(lst, lo, hi, offset=0):
     return [(lo, hi, lst[(i + offset) % len(lst)]) for i in range(5)]
 
 
+def area_water(m, tabs, rates):
+    """Each surfing table's 5 species and each fishing table's fish list, for one area. As the
+    tables always had them (sea tables: the area's first two surf species, then its rares and
+    starters in slots 2-4) unless that left a listed species out (Frillish on Routes 40 / 41,
+    Skrelp and Goomy in Dragon's Den, three of Routes 19 to 21's fish): then the surf species past
+    each table's first two share its slots 2-4 with the rares, and the fish past the first two take
+    turns over the area's tables (each table's rods reach six of the list)."""
+    surf, fish = m.get('surf', []), m.get('fish', [])
+    sea = [not rates[tab]['rateWalk'] for tab in tabs]
+    extras = {tab: [s_ for i_, s_ in enumerate(m.get('rare', []) + m.get('starter', [])) if i_ % len(tabs) == t]
+              for t, tab in enumerate(tabs)}
+    surfing = [tab for tab in tabs if rates[tab]['rateSurf']]
+    out_surf = {}
+    if surf:
+        for t, tab in enumerate(tabs):
+            lst = surf
+            if sea[t]:
+                lst = [surf[t % len(surf)], surf[(t + 1) % len(surf)]] + (extras[tab] + surf)[:3]
+            out_surf[tab] = lst
+        wanted = set(surf) | {x for t, tab in enumerate(tabs) if sea[t] and tab in surfing for x in extras[tab]}
+        got = {e[2] for tab in surfing for e in water_slots(out_surf[tab], 0, 0)}
+        if not wanted <= got and surfing:
+            core = list(surf)
+            tails = {tab: list(extras[tab]) if sea[tabs.index(tab)] else [] for tab in surfing}
+            # One table can't hold them all: what the area's rods already give leaves the surf.
+            while len(surfing) == 1 and len(core) > 2 and len(core) + len(tails[surfing[0]]) > 5:
+                drop = next((x for x in core if x in fish), None)
+                if drop is None:
+                    break
+                core.remove(drop)
+            n = len(surfing)
+            first = {tab: [core[(2 * k) % len(core)], core[(2 * k + 1) % len(core)]] for k, tab in enumerate(surfing)}
+            left = [x for x in core if not any(x in f for f in first.values())]
+            for k, tab in enumerate(surfing):
+                tail = left[k::n] + tails[tab]
+                out_surf[tab] = first[tab] + (tail + core * 3)[:3]
+    out_fish = {tab: fish for tab in tabs}
+    fishing = [tab for tab in tabs if rates[tab]['rateOldRod']]
+    if len(fish) > 6 and len(fishing) > 1:
+        rest = fish[2:]
+        for k, tab in enumerate(fishing):
+            r = (4 * k) % len(rest)
+            out_fish[tab] = fish[:2] + rest[r:] + rest[:r]
+    return out_surf, out_fish
+
+
 def rods(fish, lo, hi):
     if not fish:
         return None
@@ -257,6 +303,13 @@ def write_encounters(report):
             continue
         lo, hi = band(lv)
         grass = [tab for tab in tabs if re.search(r'\.rateWalk = [1-9]', s[s.index(f'    [ENCDATA_{tab}] = {{'):][:400])]
+        rates = {}
+        for tab in tabs:
+            blk = s[s.index(f'    [ENCDATA_{tab}] = {{'):][:600]
+            rates[tab] = {k: int(re.search(rf'\.{k} = (\d+)', blk).group(1)) for k in
+                          ('rateWalk', 'rateSurf', 'rateRockSmash', 'rateOldRod', 'rateGoodRod', 'rateSuperRod')}
+        area_surf, area_fish = area_water(m, tabs, rates)
+        placed_water = set()
         for t, tab in enumerate(tabs):
             i = s.index(f'    [ENCDATA_{tab}] = {{')
             j = s.find('\n    [ENCDATA_', i + 10)
@@ -274,21 +327,18 @@ def write_encounters(report):
                 b = sub_list(b, 'speciesNight', nite, species)
             if not grass and m.get('day') and t == 0:
                 report.append(f'{name}: no table with grass or cave encounters; the core list is not placed')
-            surf = m.get('surf', [])
-            if not rate['rateWalk']:
-                # Sea tables: the rares and starters ride the surfing slots 2-4.
-                extra = [s_ for i_, s_ in enumerate(m.get('rare', []) + m.get('starter', [])) if i_ % len(tabs) == t]
-                if surf:
-                    surf = [surf[t % len(surf)], surf[(t + 1) % len(surf)]] + (extra + surf)[:3]
-            ws = water_slots(surf, lo, hi)
+            # Sea tables: the rares and starters ride the surfing slots 2-4 (area_water).
+            ws = water_slots(area_surf.get(tab, []), lo, hi)
             if ws and rate['rateSurf']:
                 b = sub_list(b, 'surfSlots', ws, lambda e: f'{{ {e[0]}, {e[1]}, {species(e[2])} }}')
+                placed_water |= {e[2] for e in ws}
             elif ws:
                 report.append(f'{tab}: no surfing here')
-            rs = rods(m.get('fish', []), lo, hi)
+            rs = rods(area_fish.get(tab, []), lo, hi)
             if rs and rate['rateOldRod']:
                 for field, lst in zip(('oldRodSlots', 'goodRodSlots', 'superRodSlots'), rs):
                     b = sub_list(b, field, lst, lambda e: f'{{ {e[0]}, {e[1]}, {species(e[2])} }}')
+                    placed_water |= {e[2] for e in lst}
             elif rs:
                 report.append(f'{tab}: no fishing here')
             sm = m.get('smash', [])
@@ -300,6 +350,10 @@ def write_encounters(report):
             elif sm:
                 report.append(f'{tab}: no Rock Smash here')
             s = s[:i] + b + s[j:]
+        if any(rates[tab]['rateSurf'] or rates[tab]['rateOldRod'] for tab in tabs):
+            lost = [x for x in m.get('surf', []) + m.get('fish', []) if x not in placed_water]
+            if lost:
+                report.append(f'{name}: listed but given no slot: {", ".join(dict.fromkeys(lost))}')
     return path, s
 
 
