@@ -87,7 +87,7 @@ struct MapVert {
 
 /// The largest sun map, a point light's face's tile in the atlas, and the atlas.
 const SUN_SIDE: u32 = 1536;
-const TILE: u32 = 64;
+const TILE: u32 = 128;
 const ATLAS: [u32; 2] = [2048, 1024];
 /// The card map: the scene's picture.
 const PICTURE: [u32; 2] = [384, 192];

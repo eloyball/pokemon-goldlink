@@ -10,12 +10,12 @@ const CONTRAST: f32 = 0.10;
 const NORMAL_OFFSET: f32 = 0.4;
 const BIAS: f32 = 0.4;
 const NEAR: f32 = 0.5;
-// A point light's map's bias and its receivers' push off their surface, at least this many of its
-// texels there: a texel spans more of the ground the further it is, and with the bias in units
-// alone the ground's own steps (the paving's edge, a block's seam) took rows of its texels'
-// shadow that flashed as the light moved (the user, 2026-11-24).
-const TEXEL_BIAS: f32 = 1.0;
-const TEXEL_OFFSET: f32 = 0.5;
+// A point light's map holds one depth per texel, and a texel spans more of a surface the further
+// it is and the more it slants from the light: half a texel's depth change across the surface is
+// added to the bias. With the bias in units alone, what lies flat on the ground (the paving's
+// edge, a wall's foot) shadowed rows of the ground's texels that flashed as the light moved
+// (the user, 2026-11-24).
+const TEXEL_SLOPE: f32 = 0.5;
 // How much wider than 90 degrees a point light's face sees (shadow.rs `WIDEN`).
 const WIDEN: f32 = 1.05;
 const TREE_HEIGHT: f32 = 44.0;
@@ -373,7 +373,7 @@ fn over_face(f: Face, q: vec3<f32>, slope: f32, texel: f32) -> i32 {
     }
     let at = vec2<u32>(u32(f.forward.w) + ix, u32(f.right.w) + iy);
     let depth = textureLoad(atlas_raw, at, 0).r;
-    if depth > 1.0 / max(z - max(BIAS, TEXEL_BIAS * texel) * (1.0 + slope), NEAR) {
+    if depth > 1.0 / max(z - (BIAS * (1.0 + slope) + TEXEL_SLOPE * texel * slope), NEAR) {
         return i32(textureLoad(atlas_card, at, 0).r);
     }
     return -1;
@@ -407,7 +407,7 @@ fn visible(point: i32, p: vec3<f32>, n: vec3<f32>, attached: bool, card: i32) ->
     if point >= 0 && f.pos.w > 0.0 {
         texel = 2.0 * WIDEN * max(dot(p - f.pos.xyz, f.forward.xyz), NEAR) / f.pos.w;
     }
-    let q = p + n * (max(NORMAL_OFFSET, TEXEL_OFFSET * texel) * (1.0 + slope));
+    let q = p + n * (NORMAL_OFFSET * (1.0 + slope));
     var o: i32;
     if point < 0 {
         o = over_sun(q, slope);

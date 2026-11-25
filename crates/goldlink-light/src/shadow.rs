@@ -369,8 +369,8 @@ pub(crate) struct PointMaps {
 }
 
 /// Texels a side of a point light's face: the nearest the player's, the others'.
-pub const FACE: usize = 64;
-pub const FACE_COARSE: usize = 32;
+pub const FACE: usize = 128;
+pub const FACE_COARSE: usize = 64;
 
 /// The picture's polygons as shadow casters, and the depth maps of the lights that cast shadows:
 /// the sun (or the moon) and the nearest point lights.
