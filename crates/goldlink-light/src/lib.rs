@@ -1771,6 +1771,92 @@ impl Projection {
     }
 }
 
+/// How much nearer than the scene round the player a room's dark wall stands to be one (its
+/// distance over the scene's). Violet Gym's outer wall: 280 against the player's 674 (0.42).
+const NEAR_WALL: f32 = 0.75;
+/// How many rows in a row a near surface must run down the screen's edge to be a wall: a room's
+/// outer wall runs most of the picture's height; the dark cap on Sprout Tower's pillar, nearer
+/// than the floor too, is 18 rows.
+const WALL_ROWS: usize = 48;
+
+/// For each row of the 3D scene (`depth`, `layer`, `proj`: goldlink-core's `LightBuffers`,
+/// `width` columns, the DS screen's from `screen_x0`): whether the scene within `reach` pixels of
+/// the screen's left and right edges (`dark(row, 0 or 1)`: black there in the picture) is a dark
+/// wall standing near the camera, all of it nearer than
+/// [`NEAR_WALL`] times the scene's middle (its median distance). The steady overworld draws such a
+/// wall at the player's scale, and what stands past it shows in the widened sides, where the
+/// game's perspective would have the wall cover them (KNOWN_RISKS #140): the window blacks those
+/// rows out from the edge. Only a wall: at least [`WALL_ROWS`] rows of it in a row. A black gap
+/// (Sprout Tower's lattice) shows what's far below and isn't near; the dark cap on its pillar is
+/// near but short; both are left alone (the user, 2026-11-26: lines flashing at the sides while
+/// walking, a black block over the floor beside the pillar).
+pub fn near_wall_edges(
+    depth: &[u32],
+    layer: &[u8],
+    proj: &[i32; 16],
+    width: usize,
+    screen_x0: usize,
+    reach: usize,
+    dark: impl Fn(usize, usize) -> bool,
+) -> Vec<[bool; 2]> {
+    let mut out = vec![[false; 2]; HEIGHT];
+    let Some(rows) = unprojection(proj) else {
+        return out;
+    };
+    if depth.len() < width * HEIGHT
+        || layer.len() < width * HEIGHT
+        || screen_x0 < reach
+        || screen_x0 + 256 + reach > width
+    {
+        return out;
+    }
+    let distance = |col: usize, row: usize| -> Option<f32> {
+        let i = row * width + col;
+        if layer[i] != 1 {
+            return None;
+        }
+        let xn = (col as f32 + 0.5 - width as f32 / 2.0) / 128.0;
+        let yn = 1.0 - (row as f32 + 0.5) / (HEIGHT as f32 / 2.0);
+        let zn = depth[i] as f32 / 8_388_607.5 - 1.0;
+        unproject(&rows, xn, yn, zn).map(|p| -p[2])
+    };
+    let mut middle: Vec<f32> = (48..144)
+        .step_by(4)
+        .flat_map(|row| {
+            (screen_x0 + 64..screen_x0 + 192)
+                .step_by(4)
+                .map(move |col| (col, row))
+        })
+        .filter_map(|(col, row)| distance(col, row))
+        .collect();
+    if middle.is_empty() {
+        return out;
+    }
+    middle.sort_by(f32::total_cmp);
+    let near = middle[middle.len() / 2] * NEAR_WALL;
+    for (row, o) in out.iter_mut().enumerate() {
+        for (k, edge) in [screen_x0, screen_x0 + 256].into_iter().enumerate() {
+            o[k] = dark(row, k)
+                && (edge - reach..edge + reach)
+                    .all(|col| distance(col, row).is_some_and(|d| d < near));
+        }
+    }
+    // Runs shorter than a wall aren't one.
+    for k in [0, 1] {
+        let mut start = 0;
+        while start < HEIGHT {
+            let end = (start..HEIGHT)
+                .find(|&r| out[r][k] != out[start][k])
+                .unwrap_or(HEIGHT);
+            if out[start][k] && end - start < WALL_ROWS {
+                out[start..end].iter_mut().for_each(|o| o[k] = false);
+            }
+            start = end;
+        }
+    }
+    out
+}
+
 /// The inverse projection's rows, for [`unproject`].
 fn unprojection(proj: &[i32; 16]) -> Option<[[f32; 4]; 4]> {
     let inv = invert(proj)?;
@@ -1911,6 +1997,35 @@ mod tests {
     }
 
     /// A tilted floor (the ground under the camera) with the text box's rows marked 2D.
+    /// A room seen from above (`floor`), with surfaces at the screen's left edge from row `top`
+    /// for `rows` rows at view depth `z`: a near outer wall (Violet Gym's, 280 against the floor's
+    /// 500-700), the near but short cap on Sprout Tower's pillar, a far gap (its lattice).
+    #[test]
+    fn only_a_tall_near_wall_at_the_edge_is_sealed() {
+        let (width, x0, reach) = (384usize, 64usize, 6usize);
+        let edges = |top: usize, rows: usize, z: f64| {
+            let (mut depth, layer) = floor(width);
+            for y in top..top + rows {
+                for x in x0 - reach..x0 + reach {
+                    depth[y * width + x] = depth_of(z);
+                }
+            }
+            let dark = |row: usize, k: usize| k == 0 && (top..top + rows).contains(&row);
+            near_wall_edges(&depth, &layer, &PROJ, width, x0, reach, dark)
+        };
+        let wall = edges(10, 120, -280.0);
+        assert!((10..130).all(|y| wall[y][0]), "the wall's rows are sealed");
+        assert!(!wall[5][0] && !wall[140][0] && wall.iter().all(|r| !r[1]));
+        assert!(
+            edges(30, 18, -280.0).iter().all(|r| !r[0]),
+            "a short cap is no wall"
+        );
+        assert!(
+            edges(10, 120, -900.0).iter().all(|r| !r[0]),
+            "a far gap is no wall"
+        );
+    }
+
     fn floor(width: usize) -> (Vec<u32>, Vec<u8>) {
         let mut depth = vec![0u32; width * HEIGHT];
         let mut layer = vec![1u8; width * HEIGHT];

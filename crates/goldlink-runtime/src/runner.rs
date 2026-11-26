@@ -55,6 +55,10 @@ pub struct Frame {
     /// screen as shown in the middle. Empty when off.
     pub wide: Vec<u32>,
     pub wide_side: usize,
+    /// With the wider picture on, per row: whether the 3D scene at the screen's left and right
+    /// edges is a wall standing near the camera (`goldlink_light::near_wall_edges`): indoors the
+    /// window blacks those rows' sides out (KNOWN_RISKS #140). Empty when off.
+    pub wide_near: Vec<[bool; 2]>,
     /// The local player's map (the mailbox's), 0 before the game: the window's indoor rules.
     pub map: u16,
     /// Counts frames; changes when the pixels do.
@@ -76,6 +80,10 @@ pub struct Frame {
     /// The running shoes: `None` until the player has them, then whether running is locked on.
     pub running_shoes: Option<bool>,
 }
+
+/// How far either side of the DS screen's edge a row's scene must be a near wall to be sealed
+/// (`Frame::wide_near`; pixels).
+pub const SEAL_REACH: usize = 6;
 
 /// The top screen's 3D depth and what the game is doing, for the lighting (UC11).
 #[derive(Debug, Clone)]
@@ -164,6 +172,7 @@ impl Runner {
                 pixels: vec![0; SCREEN_WIDTH * SCREEN_HEIGHT * 2],
                 wide: Vec::new(),
                 wide_side: 0,
+                wide_near: Vec::new(),
                 map: 0,
                 seq: 0,
                 light: None,
@@ -319,6 +328,8 @@ fn run(
     let mut pixels = Vec::with_capacity(SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     let mut fps_window = (Instant::now(), 0u32);
     let mut lighting = false;
+    // The depth for the walls at the screen's edges with the lighting off (`wide_near`).
+    let mut edge_buffers = LightBuffers::default();
     let mut shadows = true;
     // The next frame's lighting buffers (swapped with the shared frame's, as the pixels are).
     let mut light: Option<LightFrame> = None;
@@ -388,6 +399,38 @@ fn run(
             Vec::new()
         };
         let light_now = lighting.then(|| light_frame(&emu, light.take())).flatten();
+        // The walls near the camera at the screen's edges, from this frame's depth (the
+        // lighting's buffers when it's on, else a copy of their own).
+        let mut wide_near = Vec::new();
+        if side >= SEAL_REACH {
+            let buffers = match &light_now {
+                Some(l) => Some(&l.buffers),
+                None => emu
+                    .nds
+                    .light_buffers(&mut edge_buffers)
+                    .then_some(&edge_buffers),
+            };
+            if let Some(b) = buffers {
+                let width = SCREEN_WIDTH + 2 * side;
+                let black = |p: u32| (p >> 16) & 0xFF <= 4 && (p >> 8) & 0xFF <= 4 && p & 0xFF <= 4;
+                let dark = |row: usize, k: usize| {
+                    let edge = row * width + side + 256 * k;
+                    wide.len() >= width * SCREEN_HEIGHT
+                        && wide[edge - SEAL_REACH..edge + SEAL_REACH]
+                            .iter()
+                            .all(|&p| black(p))
+                };
+                wide_near = goldlink_light::near_wall_edges(
+                    &b.depth,
+                    &b.layer,
+                    &b.proj,
+                    LightBuffers::WIDTH,
+                    goldlink_core::Nds::MAX_WIDE_SIDE,
+                    SEAL_REACH,
+                    dark,
+                );
+            }
+        }
         // Outdoors with dynamic shadows the game's painted ones (a building's, a sign's) are left
         // out from the next frame, by day (the sun's) and by night (the lit windows' and lamps'):
         // the user, after the GPU's shadows (UC14), had them gone by night too. The blobs under
@@ -416,6 +459,7 @@ fn run(
             std::mem::swap(&mut f.pixels, &mut pixels);
             std::mem::swap(&mut f.wide, &mut wide);
             f.wide_side = side;
+            f.wide_near = wide_near;
             f.map = emu.mailbox().map_or(0, |mb| {
                 let m = std::mem::offset_of!(goldlink_abi::CoopCommBlock, local_player)
                     + std::mem::offset_of!(goldlink_abi::CoopPlayerState, map_id);

@@ -708,7 +708,7 @@ impl GameApp {
                 if let Some(w) = wide.as_mut()
                     && goldlink_light::Place::of_map(frame.map) != goldlink_light::Place::Outdoor
                 {
-                    seal_wide_sides(w, frame.wide_side);
+                    seal_wide_sides(w, frame.wide_side, &frame.wide_near);
                 }
                 self.running_shoes = frame.running_shoes;
                 Some(Shown {
@@ -1810,32 +1810,37 @@ impl Drop for GameApp {
 }
 
 /// How far either side of the DS's edge a row must be black to be sealed (pixels).
-const SEAL_EDGE: usize = 6;
+const SEAL_EDGE: usize = goldlink_runtime::runner::SEAL_REACH;
 
-/// Indoors: a row of a widened side whose pixels at the DS's edge (SEAL_EDGE either side) are
-/// black, the dark beyond a room's walls reaching into the DS's own picture, is black to the
-/// picture's edge. A room's black outer walls stand near the camera; the perspective magnifies
-/// them over the whole side, the steady overworld draws them at the player's scale, and what
-/// stands past their edge showed beyond them: Violet Gym's sky panel as a strip at the far edge
-/// (the user, 2026-11-20; KNOWN_RISKS #140). Only from the edge: a dark gap further out (Sprout
-/// Tower's lattice) cut its rows into stripes. `px`: the wide picture, `256 + 2 * side` wide.
-fn seal_wide_sides(px: &mut [u32], side: usize) {
+/// Indoors: a row of a widened side whose pixels at the DS's edge (SEAL_EDGE either side) are a
+/// black wall standing near the camera (`near`, per row, left and right: the runner's
+/// `wide_near`, from the depth) is black to the picture's edge. The perspective magnifies such a
+/// wall over the whole side, the steady overworld draws it at the player's scale, and what stands
+/// past it showed beyond it: Violet Gym's sky panel as a strip at the far edge (the user,
+/// 2026-11-20; KNOWN_RISKS #140). Black alone isn't a wall: Sprout Tower's lattice gaps at the
+/// edge blacked rows out into lines that flashed as the player walked, and the hole round its
+/// pillar a block of the floor beyond (the user, 2026-11-26). `px`: the wide picture,
+/// `256 + 2 * side` wide.
+fn seal_wide_sides(px: &mut [u32], side: usize, near: &[[bool; 2]]) {
     if side < SEAL_EDGE {
         return;
     }
     let width = 256 + 2 * side;
     let black = |p: u32| (p >> 16) & 0xFF <= 4 && (p >> 8) & 0xFF <= 4 && p & 0xFF <= 4;
-    for row in px.chunks_exact_mut(width) {
+    for (y, row) in px.chunks_exact_mut(width).enumerate() {
+        let [near_left, near_right] = near.get(y).copied().unwrap_or([false; 2]);
         let (left, right) = (side, side + 256);
-        if row[left - SEAL_EDGE..left + SEAL_EDGE]
-            .iter()
-            .all(|&p| black(p))
+        if near_left
+            && row[left - SEAL_EDGE..left + SEAL_EDGE]
+                .iter()
+                .all(|&p| black(p))
         {
             row[..left].iter_mut().for_each(|p| *p &= 0xFF00_0000);
         }
-        if row[right - SEAL_EDGE..right + SEAL_EDGE]
-            .iter()
-            .all(|&p| black(p))
+        if near_right
+            && row[right - SEAL_EDGE..right + SEAL_EDGE]
+                .iter()
+                .all(|&p| black(p))
         {
             row[right..].iter_mut().for_each(|p| *p &= 0xFF00_0000);
         }
@@ -3084,7 +3089,7 @@ mod seal_tests {
     #[test]
     fn past_a_black_wall_it_stays_black() {
         let mut r = row(72);
-        seal_wide_sides(&mut r, SIDE);
+        seal_wide_sides(&mut r, SIDE, &[[true; 2]]);
         assert!(
             r[..SIDE].iter().all(|&p| p == 0),
             "the pink past the wall is gone"
@@ -3100,7 +3105,17 @@ mod seal_tests {
         // Sprout Tower's lattice: the DS's picture lit at its edge, a dark gap in the side.
         let mut r = row(0);
         let before = r.clone();
-        seal_wide_sides(&mut r, SIDE);
+        seal_wide_sides(&mut r, SIDE, &[[true; 2]]);
+        assert_eq!(r, before);
+    }
+
+    #[test]
+    fn black_at_the_edge_that_is_no_near_wall_stays() {
+        // Sprout Tower: a lattice gap or the hole round the pillar, black at the DS's edge but
+        // far below (the depth says so): the floor past it stays.
+        let mut r = row(72);
+        let before = r.clone();
+        seal_wide_sides(&mut r, SIDE, &[[false; 2]]);
         assert_eq!(r, before);
     }
 }
